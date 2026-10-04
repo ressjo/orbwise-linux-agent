@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Image mode: several references and resolution:** up to 3 reference images (numbered image 1–3, e.g. to bring
+  people from different photos into one picture), resolution as megapixels (0.5–2) per aspect ratio, a custom
+  width × height or the aspect of image 1; the resulting size is shown before generating.
 - **Images in the chat:** attach up to 4 images to a message (image button next to the microphone, Ctrl+V or drag
   and drop). If the active model can see images (llama-server with a vision module – `/props` modalities – or an
   Ollama model with the `vision` capability), it gets them directly; otherwise the message names the file and the

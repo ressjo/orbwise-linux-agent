@@ -100,7 +100,10 @@ def engine(tmp_path, monkeypatch):
 
 
 def test_sizes_and_progress_parsing():
-    assert size_of("16:9") == (1344, 768) and size_of("1000x700") == (992, 672) and size_of("?") == (1024, 1024)
+    assert size_of("16:9") == (1376, 768) and size_of("1000x700") == (992, 704) and size_of("?") == (1024, 1024)
+    assert size_of("1:1", 2.0) == (1440, 1440) and size_of("1:1", 0.5) == (736, 736)
+    assert size_of("ref", 1.0, (3000, 2000)) == size_of("3:2", 1.0)  # wie Vorlage
+    assert size_of("4000x100") == (2048, 256)  # Grenzen
     p = parse_progress("loading …\n  |====>  | 4/20 - 2.50s/it\n  |=====> | 5/20 - 2.00s/it")
     assert p == {"step": 5, "steps": 20, "eta_s": 30.0}
     assert parse_progress("| 3/10 - 2.00it/s")["eta_s"] == 3.5
@@ -128,7 +131,7 @@ def test_generate_saves_images_and_reports_progress(engine):
     assert all(Path(s["path"]).read_bytes().startswith(b"\x89PNG") for s in saved)
     sent = json.loads(Path(str(engine.directory / "fake_sd_server.py") + ".last.json").read_text())
     body = sent["body"]
-    assert (body["width"], body["height"], body["batch_count"]) == (864, 1152, 2)
+    assert (body["width"], body["height"], body["batch_count"]) == (896, 1184, 2)
     assert body["sample_params"]["sample_steps"] == 6 and body["sample_params"]["guidance"]["txt_cfg"] == 6.0
     assert body["vae_tiling_params"]["enabled"] is True  # 8-GB-Karte
     assert any(e.get("phase") == "loading" for e in events)
@@ -277,6 +280,10 @@ def test_api_without_setup(cfg, monkeypatch, tmp_path):
         assert client.get("/api/image/list").json() == {"images": []}
         assert client.get("/api/image/file/..%2F..%2Fetc%2Fpasswd").status_code == 404
         assert client.post("/api/image/release").json() == {"ok": True}
+        bad = client.post("/api/image/generate", json={"prompt": "x", "refs": [{"file": "fehlt.png"}]})
+        assert bad.status_code == 400
+        many = client.post("/api/image/generate", json={"prompt": "x", "refs": [{"data": "aGFsbG8="}] * 4})
+        assert many.status_code == 400 and "3" in many.json()["detail"]
 
 
 def test_tool_only_when_set_up(tmp_path, engine):
@@ -288,7 +295,7 @@ def test_tool_only_when_set_up(tmp_path, engine):
     assert spec.is_enabled(engine.cfg)
     ctx = ToolContext(cfg=engine.cfg, memory=None, services={"images": engine})
     out = run(image_tools.generate_image(ctx, "a lighthouse at dusk", size="16:9"))
-    assert "Bild gespeichert" in out and "1344×768" in out
+    assert "Bild gespeichert" in out and "1376×768" in out
 
 
 def test_chat_waits_for_running_image(engine):
@@ -304,3 +311,34 @@ def test_chat_waits_for_running_image(engine):
         assert task.done() and len(task.result()) == 1  # Bild wurde fertig, danach erst freigegeben
         assert not engine.loaded() and engine.llm.prepared == 1
     run(go())
+
+
+def test_image_size_from_headers():
+    import struct
+
+    from orbwise.imagegen import image_size
+    png = b"\x89PNG\r\n\x1a\n" + b"\0\0\0\rIHDR" + struct.pack(">II", 1920, 1080) + b"\0" * 8
+    assert image_size(png) == (1920, 1080)
+    jpeg = (b"\xff\xd8" + b"\xff\xe0" + struct.pack(">H", 16) + b"\0" * 14
+            + b"\xff\xc0" + struct.pack(">HBHH", 17, 8, 768, 1024) + b"\0" * 10)
+    assert image_size(jpeg) == (1024, 768)
+    assert image_size(b"GIF89a" + struct.pack("<HH", 300, 200)) == (300, 200)
+    assert image_size(b"kein bild") is None
+
+
+def test_several_references_in_order(engine):
+    import struct
+    portrait = b"\x89PNG\r\n\x1a\n" + b"\0\0\0\rIHDR" + struct.pack(">II", 600, 900) + b"\0" * 8
+    saved = run(engine.generate("the woman from image 1 and the man from image 2 on a park bench",
+                                ref_images=[portrait, b"\x89PNGzwei"], size="ref"))
+    body = json.loads(Path(str(engine.directory / "fake_sd_server.py") + ".last.json").read_text())["body"]
+    assert len(body["ref_images"]) == 2 and base64_of(portrait) == body["ref_images"][0]
+    assert body["width"] < body["height"]  # Seitenverhältnis von Bild 1 (hochkant)
+    assert saved[0]["refs"] == 2
+    with pytest.raises(ImageError, match="Höchstens 3"):
+        run(engine.generate("x", ref_images=[b"a", b"b", b"c", b"d"]))
+
+
+def base64_of(data: bytes) -> str:
+    import base64
+    return base64.b64encode(data).decode()

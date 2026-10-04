@@ -2710,7 +2710,9 @@
   // ---------------------------------------------------------------- Bild-Modus (Qwen-Image-2.1)
   // Eigene Ansicht statt Chat: Prompt, Format, Galerie. Läuft ohne Sprachmodell; der Server gibt den Grafikspeicher
   // ans Sprachmodell zurück, sobald es wieder gebraucht wird (oder beim Verlassen der Ansicht).
-  const IV = { open: false, status: null, ref: null, busy: false };
+  const IV = { open: false, status: null, refs: [], busy: false };
+  const RES_LABEL = { 0.5: L("Schnell · 0,5 MP", "Fast · 0.5 MP"), 1: L("Standard · 1 MP", "Standard · 1 MP"),
+                      1.5: L("Fein · 1,5 MP", "Fine · 1.5 MP"), 2: L("Groß · 2 MP", "Large · 2 MP") };
   const SIZE_LABEL = { "1:1": L("Quadrat 1:1", "Square 1:1"), "4:3": L("Quer 4:3", "Landscape 4:3"),
                        "3:4": L("Hoch 3:4", "Portrait 3:4"), "16:9": L("Breit 16:9", "Wide 16:9"),
                        "9:16": L("Handy 9:16", "Phone 9:16"), "3:2": L("Foto 3:2", "Photo 3:2"), "2:3": L("Foto hoch 2:3", "Photo portrait 2:3") };
@@ -2721,7 +2723,7 @@
     $("iv-steps-label").textContent = L("Schritte", "Steps");
     $("iv-count-label").textContent = L("Anzahl", "Count");
     $("iv-seed").placeholder = L("zufällig", "random");
-    $("iv-upload-label").querySelector("span").textContent = L("Bild bearbeiten …", "Edit an image …");
+    $("iv-upload-label").querySelector("span").textContent = L("Vorlagen hinzufügen …", "Add references …");
     $("iv-cancel").textContent = L("Abbrechen", "Cancel");
     $("iv-go").textContent = L("Erzeugen", "Generate");
   }
@@ -2743,9 +2745,19 @@
       const sel = $("iv-size");
       if (!sel.options.length) {
         for (const k of st.sizes || ["1:1"]) sel.add(new Option(SIZE_LABEL[k] || k, k));
+        sel.add(new Option(L("Wie Vorlage (Bild 1)", "Like reference (image 1)"), "ref"));
+        sel.add(new Option(L("Eigene Größe …", "Custom size …"), "custom"));
         sel.value = store.get("iv.size", st.size || "1:1");
+        if (!sel.value) sel.value = "1:1";
+        const res = $("iv-res");
+        for (const r of st.resolutions || [1]) res.add(new Option(RES_LABEL[r] || `${r} MP`, String(r)));
+        res.value = String(store.get("iv.mp", st.megapixels || 1));
+        if (!res.value) res.value = "1";
+        const [w, h] = store.get("iv.custom", [1280, 704]);
+        $("iv-w").value = w; $("iv-h").value = h;
         $("iv-steps").value = store.get("iv.steps", st.steps || 20);
       }
+      updateDims();
       $("iv-upload-label").classList.toggle("hidden", !st.can_edit);
       setImageBusy(!!st.busy);
     }
@@ -2807,7 +2819,7 @@
     card.querySelector("img").src = url;
     card.querySelector("img").alt = img.prompt || "";
     card.querySelector("img").onclick = () => window.open(url, "_blank");
-    card.querySelector(".iv-cap").textContent = (img.edit ? "✎ " : "") + (img.prompt || "");
+    card.querySelector(".iv-cap").textContent = (img.edit ? (img.refs > 1 ? `✎×${img.refs} ` : "✎ ") : "") + (img.prompt || "");
     card.querySelector(".iv-meta").textContent = `${img.width}×${img.height} · ${img.steps} ${L("Schritte", "steps")} · Seed ${img.seed}`
       + (img.seconds ? ` · ${secs(img.seconds)}` : "");
     const actions = card.querySelector(".iv-actions");
@@ -2822,10 +2834,12 @@
     });
     add(L("Gleich", "Reuse"), L("Prompt und Einstellungen übernehmen (Seed bleibt)", "Reuse prompt and settings (same seed)"), () => {
       $("iv-prompt").value = img.prompt || ""; $("iv-negative").value = img.negative || ""; $("iv-seed").value = img.seed;
-      $("iv-steps").value = img.steps; $("iv-prompt").focus();
+      $("iv-steps").value = img.steps;
+      $("iv-size").value = "custom"; $("iv-w").value = img.width; $("iv-h").value = img.height; updateDims();
+      $("iv-prompt").focus();
     });
-    if (IV.status && IV.status.can_edit) add(L("Bearbeiten", "Edit"), L("Dieses Bild als Vorlage verwenden – beschreib die Änderung", "Use this image as the base – describe the change"), () => {
-      setRef({ file: img.file, url }); $("iv-prompt").value = ""; $("iv-prompt").focus();
+    if (IV.status && IV.status.can_edit) add(L("Als Vorlage", "Use as reference"), L("Als Vorlage hinzufügen (bis zu 3 – z. B. Personen aus mehreren Bildern zusammenbringen)", "Add as a reference (up to 3 – e.g. bring people from several images together)"), () => {
+      addRef({ file: img.file, url }); $("iv-prompt").focus();
     });
     if (IV.status && IV.status.telegram) add(L("Handy", "Phone"), L("Per Telegram aufs Handy", "Send to the phone via Telegram"), () =>
       api("POST", `/api/image/telegram/${encodeURIComponent(img.file)}`).then(() => toast(L("Aufs Handy geschickt.", "Sent to the phone."))).catch(() => {}));
@@ -2835,35 +2849,79 @@
     });
     return card;
   }
-  function setRef(ref) {
-    IV.ref = ref;
-    $("iv-ref").classList.toggle("hidden", !ref);
-    if (ref) {
-      $("iv-ref-img").src = ref.url || ref.data;
-      $("iv-ref-text").textContent = L("Wird bearbeitet – beschreib die Änderung (z. B. „mach den Himmel rot“).",
-                                       "Being edited – describe the change (e.g. “make the sky red”).");
-    }
+  function addRef(ref) {
+    const max = (IV.status && IV.status.max_refs) || 3;
+    if (IV.refs.length >= max) { toast(L(`Höchstens ${max} Vorlagen.`, `At most ${max} references.`)); return; }
+    if (ref.file && IV.refs.some((r) => r.file === ref.file)) return;
+    IV.refs.push(ref);
+    renderRefs();
   }
-  $("iv-ref-clear").onclick = () => setRef(null);
+  function renderRefs() {
+    const box = $("iv-refs");
+    const list = $("iv-ref-list");
+    box.classList.toggle("hidden", !IV.refs.length);
+    list.innerHTML = "";
+    IV.refs.forEach((r, i) => {
+      const item = document.createElement("div");
+      item.className = "iv-ref-item";
+      item.innerHTML = `<img alt=""><b></b><button type="button" aria-label="${L("Entfernen", "Remove")}">✕</button>`;
+      item.querySelector("img").src = r.url || r.data;
+      item.querySelector("b").textContent = L(`Bild ${i + 1}`, `Image ${i + 1}`);
+      item.querySelector("button").onclick = () => { IV.refs.splice(i, 1); renderRefs(); };
+      list.appendChild(item);
+    });
+    $("iv-ref-hint").textContent = IV.refs.length > 1
+      ? L("Im Text auf die Bilder verweisen – z. B. „die Frau aus Bild 1 und der Mann aus Bild 2 zusammen auf einer Parkbank, Abendlicht“.",
+          "Refer to the images in the text – e.g. “the woman from image 1 and the man from image 2 together on a park bench, evening light”.")
+      : L("Beschreib die Änderung – z. B. „mach den Himmel rot“. Für mehrere Personen weitere Bilder hinzufügen (bis zu 3).",
+          "Describe the change – e.g. “make the sky red”. Add more images for several people (up to 3).");
+    updateDims();
+  }
+  // Ergebnisgröße anzeigen (wie der Server rechnet: Seitenverhältnis × Megapixel, auf 32 gerundet)
+  const RATIO = { "1:1": 1, "4:3": 4 / 3, "3:4": 3 / 4, "16:9": 16 / 9, "9:16": 9 / 16, "3:2": 3 / 2, "2:3": 2 / 3 };
+  const r32 = (v) => Math.max(256, Math.min(2048, Math.round(v / 32) * 32));
+  function updateDims() {
+    const size = $("iv-size").value;
+    $("iv-custom").classList.toggle("hidden", size !== "custom");
+    $("iv-res").classList.toggle("hidden", size === "custom");
+    let text = "";
+    if (size === "custom") text = "";
+    else if (size === "ref") text = IV.refs.length ? L("Seitenverhältnis wie Bild 1", "aspect of image 1") : L("erst eine Vorlage hinzufügen", "add a reference first");
+    else if (RATIO[size]) {
+      const w = Math.sqrt(Number($("iv-res").value || 1) * 1048576 * RATIO[size]);
+      text = `${r32(w)} × ${r32(w / RATIO[size])}`;
+    }
+    $("iv-dims").textContent = text;
+  }
+  $("iv-size").onchange = updateDims;
+  $("iv-res").onchange = updateDims;
   $("iv-upload").onchange = (e) => {
-    const f = e.target.files && e.target.files[0];
+    const files = [...(e.target.files || [])];
     e.target.value = "";
-    if (!f) return;
-    if (f.size > 20e6) { toast(L("Bild zu groß (höchstens 20 MB).", "Image too large (20 MB max).")); return; }
-    const reader = new FileReader();
-    reader.onload = () => { setRef({ data: reader.result }); $("iv-prompt").focus(); };
-    reader.readAsDataURL(f);
+    for (const f of files) {
+      if (f.size > 20e6) { toast(L("Bild zu groß (höchstens 20 MB).", "Image too large (20 MB max).")); continue; }
+      const reader = new FileReader();
+      reader.onload = () => { addRef({ data: reader.result }); $("iv-prompt").focus(); };
+      reader.readAsDataURL(f);
+    }
   };
   async function generateImage() {
     const prompt = $("iv-prompt").value.trim();
     if (!prompt) { $("iv-prompt").focus(); return; }
+    let size = $("iv-size").value;
+    if (size === "ref" && !IV.refs.length) size = "1:1";
     store.set("iv.size", $("iv-size").value);
+    store.set("iv.mp", Number($("iv-res").value) || 1);
     store.set("iv.steps", Number($("iv-steps").value) || 20);
+    if (size === "custom") {
+      const w = r32(Number($("iv-w").value) || 1024), h = r32(Number($("iv-h").value) || 1024);
+      store.set("iv.custom", [w, h]);
+      size = `${w}x${h}`;
+    }
     const seed = $("iv-seed").value === "" ? -1 : Number($("iv-seed").value);
-    const body = { prompt, negative: $("iv-negative").value, size: $("iv-size").value, steps: Number($("iv-steps").value) || 0,
-                   count: Number($("iv-count").value) || 1, seed };
-    if (IV.ref && IV.ref.file) body.ref_files = [IV.ref.file];
-    if (IV.ref && IV.ref.data) body.ref_images = [IV.ref.data];
+    const body = { prompt, negative: $("iv-negative").value, size, megapixels: Number($("iv-res").value) || 1,
+                   steps: Number($("iv-steps").value) || 0, count: Number($("iv-count").value) || 1, seed,
+                   refs: IV.refs.map((r) => (r.file ? { file: r.file } : { data: r.data })) };
     setImageBusy(true);
     imageProgress({ phase: "queued" });
     try { await api("POST", "/api/image/generate", body); } catch { setImageBusy(false); }

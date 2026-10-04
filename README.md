@@ -443,8 +443,11 @@ Locks, alarm panels and garage doors/gates always require confirmation.
 orbwise model add qwen-image     # stable-diffusion.cpp (Vulkan build) + model files, ~10–15 GB depending on the GPU
 ```
 
-Then pick **Bild / Image** at the top left. Describe the image (English usually works best), choose format, steps,
-count and seed – or **edit** an image (upload one or press *Edit* in the gallery and describe the change). Images
+Then pick **Bild / Image** at the top left. Describe the image (English usually works best), choose format,
+resolution (0.5 / 1 / 1.5 / 2 megapixels, a custom width × height, or "like reference"), steps, count and seed – or
+**edit**: add up to **3 references** (upload them or press *Use as reference* in the gallery). They are numbered
+image 1–3, so the prompt can combine them – e.g. "the woman from image 1 and the man from image 2 together on a park
+bench, evening light". More megapixels mean finer detail but more time and VRAM. Images
 land in `~/Bilder/Orbwise` (or `~/Pictures/Orbwise`); prompt and settings are stored in the PNG.
 
 - **Runtime:** stable-diffusion.cpp's prebuilt Linux **Vulkan** build (AMD and NVIDIA, no ROCm/CUDA build needed),

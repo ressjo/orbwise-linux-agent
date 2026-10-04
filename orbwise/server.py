@@ -1038,18 +1038,26 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(409, "Es wird gerade ein Bild erzeugt – bitte warten oder abbrechen.")
         if agent.busy():
             raise HTTPException(409, "Jarvis arbeitet gerade – bitte kurz warten.")
+        # Vorlagen in Reihenfolge (Bild 1, 2, 3): {"file": Galerie-Name} oder {"data": data:-URL eines hochgeladenen Bilds}
+        sources = list(data.get("refs") or [])
+        sources += [{"file": n} for n in data.get("ref_files") or []] + [{"data": d} for d in data.get("ref_images") or []]
         refs: list[bytes] = []
-        for name in data.get("ref_files") or []:  # Bild aus der Galerie weiterbearbeiten
-            path = images.path_of(str(name))
-            if path:
+        for src in sources:
+            if not isinstance(src, dict):
+                continue
+            if src.get("file"):
+                path = images.path_of(str(src["file"]))
+                if not path:
+                    raise HTTPException(400, f"Bild nicht gefunden: {src['file']}")
                 refs.append(path.read_bytes())
-        for raw in data.get("ref_images") or []:  # hochgeladenes Bild (data:-URL oder base64)
-            try:
-                refs.append(base64.b64decode(str(raw).split(",", 1)[-1]))
-            except ValueError:
-                raise HTTPException(400, "Bild nicht lesbar") from None
-        if len(refs) > 3 or sum(len(r) for r in refs) > 30_000_000:
-            raise HTTPException(400, "Höchstens 3 Bilder bis zusammen 30 MB")
+            elif src.get("data"):
+                try:
+                    refs.append(base64.b64decode(str(src["data"]).split(",", 1)[-1]))
+                except ValueError:
+                    raise HTTPException(400, "Bild nicht lesbar") from None
+        from .imagegen import MAX_REFS
+        if len(refs) > MAX_REFS or sum(len(r) for r in refs) > 40_000_000:
+            raise HTTPException(400, f"Höchstens {MAX_REFS} Vorlagen bis zusammen 40 MB")
 
         async def progress(state: dict) -> None:
             await hub.broadcast({"type": "image_progress", **state})
@@ -1060,7 +1068,8 @@ def create_app(cfg: Config) -> FastAPI:
                     str(data.get("prompt") or ""), negative=str(data.get("negative") or ""),
                     size=str(data.get("size") or ""), steps=int(data.get("steps") or 0),
                     cfg_scale=float(data.get("cfg_scale") or 0), seed=int(data.get("seed", -1) or -1),
-                    count=int(data.get("count") or 1), ref_images=refs, progress=progress)
+                    count=int(data.get("count") or 1), ref_images=refs, progress=progress,
+                    megapixels=float(data.get("megapixels") or 0))
                 await hub.broadcast({"type": "image_done", "images": saved})
             except ImageError as e:
                 await hub.broadcast({"type": "image_error", "text": str(e)})

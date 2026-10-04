@@ -133,6 +133,7 @@ image:                     # image mode (Qwen-Image-2.1 via stable-diffusion.cpp
   steps: 20                # more = finer detail, slower
   # cfg_scale: 6.0
   # size: "1:1"            # 1:1, 4:3, 3:4, 16:9, 9:16, 3:2, 2:3 or e.g. 1024x768
+  # megapixels: 1.0        # resolution: 0.5 fast · 1 standard · 1.5 fine · 2 large (slower, more VRAM)
   # unload_llm: auto       # take the language model out of VRAM while painting: auto (below 16 GB) | always | never
   # idle_minutes: 10       # unload the image model after this long without a new image
   # extra_args: ""         # own sd-server options (replaces the automatic --offload-to-cpu/--clip-on-cpu/--vae-tiling)

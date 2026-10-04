@@ -31,8 +31,12 @@ from .lang import T
 
 log = logging.getLogger(__name__)
 
-SIZES = {"1:1": (1024, 1024), "4:3": (1152, 864), "3:4": (864, 1152), "16:9": (1344, 768), "9:16": (768, 1344),
-         "3:2": (1216, 800), "2:3": (800, 1216)}
+# Seitenverhältnisse (Breite/Höhe); die Pixelzahl kommt aus der Auflösung (Megapixel)
+RATIOS = {"1:1": 1.0, "4:3": 4 / 3, "3:4": 3 / 4, "16:9": 16 / 9, "9:16": 9 / 16, "3:2": 3 / 2, "2:3": 2 / 3}
+SIZES = RATIOS  # Namen für die Oberfläche
+RESOLUTIONS = (0.5, 1.0, 1.5, 2.0)  # Megapixel: schnell · Standard · fein · groß (Qwen-Image ist auf ~1,7 MP trainiert)
+MAX_SIDE = 2048
+MAX_REFS = 3
 INDEX = ".orbwise-images.jsonl"
 _STEP = re.compile(r"(\d+)/(\d+)\s*-\s*([\d.]+)\s*(s/it|it/s)")
 
@@ -52,15 +56,67 @@ def output_dir(cfg) -> Path:
     return base / "Orbwise"
 
 
-def size_of(size: str) -> tuple[int, int]:
-    """"16:9" oder "1024x768" → (Breite, Höhe), auf 32 gerundet (verlangt das Modell)."""
-    if size in SIZES:
-        return SIZES[size]
+def _round32(v: float) -> int:
+    return max(256, min(MAX_SIDE, int(round(v / 32)) * 32))
+
+
+def dims_for(ratio: float, megapixels: float = 1.0) -> tuple[int, int]:
+    """Breite/Höhe für ein Seitenverhältnis und eine Pixelzahl – beide durch 32 teilbar (verlangt das Modell)."""
+    area = max(0.25, min(4.0, megapixels or 1.0)) * 1024 * 1024
+    width = (area * ratio) ** 0.5
+    return _round32(width), _round32(width / ratio)
+
+
+def size_of(size: str, megapixels: float = 1.0, ref_size: tuple[int, int] | None = None) -> tuple[int, int]:
+    """"16:9" (+ Megapixel), "1024x768" (genau) oder "ref" (Seitenverhältnis des ersten Vorlagenbilds)."""
+    if size == "ref" and ref_size and ref_size[0] and ref_size[1]:
+        return dims_for(ref_size[0] / ref_size[1], megapixels)
+    if size in RATIOS:
+        return dims_for(RATIOS[size], megapixels)
     m = re.fullmatch(r"\s*(\d{3,4})\s*[x×*]\s*(\d{3,4})\s*", size or "")
     if m:
-        w, h = (max(256, min(2048, int(v) // 32 * 32)) for v in m.groups())
+        w, h = (_round32(int(v)) for v in m.groups())
         return w, h
-    return SIZES["1:1"]
+    return dims_for(1.0, megapixels)
+
+
+def image_size(data: bytes) -> tuple[int, int] | None:
+    """Breite/Höhe aus dem Dateikopf (PNG, JPEG, WebP, GIF) – ohne Bildbibliothek."""
+    import struct
+    try:
+        if data.startswith(b"\x89PNG"):
+            return struct.unpack(">II", data[16:24])
+        if data[:6] in (b"GIF87a", b"GIF89a"):
+            return struct.unpack("<HH", data[6:10])
+        if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+            chunk = data[12:16]
+            if chunk == b"VP8X":
+                w = int.from_bytes(data[24:27], "little") + 1
+                return w, int.from_bytes(data[27:30], "little") + 1
+            if chunk == b"VP8L":
+                b = int.from_bytes(data[21:25], "little")
+                return (b & 0x3FFF) + 1, ((b >> 14) & 0x3FFF) + 1
+            if chunk == b"VP8 ":
+                w, h = struct.unpack("<HH", data[26:30])
+                return w & 0x3FFF, h & 0x3FFF
+        if data.startswith(b"\xff\xd8"):
+            i = 2
+            while i + 9 < len(data):
+                if data[i] != 0xFF:
+                    i += 1
+                    continue
+                marker = data[i + 1]
+                if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+                    i += 2
+                    continue
+                length = struct.unpack(">H", data[i + 2:i + 4])[0]
+                if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+                    h, w = struct.unpack(">HH", data[i + 5:i + 9])
+                    return w, h
+                i += 2 + length
+    except struct.error:
+        return None
+    return None
 
 
 def parse_progress(text: str) -> dict | None:
@@ -114,7 +170,8 @@ class ImageEngine:
 
     def status(self) -> dict:
         return {"available": self.available(), "loaded": self.loaded(), "busy": self.lock.locked(),
-                "can_edit": self.can_edit(), "sizes": list(SIZES), "size": self.cfg.image.size,
+                "can_edit": self.can_edit(), "sizes": list(RATIOS), "size": self.cfg.image.size,
+                "resolutions": list(RESOLUTIONS), "megapixels": self.cfg.image.megapixels, "max_refs": MAX_REFS,
                 "steps": self.cfg.image.steps, "cfg_scale": self.cfg.image.cfg_scale,
                 "llm_unloaded": self.stopped_llm, "dir": str(self.directory)}
 
@@ -225,7 +282,9 @@ class ImageEngine:
     # ---------- Erzeugen ----------
     async def generate(self, prompt: str, negative: str = "", size: str = "", steps: int = 0, cfg_scale: float = 0,
                        seed: int = -1, count: int = 1, ref_images: list[bytes] | None = None,
-                       progress: Progress | None = None) -> list[dict]:
+                       progress: Progress | None = None, megapixels: float = 0) -> list[dict]:
+        """ref_images: Vorlagen in Reihenfolge (Bild 1, 2, 3 – im Prompt darauf verweisen, z. B. „die Person aus
+        Bild 1 neben der aus Bild 2“). size: Seitenverhältnis, "ref" (wie Bild 1) oder "BxH"."""
         prompt = (prompt or "").strip()
         if not prompt:
             raise ImageError(T("Bitte beschreiben, was auf das Bild soll.", "Please describe the image."))
@@ -234,7 +293,10 @@ class ImageEngine:
                                "orbwise model add qwen-image erneut ausführen.",
                                "Editing needs the text encoder's vision part (mmproj) – run orbwise model add "
                                "qwen-image again."))
-        width, height = size_of(size or self.cfg.image.size)
+        if ref_images and len(ref_images) > MAX_REFS:
+            raise ImageError(T(f"Höchstens {MAX_REFS} Vorlagen auf einmal.", f"At most {MAX_REFS} reference images."))
+        ref_size = image_size(ref_images[0]) if ref_images else None
+        width, height = size_of(size or self.cfg.image.size, megapixels or self.cfg.image.megapixels, ref_size)
         steps = max(1, min(80, steps or self.cfg.image.steps))
         cfg_scale = cfg_scale or self.cfg.image.cfg_scale
         seed = seed if seed is not None and seed >= 0 else random.randint(0, 2 ** 31 - 1)
@@ -264,7 +326,8 @@ class ImageEngine:
             seconds = round(time.monotonic() - started, 1)
             saved = self._save(result, {"prompt": prompt, "negative": negative, "width": width, "height": height,
                                         "steps": steps, "cfg_scale": cfg_scale, "seed": seed,
-                                        "edit": bool(ref_images), "seconds": seconds})
+                                        "edit": bool(ref_images), "refs": len(ref_images or []),
+                                        "seconds": seconds})
             self._schedule_idle()
             return saved
 
