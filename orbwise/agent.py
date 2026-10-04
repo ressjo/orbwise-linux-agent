@@ -158,6 +158,7 @@ class Agent:
         # "auto" = Shell-Befehle und Dateien ohne Root (Löschen, Ausschalten, Senden ins Netz, Startdateien fragen)
         self.auto_mode = "read"
         self.last_context: dict | None = None  # letzter Prompt-Aufbau (für die Kontext-Anzeige)
+        self._vision = False  # sieht das aktive Modell angehängte Bilder selbst? (siehe _check_vision)
         self.tools = load_all_tools()
         self.all_schemas = tool_schemas(cfg)
         self._coding_schemas: tuple[list[dict], int] | None = None
@@ -259,12 +260,28 @@ class Agent:
                                            approved_plan=self._approved_plan, extra=hint)
         msg["note_meta"] = {"time": stamp, "plan": self._plan, "approved": self._approved_plan, "hint": hint}
 
-    @staticmethod
-    def _prompt_message(m: dict) -> dict:
+    def _prompt_message(self, m: dict) -> dict:
         out = {k: v for k, v in m.items() if k in ("role", "content", "tool_calls", "tool_name")}
         if m.get("note"):
             out["content"] = m["note"] + (m.get("content") or "")
+        if m.get("attachments"):
+            from . import attachments
+            paths = [p for p in (attachments.path_of(self.cfg, n) for n in m["attachments"]) if p]
+            if paths and self._vision:  # das Modell sieht die Bilder selbst
+                out["images"] = [str(p) for p in paths]
+            elif paths:  # sonst: Pfad nennen – look_at_image fragt das Vision-Modell
+                out["content"] = (out.get("content") or "") + prompts.attachment_note(
+                    self.cfg, [str(p) for p in paths], self.tool_allowed("look_at_image")
+                    and self.tools["look_at_image"].is_enabled(self.cfg))
         return out
+
+    async def _check_vision(self) -> None:
+        """Sieht das aktive Modell Bilder? (bestimmt, wie angehängte Bilder in den Prompt kommen)"""
+        fn = getattr(self.llm, "supports_images", None)
+        try:
+            self._vision = bool(await fn()) if fn else False
+        except Exception:  # noqa: BLE001
+            self._vision = False
 
     def build_messages(self, hits=None, display: bool = True, trim: bool = True) -> list[dict]:
         """Prompt für den nächsten Schritt. display=False: nur abschätzen (Komprimierung, Vorwärmen) – die Anzeige
@@ -280,7 +297,7 @@ class Agent:
         if trim:  # Notbremse – normalerweise kommt vorher das Ausblenden bzw. die Komprimierung
             history = conv.trimmed_history(max(budget, 1000))
         else:
-            history = [{k: v for k, v in m.items() if k in ("role", "content", "tool_calls", "tool_name", "note")}
+            history = [{k: v for k, v in m.items() if k in ("role", "content", "tool_calls", "tool_name", "note", "attachments")}
                        for m in conv.epoch_messages()]
         messages = [{"role": "system", "content": system}, *(self._prompt_message(m) for m in history)]
         if summary:  # vor die erste Nutzernachricht – in deren [Kontext]-Block
@@ -433,6 +450,9 @@ class Agent:
         if not small:
             used_before = {u.split(":")[0] for u in used_before}
         must = matched | pinned | self._turn_used | used_before
+        if conv.history and conv.history[conv.turn_start()].get("attachments") and not self._vision \
+                and "look_at_image" in self.tools:
+            must.add("vision")  # angehängtes Bild: ohne eigene Bildunterstützung über look_at_image
         if toolselect.is_follow_up(question):
             must |= suggested  # „ja“, „mach das“: gemeint ist der letzte Vorschlag des Modells
         if small and toolselect.wants_change([question]):  # z. B. „weiter“ im Paperless-Durchgang
@@ -582,7 +602,7 @@ class Agent:
 
     # ---------- Ablauf ----------
     async def run(self, user_text: str, emit: Emit, confirm: Confirm, think: bool | None = None,
-                  plan: bool = False, approved_plan: str = "") -> str:
+                  plan: bool = False, approved_plan: str = "", images: list[str] | None = None) -> str:
         """think: Denkmodus für diese Anfrage (None = Einstellung des Modell-Profils).
         plan: Planmodus – nur lesend nachsehen und einen Plan zur Freigabe vorlegen (gedacht wird nur, wenn der
         Denkmodus an ist). approved_plan: freigegebener Plan, der beim Ausführen angeheftet bleibt."""
@@ -591,7 +611,7 @@ class Agent:
             self._set_think(think)
             self._tainted = False
             try:
-                return await self._run(user_text, emit, confirm)
+                return await self._run(user_text, emit, confirm, images)
             finally:
                 self._think, self._think_level, self._plan, self._approved_plan = None, None, False, ""
 
@@ -642,7 +662,7 @@ class Agent:
         ep["shown"] = sorted(shown | set(taken))
         return text
 
-    async def _run(self, user_text: str, emit: Emit, confirm: Confirm) -> str:
+    async def _run(self, user_text: str, emit: Emit, confirm: Confirm, images: list[str] | None = None) -> str:
         now = datetime.now()
         self._turn_time = now.strftime("%H:%M")
         self._turn_stamp = prompts.note_stamp(self.cfg, now)
@@ -654,7 +674,8 @@ class Agent:
         start_len = len(conv.history)
         await emit({"type": "state", "state": "thinking"})
         self._turn_memories = await self._memories_for(user_text)
-        conv.add({"role": "user", "content": user_text})
+        await self._check_vision()
+        conv.add({"role": "user", "content": user_text, **({"attachments": list(images)} if images else {})})
         self._turn_open = True
         spoken: list[str] = []
         tool_notes: list[str] = []
@@ -1139,6 +1160,7 @@ class Agent:
         if not self.cache_cold():
             return False
         key = self._cache_key()  # vorher merken – der Nutzer könnte währenddessen den Chat wechseln
+        await self._check_vision()
         self.choose_tools(set())
         messages = self.build_messages(display=False)
         if messages[-1]["role"] != "user":

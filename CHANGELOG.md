@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Images in the chat:** attach up to 4 images to a message (image button next to the microphone, Ctrl+V or drag
+  and drop). If the active model can see images (llama-server with a vision module – `/props` modalities – or an
+  Ollama model with the `vision` capability), it gets them directly; otherwise the message names the file and the
+  model uses `look_at_image` with the separate vision model (the tool is loaded automatically, also in lean mode).
+  Images are stored under `~/.local/share/orbwise/attachments`, shown in the chat history and count towards the
+  context display.
 - **Image mode with Qwen-Image-2.1:** a third tab next to Tools and Coding generates and edits images locally via
   stable-diffusion.cpp (`orbwise model add qwen-image` downloads the prebuilt Vulkan build and the model files
   matching the GPU). Format, steps, count, seed, negative prompt, progress per step, gallery with variation, reuse,

@@ -355,7 +355,7 @@
         if (ev.state === "idle") stopSaying();
         break;
       case "user":
-        addUser(ev.text, ev.source);
+        addUser(ev.text, ev.source, ev.images);
         if (ev.source === "voice") S.voiceUsed = true;
         break;
       case "assistant_start":
@@ -653,8 +653,21 @@
     return el;
   }
 
-  function addUser(text, source) {
-    addMsg("user", source === "voice" ? L("DU · SPRACHE", "YOU · VOICE") : L("DU", "YOU"), escapeHtml(text));
+  function addUser(text, source, images) {
+    const el = addMsg("user", source === "voice" ? L("DU · SPRACHE", "YOU · VOICE") : L("DU", "YOU"), escapeHtml(text));
+    if (images && images.length) {
+      const box = document.createElement("div");
+      box.className = "msg-images";
+      for (const name of images) {
+        const img = document.createElement("img");
+        img.src = `/api/attachments/${encodeURIComponent(name)}`;
+        img.alt = "";
+        img.loading = "lazy";
+        img.onclick = () => window.open(img.src, "_blank");
+        box.appendChild(img);
+      }
+      el.querySelector(".body").prepend(box);
+    }
   }
   function addSystem(text) {
     const el = document.createElement("div");
@@ -1415,13 +1428,76 @@
   }
   $("input").addEventListener("input", prewarmSoon);
 
+  // ---------------------------------------------------------------- Bilder anhängen (Büroklammer, Strg+V, Ziehen)
+  const ATT = { items: [] };  // { name, url, pending }
+  function renderAttachments() {
+    const row = $("attach-row");
+    row.innerHTML = "";
+    row.classList.toggle("hidden", !ATT.items.length);
+    for (const it of ATT.items) {
+      const chip = document.createElement("div");
+      chip.className = "attach-chip" + (it.pending ? " loading" : "");
+      chip.innerHTML = `<img alt=""><button type="button" aria-label="${L("Entfernen", "Remove")}">✕</button>`;
+      chip.querySelector("img").src = it.preview || it.url;
+      chip.querySelector("button").onclick = () => { ATT.items = ATT.items.filter((x) => x !== it); renderAttachments(); };
+      row.appendChild(chip);
+    }
+    if (ATT.items.length && ATT.vision === false) {
+      const hint = document.createElement("span");
+      hint.className = "attach-hint";
+      hint.textContent = L("Das Modell sieht keine Bilder – das Vision-Modell schaut es sich an.",
+                           "This model can't see images – the vision model will look at it.");
+      row.appendChild(hint);
+    }
+  }
+  function attachFiles(files) {
+    for (const f of files) {
+      if (!f.type.startsWith("image/")) continue;
+      if (ATT.items.length >= 4) { toast(L("Höchstens 4 Bilder pro Nachricht.", "At most 4 images per message.")); break; }
+      if (f.size > 20e6) { toast(L("Bild zu groß (höchstens 20 MB).", "Image too large (20 MB max).")); continue; }
+      const it = { pending: true, preview: URL.createObjectURL(f) };
+      ATT.items.push(it);
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const r = await api("POST", "/api/attachments", { data: reader.result });
+          Object.assign(it, { name: r.name, url: r.url, pending: false });
+          ATT.vision = r.vision;
+        } catch { ATT.items = ATT.items.filter((x) => x !== it); }
+        renderAttachments();
+      };
+      reader.readAsDataURL(f);
+    }
+    renderAttachments();
+    $("input").focus();
+  }
+  $("btn-attach").onclick = () => $("attach-input").click();
+  $("attach-input").onchange = (e) => { attachFiles([...e.target.files]); e.target.value = ""; };
+  $("input").addEventListener("paste", (e) => {
+    const files = [...(e.clipboardData ? e.clipboardData.files : [])].filter((f) => f.type.startsWith("image/"));
+    if (files.length) { e.preventDefault(); attachFiles(files); }
+  });
+  const composer = $("form");
+  composer.addEventListener("dragover", (e) => { if ([...e.dataTransfer.types].includes("Files")) { e.preventDefault(); composer.classList.add("dragging"); } });
+  composer.addEventListener("dragleave", () => composer.classList.remove("dragging"));
+  composer.addEventListener("drop", (e) => {
+    composer.classList.remove("dragging");
+    if (!e.dataTransfer.files.length) return;
+    e.preventDefault();
+    attachFiles([...e.dataTransfer.files]);
+  });
+
   $("form").addEventListener("submit", (e) => {
     e.preventDefault();
     const text = $("input").value.trim();
-    if (!text) return;
+    if (ATT.items.some((it) => it.pending)) { toast(L("Bild wird noch hochgeladen …", "Image still uploading …")); return; }
+    const images = ATT.items.map((it) => it.name).filter(Boolean);
+    if (!text && !images.length) return;
     if (!S.connected) { toast(L("Keine Verbindung zum Server.", "No connection to the server.")); return; }
-    send({ type: "user_message", text });
+    send({ type: "user_message", text, images });
     $("input").value = "";
+    ATT.items = [];
+    renderAttachments();
   });
 
   $("btn-plan").onclick = () => {
@@ -2882,7 +2958,7 @@
       for (const ep of h.epochs || []) dividers[ep.at] = ep;
       h.messages.forEach((m, i) => {
         if (dividers[i]) { chat.appendChild(compactDivider(dividers[i].summary, dividers[i].ts)); }
-        if (m.role === "user") addUser(m.content);
+        if (m.role === "user") addUser(m.content, "", m.images);
         else addMsg("assistant", "JARVIS", renderMarkdown(m.content));
       });
     } catch { /* egal */ }

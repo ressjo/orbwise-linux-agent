@@ -140,7 +140,10 @@
       </section>
 
       <footer class="composer-wrap">
+        <div class="attach-row hidden" id="attach-row"></div>
         <form class="composer" id="form">
+          <button type="button" class="mic attach-btn" id="btn-attach" title="Bild anhängen (auch einfügen mit Strg+V oder hineinziehen)" aria-label="Bild anhängen"><svg class="i"><use href="#i-image"/></svg></button>
+          <input type="file" id="attach-input" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
           <button type="button" class="mic" id="btn-mic" title="Halten zum Sprechen (Leertaste) · kurz tippen = zuhören bis Stille" aria-label="Mikrofon"><svg class="i"><use href="#i-mic"/></svg></button>
           <input id="input" type="text" autocomplete="off" placeholder="Frag Jarvis oder sag „Hey Jarvis“ …">
           <button type="button" class="chip-toggle" id="btn-plan" title="Planmodus: Jarvis schaut nur lesend nach und legt erst einen Plan vor – ausgeführt wird nach deiner Freigabe."><svg class="i"><use href="#i-plan"/></svg><span>Plan</span></button>

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import logging
@@ -10,6 +11,7 @@ import math
 import re
 import time
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -71,7 +73,7 @@ class OllamaLLM:
             think = effort
         payload: dict[str, Any] = {
             "model": self.cfg.model,
-            "messages": messages,
+            "messages": ollama_messages(messages),
             "stream": stream,
             "keep_alive": self.cfg.keep_alive,
             "options": {"temperature": self.cfg.temperature, "num_ctx": self.cfg.num_ctx},
@@ -193,6 +195,14 @@ class OllamaLLM:
                 "model_vram": int(model * share), "model_ram": int(model * (1 - share)),
                 "model_ram_offload": int(model * (1 - share))}
 
+    async def supports_images(self) -> bool:
+        """Kann das Modell Bilder sehen? (Ollama: /api/show → capabilities enthält "vision")"""
+        try:
+            show = (await self._client.post("/api/show", json={"model": self.cfg.model}, timeout=10)).json()
+        except (httpx.HTTPError, ValueError):
+            return False
+        return "vision" in (show.get("capabilities") or [])
+
     async def unload_all(self) -> list[str]:
         """Alle geladenen Ollama-Modelle aus dem (Grafik-)Speicher entfernen."""
         names = await self.loaded_models()
@@ -247,8 +257,39 @@ def to_openai_messages(messages: list[dict]) -> list[dict]:
                 counter += 1
                 cid = f"call_{counter}"
             out.append({"role": "tool", "tool_call_id": cid, "content": m.get("content", "")})
+        elif m.get("images"):  # Bilder für ein Modell mit Bildunterstützung (llama-server mit mmproj)
+            parts: list[dict] = [{"type": "text", "text": m.get("content", "")}]
+            for path in m["images"]:
+                url = _data_url(path)
+                if url:
+                    parts.append({"type": "image_url", "image_url": {"url": url}})
+            out.append({"role": role, "content": parts})
         else:
             out.append({"role": role, "content": m.get("content", "")})
+    return out
+
+
+def _data_url(path: str) -> str | None:
+    from .attachments import data_url
+    try:
+        return data_url(Path(path))
+    except OSError:
+        return None
+
+
+def ollama_messages(messages: list[dict]) -> list[dict]:
+    """Bildpfade → Base64 (Ollama erwartet die Bilder direkt in der Nachricht)."""
+    out = []
+    for m in messages:
+        if m.get("images"):
+            images = []
+            for path in m["images"]:
+                try:
+                    images.append(base64.b64encode(Path(path).read_bytes()).decode())
+                except OSError:
+                    continue
+            m = {**m, "images": images}
+        out.append(m)
     return out
 
 
@@ -398,6 +439,11 @@ class OpenAICompatLLM:
         except (httpx.HTTPError, ValueError):
             return {}
         return data if isinstance(data, dict) else {}
+
+    async def supports_images(self) -> bool:
+        """Kann der Server Bilder annehmen? (llama-server mit Bildmodul: /props → modalities.vision)"""
+        data = await self.server_props()
+        return bool((data.get("modalities") or {}).get("vision"))
 
     async def server_context(self) -> int | None:
         """Tatsächliche Kontextgröße des llama-servers (GET /props), sonst None."""

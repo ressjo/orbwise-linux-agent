@@ -233,9 +233,12 @@ class Hub:
             fut.set_result((True, changes) if approved and changes and call_id in self.editable_pending else approved)
 
     async def submit(self, text: str, source: str = "text", plan: bool | None = None,
-                     approved_plan: str = "") -> None:
-        """plan: None = wie der PLAN-Knopf steht; True/False erzwingt (Ausführen/Überarbeiten eines Plans)."""
+                     approved_plan: str = "", images: list[str] | None = None) -> None:
+        """plan: None = wie der PLAN-Knopf steht; True/False erzwingt (Ausführen/Überarbeiten eines Plans).
+        images: Namen angehängter Bilder (siehe attachments.py)."""
         text = text.strip()
+        if images and not text:
+            text = prompts.text(self.cfg, "image_only")
         if not text or (source == "voice" and self.coding()):
             return  # im Coding-Modus gibt es keine Spracheingabe
         command = re.match(r"^/(compact|komprimieren)\b\s*(.*)$", text, re.I | re.S)
@@ -269,15 +272,16 @@ class Hub:
                 self.resolve(cid, False)
         self.speaker.stop()
         await self.broadcast({"type": "audio_stop"})
-        await self.broadcast({"type": "user", "text": text, "source": source})
-        task = asyncio.create_task(self._run(text, self.plan_mode if plan is None else plan, approved_plan))
+        await self.broadcast({"type": "user", "text": text, "source": source, "images": images or []})
+        task = asyncio.create_task(self._run(text, self.plan_mode if plan is None else plan, approved_plan, images))
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
 
-    async def _run(self, text: str, plan: bool = False, approved_plan: str = "") -> None:
+    async def _run(self, text: str, plan: bool = False, approved_plan: str = "",
+                   images: list[str] | None = None) -> None:
         try:
             await self.agent.run(text, self.emit, self.confirm, think=self.think, plan=plan,
-                                 approved_plan=approved_plan)
+                                 approved_plan=approved_plan, images=images)
         except asyncio.CancelledError:
             pass
         except Exception as e:  # noqa: BLE001
@@ -982,6 +986,26 @@ def create_app(cfg: Config) -> FastAPI:
         return {"available": True, "profile": llm.active, "backend": llm.profile.backend,
                 **llm_memory.summary(info), "recommend": llm_memory.recommend(info, gpu), "gpu": gpu}
 
+    # ---------- Angehängte Bilder im Chat ----------
+    @app.post("/api/attachments")
+    async def attachment_upload(request: Request):
+        from . import attachments
+        try:
+            name = attachments.save_data_url(cfg, str((await request.json()).get("data") or ""))
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        vision = await agent.llm.supports_images() if hasattr(agent.llm, "supports_images") else False
+        return {"name": name, "url": f"/api/attachments/{name}", "vision": vision}
+
+    @app.get("/api/attachments/{name}")
+    async def attachment_file(name: str):
+        from . import attachments
+        path = attachments.path_of(cfg, name)
+        if not path:
+            raise HTTPException(404, "Bild nicht gefunden")
+        return FileResponse(path, media_type=attachments.MIME.get(path.suffix, "image/png"),
+                            headers={"Cache-Control": "private, max-age=86400"})
+
     # ---------- Bild-Modus (Qwen-Image-2.1 über stable-diffusion.cpp, siehe imagegen.py) ----------
     image_task: list[asyncio.Task] = []
 
@@ -1163,7 +1187,9 @@ def create_app(cfg: Config) -> FastAPI:
                 epochs.append({"at": at, "summary": ep["summary"], "ts": ep.get("ts"), "reason": ep.get("reason", "")})
         first = conv.epochs[0].get("summary", "") if conv.epochs else ""  # Zusammenfassung aus älteren Versionen
         return {"summary": first, "chat": {"id": conv.chat_id, "title": conv.meta.get("title", "")},
-                "messages": [{"role": m["role"], "content": m["content"]} for _, m in shown], "epochs": epochs}
+                "messages": [{"role": m["role"], "content": m["content"],
+                              **({"images": m["attachments"]} if m.get("attachments") else {})} for _, m in shown],
+                "epochs": epochs}
 
     # ---------- Chat-Historie ----------
     def chat_or_404(chat_id: str) -> None:
@@ -1489,7 +1515,10 @@ def create_app(cfg: Config) -> FastAPI:
                 data = json.loads(msg["text"])
                 t = data.get("type")
                 if t == "user_message":
-                    await hub.submit(str(data.get("text", "")))
+                    from . import attachments
+                    names = [str(n) for n in (data.get("images") or [])[:attachments.MAX_PER_MESSAGE]
+                             if attachments.path_of(cfg, str(n))]
+                    await hub.submit(str(data.get("text", "")), images=names)
                 elif t == "confirm":
                     changes = data.get("args") if isinstance(data.get("args"), dict) else None
                     hub.resolve(str(data.get("id")), bool(data.get("approved")), changes)

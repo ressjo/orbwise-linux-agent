@@ -235,6 +235,7 @@ TEXTS = {
                      "Antworte dann NUR mit dem Plan als Markdown: Überschrift „## Plan“, darunter nummerierte "
                      "Schritte – je Schritt was du tust, womit (Werkzeug bzw. genauer Befehl) und ob eine Rückfrage "
                      "kommt. Danach kurz „Risiken/Annahmen“, falls es welche gibt. Kein Vorwort.",
+        "image_only": "Was siehst du auf dem Bild?",
         "plan_skipped": "PLANMODUS: nicht ausgeführt – diese Aktion verändert etwas. Nimm sie als Schritt in den "
                         "Plan auf.",
         "plan_execute": "Der Plan ist freigegeben. Führe ihn jetzt Schritt für Schritt aus.",
@@ -276,6 +277,7 @@ TEXTS = {
                      "Then answer ONLY with the plan in Markdown: heading “## Plan”, then numbered steps – for each "
                      "step what you will do, with what (tool or exact command) and whether it asks for confirmation. "
                      "Afterwards briefly “Risks/assumptions” if there are any. No preamble.",
+        "image_only": "What do you see in the image?",
         "plan_skipped": "PLAN MODE: not executed – this action changes something. Add it to the plan as a step.",
         "plan_execute": "The plan is approved. Carry it out now, step by step.",
         "approved_plan": "Approved plan – carry it out now:",
@@ -395,6 +397,18 @@ HINT_ORDER = ("remember", "recall", "dates", "power", "actions", "tool_loader", 
               "mail", "mail_write")
 ACTION_HINTS = (("briefing", "daily_briefing"), ("reminder", "set_reminder"), ("website", "open_website"),
                 ("weather", "weather"))  # eine gemeinsame Zeile für die kurzen Zuordnungen
+
+
+def attachment_note(cfg, paths: list[str], can_look: bool) -> str:
+    """Hinweis an der Nutzernachricht, wenn das Modell angehängte Bilder nicht selbst sehen kann."""
+    files = ", ".join(paths)
+    if lang_of(cfg) == "en":
+        return (f"\n[Attached image(s): {files} – look at them with look_at_image(path, question)]" if can_look else
+                f"\n[Attached image(s): {files} – no image model available; tell the user that you cannot see "
+                "images with the current model]")
+    return (f"\n[Angehängte(s) Bild(er): {files} – ansehen mit look_at_image(path, question)]" if can_look else
+            f"\n[Angehängte(s) Bild(er): {files} – kein Bildmodell verfügbar; sag dem Nutzer, dass du mit dem "
+            "aktuellen Modell keine Bilder sehen kannst]")
 
 
 def hints(cfg, tools: set[str]) -> str:

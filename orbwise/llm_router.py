@@ -284,6 +284,18 @@ class LLMRouter:
     def profile(self) -> ProfileConfig:
         return self.profiles[self.active]
 
+    async def supports_images(self) -> bool:
+        """Kann das aktive Modell Bilder direkt sehen? (je Profil gemerkt; nach Wechsel/Neustart neu gefragt)"""
+        key = (self.active, id(self.client))
+        cache = getattr(self, "_vision_cache", {})
+        if key not in cache:
+            try:
+                cache[key] = bool(await self.client.supports_images())
+            except Exception:  # noqa: BLE001 – im Zweifel: Bild über das Vision-Werkzeug
+                return False
+            self._vision_cache = cache
+        return cache[key]
+
     @property
     def context_size(self) -> int:
         """Kontextfenster des aktiven Modells: vom Server gemeldet > Profil (num_ctx) > llm.num_ctx."""
