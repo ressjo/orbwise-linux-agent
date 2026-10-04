@@ -49,6 +49,9 @@ log = logging.getLogger(__name__)
 
 # Nach dem Lesen fremder Mailinhalte brauchen auch sonst sichere Tools dieser Gruppen eine Bestätigung –
 # eine Mail könnte versteckte Anweisungen enthalten (z. B. Daten per fetch_url nach außen schicken).
+# Alle Werkzeuge gehen nur mit, wenn ihre Beschreibungen in höchstens so vielen Sekunden eingelesen sind
+ALL_TOOLS_SECONDS = 10.0
+
 TAINT_SOURCES = {"mail_list", "mail_search", "mail_read", "mail_ask", "daily_briefing",
                  "look_at_screen", "look_at_image"}  # auch Bildschirm/Bild: eine Webseite kann Anweisungen zeigen
 TAINT_GUARDED = {"shell", "ssh", "portainer", "web", "files", "apps", "obsidian", "trilium", "calendar_tools",
@@ -138,7 +141,11 @@ class Agent:
         self._think: bool | None = None
         self._think_level: str | None = None  # low | medium | high, wenn gedacht wird
         self._plan = False  # Planmodus: nur lesen, am Ende einen Plan vorlegen
-        self._prefill_tps: dict[str, float] = {}  # gelernte Einlese-Geschwindigkeit je Modell (Token/s)
+        # gelernte Einlese-Geschwindigkeit je Modell (Token/s) – in state.json gemerkt, damit sie nach einem Neustart
+        # gleich bekannt ist (entscheidet mit, ob alle Werkzeuge mitgehen)
+        self._state_path = cfg.memory.dir.parent / "state.json"
+        self._prefill_tps: dict[str, float] = self._load_prefill()
+        self._saved_tps: dict[str, float] = dict(self._prefill_tps)
         self._last_prompt: dict[str, int] = {}  # Prompt-Größe des letzten Schritts (für „neu einzulesen“)
         self._approved_plan = ""  # beim Ausführen: der freigegebene Plan (hängt an der aktuellen Nachricht)
         self._full_prompt = 0  # ungekürzte Größe des nächsten Prompts (echte Token, geschätzt)
@@ -405,7 +412,7 @@ class Agent:
         ep = conv.epoch
         plan = self.plan()
         self._tools_dropped = set()
-        if base_tokens <= 0.3 * self.context_budget():
+        if base_tokens <= 0.3 * self.context_budget() and self._all_tools_quick(base_tokens):
             # alles passt: alle Werkzeuge, ohne load_tools (es gibt nichts nachzuladen)
             self._set_schemas([s for s in base if s["function"]["name"] != "load_tools"])
             ep["groups"] = ep["tools"] = None  # alle Werkzeuge – und alle Hinweise
@@ -453,6 +460,42 @@ class Agent:
         self._set_schemas(self._with_loader(toolselect.select(base, self.groups_of, new, small)))
         ep["tools"] = sorted(s["function"]["name"] for s in self.schemas)
         return added
+
+    def _all_tools_quick(self, tool_tokens: int) -> bool:
+        """Dürfen alle Werkzeuge mitgehen? Nur, wenn ihr Einlesen kurz ist: Der Prompt-Anfang muss nach jedem Start,
+        Modellwechsel und jeder Komprimierung neu eingelesen werden – bei ~140 Token/s (Bonsai auf 8 GB) kosten 16k
+        Token Werkzeugbeschreibungen über 2 Minuten, auf einer schnellen Karte 5 s. Unbekannte Geschwindigkeit:
+        alle (wird beim ersten Einlesen gelernt und gemerkt). Etwas Abstand zwischen An und Aus, damit die Auswahl
+        nicht hin und her springt (jeder Wechsel kostet ein Neueinlesen)."""
+        tps = self._prefill_tps.get(self._profile_key())
+        if not tps:
+            return True
+        seconds = tool_tokens * self.token_ratio() / tps
+        all_now = self.memory.conversation.epoch.get("tools", "") is None
+        return seconds <= (ALL_TOOLS_SECONDS * 1.25 if all_now else ALL_TOOLS_SECONDS)
+
+    def _load_prefill(self) -> dict[str, float]:
+        try:
+            data = json.loads(self._state_path.read_text(encoding="utf-8"))
+            raw = data.get("prefill_tps") or {}
+            return {str(k): float(v) for k, v in raw.items() if isinstance(v, (int, float)) and v > 0}
+        except (OSError, ValueError, AttributeError):
+            return {}
+
+    def _save_prefill(self) -> None:
+        """Gelernte Geschwindigkeit merken – nur bei spürbarer Änderung (state.json teilt sich das mit dem Router)."""
+        key = self._profile_key()
+        tps, saved = self._prefill_tps.get(key), self._saved_tps.get(key)
+        if not tps or (saved and abs(tps - saved) / saved < 0.1):
+            return
+        try:
+            data = json.loads(self._state_path.read_text(encoding="utf-8")) if self._state_path.exists() else {}
+            data.setdefault("prefill_tps", {})[key] = tps
+            self._state_path.parent.mkdir(parents=True, exist_ok=True)
+            self._state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
+            self._saved_tps[key] = tps
+        except (OSError, ValueError) as e:
+            log.info("Einlese-Geschwindigkeit nicht gespeichert: %s", e)
 
     def _unit(self, name: str, small: bool) -> str:
         """Auswahl-Einheit eines Werkzeugs – leer für die Grundausstattung des kleinen Fensters (immer geladen)."""
@@ -1105,7 +1148,11 @@ class Agent:
         pid, started = uuid.uuid4().hex[:8], time.monotonic()
         tokens = self._full_prompt
         if emit:
-            await emit({"type": "llm_phase", "id": pid, "phase": "prewarm", "tokens": tokens})
+            phase = {"type": "llm_phase", "id": pid, "phase": "prewarm", "tokens": tokens}
+            tps = self._prefill_tps.get(self._profile_key())
+            if tps:  # höchstens so lange – liegt der Anfang (Systemprompt, Werkzeuge) im Cache, geht es schneller
+                phase["eta_s"] = round(tokens / tps, 1)
+            await emit(phase)
         stats: dict = {}
         try:
             async for ev in self._call_llm(messages, self.schemas, think=False, max_tokens=1):
@@ -1120,8 +1167,11 @@ class Agent:
         self._learn_prefill(stats)
         self._cache_owner = key
         if emit:
-            await emit({"type": "llm_phase", "id": pid, "phase": "done", "prewarm": True, "tokens": tokens,
-                        "seconds": round(time.monotonic() - started, 1)})
+            done = {"type": "llm_phase", "id": pid, "phase": "done", "prewarm": True,
+                    "tokens": stats.get("prompt_total") or tokens, "seconds": round(time.monotonic() - started, 1)}
+            if stats.get("prompt_tokens") is not None and stats.get("prompt_total"):
+                done["new"] = stats["prompt_tokens"]  # wirklich eingelesen – der Rest kam aus dem Cache
+            await emit(done)
         return True
 
     # ---------- Freigaben ----------
@@ -1178,6 +1228,7 @@ class Agent:
         if tps and n >= 200:  # kleine Häppchen messen eher die Latenz als die Geschwindigkeit
             old = self._prefill_tps.get(key)
             self._prefill_tps[key] = round(tps if old is None else 0.7 * old + 0.3 * tps, 1)
+            self._save_prefill()
 
     async def _step(self, emit: Emit, msg_id: str, final: bool = False) -> tuple[str, list]:
         """Ein Modellschritt: streamt Tokens an die UI, liefert (Text, Tool-Aufrufe).

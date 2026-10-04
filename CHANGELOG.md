@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **All tools only when they are quick to read:** with a large window Orbwise used to send every tool description
+  (~16k tokens with all integrations) – on a slow card (Bonsai on 8 GB, ~140 tokens/s) that is over 2 minutes of
+  reading after every start, model switch and summary. Now all tools only go along if reading them takes ≤ 10 s;
+  otherwise the selection (core tools + matching groups, the rest via `load_tools`) applies – the start prompt drops
+  from ~18k to ~5k tokens there. The measured reading speed is remembered per model (`state.json`), and the
+  background pre-read now shows how much came from the cache.
 - **Docker via Portainer** (`portainer:` in the config): list containers and stacks, check for newer images without
   downloading (registry digest vs. running image), update a container or stack to the newest image, start/stop/
   restart/remove containers and stacks, read logs and install new apps from a docker-compose file. Changes need a

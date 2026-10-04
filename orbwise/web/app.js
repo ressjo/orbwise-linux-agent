@@ -882,7 +882,9 @@
       case "clear": return L(`blendet ${oldResults(ev.results)} aus – spart das Zusammenfassen`,
                              `hiding ${oldResults(ev.results)} – no summary needed`);
       case "prewarm": return L(`liest den Chat im Hintergrund vor · ${kTok(ev.tokens)} Token`,
-                               `pre-reading the chat in the background · ${kTok(ev.tokens)} tokens`);
+                               `pre-reading the chat in the background · ${kTok(ev.tokens)} tokens`)
+        + (ev.eta_s >= 2 ? L(` · höchstens ≈ ${secs(ev.eta_s)} (bereits Bekanntes kommt aus dem Cache)`,
+                             ` · at most ≈ ${secs(ev.eta_s)} (anything already known comes from the cache)`) : "");
       default: return "";
     }
   }
@@ -910,8 +912,11 @@
     if (ev.compress) return L(`Chat zusammengefasst · ${num(ev.before)} → ${num(ev.after)} Token · Zusammenfassung ${num(ev.tokens)} Token`,
                               `chat summarised · ${num(ev.before)} → ${num(ev.after)} tokens · summary ${num(ev.tokens)} tokens`);
     if (ev.prewarm) return ev.error ? L("Vorlesen übersprungen", "pre-read skipped")
-      : L(`Chat vorgelesen · ${num(ev.tokens)} Token – die nächste Frage liest nur noch Neues`,
-          `chat pre-read · ${num(ev.tokens)} tokens – the next question only reads what is new`);
+      : ev.new != null && ev.new < ev.tokens
+        ? L(`Chat vorgelesen · ${num(ev.tokens)} Token, davon ${num(ev.tokens - ev.new)} aus dem Cache · ${num(ev.new)} neu in ${secs(ev.seconds)}`,
+            `chat pre-read · ${num(ev.tokens)} tokens, ${num(ev.tokens - ev.new)} from the cache · ${num(ev.new)} new in ${secs(ev.seconds)}`)
+        : L(`Chat vorgelesen · ${num(ev.tokens)} Token in ${secs(ev.seconds)} – die nächste Frage liest nur noch Neues`,
+            `chat pre-read · ${num(ev.tokens)} tokens in ${secs(ev.seconds)} – the next question only reads what is new`);
     if (ev.cleared) return L(`Platz geschaffen · ${oldResults(ev.cleared)} ausgeblendet · ${num(ev.before)} → ${num(ev.after)} Token – ohne Zusammenfassen`,
                              `made room · ${oldResults(ev.cleared)} hidden · ${num(ev.before)} → ${num(ev.after)} tokens – no summary needed`);
     if ((ev.tools_added && ev.tools_added.length) || (ev.tools_dropped && ev.tools_dropped.length)) return toolsChanged(ev.tools_added, ev.tools_dropped);
