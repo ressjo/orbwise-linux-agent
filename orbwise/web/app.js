@@ -430,6 +430,16 @@
       case "password_request":
         openPassword(ev);
         break;
+      case "image_progress":
+        if (IV.open) imageProgress(ev);
+        break;
+      case "image_done":
+        if (IV.open) imageDone(ev);
+        else toast(L("Bild fertig – im Bild-Modus ansehen.", "Image ready – see image mode."));
+        break;
+      case "image_error":
+        if (IV.open) imageError(ev);
+        break;
       case "password_done":
         closePassword(ev.id);
         break;
@@ -897,7 +907,7 @@
     briefing: L("Tagesüberblick", "Briefing"), reminder_tools: L("Erinnerungen", "Reminders"),
     files: L("Dateien", "Files"), web: "Web", system: L("Systeminfo", "System info"),
     todo_tools: L("Aufgabenliste", "Task list"), memory_tools: L("Gedächtnis", "Memory"),
-    portainer: "Docker", ssh: "SSH",
+    portainer: "Docker", ssh: "SSH", image_tools: L("Bilder", "Images"),
   };
   const oldResults = (n) => n === 1 ? L("1 altes Werkzeug-Ergebnis", "1 old tool result")
     : L(`${num(n)} alte Werkzeug-Ergebnisse`, `${num(n)} old tool results`);
@@ -2621,6 +2631,174 @@
   });
   $("chat-new").onclick = () => newChat();
 
+  // ---------------------------------------------------------------- Bild-Modus (Qwen-Image-2.1)
+  // Eigene Ansicht statt Chat: Prompt, Format, Galerie. Läuft ohne Sprachmodell; der Server gibt den Grafikspeicher
+  // ans Sprachmodell zurück, sobald es wieder gebraucht wird (oder beim Verlassen der Ansicht).
+  const IV = { open: false, status: null, ref: null, busy: false };
+  const SIZE_LABEL = { "1:1": L("Quadrat 1:1", "Square 1:1"), "4:3": L("Quer 4:3", "Landscape 4:3"),
+                       "3:4": L("Hoch 3:4", "Portrait 3:4"), "16:9": L("Breit 16:9", "Wide 16:9"),
+                       "9:16": L("Handy 9:16", "Phone 9:16"), "3:2": L("Foto 3:2", "Photo 3:2"), "2:3": L("Foto hoch 2:3", "Photo portrait 2:3") };
+  function ivText() {
+    $("iv-prompt").placeholder = L("Beschreib das Bild – z. B. „ein Fuchs im Schnee, Abendlicht, Fotografie“ (Englisch klappt meist am besten)",
+                                   "Describe the image – e.g. “a fox in the snow, evening light, photograph”");
+    $("iv-neg-label").textContent = L("Was nicht aufs Bild soll", "What should not be in the image");
+    $("iv-steps-label").textContent = L("Schritte", "Steps");
+    $("iv-count-label").textContent = L("Anzahl", "Count");
+    $("iv-seed").placeholder = L("zufällig", "random");
+    $("iv-upload-label").querySelector("span").textContent = L("Bild bearbeiten …", "Edit an image …");
+    $("iv-cancel").textContent = L("Abbrechen", "Cancel");
+    $("iv-go").textContent = L("Erzeugen", "Generate");
+  }
+  async function openImageView() {
+    IV.open = true;
+    store.set("view", "image");
+    app.classList.add("imaging");
+    markModeTabs();
+    ivText();
+    try { IV.status = await getJSON("/api/image/status"); } catch { IV.status = null; }
+    const st = IV.status || {};
+    $("iv-setup").classList.toggle("hidden", !!st.available);
+    $("iv-form").classList.toggle("hidden", !st.available);
+    if (!st.available) {
+      $("iv-setup").innerHTML = L(
+        "<b>Bild-Modus einrichten</b><br>Einmal im Terminal: <code>orbwise model add qwen-image</code> – lädt stable-diffusion.cpp und Qwen-Image-2.1 (je nach Grafikkarte ~10–15 GB). Danach Orbwise neu laden.",
+        "<b>Set up image mode</b><br>Once in a terminal: <code>orbwise model add qwen-image</code> – downloads stable-diffusion.cpp and Qwen-Image-2.1 (~10–15 GB depending on the GPU). Then reload Orbwise.");
+    } else {
+      const sel = $("iv-size");
+      if (!sel.options.length) {
+        for (const k of st.sizes || ["1:1"]) sel.add(new Option(SIZE_LABEL[k] || k, k));
+        sel.value = store.get("iv.size", st.size || "1:1");
+        $("iv-steps").value = store.get("iv.steps", st.steps || 20);
+      }
+      $("iv-upload-label").classList.toggle("hidden", !st.can_edit);
+      setImageBusy(!!st.busy);
+    }
+    loadGallery();
+    setTimeout(() => $("iv-prompt").focus(), 30);
+  }
+  function closeImageView() {
+    IV.open = false;
+    store.set("view", "chat");
+    app.classList.remove("imaging");
+    markModeTabs();
+    api("POST", "/api/image/release").catch(() => {});  // Sprachmodell zurück in den Grafikspeicher
+  }
+  function setImageBusy(busy) {
+    IV.busy = busy;
+    $("iv-go").disabled = busy;
+    $("iv-cancel").classList.toggle("hidden", !busy);
+    $("iv-progress").classList.toggle("hidden", !busy);
+  }
+  function imageProgress(ev) {
+    setImageBusy(true);
+    const p = $("iv-progress");
+    const text = $("iv-progress-text");
+    p.classList.toggle("indeterminate", !ev.steps);
+    if (ev.phase === "unload_llm") text.textContent = L("nimmt das Sprachmodell aus dem Grafikspeicher …", "moving the language model out of VRAM …");
+    else if (ev.phase === "loading") text.textContent = ev.text || L("lädt das Bildmodell (beim ersten Bild etwas länger) …", "loading the image model (takes longer the first time) …");
+    else if (ev.phase === "queued") text.textContent = L("wartet …", "waiting …");
+    else if (ev.steps) {
+      $("iv-bar").style.width = `${Math.round(100 * ev.step / ev.steps)}%`;
+      text.textContent = L(`Schritt ${ev.step} von ${ev.steps}`, `step ${ev.step} of ${ev.steps}`)
+        + (ev.eta_s >= 1 ? ` · ≈ ${secs(ev.eta_s)}` : "");
+    } else text.textContent = L("rechnet …", "generating …");
+  }
+  function imageDone(ev) {
+    setImageBusy(false);
+    $("iv-bar").style.width = "0";
+    loadGallery((ev.images || []).map((i) => i.file));
+  }
+  function imageError(ev) {
+    setImageBusy(false);
+    toast(L("Bild: ", "Image: ") + (ev.text || L("fehlgeschlagen", "failed")));
+  }
+  async function loadGallery(fresh = []) {
+    let data;
+    try { data = await getJSON("/api/image/list"); } catch { return; }
+    const box = $("iv-gallery");
+    box.innerHTML = "";
+    if (!data.images.length) {
+      box.innerHTML = `<div class="iv-empty">${L("Noch keine Bilder.", "No images yet.")}</div>`;
+      return;
+    }
+    for (const img of data.images) box.appendChild(imageCard(img, fresh.includes(img.file)));
+  }
+  function imageCard(img, fresh) {
+    const card = document.createElement("div");
+    card.className = "iv-card" + (fresh ? " new" : "");
+    const url = `/api/image/file/${encodeURIComponent(img.file)}`;
+    card.innerHTML = `<img loading="lazy" alt=""><div class="iv-cap"></div><div class="iv-meta"></div><div class="iv-actions"></div>`;
+    card.querySelector("img").src = url;
+    card.querySelector("img").alt = img.prompt || "";
+    card.querySelector("img").onclick = () => window.open(url, "_blank");
+    card.querySelector(".iv-cap").textContent = (img.edit ? "✎ " : "") + (img.prompt || "");
+    card.querySelector(".iv-meta").textContent = `${img.width}×${img.height} · ${img.steps} ${L("Schritte", "steps")} · Seed ${img.seed}`
+      + (img.seconds ? ` · ${secs(img.seconds)}` : "");
+    const actions = card.querySelector(".iv-actions");
+    const add = (label, title, fn) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "btn small"; b.textContent = label; b.title = title; b.onclick = fn;
+      actions.appendChild(b);
+    };
+    add(L("Variante", "Variation"), L("Gleicher Prompt, neuer Seed", "Same prompt, new seed"), () => {
+      $("iv-prompt").value = img.prompt || ""; $("iv-negative").value = img.negative || ""; $("iv-seed").value = "";
+      generateImage();
+    });
+    add(L("Gleich", "Reuse"), L("Prompt und Einstellungen übernehmen (Seed bleibt)", "Reuse prompt and settings (same seed)"), () => {
+      $("iv-prompt").value = img.prompt || ""; $("iv-negative").value = img.negative || ""; $("iv-seed").value = img.seed;
+      $("iv-steps").value = img.steps; $("iv-prompt").focus();
+    });
+    if (IV.status && IV.status.can_edit) add(L("Bearbeiten", "Edit"), L("Dieses Bild als Vorlage verwenden – beschreib die Änderung", "Use this image as the base – describe the change"), () => {
+      setRef({ file: img.file, url }); $("iv-prompt").value = ""; $("iv-prompt").focus();
+    });
+    if (IV.status && IV.status.telegram) add(L("Handy", "Phone"), L("Per Telegram aufs Handy", "Send to the phone via Telegram"), () =>
+      api("POST", `/api/image/telegram/${encodeURIComponent(img.file)}`).then(() => toast(L("Aufs Handy geschickt.", "Sent to the phone."))).catch(() => {}));
+    add("🗑", L("Löschen", "Delete"), () => {
+      if (!confirm(L("Bild löschen?", "Delete image?"))) return;
+      api("DELETE", `/api/image/file/${encodeURIComponent(img.file)}`).then(() => card.remove()).catch(() => {});
+    });
+    return card;
+  }
+  function setRef(ref) {
+    IV.ref = ref;
+    $("iv-ref").classList.toggle("hidden", !ref);
+    if (ref) {
+      $("iv-ref-img").src = ref.url || ref.data;
+      $("iv-ref-text").textContent = L("Wird bearbeitet – beschreib die Änderung (z. B. „mach den Himmel rot“).",
+                                       "Being edited – describe the change (e.g. “make the sky red”).");
+    }
+  }
+  $("iv-ref-clear").onclick = () => setRef(null);
+  $("iv-upload").onchange = (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    if (f.size > 20e6) { toast(L("Bild zu groß (höchstens 20 MB).", "Image too large (20 MB max).")); return; }
+    const reader = new FileReader();
+    reader.onload = () => { setRef({ data: reader.result }); $("iv-prompt").focus(); };
+    reader.readAsDataURL(f);
+  };
+  async function generateImage() {
+    const prompt = $("iv-prompt").value.trim();
+    if (!prompt) { $("iv-prompt").focus(); return; }
+    store.set("iv.size", $("iv-size").value);
+    store.set("iv.steps", Number($("iv-steps").value) || 20);
+    const seed = $("iv-seed").value === "" ? -1 : Number($("iv-seed").value);
+    const body = { prompt, negative: $("iv-negative").value, size: $("iv-size").value, steps: Number($("iv-steps").value) || 0,
+                   count: Number($("iv-count").value) || 1, seed };
+    if (IV.ref && IV.ref.file) body.ref_files = [IV.ref.file];
+    if (IV.ref && IV.ref.data) body.ref_images = [IV.ref.data];
+    setImageBusy(true);
+    imageProgress({ phase: "queued" });
+    try { await api("POST", "/api/image/generate", body); } catch { setImageBusy(false); }
+  }
+  $("iv-form").addEventListener("submit", (e) => { e.preventDefault(); generateImage(); });
+  $("iv-prompt").addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); generateImage(); }
+  });
+  $("iv-cancel").onclick = () => api("POST", "/api/image/cancel").catch(() => {});
+  if (store.get("view", "chat") === "image") setTimeout(openImageView, 0);  // zuletzt offen → wieder öffnen
+
   // ---------------------------------------------------------------- Modi: Tools (Assistent) / Coding
   // Getrennte Chat-Verläufe; Coding lädt nur Dateien, Shell, Web und Gedächtnis und hat keine Sprache.
   const MODE_TEXT = {
@@ -2638,10 +2816,7 @@
     S.chatId = ev.chat_id || ev.id || S.chatId;
     S.project = ev.project || "";
     app.classList.toggle("coding", S.mode === "coding");
-    document.querySelectorAll(".mode-switch [data-mode]").forEach((b) => {
-      b.classList.toggle("on", b.dataset.mode === S.mode);
-      b.setAttribute("aria-selected", String(b.dataset.mode === S.mode));
-    });
+    markModeTabs();
     $("input").placeholder = MODE_TEXT[S.mode].placeholder;
     document.querySelector(".composer-hint").textContent = MODE_TEXT[S.mode].hint;
     const chip = $("project-chip");
@@ -2656,8 +2831,17 @@
     }
     refresh();
   }
+  function markModeTabs() {
+    const current = IV.open ? "image" : S.mode;
+    document.querySelectorAll(".mode-switch [data-mode]").forEach((b) => {
+      b.classList.toggle("on", b.dataset.mode === current);
+      b.setAttribute("aria-selected", String(b.dataset.mode === current));
+    });
+  }
   document.querySelectorAll(".mode-switch [data-mode]").forEach((b) => {
     b.onclick = () => {
+      if (b.dataset.mode === "image") { openImageView(); return; }
+      if (IV.open) closeImageView();
       if (b.dataset.mode === S.mode) return;
       api("POST", "/api/mode", { mode: b.dataset.mode })
         .then(() => toast(b.dataset.mode === "coding"

@@ -30,7 +30,7 @@ GROUP_LABELS = {
            "paperless": "Dokumente, Rechnungen, Verträge", "trilium": "Notizen",
            "obsidian": "Notizen", "vision": "Bildschirm, Bilder", "telegram_tools": "Dateien aufs Handy",
            "calendar_tools": "Kalender, Termine", "portainer": "Docker-Container, Stacks (Portainer)",
-           "ssh": "andere Rechner per SSH (NAS, Server)",
+           "ssh": "andere Rechner per SSH (NAS, Server)", "image_tools": "Bilder erzeugen",
            # nur im kleinen Fenster nachzuladen (ab 16k immer dabei)
            "weather": "Wetter", "power": "Ausschalten, Neustart, Standby, Sperren", "apps": "Programme öffnen",
            "briefing": "Tagesüberblick", "reminder_tools": "Erinnerungen, Timer",
@@ -41,6 +41,7 @@ GROUP_LABELS = {
            "paperless": "documents, invoices, contracts", "trilium": "notes", "obsidian": "notes",
            "vision": "screen, images", "telegram_tools": "files to the phone", "calendar_tools": "calendar, events",
            "portainer": "docker containers, stacks (Portainer)", "ssh": "other computers via SSH (NAS, server)",
+           "image_tools": "generate images",
            "weather": "weather", "power": "shut down, reboot, suspend, lock", "apps": "open programs",
            "briefing": "daily briefing", "reminder_tools": "reminders, timers", "files": "write/edit/open files",
            "web": "open/read web pages", "system": "system info", "todo_tools": "task list",
@@ -87,6 +88,10 @@ KEYWORDS = {
     "portainer": r"docker|container|portainer|\bstacks?\b|compose|\bimages?\b|self-?host|watchtower",
     "ssh": r"\bssh\b|\bnas\b|\bserver\b|synology|unraid|truenas|openmediavault|proxmox|raspberry|\bpi\b|"
            r"einlogg|anmelden (auf|am|bei)|log ?in (to|on)|remote|auf (dem|meinem) (nas|server|pi)",
+    "image_tools": r"(bild|foto|grafik|illustration|logo|wallpaper|hintergrundbild|poster|icon)\w*\b.*\b(erzeug|"
+                   r"generier|mal|zeichne|erstell|mach)|\b(erzeug|generier|zeichne|mal)\w*\b.*\b(bild|foto|logo|illustration|"
+                   r"wallpaper|poster|icon|grafik)|generate an? (image|picture)|"
+                   r"draw (me )?an?|paint (me )?an?|create an? (image|picture|logo|illustration)",
     "calendar_tools": r"termin|kalender|calendar|meeting|appointment|\bevent|verabred|besprechung|"
                       r"frei(e zeit)?\b|free time|schedule|wann habe ich|when do i",
 }

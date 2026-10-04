@@ -204,6 +204,7 @@ def load_all_tools() -> dict[str, ToolSpec]:
         calendar_tools,
         files,
         homeassistant,
+        image_tools,
         mail,
         memory_tools,
         obsidian,

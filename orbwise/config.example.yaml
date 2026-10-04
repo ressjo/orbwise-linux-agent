@@ -126,6 +126,18 @@ portainer:                 # Docker containers and stacks via the Portainer API 
   verify_ssl: true         # Portainer's default certificate is self-signed: false (or the path to your CA file)
   # timeout: 60
 
+image:                     # image mode (Qwen-Image-2.1 via stable-diffusion.cpp) – set up with: orbwise model add qwen-image
+  # dir: ""                # program + models (default ~/orbwise-image)
+  # output_dir: ""         # where images go (default ~/Bilder/Orbwise or ~/Pictures/Orbwise)
+  # port: 7861
+  steps: 20                # more = finer detail, slower
+  # cfg_scale: 6.0
+  # size: "1:1"            # 1:1, 4:3, 3:4, 16:9, 9:16, 3:2, 2:3 or e.g. 1024x768
+  # unload_llm: auto       # take the language model out of VRAM while painting: auto (below 16 GB) | always | never
+  # idle_minutes: 10       # unload the image model after this long without a new image
+  # extra_args: ""         # own sd-server options (replaces the automatic --offload-to-cpu/--clip-on-cpu/--vae-tiling)
+  # startup_timeout: 600
+
 ssh:                       # other computers (NAS, server) via SSH – user name and password are asked in the dashboard
   hosts: {}                # short names, e.g. {nas: {host: 192.168.1.10, user: admin}} (port: 22) – any address works too
   # keep_minutes: 15       # a connection stays open this long after the last command, then the password is asked again

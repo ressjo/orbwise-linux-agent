@@ -242,6 +242,26 @@ class PortainerConfig(BaseModel):
         return bool(self.url and self.api_token)
 
 
+class ImageConfig(BaseModel):
+    """Bild-Modus: Qwen-Image-2.1 über stable-diffusion.cpp (sd-server) – einrichten mit `orbwise model add qwen-image`."""
+    # Ordner mit bin/sd-server und models/ (leer = ~/orbwise-image bzw. $ORBWISE_IMAGE_DIR)
+    dir: str = ""
+    # wohin die Bilder kommen (leer = ~/Bilder/Orbwise bzw. ~/Pictures/Orbwise)
+    output_dir: str = ""
+    port: int = 7861
+    steps: int = 20
+    cfg_scale: float = 6.0
+    size: str = "1:1"  # Seitenverhältnis: 1:1, 4:3, 3:4, 16:9, 9:16
+    # Sprachmodell (eigener llama-server) während der Bilderzeugung aus dem Grafikspeicher nehmen:
+    # auto = bei weniger als 16 GB VRAM, always, never
+    unload_llm: str = "auto"
+    # so lange bleibt das Bildmodell nach dem letzten Bild geladen (danach kommt das Sprachmodell zurück)
+    idle_minutes: int = 10
+    # zusätzliche Startoptionen für sd-server (leer = passend zum VRAM: --offload-to-cpu, --vae-tiling …)
+    extra_args: str = ""
+    startup_timeout: float = 600.0
+
+
 class SshHost(BaseModel):
     host: str
     port: int = 22
@@ -444,6 +464,7 @@ class Config(BaseModel):
     homeassistant: HomeAssistantConfig = Field(default_factory=HomeAssistantConfig)
     portainer: PortainerConfig = Field(default_factory=PortainerConfig)
     ssh: SshConfig = Field(default_factory=SshConfig)
+    image: ImageConfig = Field(default_factory=ImageConfig)
     weather: WeatherConfig = Field(default_factory=WeatherConfig)
     calendar: CalendarConfig = Field(default_factory=CalendarConfig)
     briefing: BriefingConfig = Field(default_factory=BriefingConfig)

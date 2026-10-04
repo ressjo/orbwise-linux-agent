@@ -219,6 +219,9 @@ class LLMRouter:
         self.switching: str | None = None
         self._lock = asyncio.Lock()
         self.detected_ctx: dict[str, int] = {}  # vom Server gemeldete Kontextgröße je Profil
+        # Hat der Bild-Modus den Grafikspeicher geliehen (Sprachmodell beendet)? Dann gibt dieser Aufruf ihn zurück
+        # (release(restart=…)), bevor das Sprachmodell wieder gebraucht wird – siehe imagegen.py
+        self.gpu_borrowed = None
         for name, n in (self._read_state().get("context") or {}).items():  # in der Oberfläche eingestellt
             if name in self.profiles and isinstance(n, int):
                 self._apply_context(name, n)
@@ -347,6 +350,8 @@ class LLMRouter:
     async def activate(self, name: str, progress: Progress | None = None) -> None:
         if name not in self.profiles:
             raise LLMError(f"Unbekanntes Profil '{name}'. Vorhanden: {', '.join(self.profiles)}")
+        if self.gpu_borrowed:  # Bildmodell zuerst entladen – das neue Modell startet gleich ohnehin
+            await self.gpu_borrowed(restart=False)
         async with self._lock:
             if name == self.active and (not self.server_for(name) or await self.server_for(name).healthy()):
                 return
@@ -380,6 +385,8 @@ class LLMRouter:
     async def chat_stream(self, messages: list[dict], tools: list[dict] | None = None,
                           think: bool | None = None, **opts) -> AsyncIterator[dict]:
         """opts: max_tokens, tool_choice (für Komprimierung und Vorwärmen)."""
+        if self.gpu_borrowed:  # Bild-Modus hat den Grafikspeicher – zurückgeben, Sprachmodell starten
+            await self.gpu_borrowed()
         try:
             async for ev in self.client.chat_stream(messages, tools, think=think, **opts):
                 yield ev
@@ -389,6 +396,8 @@ class LLMRouter:
             raise
 
     async def chat(self, messages: list[dict]) -> str:
+        if self.gpu_borrowed:
+            await self.gpu_borrowed()
         return await self.client.chat(messages)
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
@@ -429,6 +438,8 @@ class LLMRouter:
             raise LLMError(f"Unbekanntes Profil '{name}'")
         if not 1024 <= n <= 262144:
             raise LLMError("Kontextfenster bitte zwischen 1.024 und 262.144 Token")
+        if self.gpu_borrowed and name == self.active:
+            await self.gpu_borrowed(restart=False)
         async with self._lock:
             running = self.servers.get(name) or (self.server_for(name) if name == self.active else None)
             if running:

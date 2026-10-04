@@ -118,6 +118,8 @@ HINTS = {
         "portainer_write": "- Ändern: portainer_update (Container oder Stack aufs neueste Image), portainer_container_action "
                            "(start/stop/restart/remove), portainer_stack_action, neue App installieren mit "
                            "portainer_deploy_stack (komplette docker-compose.yml; Daten in Volumes/Bind-Mounts).\n",
+        "image": "- Bilder malen/erzeugen: generate_image mit einem konkreten englischen Prompt (Motiv, Stil, Licht). "
+                 "Bearbeiten und Varianten gehen im Bild-Modus (Umschalter oben links).\n",
         "ssh": "- Andere Rechner (NAS, Server) per SSH: ssh_run(host, command) führt Befehle dort aus wie run_shell hier – "
                "run_shell ist nur dieser PC. Benutzername und Passwort fragt Orbwise selbst im Dashboard ab: frag NIE "
                "im Chat danach und schreib sie nie in Befehle. Kurznamen wie 'nas' kommen aus der Config.\n",
@@ -186,6 +188,8 @@ HINTS = {
         "portainer_write": "- Changes: portainer_update (container or stack to the newest image), portainer_container_action "
                            "(start/stop/restart/remove), portainer_stack_action, install a new app with "
                            "portainer_deploy_stack (complete docker-compose.yml; data in volumes/bind mounts).\n",
+        "image": "- Draw/generate images: generate_image with a concrete English prompt (subject, style, light). "
+                 "Editing and variations work in image mode (switch at the top left).\n",
         "ssh": "- Other computers (NAS, server) via SSH: ssh_run(host, command) runs commands there like run_shell here – "
                "run_shell is only this PC. Orbwise asks for user name and password itself in the dashboard: NEVER ask "
                "for them in the chat and never put them into commands. Short names like 'nas' come from the config.\n",
@@ -382,12 +386,13 @@ HINT_TOOLS = {
     "portainer": ("portainer_containers", "portainer_check_updates"),
     "portainer_write": ("portainer_update", "portainer_container_action", "portainer_deploy_stack"),
     "ssh": ("ssh_run", "ssh_connect"),
+    "image": ("generate_image",),
     "mail": ("mail_list", "mail_search", "mail_read"), "mail_write": ("mail_manage", "mail_to_paperless"),
 }
 HINT_ORDER = ("remember", "recall", "dates", "power", "actions", "tool_loader", "sysadmin", "packages", "routines",
               "calendar", "calendar_write", "services", "paperless", "paperless_write", "trilium", "trilium_write",
-              "obsidian", "obsidian_write", "homeassistant", "portainer", "portainer_write", "ssh", "mail",
-              "mail_write")
+              "obsidian", "obsidian_write", "homeassistant", "portainer", "portainer_write", "ssh", "image",
+              "mail", "mail_write")
 ACTION_HINTS = (("briefing", "daily_briefing"), ("reminder", "set_reminder"), ("website", "open_website"),
                 ("weather", "weather"))  # eine gemeinsame Zeile für die kurzen Zuordnungen
 

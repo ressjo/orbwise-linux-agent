@@ -1125,7 +1125,8 @@ class Agent:
     async def prewarm(self, emit: Emit | None = None) -> bool:
         """Den Prompt-Anfang des offenen Chats im Leerlauf einlesen lassen (nach Telegram/Routinen, Chatwechsel,
         Start oder sobald getippt wird) – die nächste Frage liest dann nur noch ihren neuen Teil ein."""
-        if self.lock.locked() or getattr(self.llm, "switching", None) or not self.cache_cold():
+        if self.lock.locked() or getattr(self.llm, "switching", None) or not self.cache_cold() \
+                or getattr(self.llm, "gpu_borrowed", None):  # Bild-Modus hat gerade den Grafikspeicher
             return False
         async with self.lock:
             self._prewarming = True

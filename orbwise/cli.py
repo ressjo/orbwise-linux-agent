@@ -194,6 +194,23 @@ def cmd_doctor(args) -> None:
         line(pt["online"], f"{pt.get('url') or cfg.portainer.url}" + (
             f" – Version {pt['version']}, {T('Umgebungen', 'environments')}: {', '.join(pt['environments']) or '–'}"
             if pt["online"] else ""), pt.get("error", ""))
+    print(T("Bild-Modus:", "Image mode:"))
+    from . import imagegen_setup
+    image_root = imagegen_setup.image_dir(cfg)
+    if not imagegen_setup.server_binary(image_root).exists() and not imagegen_setup.manifest(image_root):
+        print(T("  – nicht eingerichtet", "  – not set up") + " (orbwise model add qwen-image)")
+    else:
+        binary = imagegen_setup.server_binary(image_root)
+        missing_bin = bonsai.missing_libs(binary, str(binary.parent)) if binary.exists() else ["sd-server"]
+        line(not missing_bin, f"sd-server ({binary})", T("fehlt: ", "missing: ") + ", ".join(missing_bin)
+             + " – " + T("Vulkan-Treiber installieren (z. B. vulkan-radeon / mesa-vulkan-drivers)",
+                         "install the Vulkan driver (e.g. vulkan-radeon / mesa-vulkan-drivers)"))
+        paths = imagegen_setup.model_paths(image_root)
+        for role in ("diffusion", "llm", "vae", "vision"):
+            p = paths.get(role)
+            if p or role != "vision":
+                line(bool(p and p.exists()), f"{role}: {p.name if p else '?'}" + (
+                    f" ({p.stat().st_size / 1e9:.1f} GB)" if p and p.exists() else ""), "orbwise model add qwen-image")
     print("SSH:")
     from .tools.ssh import ssh_status
     sh = ssh_status()
@@ -385,6 +402,11 @@ def cmd_model_manage(args, cfg, state: Path) -> None:
         if not args.tag:
             print(T("Welches Modell? orbwise model remove <name>", "Which model? orbwise model remove <name>"))
             sys.exit(1)
+        if args.tag.strip().lower() == "qwen-image":
+            from . import imagegen_setup
+            freed = imagegen_setup.remove(cfg)
+            print(T(f"✔ Bildmodell gelöscht ({freed / 1e9:.1f} GB frei).", f"✔ Image model deleted ({freed / 1e9:.1f} GB freed)."))
+            return
         tag = mdl.unregister_model(state, args.tag)
         if not tag:
             print(T(f"'{args.tag}' ist kein per 'orbwise model add' geladenes Modell.",
@@ -412,6 +434,11 @@ def cmd_model_manage(args, cfg, state: Path) -> None:
     if not tag or not mdl.TAG_RE.match(tag):
         print(T("Ungültiger Modellname.", "Invalid model name."))
         sys.exit(1)
+    if tag == "qwen-image":  # Bild-Modus: stable-diffusion.cpp + Qwen-Image-2.1
+        from . import imagegen_setup
+        if not imagegen_setup.install(gpu, cfg):
+            sys.exit(1)
+        return
     if tag in ("bonsai", "bonsai-kompakt"):
         from . import bonsai
         name = bonsai.install(state, gpu=gpu, activate=True, variant=tag)
@@ -529,7 +556,7 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("doctor", help=T("Installation prüfen", "check the installation"))
     p = sub.add_parser("model", help=T("Modelle anzeigen, umschalten, laden (add) oder entfernen (remove)",
                                        "list, switch, download (add) or remove (remove) models"))
-    p.add_argument("name", nargs="?", help=T("Profilname zum Umschalten – oder add / remove",
+    p.add_argument("name", nargs="?", help=T("Profilname zum Umschalten – oder add / remove (auch: add qwen-image)",
                                              "profile to switch to – or add / remove"))
     p.add_argument("tag", nargs="?", help=T("bei add/remove: Ollama-Modellname", "with add/remove: Ollama model name"))
     p.add_argument("-y", "--yes", action="store_true", help=T("ohne Rückfragen", "no questions"))

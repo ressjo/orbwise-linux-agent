@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import hashlib
 import json
@@ -16,7 +17,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import askpass, metrics, prompts
@@ -404,6 +405,10 @@ def create_app(cfg: Config) -> FastAPI:
         wake = WakeWordFactory(cfg.voice)
         tts = PiperTTS(cfg.voice)
     hub = Hub(cfg, agent, tts, stt, wake)
+    from .imagegen import ImageEngine, ImageError
+    images = ImageEngine(cfg, llm if isinstance(llm, LLMRouter) else None,
+                         gpu_info=lambda: (metrics.collect() or {}).get("gpu"))
+    agent.services["images"] = images
     startup = Startup(cfg, hub.broadcast)
     en = cfg.language == "en"
     # Root-Rechte per Passwortfeld in der Oberfläche (sudo -A)
@@ -530,7 +535,9 @@ def create_app(cfg: Config) -> FastAPI:
         for t in [*background, *healing, *side_tasks]:
             t.cancel()
         from .tools.ssh import close_all as close_ssh
-        await close_ssh()  # offene SSH-Verbindungen schließen (sonst bleiben sie bis zum Zeitlimit angemeldet)
+        await close_ssh()
+        if images.server is not None:
+            await images.server.stop()  # Bildserver nicht verwaist laufen lassen  # offene SSH-Verbindungen schließen (sonst bleiben sie bis zum Zeitlimit angemeldet)
         await hub.speaker.close()
         await llm.close()
         memory.close()
@@ -609,6 +616,7 @@ def create_app(cfg: Config) -> FastAPI:
             transcribe=(lambda data: transcribe_voice(stt, data)) if stt else None,
             on_stop=hub.stop)  # /stop vom Handy stoppt auch, was am PC läuft
         agent.services["telegram"] = telegram_bot  # für telegram_send_file
+        telegram_bot.images = images  # /bild
         hub.cancellers.append(telegram_bot.cancel_current)  # STOP am PC bricht auch Anfragen vom Handy ab
 
     async def fire_reminder(r, now) -> None:
@@ -973,6 +981,95 @@ def create_app(cfg: Config) -> FastAPI:
                     "managed": llm.profile.server is not None, "backend": llm.profile.backend}
         return {"available": True, "profile": llm.active, "backend": llm.profile.backend,
                 **llm_memory.summary(info), "recommend": llm_memory.recommend(info, gpu), "gpu": gpu}
+
+    # ---------- Bild-Modus (Qwen-Image-2.1 über stable-diffusion.cpp, siehe imagegen.py) ----------
+    image_task: list[asyncio.Task] = []
+
+    @app.get("/api/image/status")
+    async def image_status():
+        return {**images.status(), "telegram": bool(telegram_bot is not None and cfg.telegram.chat_id)}
+
+    @app.get("/api/image/list")
+    async def image_list(limit: int = 60):
+        return {"images": images.list(limit)}
+
+    @app.get("/api/image/file/{name}")
+    async def image_file(name: str):
+        path = images.path_of(name)
+        if not path:
+            raise HTTPException(404, "Bild nicht gefunden")
+        return FileResponse(path, media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
+
+    @app.delete("/api/image/file/{name}")
+    async def image_delete(name: str):
+        if not images.delete(name):
+            raise HTTPException(404, "Bild nicht gefunden")
+        return {"ok": True}
+
+    @app.post("/api/image/generate")
+    async def image_generate(request: Request):
+        """Startet ein Bild im Hintergrund; Fortschritt und Ergebnis kommen per WebSocket (image_progress/_done)."""
+        data = await request.json()
+        if images.lock.locked():
+            raise HTTPException(409, "Es wird gerade ein Bild erzeugt – bitte warten oder abbrechen.")
+        if agent.busy():
+            raise HTTPException(409, "Jarvis arbeitet gerade – bitte kurz warten.")
+        refs: list[bytes] = []
+        for name in data.get("ref_files") or []:  # Bild aus der Galerie weiterbearbeiten
+            path = images.path_of(str(name))
+            if path:
+                refs.append(path.read_bytes())
+        for raw in data.get("ref_images") or []:  # hochgeladenes Bild (data:-URL oder base64)
+            try:
+                refs.append(base64.b64decode(str(raw).split(",", 1)[-1]))
+            except ValueError:
+                raise HTTPException(400, "Bild nicht lesbar") from None
+        if len(refs) > 3 or sum(len(r) for r in refs) > 30_000_000:
+            raise HTTPException(400, "Höchstens 3 Bilder bis zusammen 30 MB")
+
+        async def progress(state: dict) -> None:
+            await hub.broadcast({"type": "image_progress", **state})
+
+        async def run() -> None:
+            try:
+                saved = await images.generate(
+                    str(data.get("prompt") or ""), negative=str(data.get("negative") or ""),
+                    size=str(data.get("size") or ""), steps=int(data.get("steps") or 0),
+                    cfg_scale=float(data.get("cfg_scale") or 0), seed=int(data.get("seed", -1) or -1),
+                    count=int(data.get("count") or 1), ref_images=refs, progress=progress)
+                await hub.broadcast({"type": "image_done", "images": saved})
+            except ImageError as e:
+                await hub.broadcast({"type": "image_error", "text": str(e)})
+            except Exception as e:  # noqa: BLE001
+                log.exception("Bild fehlgeschlagen")
+                await hub.broadcast({"type": "image_error", "text": str(e)})
+        image_task[:] = [asyncio.create_task(run())]
+        return JSONResponse({"started": True}, status_code=202)
+
+    @app.post("/api/image/cancel")
+    async def image_cancel():
+        return {"ok": await images.cancel()}
+
+    @app.post("/api/image/release")
+    async def image_release():
+        """Bild-Modus verlassen: Bildmodell entladen, Sprachmodell zurück (im Hintergrund)."""
+        if images.loaded() and not images.lock.locked():
+            background.append(asyncio.create_task(images.release()))
+        return {"ok": True}
+
+    @app.post("/api/image/telegram/{name}")
+    async def image_telegram(name: str):
+        path = images.path_of(name)
+        if not path:
+            raise HTTPException(404, "Bild nicht gefunden")
+        bot = agent.services.get("telegram")
+        if bot is None:
+            raise HTTPException(400, "Telegram ist nicht eingerichtet")
+        try:
+            await bot.send_file(path.read_bytes(), path.name)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"Senden fehlgeschlagen: {bot.redact(e)}") from e
+        return {"ok": True}
 
     @app.post("/api/context/test")
     async def context_test(quick: bool = False):

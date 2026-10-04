@@ -51,6 +51,7 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **Everyday** | Weather (Open-Meteo), reminders and timers, **dates worked out instead of guessed** (weekdays, "next Tuesday", "in 3 weeks", calendar weeks, days between dates, German public holidays – `holiday_region` for your state; reminders, calendar, memory and routines understand such phrases directly), a **morning briefing** with the items you choose (incl. news and your Paperless inbox) |
 | **Routines** | Tasks Orbwise does on its own at set times – "every weekday at 8, search Linux news" – each with its own chat |
 | **Home Assistant** | Find devices by name/room/type, read sensors, switch/dim lights, heating, covers, scenes – locks, alarms and gates only after confirmation |
+| **Image mode** | Third tab next to Tools and Coding: **generate and edit images locally with Qwen-Image-2.1** (stable-diffusion.cpp) – format, steps, count, seed, negative prompt, gallery with variation/reuse/edit/send to phone; also "draw me …" in the tools mode and `/bild …` via Telegram. On small cards the language model steps aside while painting and comes back by itself |
 | **Docker (Portainer)** | List containers and stacks, **check for newer images without downloading**, update a container or a whole stack to the newest image, start/stop/restart/remove, read logs, **install new apps** from a docker-compose file – changes after confirmation |
 | **SSH (NAS, servers)** | Run Linux commands on other machines like on the PC – user name and password are **asked in the dashboard for every new connection** (never stored, never shown to the model); read-only commands run directly, everything else after confirmation, `sudo` there asks again |
 | **Paperless-ngx** | Search documents, **ask questions about their content**, open them as PDF, suggest and apply correspondent, type, tags, title and date (after confirmation), upload local files or files sent from the phone |
@@ -435,6 +436,31 @@ Tools: `ha_find` (by name, room or type, with state), `ha_state`, `ha_control` (
 colour, temperature, open/close/position for covers, scenes/scripts/buttons, lock/unlock, set values).
 Locks, alarm panels and garage doors/gates always require confirmation.
 
+### Image mode (Qwen-Image-2.1)
+
+```bash
+orbwise model add qwen-image     # stable-diffusion.cpp (Vulkan build) + model files, ~10–15 GB depending on the GPU
+```
+
+Then pick **Bild / Image** at the top left. Describe the image (English usually works best), choose format, steps,
+count and seed – or **edit** an image (upload one or press *Edit* in the gallery and describe the change). Images
+land in `~/Bilder/Orbwise` (or `~/Pictures/Orbwise`); prompt and settings are stored in the PNG.
+
+- **Runtime:** stable-diffusion.cpp's prebuilt Linux **Vulkan** build (AMD and NVIDIA, no ROCm/CUDA build needed),
+  `sd-server` stays loaded while you keep painting. Model: Qwen-Image-2.1 GGUF (quantisation by VRAM: Q4 on 8 GB,
+  Q6 on 12 GB, Q8 from 20 GB), text encoder Qwen3-VL-8B (GGUF + mmproj for editing) and its VAE. The exact files are
+  read from Hugging Face during setup and recorded in `~/orbwise-image/manifest.json`; your own build can replace
+  `~/orbwise-image/bin/sd-server`.
+- **Graphics memory:** below 16 GB the language model (Bonsai's llama-server) is stopped before the first image –
+  both don't fit. As soon as Orbwise needs the language model again (a chat question, a model switch), when you
+  leave the image view or after `image.idle_minutes` (10) without a new image, the image model is unloaded and the
+  language model starts again (`image.unload_llm: auto | always | never`). On 8 GB the text encoder runs on the CPU
+  and the VAE in tiles; expect roughly 1–3 minutes per 1024² image there.
+- **Elsewhere:** `generate_image` in the tools mode ("draw me a lighthouse at dusk", with confirmation) and
+  `/bild <description>` via Telegram.
+- `orbwise doctor` checks program, Vulkan libraries and model files; `orbwise model remove qwen-image` deletes the
+  model files.
+
 ### Docker via Portainer
 
 1. Portainer → user menu (top right) → **My account** → **Access tokens** → **Add access token**.
@@ -805,6 +831,7 @@ orbwise serve [--open] [-v]    # start the server
 orbwise doctor                 # check the installation
 orbwise model [name]           # list or switch model profiles
 orbwise model add [ollama-tag] # download another model (interactive presets without a tag)
+orbwise model add qwen-image   # set up the image mode (Qwen-Image-2.1)
 orbwise model remove <name>    # remove a downloaded model from the list
 orbwise context-test [--quick] # check the context window with the active model (Orbwise must be running)
 orbwise update                 # update (git pull, dependencies, restart)

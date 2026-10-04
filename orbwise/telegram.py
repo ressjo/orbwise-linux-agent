@@ -161,6 +161,36 @@ class TelegramBot:
             out.append(await self.call("sendMessage", chat_id=chat_id or self.t.chat_id, text=part, **extra))
         return out
 
+    async def _image(self, prompt: str) -> None:
+        """/bild <Beschreibung>: Bild mit dem lokalen Bildmodell erzeugen und schicken (läuft im Hintergrund)."""
+        engine = getattr(self, "images", None)
+        if engine is None or not engine.available():
+            await self.send(self.L("Der Bild-Modus ist nicht eingerichtet (orbwise model add qwen-image).",
+                                   "Image mode is not set up (orbwise model add qwen-image)."))
+            return
+        if not prompt:
+            await self.send(self.L("Schreib dazu, was aufs Bild soll – z. B. „/bild a red fox in the snow, photo“.",
+                                   "Add what the image should show – e.g. “/image a red fox in the snow, photo”."))
+            return
+        if engine.lock.locked():
+            await self.send(self.L("Es wird gerade schon ein Bild erzeugt – gleich noch einmal.",
+                                   "An image is already being generated – try again shortly."))
+            return
+
+        async def run() -> None:
+            from .imagegen import ImageError
+            try:
+                saved = await engine.generate(prompt)
+                img = saved[0]
+                await self.send_file(Path(img["path"]).read_bytes(), img["file"],
+                                     caption=f"{prompt[:200]} · Seed {img['seed']}")
+            except ImageError as e:
+                await self.send(f"✘ {e}")
+            except Exception as e:  # noqa: BLE001
+                await self.send(f"✘ {self.redact(e)}")
+        await self.send(self.L("🎨 Male … (je nach Grafikkarte 1–3 Minuten)", "🎨 Painting … (1–3 minutes depending on the GPU)"))
+        self._image_task = asyncio.create_task(run())
+
     async def send_file(self, data: bytes, filename: str, caption: str = "") -> dict:
         """Datei an den eigenen Chat schicken (sendDocument, bis 50 MB)."""
         if len(data) > MAX_UPLOAD:
@@ -271,14 +301,17 @@ class TelegramBot:
             await self.send(self.L("Hallo! Schreib oder sprich mir einfach, was du brauchst – z. B. „Erinner mich "
                                    "morgen um 9 an den Zahnarzt“. Erinnerungen kommen hierher. Mit /stop (oder "
                                    "„stopp“) brichst du ab, was gerade läuft – auch am PC. Mit /plan <Anfrage> legt "
-                                   "Jarvis erst einen Plan vor, den du freigibst.",
+                                   "Jarvis erst einen Plan vor, den du freigibst. /bild <Beschreibung> malt ein Bild.",
                                    "Hi! Just write or speak what you need – e.g. “Remind me tomorrow at 9 about the "
                                    "dentist”. Reminders arrive here. /stop (or “stop”) cancels whatever is running – "
                                    "on the PC too. /plan <request> makes Jarvis present a plan for you to approve "
-                                   "first."))
+                                   "first. /image <description> paints a picture."))
             return
         if text.lower().strip(" .!") in STOP_WORDS:
             await self.stop()  # sofort – nicht hinter der laufenden Anfrage anstellen
+            return
+        if text.split(maxsplit=1)[:1] in (["/bild"], ["/image"]):
+            await self._image(text.split(maxsplit=1)[1].strip() if " " in text else "")
             return
         if text.split(maxsplit=1)[:1] == ["/plan"]:
             request = text[len("/plan"):].strip()

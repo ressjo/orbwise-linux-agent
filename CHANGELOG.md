@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Image mode with Qwen-Image-2.1:** a third tab next to Tools and Coding generates and edits images locally via
+  stable-diffusion.cpp (`orbwise model add qwen-image` downloads the prebuilt Vulkan build and the model files
+  matching the GPU). Format, steps, count, seed, negative prompt, progress per step, gallery with variation, reuse,
+  edit, send to phone and delete. On cards below 16 GB the language model steps aside while painting and returns
+  automatically when it is needed again, when the image view is left or after 10 idle minutes. Also available as
+  `generate_image` in the tools mode and `/bild …` via Telegram.
 - **All tools only when they are quick to read:** with a large window Orbwise used to send every tool description
   (~16k tokens with all integrations) – on a slow card (Bonsai on 8 GB, ~140 tokens/s) that is over 2 minutes of
   reading after every start, model switch and summary. Now all tools only go along if reading them takes ≤ 10 s;
