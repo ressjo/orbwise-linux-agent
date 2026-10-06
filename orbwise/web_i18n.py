@@ -136,6 +136,18 @@ HTML_EN = [
     ('<h2>Gedächtnis</h2>', '<h2>Memory</h2>'),
     ('<h3>Fakten</h3>', '<h3>Facts</h3>'),
     ('<h3>Tagebuch</h3>', '<h3>Journal</h3>'),
+    ('<h3>Erfahrungen</h3>', '<h3>Experience</h3>'),
+    ('Kurze Lektionen, die Jarvis aus Fehlern, deinen Korrekturen und 👎 gelernt hat. Zu einer Frage gehen nur die '
+     'passenden mit (feste kleine Grenze) – das Kontextfenster wächst dadurch nicht.',
+     'Short lessons Jarvis learned from errors, your corrections and 👎. Only matching ones go along with a question '
+     '(small fixed limit) – the context window does not grow.'),
+    ('placeholder="Eigene Regel hinzufügen, z. B. „Docker auf dem NAS immer mit sudo“"',
+     'placeholder="Add your own rule, e.g. “always use sudo for docker on the NAS”"'),
+    ('<button class="btn small" type="submit">Hinzufügen</button>', '<button class="btn small" type="submit">Add</button>'),
+    ('title="Bild: Bilder erzeugen und bearbeiten mit Qwen-Image-2.1 – lokal"><svg class="i"><use href="#i-image"/></svg><span>Bild<',
+     'title="Image: generate and edit images with Qwen-Image-2.1 – locally"><svg class="i"><use href="#i-image"/></svg><span>Image<'),
+    ('title="Bild anhängen (auch einfügen mit Strg+V oder hineinziehen)" aria-label="Bild anhängen"',
+     'title="Attach an image (or paste with Ctrl+V or drag it in)" aria-label="Attach image"'),
     # Einstellungen
     ('aria-label="Einstellungen">', 'aria-label="Settings">'),
     ('<h2>Einstellungen</h2>', '<h2>Settings</h2>'),

@@ -736,6 +736,19 @@ def create_app(cfg: Config) -> FastAPI:
     async def summary_loop() -> None:
         await asyncio.sleep(30)
         while True:
+            idle = time.time() - memory.last_activity >= min(10, cfg.memory.summarize_idle_minutes) * 60
+            if (idle and cfg.memory.learning and not agent.lock.locked() and not images.loaded()
+                    and not getattr(llm, "switching", None) and memory.lessons.pending()):
+                try:  # im Leerlauf über Fehler, Korrekturen und 👎 nachdenken (kurze Lektionen)
+                    async with agent.lock:
+                        learned = await agent.reflect_lessons()
+                    if learned:
+                        log.info("Aus Erfahrung gelernt: %d Lektion(en)", learned)
+                        await hub.broadcast({"type": "lessons_changed"})
+                        if hub.clients:
+                            hub.prewarm_soon()
+                except Exception as e:  # noqa: BLE001
+                    log.warning("Nachdenken über Fehler fehlgeschlagen: %s", e)
             if not agent.lock.locked():
                 try:
                     done = await memory.summarize_pending()
@@ -985,6 +998,40 @@ def create_app(cfg: Config) -> FastAPI:
                     "managed": llm.profile.server is not None, "backend": llm.profile.backend}
         return {"available": True, "profile": llm.active, "backend": llm.profile.backend,
                 **llm_memory.summary(info), "recommend": llm_memory.recommend(info, gpu), "gpu": gpu}
+
+    # ---------- Erfahrungen (gelernte Lektionen) ----------
+    @app.get("/api/lessons")
+    async def lessons_list():
+        store = memory.lessons
+        items = sorted(store.lessons, key=lambda x: max(x.last_used, x.created), reverse=True)
+        return {"enabled": cfg.memory.learning, "lessons": [x.public() for x in items],
+                "pending": len(store.pending()), "max": store.max_count}
+
+    @app.post("/api/lessons")
+    async def lessons_add(request: Request):
+        data = await request.json()
+        try:
+            lesson, merged = await memory.lessons.add(str(data.get("text") or ""),
+                                                      [str(x) for x in data.get("scope") or []], "manual")
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        return {"lesson": lesson.public(), "merged": merged}
+
+    @app.patch("/api/lessons/{lesson_id}")
+    async def lessons_update(lesson_id: str, request: Request):
+        data = await request.json()
+        scope = data.get("scope")
+        lesson = await memory.lessons.update(lesson_id, data.get("text"),
+                                             [str(x) for x in scope] if isinstance(scope, list) else None)
+        if not lesson:
+            raise HTTPException(404, "Lektion nicht gefunden")
+        return {"lesson": lesson.public()}
+
+    @app.delete("/api/lessons/{lesson_id}")
+    async def lessons_delete(lesson_id: str):
+        if not memory.lessons.delete(lesson_id):
+            raise HTTPException(404, "Lektion nicht gefunden")
+        return {"ok": True}
 
     # ---------- Angehängte Bilder im Chat ----------
     @app.post("/api/attachments")
@@ -1528,6 +1575,8 @@ def create_app(cfg: Config) -> FastAPI:
                     names = [str(n) for n in (data.get("images") or [])[:attachments.MAX_PER_MESSAGE]
                              if attachments.path_of(cfg, str(n))]
                     await hub.submit(str(data.get("text", "")), images=names)
+                elif t == "feedback":  # 👍/👎 an einer Antwort (Lernen aus Erfahrung)
+                    agent.feedback(str(data.get("id", "")), bool(data.get("good")), str(data.get("text") or "")[:500])
                 elif t == "confirm":
                     changes = data.get("args") if isinstance(data.get("args"), dict) else None
                     hub.resolve(str(data.get("id")), bool(data.get("approved")), changes)

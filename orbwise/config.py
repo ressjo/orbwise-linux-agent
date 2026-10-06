@@ -100,6 +100,10 @@ class MemoryConfig(BaseModel):
     compact_idle: bool = True
     # Tagesübersicht erzeugen, wenn so viele Minuten keine Aktivität war
     summarize_idle_minutes: int = 15
+    # Aus Fehlern, Korrekturen und 👎 lernen (Lektionen, im Leerlauf nachgedacht) – nur passende gehen mit, mit festem,
+    # kleinem Budget; sichtbar und löschbar unter Gedächtnis → Erfahrungen
+    learning: bool = True
+    lessons_max: int = 300
 
 
 DEFAULT_VOICES = {"de": "de_DE-thorsten-high", "en": "en_GB-alan-medium"}

@@ -43,6 +43,8 @@ class ContextPlan:
     appendix_users: int  # Nutzernachrichten, die der Zusammenfassung angehängt werden …
     appendix_chars: int  # … je höchstens so lang
     appendix_paths: int  # berührte Dateien/Ordner im Anhang
+    lessons: int = 0  # gelernte Erfahrungen in der Kontext-Notiz (höchstens; nur passende, oft gar keine)
+    lessons_count: int = 0  # … und höchstens so viele
 
     @property
     def name(self) -> str:
@@ -79,11 +81,13 @@ def plan_for(window: int) -> ContextPlan:
             memories=int(window * 0.06), facts=int(window * 0.05),
             summary_max=_clamp(window * 0.08, 400, 900), summary_floor=_clamp(window * 0.05, 300, 600),
             summary_min=300, instruction_reserve=300, carry_share=0.15,
-            appendix_users=5, appendix_chars=120, appendix_paths=6)
+            appendix_users=5, appendix_chars=120, appendix_paths=6,
+            lessons=_clamp(window * 0.02, 120, 200), lessons_count=2)
     return ContextPlan(
         window=window, small=False, answer_reserve=ANSWER_RESERVE, think_cap=0,
         output_share=0.15, tool_share=0.50, keep_share=0.25, stub_chars=300,
         memories=int(window * 0.08), facts=int(window * 0.06),
         summary_max=_clamp(window * 0.1, 1200, 4000), summary_floor=_clamp(window * 0.06, 900, 2500),
         summary_min=SUMMARY_MIN, instruction_reserve=400, carry_share=0.20,
-        appendix_users=8, appendix_chars=160, appendix_paths=12)
+        appendix_users=8, appendix_chars=160, appendix_paths=12,
+        lessons=_clamp(window * 0.03, 300, 1000), lessons_count=5)

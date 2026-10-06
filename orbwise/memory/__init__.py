@@ -21,6 +21,7 @@ from .chats import ChatStore, chat_mode
 from .context import Conversation, est_tokens
 from .files import Facts, Journal, Summaries, day_str
 from .index import Hit, MemoryIndex, split_text
+from .lessons import LessonStore
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class Memory:
         self.facts = Facts(cfg.dir / "facts.md")
         self.index = MemoryIndex(cfg.dir / "index.sqlite", embedder=llm)
         self.chats = ChatStore(cfg.dir / "chats", legacy_session=cfg.dir / "session.json")
+        self.lessons = LessonStore(cfg.dir, embed=self.index._embed, max_count=cfg.lessons_max)
         self.conversation = self.chats.open_active()  # Chat, in dem der Agent gerade arbeitet
         self._outer: list[Conversation] = []  # während in_chat: die darunterliegenden Chats (unten = Nutzer-Chat)
         self.last_activity = time.time()

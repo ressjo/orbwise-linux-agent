@@ -198,8 +198,10 @@ HINTS = {
 
 SECTIONS = {
     "de": {"facts": "## Dauerhafte Fakten", "memories": "## Relevante Erinnerungen aus früheren Gesprächen",
+           "lessons": "## Erfahrungen (aus früheren Fehlern gelernt – beachten)",
            "summary": "## Früherer Verlauf dieses Gesprächs (zusammengefasst)"},
     "en": {"facts": "## Permanent facts", "memories": "## Relevant memories from earlier conversations",
+           "lessons": "## Experience (learned from earlier mistakes – follow it)",
            "summary": "## Earlier part of this conversation (summarised)"},
 }
 
@@ -236,6 +238,8 @@ TEXTS = {
                      "Schritte – je Schritt was du tust, womit (Werkzeug bzw. genauer Befehl) und ob eine Rückfrage "
                      "kommt. Danach kurz „Risiken/Annahmen“, falls es welche gibt. Kein Vorwort.",
         "image_only": "Was siehst du auf dem Bild?",
+        "reflect_system": "Du wertest einen Ablauf eines KI-Assistenten auf dem Linux-PC des Nutzers aus, damit er "
+                          "beim nächsten Mal nicht denselben Fehler macht. Du antwortest knapp und sachlich.",
         "plan_skipped": "PLANMODUS: nicht ausgeführt – diese Aktion verändert etwas. Nimm sie als Schritt in den "
                         "Plan auf.",
         "plan_execute": "Der Plan ist freigegeben. Führe ihn jetzt Schritt für Schritt aus.",
@@ -278,6 +282,8 @@ TEXTS = {
                      "step what you will do, with what (tool or exact command) and whether it asks for confirmation. "
                      "Afterwards briefly “Risks/assumptions” if there are any. No preamble.",
         "image_only": "What do you see in the image?",
+        "reflect_system": "You review a run of an AI assistant on the user's Linux PC so it does not repeat the same "
+                          "mistake next time. You answer briefly and factually.",
         "plan_skipped": "PLAN MODE: not executed – this action changes something. Add it to the plan as a step.",
         "plan_execute": "The plan is approved. Carry it out now, step by step.",
         "approved_plan": "Approved plan – carry it out now:",
@@ -411,6 +417,54 @@ def attachment_note(cfg, paths: list[str], can_look: bool) -> str:
             "aktuellen Modell keine Bilder sehen kannst]")
 
 
+REFLECT = {
+    "de": {"kind": {"error": "Ein Werkzeug schlug fehl, danach ging es anders weiter (oder gar nicht).",
+                    "correction": "Der Nutzer hat die Antwort danach korrigiert.",
+                    "feedback": "Der Nutzer hat die Antwort als schlecht bewertet (👎)."},
+           "user": "Nutzer", "steps": "Schritte", "answer": "Antwort", "said": "Der Nutzer sagte danach",
+           "ask": "Was lief schief, und wie geht es beim nächsten Mal richtig? Antworte mit GENAU EINER Zeile:\n"
+                  "LEKTION: <allgemein gültige Regel für diesen PC bzw. diesen Nutzer, höchstens 25 Wörter, konkret "
+                  "mit Werkzeug-, Pfad- oder Namensangaben>\n"
+                  "oder KEINE – wenn sich nichts Allgemeines lernen lässt (Netzwerkfehler, einmaliger Tippfehler, "
+                  "Nutzer hat nur umentschieden). Keine Passwörter, keine persönlichen Inhalte aus Dokumenten oder "
+                  "Mails."},
+    "en": {"kind": {"error": "A tool failed, then the run continued differently (or not at all).",
+                    "correction": "The user corrected the answer afterwards.",
+                    "feedback": "The user rated the answer as bad (👎)."},
+           "user": "User", "steps": "Steps", "answer": "Answer", "said": "Afterwards the user said",
+           "ask": "What went wrong, and how is it done right next time? Reply with EXACTLY ONE line:\n"
+                  "LESSON: <generally valid rule for this PC or this user, at most 25 words, concrete with tool, "
+                  "path or name details>\n"
+                  "or NONE – if nothing general can be learned (network error, one-off typo, the user just changed "
+                  "their mind). No passwords, no personal content from documents or mails."},
+}
+
+
+def reflect_request(cfg, cand: dict) -> str:
+    r = REFLECT[lang_of(cfg)]
+    parts = [r["kind"].get(cand.get("kind", "error"), ""), f"\n{r['user']}: {cand.get('user', '')}"]
+    if cand.get("steps"):
+        parts.append(f"{r['steps']}:\n" + "\n".join(f"- {s}" for s in cand["steps"]))
+    if cand.get("answer"):
+        parts.append(f"{r['answer']}: {cand['answer']}")
+    if cand.get("correction"):
+        parts.append(f"{r['said']}: {cand['correction']}")
+    return "\n".join(parts) + "\n\n" + r["ask"]
+
+
+def parse_lesson(reply: str) -> str:
+    """„LEKTION: …“ / „LESSON: …“ aus der Antwort – leer bei KEINE/NONE oder ohne erkennbare Lektion."""
+    m = re.search(r"(?:LEKTION|LESSON)\s*:\s*(.+)", strip_think_text(reply or ""), re.I)
+    if not m:
+        return ""
+    text = m.group(1).strip().strip("\"'„“")
+    return "" if re.fullmatch(r"(?:keine|none)\W*", text, re.I) else text[:220]
+
+
+def strip_think_text(text: str) -> str:
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.S)
+
+
 def hints(cfg, tools: set[str]) -> str:
     """Hinweise zu den geladenen Werkzeugen (tools: Namen)."""
     h = HINTS[lang_of(cfg)]
@@ -492,12 +546,14 @@ def note_stamp(cfg, now: datetime) -> str:
 
 
 def context_note(cfg, time: str, memories: str = "", plan: bool = False, approved_plan: str = "",
-                 extra: str = "") -> str:
+                 extra: str = "", lessons: str = "") -> str:
     """approved_plan: beim Ausführen hängt der freigegebene Plan an der aktuellen Nachricht – so fällt er beim
     Kürzen des Verlaufs nie weg, auch wenn die Werkzeug-Ergebnisse der Ausführung viel Platz brauchen.
     extra: zusätzlicher Hinweis (z. B. „Aufgabe läuft noch“ nach einer Komprimierung)."""
     head = TEXTS[lang_of(cfg)]["context_note"].format(time=time)
     body = f"\n{SECTIONS[lang_of(cfg)]['memories']}\n{memories}" if memories else ""
+    if lessons.strip():
+        body += f"\n{SECTIONS[lang_of(cfg)]['lessons']}\n{lessons.strip()}"
     if plan:
         body += "\n" + TEXTS[lang_of(cfg)]["plan_mode"]
     if approved_plan.strip():

@@ -389,6 +389,7 @@
         break;
       case "assistant_end":
         Thought.finish(ev.id);
+        if (ev.feedback && ev.text) addFeedback(ev.id);
         finishAssistant(ev.id, ev.cancelled);
         S.serverState = "idle";  // Antwort fertig = bereit, auch wenn das „idle“ des Servers noch aussteht
         stopSaying();
@@ -429,6 +430,9 @@
         break;
       case "password_request":
         openPassword(ev);
+        break;
+      case "lessons_changed":
+        if (!$("tab-memory").classList.contains("hidden")) loadLessons();
         break;
       case "image_progress":
         if (IV.open) imageProgress(ev);
@@ -806,6 +810,35 @@
       if (!cancelled && !a.el.querySelector(".tool-chip")) a.el.remove();
     }
     delete assistants[id];
+  }
+
+  // ---------------------------------------------------------------- 👍/👎 (Lernen aus Erfahrung)
+  // 👎 wird zum Lern-Kandidaten: im Leerlauf überlegt Jarvis, was schiefging, und merkt sich höchstens eine kurze Lektion
+  function addFeedback(id) {
+    const a = assistants[id];
+    if (!a || a.el.querySelector(".msg-feedback")) return;
+    const bar = document.createElement("div");
+    bar.className = "msg-feedback";
+    bar.innerHTML = `<button type="button" data-good="1" title="${L("Hilfreich", "Helpful")}">👍</button>`
+      + `<button type="button" data-good="0" title="${L("Nicht gut – Jarvis lernt daraus", "Not good – Jarvis learns from it")}">👎</button>`
+      + `<span class="fb-note"></span>`;
+    bar.querySelectorAll("button").forEach((b) => (b.onclick = () => {
+      if (bar.classList.contains("done")) return;
+      const good = b.dataset.good === "1";
+      let text = "";
+      if (!good) {
+        const answer = window.prompt(L("Was war falsch oder wie wäre es richtig? (optional – hilft beim Lernen)",
+                                       "What was wrong or what would be right? (optional – helps learning)"), "");
+        if (answer === null) return;
+        text = answer.trim();
+      }
+      send({ type: "feedback", id, good, text });
+      b.classList.add("on");
+      bar.classList.add("done");
+      bar.querySelector(".fb-note").textContent = good ? L("Danke!", "Thanks!")
+        : L("Danke – Jarvis denkt in einer ruhigen Minute darüber nach.", "Thanks – Jarvis will think about it when idle.");
+    }));
+    a.el.appendChild(bar);
   }
 
   // ---------------------------------------------------------------- Planmodus
@@ -3096,7 +3129,51 @@
     } catch (err) {
       toast(L("Gedächtnis nicht ladbar: ", "Could not load memory: ") + err.message);
     }
+    loadLessons();
   }
+
+  const LESSON_SOURCE = { error: L("aus einem Fehler", "from an error"), correction: L("aus deiner Korrektur", "from your correction"),
+                          feedback: L("aus 👎", "from 👎"), manual: L("von dir", "by you") };
+  async function loadLessons() {
+    let data;
+    try { data = await getJSON("/api/lessons"); } catch { return; }
+    $("lessons-meta").textContent = (data.enabled ? "" : L("aus · ", "off · ")) + `${data.lessons.length}/${data.max}`
+      + (data.pending ? L(` · ${data.pending} zum Nachdenken`, ` · ${data.pending} to think about`) : "");
+    const list = $("lessons");
+    list.innerHTML = "";
+    if (!data.lessons.length) {
+      list.innerHTML = `<li class="empty">${L("Noch nichts gelernt – das kommt mit Fehlern, Korrekturen und 👎.", "Nothing learned yet – that comes with errors, corrections and 👎.")}</li>`;
+      return;
+    }
+    for (const x of data.lessons) {
+      const li = document.createElement("li");
+      li.innerHTML = `<span class="ls-text" contenteditable="true" spellcheck="false"></span><small></small>`
+        + `<span class="ls-actions"><button class="btn small" type="button" title="${L("Löschen", "Delete")}">🗑</button></span>`;
+      const text = li.querySelector(".ls-text");
+      text.textContent = x.text;
+      li.querySelector("small").textContent = [LESSON_SOURCE[x.source] || x.source, (x.scope || []).join(", "),
+        x.uses ? L(`${x.uses}× genutzt, ${x.helped}× geholfen`, `used ${x.uses}×, helped ${x.helped}×`) : L("noch nicht genutzt", "not used yet")]
+        .filter(Boolean).join(" · ");
+      text.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); text.blur(); } };
+      text.onblur = () => {
+        const v = text.textContent.trim();
+        if (v && v !== x.text) api("PATCH", `/api/lessons/${x.id}`, { text: v }).then(() => { x.text = v; toast(L("Gespeichert.", "Saved.")); }).catch(() => {});
+      };
+      li.querySelector("button").onclick = () =>
+        api("DELETE", `/api/lessons/${x.id}`).then(() => li.remove()).catch(() => {});
+      list.appendChild(li);
+    }
+  }
+  $("lesson-add").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const v = $("lesson-new").value.trim();
+    if (!v) return;
+    api("POST", "/api/lessons", { text: v }).then((r) => {
+      $("lesson-new").value = "";
+      toast(r.merged ? L("Mit einer ähnlichen Lektion zusammengeführt.", "Merged with a similar lesson.") : L("Gemerkt.", "Saved."));
+      loadLessons();
+    }).catch(() => {});
+  });
 
   function formatDay(day) {
     const d = new Date(day + "T12:00:00");

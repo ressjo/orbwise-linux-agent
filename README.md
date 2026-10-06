@@ -65,6 +65,7 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **Obsidian** | Search, read and ask questions about notes in your vault, create/append/update notes, open them in Obsidian |
 | **Trilium** | Search and read notes, create notes in the inbox, append to and update notes |
 | **Calendar** | iCloud or any CalDAV server: list events, find free time, create/change/delete events |
+| **Learning from experience** | Short lessons from errors, your corrections and 👎 ("docker on the NAS needs sudo") – thought about while idle, only matching ones go along with a question under a small fixed limit, so the context window does not grow; viewable, editable and deletable under Memory → Experience |
 | **Memory** | Remembers everything permanently (see below), `remember` / `recall` / `forget`, **chat history** with search, favourites, rename and delete; the search index repairs itself if it gets damaged |
 | **Dashboard** | Animated neural-network orb: thinking pulse, **tool symbols** next to the orb (CLI, cloud for the web, mail, Paperless) with a beam of dots flowing to them, golden neurons when memory is used, a **context ring** showing how full the model's context is; calm, modern layout: collapsible sidebar with chats, a big orb with greeting and suggestions on an empty chat that shrinks to a live strip once you talk, a live line in each answer showing what the model is doing (reading the prompt, thinking, writing a call) and a small time/token summary afterwards, an activity panel with live telemetry (tokens/s, context, GPU, VRAM, RAM, power), Planner and Memory sheets, a settings page; works on the phone too |
 | **Models & voices** | **Settings → Models:** switch model profiles, download models with progress, cancel downloads, delete models · **Settings → Voice:** choose, download (whole Piper catalogue), upload your own (`.onnx` + `.json`) and delete voices, "Jarvis" voice effect · **Think** button for reasoning models |
@@ -258,6 +259,24 @@ Afterwards – and after switching chat, mode or model – Orbwise reads the cur
 nothing else runs, and again when you start typing or recording if needed. The activity panel shows it as
 *pre-reading the chat*; the next question then only reads its new part. See also the
 [prompt cache tips](#prompt-cache-tips).
+
+### Learning from experience
+
+The model's weights cannot be retrained locally, so Orbwise learns the way large assistants do: from experience,
+outside the model.
+
+- **Candidates** are noted for free during a turn: a tool failed and the model then solved it differently (or not at
+  all), you corrected the previous answer ("no, that's wrong …", "use … instead"), or you pressed 👎 (optionally with a
+  note on what was wrong).
+- **Reflection while idle** (no question for ~10 minutes, nothing else loaded): the model looks at each candidate and
+  writes at most **one short lesson** – or nothing if there is nothing general to learn. Similar lessons are merged
+  instead of appended; lessons that went along often without helping are removed; at most `memory.lessons_max` (300).
+- **The context does not grow:** lessons never sit in the system prompt. For each question only lessons that really
+  match (similarity threshold, same tool area) go into its context note – at most ~2 % of the window below 16k
+  (2 lessons) and ~3 % from 16k (5 lessons), often none. 10 or 300 stored lessons cost the same. Lessons already shown
+  in a chat are not repeated, and the prompt cache stays intact.
+- **Memory → Experience** lists everything learned (where it came from, how often it was used and helped); click a
+  lesson to edit it, 🗑 deletes it, and you can add your own rules. `memory.learning: false` turns it off.
 
 ### Chat history
 

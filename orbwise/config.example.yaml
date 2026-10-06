@@ -60,6 +60,8 @@ memory:
   # facts_max_tokens: 1200       # max. size of the permanent facts (profile) in the prompt
   # compact_idle: true           # if the context is almost at the compaction point after an answer, compress right away instead of before the next question
   summarize_idle_minutes: 15
+  # learning: true          # learn short lessons from errors, corrections and 👎 (only matching ones go along, small fixed budget)
+  # lessons_max: 300
 
 voice:
   enabled: true

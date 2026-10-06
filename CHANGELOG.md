@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Learning from experience:** Orbwise notes failed-then-solved tool runs, your corrections and 👎 (new buttons under
+  each answer) and, while idle, turns them into short lessons. Only lessons matching the current question go into
+  its context note, under a small fixed budget (≈2 % of the window below 16k, ≈3 % above) – the prompt does not grow
+  with the number of lessons and the system prompt stays cached. Similar lessons are merged, useless ones dropped,
+  everything is visible and editable under Memory → Experience (`memory.learning`, `memory.lessons_max`).
 - **Image mode: several references and resolution:** up to 3 reference images (numbered image 1–3, e.g. to bring
   people from different photos into one picture), resolution as megapixels (0.5–2) per aspect ratio, a custom
   width × height or the aspect of image 1; the resulting size is shown before generating.

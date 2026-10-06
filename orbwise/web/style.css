@@ -880,3 +880,24 @@ details.card[open] > summary .caret { transform: rotate(180deg); }
 .msg .msg-images { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 .msg .msg-images img { max-width: 220px; max-height: 180px; border-radius: 10px; border: 1px solid var(--border); cursor: zoom-in; }
 .app.imaging .attach-row { display: none !important; }
+
+/* ---------------------------------------------------------------- Lernen aus Erfahrung */
+.msg-feedback { display: flex; gap: 4px; margin-top: 6px; opacity: .55; transition: opacity .15s; }
+.msg:hover .msg-feedback, .msg-feedback.done { opacity: 1; }
+.msg-feedback button { height: 24px; min-width: 28px; padding: 0 6px; border: 1px solid var(--border); border-radius: 7px;
+  background: none; color: var(--muted); cursor: pointer; font-size: 13px; }
+.msg-feedback button:hover { color: var(--text); background: var(--surface-3); }
+.msg-feedback button.on { border-color: var(--accent); color: var(--text); }
+.msg-feedback .fb-note { font-size: 12px; color: var(--muted); align-self: center; margin-left: 4px; }
+.lessons-meta { color: var(--muted); font-size: 12px; margin-left: auto; }
+.lessons-hint { margin: 0 0 8px; font-size: 12.5px; color: var(--muted); line-height: 1.4; }
+.lessons { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.lessons li { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; padding: 8px 10px; border: 1px solid var(--border);
+  border-radius: 10px; font-size: 13.5px; }
+.lessons li .ls-text { outline: none; line-height: 1.4; }
+.lessons li .ls-text:focus { color: var(--text); box-shadow: 0 0 0 2px rgba(76,194,255,.25); border-radius: 4px; }
+.lessons li small { grid-column: 1; color: var(--muted); font-size: 11.5px; }
+.lessons li .ls-actions { grid-row: 1 / span 2; grid-column: 2; display: flex; gap: 4px; align-items: start; }
+.lessons li.empty { display: block; color: var(--muted); border-style: dashed; }
+.lesson-add { display: flex; gap: 6px; margin-top: 8px; }
+.lesson-add input { flex: 1; min-width: 0; }
