@@ -344,6 +344,9 @@ def cmd_model(args) -> None:
 
     cfg = load_config()
     state = cfg.memory.dir.parent / "state.json"
+    args.tag = " ".join(args.tag or []) or None
+    if args.name == "search":
+        return cmd_model_search(args, cfg)
     if args.name in ("add", "remove", "choose"):
         return cmd_model_manage(args, cfg, state)
     router = LLMRouter(cfg.llm, state_path=state)
@@ -375,6 +378,47 @@ def cmd_model(args) -> None:
         router._write_state()
         print(T(f"Orbwise läuft gerade nicht – '{args.name}' wird beim nächsten Start verwendet.",
                 f"Orbwise is not running – '{args.name}' will be used on the next start."))
+
+
+def cmd_model_search(args, cfg) -> None:
+    """orbwise model search <begriff> → GGUF-Repos auf Hugging Face; orbwise model search <nutzer/repo> → Quantisierungen."""
+    import httpx
+
+    from . import models as mdl
+    term = (args.tag or "").strip()
+    if not term:
+        print(T("Wonach suchen? orbwise model search qwen3 27b", "Search for what? orbwise model search qwen3 27b"))
+        sys.exit(1)
+    tag = mdl.normalize_tag(term)
+    repo = tag[6:].split(":", 1)[0] if tag and mdl.is_hf(tag) else \
+        term if mdl.REPO_RE.match(term) else None
+    try:
+        if repo:
+            gpu = mdl.detect_gpu()
+            items = mdl.hf_quants(repo, gpu["vram_gb"], mdl.installed_models(cfg.llm.base_url))
+            if not items:
+                print(T("Keine einzeln ladbare GGUF-Datei in diesem Repo.", "No single-file GGUF in this repo."))
+                return
+            print(T(f"{repo} (Grafikspeicher: {gpu['vram_gb']:g} GB; ✔ passt · ~ teils im RAM · ✘ zu groß)",
+                    f"{repo} (video memory: {gpu['vram_gb']:g} GB; ✔ fits · ~ partly in RAM · ✘ too big)"))
+            for q in items:
+                extra = T("  [EMPFOHLEN]", "  [RECOMMENDED]") if q.get("recommended") else ""
+                extra += T("  [installiert]", "  [installed]") if q["installed"] else ""
+                print(f"  {mdl.FIT_MARK[q['fit']]} {q['quant']:<14} ~{q['download_gb']:>5.1f} GB   "
+                      f"orbwise model add {q['tag']}{extra}")
+            return
+        results = mdl.hf_search(term)
+    except (httpx.HTTPError, ValueError) as e:
+        print(T(f"✘ Hugging Face nicht erreichbar: {e}", f"✘ Hugging Face not reachable: {e}"))
+        sys.exit(1)
+    if not results:
+        print(T("Nichts gefunden – anderen Begriff versuchen (z. B. nur 'qwen3.6').",
+                "Nothing found – try another term (e.g. just 'qwen3.6')."))
+        return
+    for r in results:
+        print(f"  {r['repo']:<55} ⬇ {r['downloads']:>9,}")
+    print(T("\nQuantisierungen eines Repos: orbwise model search <nutzer/repo>",
+            "\nQuantizations of a repo: orbwise model search <user/repo>"))
 
 
 def cmd_model_manage(args, cfg, state: Path) -> None:
@@ -430,8 +474,9 @@ def cmd_model_manage(args, cfg, state: Path) -> None:
         return
     # add
     gpu = mdl.detect_gpu()
-    tag = (args.tag or "").strip().lower() or mdl.choose_interactive(gpu["vram_gb"], mdl.installed_models(cfg.llm.base_url))
-    if not tag or not mdl.TAG_RE.match(tag):
+    tag = mdl.normalize_tag(args.tag or "") if (args.tag or "").strip() else \
+        mdl.choose_interactive(gpu["vram_gb"], mdl.installed_models(cfg.llm.base_url))
+    if not tag:
         print(T("Ungültiger Modellname.", "Invalid model name."))
         sys.exit(1)
     if tag == "qwen-image":  # Bild-Modus: stable-diffusion.cpp + Qwen-Image-2.1
@@ -556,9 +601,10 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("doctor", help=T("Installation prüfen", "check the installation"))
     p = sub.add_parser("model", help=T("Modelle anzeigen, umschalten, laden (add) oder entfernen (remove)",
                                        "list, switch, download (add) or remove (remove) models"))
-    p.add_argument("name", nargs="?", help=T("Profilname zum Umschalten – oder add / remove (auch: add qwen-image)",
-                                             "profile to switch to – or add / remove"))
-    p.add_argument("tag", nargs="?", help=T("bei add/remove: Ollama-Modellname", "with add/remove: Ollama model name"))
+    p.add_argument("name", nargs="?", help=T("Profilname zum Umschalten – oder add / remove / search (auch: add qwen-image)",
+                                             "profile to switch to – or add / remove / search"))
+    p.add_argument("tag", nargs="*", help=T("bei add: Ollama-Name oder Hugging-Face-Link · bei search: Suchbegriff",
+                                            "with add: Ollama name or Hugging Face link · with search: search term"))
     p.add_argument("-y", "--yes", action="store_true", help=T("ohne Rückfragen", "no questions"))
     p.add_argument("--vram", type=float, help=argparse.SUPPRESS)
     p.add_argument("--out", help=argparse.SUPPRESS)

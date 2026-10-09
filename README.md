@@ -300,8 +300,19 @@ their files (the active model and models from `config.yaml` stay). Or run
 orbwise model add              # interactive list of presets for your GPU
 orbwise model add qwen3:14b    # or any model from ollama.com/library
 orbwise model add bonsai       # Bonsai 2 27B incl. its llama.cpp server (see below)
+orbwise model search qwen3.6 27b                  # search GGUF models on Hugging Face
+orbwise model search unsloth/Qwen3.6-27B-GGUF     # its quantizations with size and fit (✔ ~ ✘)
+orbwise model add https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/blob/main/Qwen3.6-27B-UD-Q4_K_XL.gguf
+orbwise model add hf.co/unsloth/Qwen3.6-27B-GGUF:UD-Q4_K_XL   # same as the link
 orbwise model remove qwen3-14b # remove it from the list (optionally also delete the files)
 ```
+
+**Any model from Hugging Face:** in **+ ADD MODEL** type a search term (`qwen3.6 27b`) or paste a Hugging Face link
+into the search field. Pick a repository, then a quantization: each shows its download size, the estimated video
+memory (weights + ~1.5 GB for context) and whether it fits; the largest one that fits completely is marked
+**RECOMMENDED**. Ollama downloads the file directly (`hf.co/<user>/<repo>:<quant>`). Split GGUF files
+(`-00001-of-00003`) and vision projectors (`mmproj`) are not offered – Ollama cannot load them that way. The model must
+be supported by your Ollama version (very new architectures sometimes need an Ollama update).
 
 Orbwise can know several language models and switch between them – click the **model chip** at the top or run
 `orbwise model <name>` (`orbwise model` lists all profiles). The choice is remembered.
@@ -853,7 +864,8 @@ Passwords and tokens can also come from environment variables (`ORBWISE_MAIL_PAS
 orbwise serve [--open] [-v]    # start the server
 orbwise doctor                 # check the installation
 orbwise model [name]           # list or switch model profiles
-orbwise model add [ollama-tag] # download another model (interactive presets without a tag)
+orbwise model add [ollama-tag] # download another model (interactive presets without a tag; also HF links)
+orbwise model search <term>    # search GGUF models on Hugging Face (or <user/repo> for its quantizations)
 orbwise model add qwen-image   # set up the image mode (Qwen-Image-2.1)
 orbwise model remove <name>    # remove a downloaded model from the list
 orbwise context-test [--quick] # check the context window with the active model (Orbwise must be running)

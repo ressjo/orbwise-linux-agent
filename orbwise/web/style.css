@@ -901,3 +901,8 @@ details.card[open] > summary .caret { transform: rotate(180deg); }
 .lessons li.empty { display: block; color: var(--muted); border-style: dashed; }
 .lesson-add { display: flex; gap: 6px; margin-top: 8px; }
 .lesson-add input { flex: 1; min-width: 0; }
+.mm-search { display: flex; gap: 6px; margin: 2px 0 4px; }
+.mm-search input { flex: 1; min-width: 0; }
+.mm-search button { flex: none; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--accent); font-size: 12px; }
+.mm-hf { display: flex; flex-direction: column; gap: 4px; }
+.mm-hf .mi-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }

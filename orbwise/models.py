@@ -59,6 +59,48 @@ PRESETS: list[Preset] = [
 ]
 BY_TAG = {p.tag: p for p in PRESETS}
 TAG_RE = re.compile(r"^[a-z0-9][a-z0-9._/-]*(:[a-z0-9._-]+)?$")
+# Ollama lädt GGUF-Modelle direkt von Hugging Face: hf.co/<nutzer>/<repo>[:<quant>] (Groß/Klein bleibt erhalten)
+HF_TAG_RE = re.compile(r"^hf\.co/[A-Za-z0-9][\w.-]*/[\w.-]+(:[\w.-]+)?$")
+HF_URL_RE = re.compile(r"^(?:https?://)?(?:www\.)?(?:huggingface\.co|hf\.co)/([A-Za-z0-9][\w.-]*)/([\w.-]+)"
+                       r"(?:/(?:blob|resolve)/[^/]+/(?:[^?#]*/)?([^/?#]+\.gguf)|/tree/[^?#]*)?(?::([\w.-]+))?/?(?:[?#].*)?$",
+                       re.IGNORECASE)
+QUANT_RE = re.compile(r"(?:^|[-_.])((?:UD-)?(?:I?Q\d(?:_[A-Z0-9]+)*|TQ\d_\d|BF16|F16|F32|MXFP4(?:_MOE)?))\.gguf$",
+                      re.IGNORECASE)
+REPO_RE = re.compile(r"^[A-Za-z0-9][\w-]*(?:\.[\w-]+)*/[A-Za-z0-9][\w-]*(?:\.[\w-]+)*$")  # nutzer/repo, ohne ".."
+SPLIT_RE = re.compile(r"-\d{5}-of-\d{5}\.gguf$", re.IGNORECASE)
+
+
+def normalize_tag(text: str) -> str | None:
+    """Ollama-Name, Hugging-Face-Link oder hf.co-Name → gültiger Ollama-Name (sonst None).
+    'https://huggingface.co/unsloth/Qwen3-8B-GGUF/blob/main/Qwen3-8B-Q4_K_M.gguf' → 'hf.co/unsloth/Qwen3-8B-GGUF:Q4_K_M'"""
+    text = (text or "").strip()
+    m = HF_URL_RE.match(text)
+    if m:
+        user, repo, file, quant = m.groups()
+        if file:
+            if SPLIT_RE.search(file):
+                return None  # geteilte GGUF-Dateien kann Ollama nicht laden
+            q = QUANT_RE.search(file)
+            quant = q.group(1) if q else None
+        return f"hf.co/{user}/{repo}" + (f":{quant}" if quant else "")
+    if HF_TAG_RE.match(text):
+        return text
+    return text.lower() if TAG_RE.match(text.lower()) else None
+
+
+def is_hf(tag: str) -> bool:
+    return tag.startswith("hf.co/")
+
+
+def label_of(tag: str) -> str:
+    """Anzeigename: Preset-Name oder bei Hugging Face 'Qwen3-8B Q4_K_M' statt des langen hf.co-Namens."""
+    if tag in BY_TAG:
+        return BY_TAG[tag].label
+    if is_hf(tag):
+        repo, _, quant = tag.split("/", 2)[2].partition(":")
+        repo = re.sub(r"[-_.]?gguf$", "", repo, flags=re.IGNORECASE)
+        return f"{repo} {quant}".strip()
+    return tag
 
 
 def slug(tag: str) -> str:
@@ -136,6 +178,9 @@ def is_installed(tag: str, installed: set[str]) -> bool:
     if tag in ("bonsai", "bonsai-kompakt"):
         from .bonsai import is_set_up
         return is_set_up(variant=tag)
+    if is_hf(tag):  # Ollama schreibt hf.co-Namen je nach Version anders groß
+        return tag.lower() in {t.lower() for t in installed} or \
+            (":" not in tag and f"{tag}:latest".lower() in {t.lower() for t in installed})
     return tag in installed or (":" not in tag and f"{tag}:latest" in installed)
 
 
@@ -143,6 +188,73 @@ def preset_list(vram_gb: float, installed: set[str]) -> list[dict]:
     rec = recommend(vram_gb)
     return [{**asdict(p), "note": p.note(), "fit": fit(p, vram_gb), "installed": is_installed(p.tag, installed),
              "recommended": p.tag == rec, "profile": slug(p.tag)} for p in PRESETS]
+
+
+# ---------------------------------------------------------------- Hugging Face: suchen, Quantisierung wählen
+
+HF_API = "https://huggingface.co/api"
+
+
+def _hf_get(path: str, params: dict | None = None, base: str | None = None):
+    r = httpx.get(f"{base or HF_API}{path}", params=params, timeout=15, follow_redirects=True,
+                  headers={"User-Agent": "orbwise"})
+    r.raise_for_status()
+    return r.json()
+
+
+def hf_search(query: str, limit: int = 20, base: str | None = None) -> list[dict]:
+    """GGUF-Modelle auf Hugging Face (meiste Downloads zuerst). Mehrere Wörter („qwen 3.6 27b“) müssen alle im Namen
+    vorkommen – die HF-Suche selbst kennt nur Teilstrings, daher wird bei Bedarf mit dem längsten Wort gesucht."""
+    words = [w for w in re.split(r"\s+", query.strip().lower()) if w]
+    if not words:
+        return []
+    params = {"filter": "gguf", "sort": "downloads", "direction": "-1"}
+    found = _hf_get("/models", {**params, "search": " ".join(words), "limit": limit}, base)
+    if not found and len(words) > 1:
+        found = _hf_get("/models", {**params, "search": max(words, key=len), "limit": 100}, base)
+    out = []
+    for m in found if isinstance(found, list) else []:
+        rid = m.get("id") or m.get("modelId") or ""
+        flat = rid.lower()
+        if "/" not in rid or not all(w in flat for w in words):
+            continue
+        out.append({"repo": rid, "downloads": m.get("downloads", 0), "likes": m.get("likes", 0)})
+    return out[:limit]
+
+
+def need_gb(size_gb: float) -> float:
+    """Grafikspeicher für Gewichte + etwas Kontext (~8k) und Puffer."""
+    return round(size_gb + 1.5, 1)
+
+
+def hf_quants(repo: str, vram_gb: float, installed: set[str] | None = None, base: str | None = None) -> list[dict]:
+    """Die ladbaren Quantisierungen eines Repos mit Größe und ob sie in den Grafikspeicher passen (kleinste zuerst).
+    Geteilte Dateien (-00001-of-00003) und das Bildmodul (mmproj) werden nicht angeboten."""
+    if not REPO_RE.match(repo):
+        raise ValueError("ungültiges Repo")
+    files = _hf_get(f"/models/{repo}/tree/main", {"recursive": "1"}, base)
+    installed = {t.lower() for t in installed or set()}
+    by_quant: dict[str, dict] = {}
+    for f in files if isinstance(files, list) else []:
+        path = f.get("path", "")
+        name = path.rsplit("/", 1)[-1]
+        if f.get("type") != "file" or not name.lower().endswith(".gguf") or "mmproj" in name.lower() \
+                or SPLIT_RE.search(name):
+            continue
+        q = QUANT_RE.search(name)
+        if not q:
+            continue
+        quant = q.group(1).upper()
+        size = int((f.get("lfs") or {}).get("size") or f.get("size") or 0) / 1e9
+        tag = f"hf.co/{repo}:{quant}"
+        p = Preset(tag, label_of(tag), round(size, 1), need_gb(size), "", "")
+        by_quant.setdefault(quant, {"tag": tag, "quant": quant, "file": path, "download_gb": round(size, 1),
+                                    "vram_gb": p.vram_gb, "fit": fit(p, vram_gb), "installed": tag.lower() in installed})
+    items = sorted(by_quant.values(), key=lambda x: x["download_gb"])
+    ok = [x for x in items if x["fit"] == "ok"]
+    if ok:  # größte, die noch komplett passt = beste Qualität ohne RAM-Auslagerung
+        max(ok, key=lambda x: x["download_gb"])["recommended"] = True
+    return items
 
 
 # ---------------------------------------------------------------- Zusätzliche Modelle merken (state.json)
@@ -171,7 +283,7 @@ def register_profile(state_path: Path, name: str, profile: dict, activate: bool 
 
 
 def added_models(state_path: Path) -> list[str]:
-    return [t for t in _read_state(state_path).get("added_models", []) if isinstance(t, str) and TAG_RE.match(t)]
+    return [t for t in _read_state(state_path).get("added_models", []) if isinstance(t, str) and normalize_tag(t) == t]
 
 
 def register_model(state_path: Path, tag: str, activate: bool = False) -> str:
@@ -232,14 +344,16 @@ def choose_interactive(vram_gb: float, installed: set[str] | None = None, ask=in
             tags.append(T("installiert", "installed"))
         extra = f"  [{', '.join(tags)}]" if tags else ""
         out(f" {i:>2}) {FIT_MARK[fit(p, vram_gb)]} {p.label:<24} ~{p.download_gb:g} GB  {p.note()}{extra}")
-    out(T("  Oder einen eigenen Ollama-Namen eingeben (z. B. qwen3:1.7b).",
-          "  Or type any Ollama model name (e.g. qwen3:1.7b)."))
+    out(T("  Oder einen eigenen Ollama-Namen oder Hugging-Face-Link eingeben (z. B. qwen3:1.7b oder\n"
+          "  https://huggingface.co/unsloth/Qwen3-8B-GGUF – Suche: orbwise model search <begriff>).",
+          "  Or type any Ollama model name or Hugging Face link (e.g. qwen3:1.7b or\n"
+          "  https://huggingface.co/unsloth/Qwen3-8B-GGUF – search: orbwise model search <term>)."))
     while True:
         answer = ask(T(f"Auswahl [Enter = {rec}]: ", f"Choice [Enter = {rec}]: ")).strip()
         if not answer:
             return rec
         if answer.isdigit() and 1 <= int(answer) <= len(PRESETS):
             return PRESETS[int(answer) - 1].tag
-        if TAG_RE.match(answer.lower()):
-            return answer.lower()
+        if normalize_tag(answer):
+            return normalize_tag(answer)
         out(T("Bitte eine Nummer oder einen Modellnamen eingeben.", "Please enter a number or a model name."))

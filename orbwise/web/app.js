@@ -2321,12 +2321,28 @@
     modelMenu.querySelector(".mm-hint").textContent = gpuText + " · " +
       L("✔ passt · ~ teils im RAM (langsamer) · ✘ zu groß", "✔ fits · ~ partly in RAM (slower) · ✘ too big");
     for (const tag of data.pulling) modelMenu.appendChild(pullRow({ tag }));
-    const marks = { ok: "✔", tight: "~", big: "✘" };
+    // Hugging Face: Suchbegriff oder Link einfügen → Repos → Quantisierung mit Größe und Passung
+    const form = document.createElement("form");
+    form.className = "mm-search";
+    form.innerHTML = `<input type="search" autocomplete="off" spellcheck="false"><button type="submit">${L("SUCHEN", "SEARCH")}</button>`;
+    const q = form.querySelector("input");
+    q.placeholder = L("Hugging Face durchsuchen oder Link einfügen (z. B. qwen3.6 27b)",
+                      "Search Hugging Face or paste a link (e.g. qwen3.6 27b)");
+    const hf = document.createElement("div");
+    hf.className = "mm-hf";
+    form.onclick = (e) => e.stopPropagation();
+    form.onsubmit = (e) => { e.preventDefault(); hfSearch(q.value, hf); };
+    modelMenu.appendChild(form);
+    modelMenu.appendChild(hf);
+    const presetTitle = document.createElement("div");
+    presetTitle.className = "mm-title";
+    presetTitle.textContent = L("VORAUSWAHL", "PRESETS");
+    modelMenu.appendChild(presetTitle);
     for (const p of data.presets) {
       const b = document.createElement("button");
       b.className = "model-item";
       const pulling = data.pulling.includes(p.tag);
-      b.innerHTML = `<div class="mi-head"><span><span class="fit-${p.fit}">${marks[p.fit]}</span> <span class="mi-name"></span></span>
+      b.innerHTML = `<div class="mi-head"><span><span class="fit-${p.fit}">${FIT_MARKS[p.fit]}</span> <span class="mi-name"></span></span>
         <span class="mi-tag"></span></div><div class="mi-sub"></div><div class="mi-note"></div>`;
       b.querySelector(".mi-name").textContent = p.label;
       b.querySelector(".mi-tag").textContent = pulling ? L("LÄDT …", "LOADING …")
@@ -2342,13 +2358,7 @@
                   `${p.label}: set it up in a terminal with “orbwise model add ${p.tag}” (downloads ~7 GB and the matching llama.cpp server).`));
           return;
         }
-        if (p.fit === "big" && !confirm(L(`${p.label} ist für deinen Grafikspeicher zu groß und wird sehr langsam. Trotzdem laden?`,
-                                          `${p.label} is too big for your video memory and will be very slow. Download anyway?`))) return;
-        closeModelMenu();
-        try {
-          await api("POST", "/api/models/pull", { tag: p.tag });
-          toast(L(`Lade ${p.tag} …`, `Downloading ${p.tag} …`));
-        } catch { /* Meldung kommt von api() */ }
+        startPull(p.tag, p.label, p.fit);
       };
       modelMenu.appendChild(b);
     }
@@ -2357,6 +2367,87 @@
     back.textContent = L("← ZURÜCK", "← BACK");
     back.onclick = (e) => { e.stopPropagation(); openModelMenu(); };
     modelMenu.appendChild(back);
+  }
+
+  const FIT_MARKS = { ok: "✔", tight: "~", big: "✘" };
+  async function startPull(tag, label, fit) {
+    if (fit === "big" && !confirm(L(`${label} ist für deinen Grafikspeicher zu groß und wird sehr langsam. Trotzdem laden?`,
+                                    `${label} is too big for your video memory and will be very slow. Download anyway?`))) return;
+    try {
+      await api("POST", "/api/models/pull", { tag });
+      toast(L(`Lade ${tag} …`, `Downloading ${tag} …`));
+      openPresetMenu();  // Fortschritt erscheint oben in der Liste
+    } catch { /* Meldung kommt von api() */ }
+  }
+
+  function hfItem(head, tag, sub, note) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "model-item";
+    b.innerHTML = `<div class="mi-head"><span class="mi-name"></span><span class="mi-tag"></span></div>
+      <div class="mi-sub"></div>` + (note ? `<div class="mi-note"></div>` : "");
+    b.querySelector(".mi-name").append(...head);
+    b.querySelector(".mi-tag").textContent = tag;
+    b.querySelector(".mi-sub").textContent = sub;
+    if (note) b.querySelector(".mi-note").textContent = note;
+    return b;
+  }
+
+  async function hfSearch(text, box) {
+    text = text.trim();
+    if (!text) { box.innerHTML = ""; return; }
+    box.innerHTML = `<div class="mm-hint">${L("Suche auf Hugging Face …", "Searching Hugging Face …")}</div>`;
+    let data;
+    try { data = await getJSON("/api/models/hf/search?q=" + encodeURIComponent(text)); }
+    catch { box.innerHTML = `<div class="mm-hint">${L("Hugging Face nicht erreichbar.", "Hugging Face not reachable.")}</div>`; return; }
+    box.innerHTML = "";
+    if (!data.results.length) {
+      box.innerHTML = `<div class="mm-hint">${L("Nichts gefunden – kürzeren Begriff versuchen (z. B. nur „qwen3.6“).",
+                                                "Nothing found – try a shorter term (e.g. just “qwen3.6”).")}</div>`;
+      return;
+    }
+    if (data.results.length === 1 && data.results[0].tag) {  // Link auf eine bestimmte Datei
+      const r = data.results[0];
+      return hfQuants(r.repo, box, r.tag);
+    }
+    if (data.results.length === 1) return hfQuants(data.results[0].repo, box);
+    for (const r of data.results) {
+      const b = hfItem([document.createTextNode(r.repo)], r.downloads ? `⬇ ${r.downloads.toLocaleString(LOCALE)}` : "",
+                       L("GGUF · Quantisierung wählen →", "GGUF · choose quantization →"));
+      b.onclick = (e) => { e.stopPropagation(); hfQuants(r.repo, box); };
+      box.appendChild(b);
+    }
+  }
+
+  async function hfQuants(repo, box, only) {
+    box.innerHTML = `<div class="mm-hint">${L("Lade Dateiliste …", "Loading file list …")}</div>`;
+    let data;
+    try { data = await api("GET", "/api/models/hf/quants?repo=" + encodeURIComponent(repo)); }
+    catch { box.innerHTML = ""; return; }
+    box.innerHTML = "";
+    const title = document.createElement("div");
+    title.className = "mm-hint";
+    title.textContent = repo + " · " + L("Ollama lädt die Datei direkt von Hugging Face.", "Ollama downloads the file straight from Hugging Face.");
+    box.appendChild(title);
+    const items = only ? data.quants.filter((x) => x.tag.toLowerCase() === only.toLowerCase()) : data.quants;
+    if (!items.length) {
+      box.insertAdjacentHTML("beforeend", `<div class="mm-hint">${L("Keine einzeln ladbare GGUF-Datei (geteilte Dateien kann Ollama nicht laden).",
+                                                                     "No single-file GGUF (Ollama cannot load split files).")}</div>`);
+      return;
+    }
+    for (const x of items) {
+      const mark = document.createElement("span");
+      mark.className = "fit-" + x.fit;
+      mark.textContent = FIT_MARKS[x.fit] + " ";
+      const pulling = data.pulling.includes(x.tag);
+      const b = hfItem([mark, document.createTextNode(x.quant)],
+                       pulling ? L("LÄDT …", "LOADING …") : x.installed ? L("INSTALLIERT", "INSTALLED")
+                         : x.recommended ? L("EMPFOHLEN", "RECOMMENDED") : "",
+                       `~${x.download_gb} GB · ${L("braucht", "needs")} ~${x.vram_gb} GB VRAM`);
+      b.disabled = pulling || x.installed;
+      b.onclick = (e) => { e.stopPropagation(); startPull(x.tag, `${repo} ${x.quant}`, x.fit); };
+      box.appendChild(b);
+    }
   }
 
   async function deleteModel(p) {

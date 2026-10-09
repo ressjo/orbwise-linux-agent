@@ -867,6 +867,35 @@ def create_app(cfg: Config) -> FastAPI:
         return {"gpu": gpu, "presets": mdl.preset_list(gpu["vram_gb"], installed),
                 "pulling": sorted(pulls)}
 
+    @app.get("/api/models/hf/search")
+    async def hf_search(q: str = ""):
+        from . import models as mdl
+        if not q.strip():
+            return {"results": []}
+        tag = mdl.normalize_tag(q)
+        if tag and mdl.is_hf(tag):  # Link eingefügt → gleich dieses Repo
+            return {"results": [{"repo": tag[6:].split(":", 1)[0], "tag": tag if ":" in tag else None}]}
+        try:
+            return {"results": await asyncio.to_thread(mdl.hf_search, q)}
+        except (httpx.HTTPError, ValueError) as e:
+            raise HTTPException(502, f"Hugging Face nicht erreichbar: {e}") from e
+
+    @app.get("/api/models/hf/quants")
+    async def hf_quants(repo: str):
+        from . import models as mdl
+        gpu = await asyncio.to_thread(mdl.detect_gpu)
+        installed = await asyncio.to_thread(mdl.installed_models, cfg.llm.base_url)
+        try:
+            items = await asyncio.to_thread(mdl.hf_quants, repo, gpu["vram_gb"], installed)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(404 if e.response.status_code in (401, 404) else 502,
+                                "Repo nicht gefunden oder nicht öffentlich") from e
+        except httpx.HTTPError as e:
+            raise HTTPException(502, f"Hugging Face nicht erreichbar: {e}") from e
+        return {"repo": repo, "gpu": gpu, "quants": items, "pulling": sorted(pulls)}
+
     async def pull_model(tag: str) -> None:
         from . import models as mdl
         last = 0.0
@@ -907,9 +936,9 @@ def create_app(cfg: Config) -> FastAPI:
         from . import models as mdl
         if not isinstance(llm, LLMRouter):
             raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
-        tag = str((await request.json()).get("tag", "")).strip().lower()
-        if not mdl.TAG_RE.match(tag):
-            raise HTTPException(400, "Ungültiger Modellname")
+        tag = mdl.normalize_tag(str((await request.json()).get("tag", "")))
+        if not tag:
+            raise HTTPException(400, "Ungültiger Modellname oder Hugging-Face-Link (geteilte GGUF-Dateien gehen nicht)")
         if tag in mdl.BY_TAG and mdl.BY_TAG[tag].kind != "ollama":
             raise HTTPException(400, prompts.spoken(cfg, "setup_terminal", cmd=f"orbwise model add {tag}"))
         if tag not in pulls:

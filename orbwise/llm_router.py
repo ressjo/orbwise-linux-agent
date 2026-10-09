@@ -231,7 +231,7 @@ class LLMRouter:
         """Per `orbwise model add` bzw. Oberfläche geladene Ollama-Modelle als Profile ergänzen."""
         if not self.state_path:
             return []
-        from .models import BY_TAG, added_models, added_profiles, slug
+        from .models import added_models, added_profiles, label_of, slug
         new = []
         for name, raw in added_profiles(self.state_path).items():
             if name in self.profiles:
@@ -247,7 +247,7 @@ class LLMRouter:
             name = slug(tag)
             if name in self.profiles:
                 continue
-            label = BY_TAG[tag].label if tag in BY_TAG else tag
+            label = label_of(tag)
             extra = self.cfg.model_copy(update={"profiles": {name: ProfileConfig(backend="ollama", model=tag,
                                                                                   label=label)}})
             self.profiles[name] = extra.resolved_profiles()[name]
