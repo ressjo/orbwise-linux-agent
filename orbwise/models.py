@@ -59,7 +59,7 @@ PRESETS: list[Preset] = [
 ]
 BY_TAG = {p.tag: p for p in PRESETS}
 TAG_RE = re.compile(r"^[a-z0-9][a-z0-9._/-]*(:[a-z0-9._-]+)?$")
-# Ollama lädt GGUF-Modelle direkt von Hugging Face: hf.co/<nutzer>/<repo>[:<quant>] (Groß/Klein bleibt erhalten)
+# GGUF-Modelle von Hugging Face: hf.co/<nutzer>/<repo>[:<quant>] (Groß/Klein bleibt erhalten)
 HF_TAG_RE = re.compile(r"^hf\.co/[A-Za-z0-9][\w.-]*/[\w.-]+(:[\w.-]+)?$")
 HF_URL_RE = re.compile(r"^(?:https?://)?(?:www\.)?(?:huggingface\.co|hf\.co)/([A-Za-z0-9][\w.-]*)/([\w.-]+)"
                        r"(?:/(?:blob|resolve)/[^/]+/(?:[^?#]*/)?([^/?#]+\.gguf)|/tree/[^?#]*)?(?::([\w.-]+))?/?(?:[?#].*)?$",
@@ -71,16 +71,15 @@ SPLIT_RE = re.compile(r"-\d{5}-of-\d{5}\.gguf$", re.IGNORECASE)
 
 
 def normalize_tag(text: str) -> str | None:
-    """Ollama-Name, Hugging-Face-Link oder hf.co-Name → gültiger Ollama-Name (sonst None).
+    """Ollama-Name, Hugging-Face-Link oder hf.co-Name → gültiger Name (sonst None). hf.co/… lädt Orbwise selbst und
+    startet es mit llama.cpp (siehe llamacpp.py), alles andere geht an Ollama.
     'https://huggingface.co/unsloth/Qwen3-8B-GGUF/blob/main/Qwen3-8B-Q4_K_M.gguf' → 'hf.co/unsloth/Qwen3-8B-GGUF:Q4_K_M'"""
     text = (text or "").strip()
     m = HF_URL_RE.match(text)
     if m:
         user, repo, file, quant = m.groups()
         if file:
-            if SPLIT_RE.search(file):
-                return None  # geteilte GGUF-Dateien kann Ollama nicht laden
-            q = QUANT_RE.search(file)
+            q = QUANT_RE.search(SPLIT_RE.sub(".gguf", file))  # geteilte Dateien: llama.cpp lädt alle Teile
             quant = q.group(1) if q else None
         return f"hf.co/{user}/{repo}" + (f":{quant}" if quant else "")
     if HF_TAG_RE.match(text):
@@ -227,30 +226,54 @@ def need_gb(size_gb: float) -> float:
     return round(size_gb + 1.5, 1)
 
 
-def hf_quants(repo: str, vram_gb: float, installed: set[str] | None = None, base: str | None = None) -> list[dict]:
-    """Die ladbaren Quantisierungen eines Repos mit Größe und ob sie in den Grafikspeicher passen (kleinste zuerst).
-    Geteilte Dateien (-00001-of-00003) und das Bildmodul (mmproj) werden nicht angeboten."""
+def _pick_mmproj(files: list[dict]) -> dict | None:
+    """Bildmodul eines Repos: F16 bevorzugt (BF16 können nicht alle Builds), sonst das erste."""
+    found = sorted((f for f in files if "mmproj" in f["path"].rsplit("/", 1)[-1].lower()), key=lambda f: f["path"])
+    for pref in ("f16", "bf16", "f32"):
+        hit = next((f for f in found if re.search(rf"[-_.]{pref}\.gguf$", f["path"], re.I)), None)
+        if hit:
+            return hit
+    return found[0] if found else None
+
+
+def hf_quants(repo: str, vram_gb: float, models_dir: Path | None = None, base: str | None = None) -> list[dict]:
+    """Die Quantisierungen eines Repos mit Größe und ob sie in den Grafikspeicher passen (kleinste zuerst). Geteilte
+    Dateien (-00001-of-00003) werden zusammengefasst; ein Bildmodul (mmproj) wird mitgeladen und mitgezählt.
+    installed: liegt die Datei schon in models_dir/<nutzer>_<repo>/?"""
     if not REPO_RE.match(repo):
         raise ValueError("ungültiges Repo")
-    files = _hf_get(f"/models/{repo}/tree/main", {"recursive": "1"}, base)
-    installed = {t.lower() for t in installed or set()}
-    by_quant: dict[str, dict] = {}
-    for f in files if isinstance(files, list) else []:
-        path = f.get("path", "")
-        name = path.rsplit("/", 1)[-1]
-        if f.get("type") != "file" or not name.lower().endswith(".gguf") or "mmproj" in name.lower() \
-                or SPLIT_RE.search(name):
+    tree = _hf_get(f"/models/{repo}/tree/main", {"recursive": "1"}, base)
+    files = [{"path": f.get("path", ""), "size": int((f.get("lfs") or {}).get("size") or f.get("size") or 0)}
+             for f in tree if isinstance(tree, list) and f.get("type") == "file"
+             and f.get("path", "").lower().endswith(".gguf")] if isinstance(tree, list) else []
+    mmproj = _pick_mmproj(files)
+    extra = (mmproj["size"] if mmproj else 0) / 1e9
+    groups: dict[str, dict] = {}
+    for f in files:
+        name = f["path"].rsplit("/", 1)[-1]
+        if "mmproj" in name.lower():
             continue
-        q = QUANT_RE.search(name)
+        q = QUANT_RE.search(SPLIT_RE.sub(".gguf", name))
         if not q:
             continue
         quant = q.group(1).upper()
-        size = int((f.get("lfs") or {}).get("size") or f.get("size") or 0) / 1e9
+        key = SPLIT_RE.sub(".gguf", f["path"])  # alle Teile einer Datei
+        g = groups.setdefault(quant, {"key": key, "files": []})
+        if g["key"] == key:  # gleiche Quantisierung eines anderen Modells im Repo: nur die erste
+            g["files"].append(f)
+    items = []
+    target = (models_dir / repo.replace("/", "_")) if models_dir else None
+    for quant, g in groups.items():
+        parts = sorted(g["files"], key=lambda f: f["path"])
+        size = sum(f["size"] for f in parts) / 1e9
         tag = f"hf.co/{repo}:{quant}"
-        p = Preset(tag, label_of(tag), round(size, 1), need_gb(size), "", "")
-        by_quant.setdefault(quant, {"tag": tag, "quant": quant, "file": path, "download_gb": round(size, 1),
-                                    "vram_gb": p.vram_gb, "fit": fit(p, vram_gb), "installed": tag.lower() in installed})
-    items = sorted(by_quant.values(), key=lambda x: x["download_gb"])
+        p = Preset(tag, label_of(tag), round(size, 1), need_gb(size + extra), "", "")
+        items.append({"tag": tag, "quant": quant, "file": parts[0]["path"], "files": parts, "parts": len(parts),
+                      "mmproj": mmproj, "download_gb": round(size + extra, 1), "vram_gb": p.vram_gb,
+                      "fit": fit(p, vram_gb),
+                      "installed": bool(target and all((target / f["path"].rsplit("/", 1)[-1]).exists()
+                                                       for f in parts))})
+    items.sort(key=lambda x: x["download_gb"])
     ok = [x for x in items if x["fit"] == "ok"]
     if ok:  # größte, die noch komplett passt = beste Qualität ohne RAM-Auslagerung
         max(ok, key=lambda x: x["download_gb"])["recommended"] = True
@@ -280,6 +303,14 @@ def register_profile(state_path: Path, name: str, profile: dict, activate: bool 
     state_path.parent.mkdir(parents=True, exist_ok=True)
     state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
     return name
+
+
+def set_active(state_path: Path, name: str) -> None:
+    """Profil für den nächsten Start merken (wenn Orbwise gerade nicht läuft)."""
+    data = _read_state(state_path)
+    data["active_profile"] = name
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
 
 
 def added_models(state_path: Path) -> list[str]:

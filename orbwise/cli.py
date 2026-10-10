@@ -69,6 +69,13 @@ def cmd_doctor(args) -> None:
     line(st["online"], f"Ollama {T('unter', 'at')} {cfg.llm.base_url}", "sudo systemctl enable --now ollama")
     if st["online"]:
         line(st["embed_available"], f"{T('Embedding-Modell', 'Embedding model')} {cfg.llm.embed_model}", f"ollama pull {cfg.llm.embed_model}")
+    from . import llamacpp
+    if llamacpp.installed(cfg):  # Build für eigene Modelle (Hugging Face, ~/models)
+        m = llamacpp.manifest(cfg)
+        why = llamacpp.check_build(llamacpp.binary(cfg).resolve().parent, m.get("flavor", ""))
+        line(not why, f"llama.cpp {m.get('tag', '?')} ({m.get('flavor', '?')})" + (f" – {why}" if why else "")
+             + f" · {T('Modelle in', 'models in')} {llamacpp._short(llamacpp.models_dir(cfg))}",
+             "orbwise model llamacpp --update")
     for name, p in router.profiles.items():
         mark = T(" (aktiv)", " (active)") if name == router.active else ""
         print(f"  {T('Profil', 'Profile')} {name}{mark}: {p.backend} · {p.model} · {p.base_url}")
@@ -347,6 +354,20 @@ def cmd_model(args) -> None:
     args.tag = " ".join(args.tag or []) or None
     if args.name == "search":
         return cmd_model_search(args, cfg)
+    if args.name == "llamacpp":  # orbwise model llamacpp [--update]
+        from . import llamacpp
+        from . import models as mdl
+        if args.update or not llamacpp.installed(cfg):
+            try:
+                ok = llamacpp.install(cfg, mdl.detect_gpu(), update=True)
+            except (httpx.HTTPError, OSError, ValueError) as e:
+                print(T(f"✘ llama.cpp konnte nicht geladen werden: {e}", f"✘ Could not download llama.cpp: {e}"))
+                ok = None
+            sys.exit(0 if ok else 1)
+        m = llamacpp.manifest(cfg)
+        print(f"llama.cpp {m.get('tag', '?')} ({m.get('flavor', '?')}) · {llamacpp.binary(cfg)}")
+        print(T("Aktualisieren: orbwise model llamacpp --update", "Update: orbwise model llamacpp --update"))
+        return
     if args.name in ("add", "remove", "choose"):
         return cmd_model_manage(args, cfg, state)
     router = LLMRouter(cfg.llm, state_path=state)
@@ -395,15 +416,17 @@ def cmd_model_search(args, cfg) -> None:
     try:
         if repo:
             gpu = mdl.detect_gpu()
-            items = mdl.hf_quants(repo, gpu["vram_gb"], mdl.installed_models(cfg.llm.base_url))
+            from . import llamacpp
+            items = mdl.hf_quants(repo, gpu["vram_gb"], llamacpp.models_dir(cfg))
             if not items:
-                print(T("Keine einzeln ladbare GGUF-Datei in diesem Repo.", "No single-file GGUF in this repo."))
+                print(T("Keine GGUF-Datei in diesem Repo.", "No GGUF file in this repo."))
                 return
             print(T(f"{repo} (Grafikspeicher: {gpu['vram_gb']:g} GB; ✔ passt · ~ teils im RAM · ✘ zu groß)",
                     f"{repo} (video memory: {gpu['vram_gb']:g} GB; ✔ fits · ~ partly in RAM · ✘ too big)"))
             for q in items:
                 extra = T("  [EMPFOHLEN]", "  [RECOMMENDED]") if q.get("recommended") else ""
-                extra += T("  [installiert]", "  [installed]") if q["installed"] else ""
+                extra += T("  [heruntergeladen]", "  [downloaded]") if q["installed"] else ""
+                extra += T(f"  [{q['parts']} Teile]", f"  [{q['parts']} parts]") if q["parts"] > 1 else ""
                 print(f"  {mdl.FIT_MARK[q['fit']]} {q['quant']:<14} ~{q['download_gb']:>5.1f} GB   "
                       f"orbwise model add {q['tag']}{extra}")
             return
@@ -422,7 +445,8 @@ def cmd_model_search(args, cfg) -> None:
 
 
 def cmd_model_manage(args, cfg, state: Path) -> None:
-    """orbwise model add [ollama-name] · orbwise model remove <name> · orbwise model choose (für den Installer)."""
+    """orbwise model add [ollama-name | hf-link | datei.gguf] · orbwise model remove <name> · orbwise model choose
+    (für den Installer)."""
     import subprocess
 
     import httpx
@@ -474,6 +498,13 @@ def cmd_model_manage(args, cfg, state: Path) -> None:
         return
     # add
     gpu = mdl.detect_gpu()
+    raw = (args.tag or "").strip()
+    if raw.lower().endswith(".gguf") and not mdl.HF_URL_RE.match(raw):  # vorhandene Datei (z. B. in ~/models)
+        name = _add_llamacpp(cfg, state, gpu, path=Path(os.path.expanduser(raw)))
+        if not name:
+            sys.exit(1)
+        print(T(f"✔ '{name}' angelegt – startet mit llama.cpp.", f"✔ '{name}' added – runs with llama.cpp."))
+        return _finish_add(args, state, name, name, base, headers)
     tag = mdl.normalize_tag(args.tag or "") if (args.tag or "").strip() else \
         mdl.choose_interactive(gpu["vram_gb"], mdl.installed_models(cfg.llm.base_url))
     if not tag:
@@ -497,6 +528,12 @@ def cmd_model_manage(args, cfg, state: Path) -> None:
         except httpx.HTTPError:
             pass
         return
+    if mdl.is_hf(tag):  # Hugging Face → Datei nach ~/models, läuft mit llama.cpp
+        name = _add_llamacpp(cfg, state, gpu, tag=tag)
+        if not name:
+            sys.exit(1)
+        print(T(f"✔ '{name}' angelegt – startet mit llama.cpp.", f"✔ '{name}' added – runs with llama.cpp."))
+        return _finish_add(args, state, name, name, base, headers)
     if not shutil.which("ollama"):
         print(T("ollama ist nicht installiert – erst scripts/install.sh ausführen.",
                 "ollama is not installed – run scripts/install.sh first."))
@@ -507,6 +544,57 @@ def cmd_model_manage(args, cfg, state: Path) -> None:
                 f"✘ Could not download '{tag}' – check the name (ollama.com/library) or pick another model."))
         sys.exit(1)
     name = mdl.register_model(state, tag)
+    _finish_add(args, state, name, tag, base, headers)
+
+
+def _add_llamacpp(cfg, state: Path, gpu: dict, tag: str = "", path: Path | None = None) -> str | None:
+    """Hugging-Face-Modell (hf.co/<repo>:<quant>) laden bzw. vorhandene GGUF-Datei übernehmen – läuft mit llama.cpp."""
+    import asyncio
+
+    import httpx
+
+    from . import llamacpp
+    from . import models as mdl
+    from .llm_router import LLMRouter
+    if path is not None and not path.is_file():
+        print(T(f"✘ Datei nicht gefunden: {path}", f"✘ File not found: {path}"))
+        return None
+    try:
+        if not llamacpp.install(cfg, gpu):
+            return None
+        profiles = LLMRouter(cfg.llm, state_path=state).profiles
+        if path is not None:
+            return llamacpp.add_model(cfg, state, path, None, gpu, profiles, downloaded=False)
+        repo, _, quant = tag[6:].partition(":")
+        items = mdl.hf_quants(repo, gpu["vram_gb"], llamacpp.models_dir(cfg))
+        item = next((x for x in items if x["quant"].lower() == quant.lower()), None) if quant else \
+            next((x for x in items if x.get("recommended")), items[0] if items else None)
+        if not item:
+            print(T(f"✘ Keine passende GGUF-Datei in {repo} – Varianten: orbwise model search {repo}",
+                    f"✘ No matching GGUF file in {repo} – variants: orbwise model search {repo}"))
+            return None
+        print(T(f"Lade {repo} {item['quant']} (~{item['download_gb']} GB) nach {llamacpp.repo_dir(cfg, repo)} …",
+                f"Downloading {repo} {item['quant']} (~{item['download_gb']} GB) to {llamacpp.repo_dir(cfg, repo)} …"))
+        shown = [-1]
+
+        async def progress(done: int, total: int) -> None:
+            pct = int(100 * done / total) if total else 0
+            if pct // 5 != shown[0]:
+                shown[0] = pct // 5
+                print(f"  {done / 1e9:.1f} / {total / 1e9:.1f} GB ({pct} %)", flush=True)
+        first, mmproj, _ = asyncio.run(llamacpp.download_quant(cfg, repo, item, progress))
+        return llamacpp.add_model(cfg, state, first, mmproj, gpu, profiles, downloaded=True, repo=repo)
+    except (httpx.HTTPError, OSError, ValueError) as e:
+        print(f"✘ {e}")
+        return None
+
+
+def _finish_add(args, state: Path, name: str, shown: str, base: str, headers: dict) -> None:
+    """Neues Modell im laufenden Orbwise bekannt machen und auf Wunsch aktivieren."""
+    import httpx
+
+    from . import models as mdl
+    tag = shown
     activate = args.yes or not sys.stdin.isatty() or input(T(f"'{tag}' jetzt aktivieren? [J/n] ", f"Activate '{tag}' now? [Y/n] ")
                                                 ).strip().lower() not in ("n", "nein", "no")
     try:
@@ -519,7 +607,7 @@ def cmd_model_manage(args, cfg, state: Path) -> None:
             print(T(f"✔ '{name}' steht jetzt im Modell-Menü.", f"✔ '{name}' is now in the model menu."))
     except httpx.ConnectError:
         if activate:
-            mdl.register_model(state, tag, activate=True)
+            mdl.set_active(state, name)
         print(T(f"✔ '{name}' gespeichert" + (" und wird beim nächsten Start verwendet." if activate else "."),
                 f"✔ '{name}' saved" + (" and will be used on the next start." if activate else ".")))
 
@@ -606,6 +694,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("tag", nargs="*", help=T("bei add: Ollama-Name oder Hugging-Face-Link · bei search: Suchbegriff",
                                             "with add: Ollama name or Hugging Face link · with search: search term"))
     p.add_argument("-y", "--yes", action="store_true", help=T("ohne Rückfragen", "no questions"))
+    p.add_argument("--update", action="store_true", help=T("bei llamacpp: neuesten Build laden",
+                                                           "with llamacpp: download the newest build"))
     p.add_argument("--vram", type=float, help=argparse.SUPPRESS)
     p.add_argument("--out", help=argparse.SUPPRESS)
     p = sub.add_parser("context-test", help=T("Kontextfenster mit dem aktiven Modell prüfen (Größe, Cache, Füllung)",

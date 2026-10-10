@@ -23,7 +23,11 @@ llm:
   # keep_alive: 30m        # how long Ollama keeps the model in (V)RAM after the last request
   # request_timeout: 300   # seconds until a model request is given up
 
+  # models_dir: ~/models    # GGUF models for llama.cpp (Hugging Face downloads land here; files placed here
+  #                          # show up under "On disk" in Settings → Models – no profile needed)
+
   # Optional: several model profiles. Switch by clicking the LLM pill or with `orbwise model <name>`.
+  # Models added in the web UI (Hugging Face, ~/models) need no entry here.
   # Without profiles there is a single profile "standard" built from the values above.
   # active: bonsai
   # profiles:

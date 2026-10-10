@@ -100,10 +100,12 @@ class ManagedServer:
             return False
         if not self.running() and not await self.port_in_use():
             command = os.path.expanduser(self.cfg.command)
-            env = {**os.environ, **{k: str(v) for k, v in self.cfg.env.items()}}
+            env = {**os.environ, **{k: os.path.expanduser(str(v)) for k, v in self.cfg.env.items()}}
+            if "LD_LIBRARY_PATH" in self.cfg.env and os.environ.get("LD_LIBRARY_PATH"):  # ergänzen statt ersetzen
+                env["LD_LIBRARY_PATH"] += ":" + os.environ["LD_LIBRARY_PATH"]
             try:  # Bonsai (Hybrid-Modell): Prompt-Cache über Checkpoints – sonst liest er nach Änderungen viel neu ein
                 from .bonsai import cache_flags
-                extra = await asyncio.to_thread(cache_flags, command, {k: str(v) for k, v in self.cfg.env.items()})
+                extra = await asyncio.to_thread(cache_flags, command, {k: env[k] for k in self.cfg.env})
             except Exception:  # noqa: BLE001 – nur eine Beschleunigung, der Start darf nicht daran scheitern
                 extra = ""
             if extra:
@@ -185,6 +187,12 @@ def library_hint(command: str) -> str:
         text = _log_path().read_text(errors="replace")[-20000:].rsplit("===== Starte:", 1)[-1]  # nur letzter Start
     except OSError:
         return ""
+    arch = re.search(r"unknown model architecture: '?([\w.-]+)", text)
+    if arch:
+        return T(f"\n→ Dieser llama-server kennt den Modelltyp „{arch.group(1)}“ noch nicht. Für Modelle aus der "
+                 "Oberfläche: Einstellungen → Modelle → llama.cpp AKTUALISIEREN (oder orbwise model llamacpp --update).",
+                 f"\n→ This llama-server does not know the model type “{arch.group(1)}” yet. For models added in the "
+                 "web UI: Settings → Models → update llama.cpp (or orbwise model llamacpp --update).")
     m = re.search(r"error while loading shared libraries: ([^:\s]+)", text)
     if not m:
         return ""

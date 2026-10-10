@@ -1,5 +1,5 @@
 """Modelle direkt von Hugging Face: Link oder hf.co-Name einfügen, suchen, Quantisierung mit Größe/Passung wählen –
-Ollama lädt dann hf.co/<nutzer>/<repo>:<quant>."""
+Orbwise lädt dann die GGUF-Datei und startet sie mit llama.cpp (Ablauf siehe test_llamacpp.py)."""
 
 import json
 import threading
@@ -8,7 +8,6 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 from fastapi.testclient import TestClient
-from test_models import FakeOllama, ollama  # noqa: F401 – Fixture
 
 from orbwise import models as mdl
 
@@ -72,7 +71,8 @@ def test_normalize_links_and_names():
     assert n(f"https://huggingface.co/{REPO}/blob/main/Qwen3.6-27B-UD-Q4_K_XL.gguf") == f"hf.co/{REPO}:UD-Q4_K_XL"
     assert n(f"huggingface.co/{REPO}/resolve/main/x/Qwen3.6-27B-Q8_0.gguf?download=true") == f"hf.co/{REPO}:Q8_0"
     assert n(f"hf.co/{REPO}:Q4_K_M") == f"hf.co/{REPO}:Q4_K_M"  # Groß/Klein bleibt
-    assert n(f"https://huggingface.co/{REPO}/blob/main/BF16/Qwen3.6-27B-BF16-00001-of-00002.gguf") is None
+    # geteilte Dateien: llama.cpp lädt alle Teile
+    assert n(f"https://huggingface.co/{REPO}/blob/main/BF16/Qwen3.6-27B-BF16-00001-of-00002.gguf") == f"hf.co/{REPO}:BF16"
     assert n("Qwen3:8B") == "qwen3:8b" and n("; rm -rf /") is None and n("") is None
     assert mdl.label_of(f"hf.co/{REPO}:UD-Q4_K_XL") == "Qwen3.6-27B UD-Q4_K_XL"
     assert mdl.slug(f"hf.co/{REPO}:Q4_K_M") == "hf.co-unsloth-qwen3.6-27b-gguf-q4-k-m"
@@ -84,24 +84,27 @@ def test_search_all_words(hf):
     assert mdl.hf_search("   ") == []
 
 
-def test_quants_fit_vram(hf):
-    items = mdl.hf_quants(REPO, 20, {f"hf.co/{REPO.lower()}:q2_k"})
-    assert [x["quant"] for x in items] == ["Q2_K", "UD-Q4_K_XL", "Q8_0"]  # ohne mmproj und geteilte Dateien
-    q2, q4, q8 = items
-    assert q2["fit"] == "ok" and q2["installed"] and q8["fit"] == "big"
-    assert q4["tag"] == f"hf.co/{REPO}:UD-Q4_K_XL" and q4["vram_gb"] > 17.6
+def test_quants_fit_vram(hf, tmp_path):
+    models = tmp_path / "models"
+    (models / "unsloth_Qwen3.6-27B-GGUF").mkdir(parents=True)
+    (models / "unsloth_Qwen3.6-27B-GGUF" / "Qwen3.6-27B-Q2_K.gguf").write_bytes(b"x")
+    items = mdl.hf_quants(REPO, 24, models)
+    assert [x["quant"] for x in items] == ["Q2_K", "UD-Q4_K_XL", "Q8_0", "BF16"]  # mmproj kommt mit, nicht als Variante
+    q2, q4, q8, bf16 = items
+    assert q2["installed"] and not q4["installed"] and q2["fit"] == "ok" and q8["fit"] == "tight"
+    assert q4["tag"] == f"hf.co/{REPO}:UD-Q4_K_XL" and q4["download_gb"] == 18.5  # 17,6 GB + Bildmodul 0,9 GB
+    assert q4["mmproj"]["path"] == "mmproj-F16.gguf" and q4["vram_gb"] == 20.0
+    assert bf16["parts"] == 1 and bf16["file"].startswith("BF16/")
     assert [x["quant"] for x in items if x.get("recommended")] == ["UD-Q4_K_XL"]  # größte, die ganz passt
     assert [x["quant"] for x in mdl.hf_quants(REPO, 16) if x.get("recommended")] == ["Q2_K"]
     with pytest.raises(ValueError):
         mdl.hf_quants("../etc", 8)
 
 
-def test_hf_via_web_api(cfg, hf, ollama, monkeypatch):  # noqa: F811
+def test_hf_search_api(cfg, hf, monkeypatch):
     monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
-    monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
+    monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
     monkeypatch.setattr(mdl, "detect_gpu", lambda: {"vendor": "amd", "name": "x", "vram_gb": 24.0})
-    cfg.llm.base_url = ollama
-    monkeypatch.setattr(FakeOllama, "pulled", [])
     from orbwise.server import create_app
     with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
         found = client.get("/api/models/hf/search", params={"q": "qwen3.6 27b"}).json()["results"]
@@ -110,23 +113,9 @@ def test_hf_via_web_api(cfg, hf, ollama, monkeypatch):  # noqa: F811
         assert client.get("/api/models/hf/search", params={"q": link}).json()["results"] == \
             [{"repo": REPO, "tag": f"hf.co/{REPO}:Q8_0"}]
         quants = client.get("/api/models/hf/quants", params={"repo": REPO}).json()
-        assert quants["gpu"]["vram_gb"] == 24 and len(quants["quants"]) == 3
+        assert quants["gpu"]["vram_gb"] == 24 and len(quants["quants"]) == 4
         assert client.get("/api/models/hf/quants", params={"repo": "x/gibtsnicht"}).status_code == 404
-        with client.websocket_connect("ws://localhost:8765/ws", headers={"Origin": "http://localhost:8765"}) as ws:
-            ws.receive_json()
-            r = client.post("/api/models/pull", json={"tag": f"https://huggingface.co/{REPO}/blob/main/Qwen3.6-27B-UD-Q4_K_XL.gguf"})
-            assert r.json()["tag"] == f"hf.co/{REPO}:UD-Q4_K_XL"
-            while True:
-                ev = ws.receive_json()
-                if ev["type"] == "model_pull" and (ev.get("done") or ev.get("error")):
-                    break
-            assert ev.get("done"), ev
-        profiles = {p["name"]: p for p in client.get("/api/models").json()["profiles"]}
-        p = profiles[ev["profile"]]
-        assert p["model"] == f"hf.co/{REPO}:UD-Q4_K_XL" and p["label"] == "Qwen3.6-27B UD-Q4_K_XL"
-        assert client.post("/api/models/pull", json={"tag": "https://huggingface.co/a/b/blob/main/x-00001-of-00002.gguf"}
-                           ).status_code == 400
-    assert FakeOllama.pulled == [f"hf.co/{REPO}:UD-Q4_K_XL"]
+        assert client.post("/api/models/pull", json={"tag": "; rm -rf /"}).status_code == 400
 
 
 def test_runner_crash_is_explained():

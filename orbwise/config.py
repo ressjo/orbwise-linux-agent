@@ -68,6 +68,9 @@ class LLMConfig(BaseModel):
     profiles: dict[str, ProfileConfig] = Field(default_factory=dict)
     # Profil beim Start (eine Auswahl in der Oberfläche wird gemerkt und hat Vorrang)
     active: str = ""
+    # GGUF-Modelle für llama.cpp: Downloads von Hugging Face landen hier, vorhandene Dateien erscheinen im
+    # Modell-Menü unter „Auf der Festplatte“
+    models_dir: str = "~/models"
 
     def resolved_profiles(self) -> dict[str, ProfileConfig]:
         """Alle Profile mit aufgefüllten Standardwerten."""

@@ -2272,7 +2272,8 @@
       b.querySelector(".mi-tag").textContent = p.active ? L("AKTIV", "ACTIVE")
         : p.name === data.switching ? L("LÄDT …", "LOADING …")
         : p.managed ? L("STARTET SERVER", "STARTS SERVER") : p.backend.toUpperCase();
-      b.querySelector(".mi-sub").textContent = `${p.backend} · ${p.model}` + (p.size_gb ? ` · ${p.size_gb} GB` : "");
+      b.querySelector(".mi-sub").textContent = (p.engine ? `${p.engine} · ${p.num_ctx ? Math.round(p.num_ctx / 1024) + "k" : ""}`.replace(/ · $/, "")
+        : `${p.backend} · ${p.model}`) + (p.size_gb ? ` · ${p.size_gb} GB` : "");
       b.onclick = async () => {
         closeModelMenu();
         if (p.active) return;
@@ -2301,8 +2302,31 @@
       add.textContent = L("+ MODELL HINZUFÜGEN …", "+ ADD MODEL …");
       add.onclick = (e) => { e.stopPropagation(); openPresetMenu(); };
       modelMenu.appendChild(add);
+      llamacppRow();
     }
     modelMenu.classList.remove("hidden");
+  }
+
+  // llama.cpp-Build für eigene Modelle: Version und Aktualisieren (neue Modelltypen brauchen oft einen neuen Build)
+  async function llamacppRow() {
+    let st;
+    try { st = await getJSON("/api/llamacpp"); } catch { return; }
+    if (!st.installed || modelMenu.querySelector(".mm-llamacpp")) return;
+    const row = document.createElement("div");
+    row.className = "mm-hint mm-llamacpp";
+    row.innerHTML = `<span></span> <button type="button" class="mm-link"></button>`;
+    row.querySelector("span").textContent = `llama.cpp ${st.tag || ""}` + (st.flavor ? ` (${st.flavor})` : "")
+      + L(" – startet Modelle von Hugging Face und aus ~/models.", " – runs models from Hugging Face and ~/models.");
+    const btn = row.querySelector("button");
+    btn.textContent = st.updating ? L("WIRD AKTUALISIERT …", "UPDATING …") : L("AKTUALISIEREN", "UPDATE");
+    btn.disabled = st.updating;
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      btn.disabled = true;
+      btn.textContent = L("WIRD AKTUALISIERT …", "UPDATING …");
+      try { await api("POST", "/api/llamacpp/update"); } catch { btn.disabled = false; }
+    };
+    modelMenu.appendChild(row);
   }
   // Liste und Kontext-Block nach Wechsel/Änderung neu zeichnen (nicht, solange die Vorauswahl offen ist)
   function refreshModelViews() {
@@ -2326,14 +2350,23 @@
     form.className = "mm-search";
     form.innerHTML = `<input type="search" autocomplete="off" spellcheck="false"><button type="submit">${L("SUCHEN", "SEARCH")}</button>`;
     const q = form.querySelector("input");
-    q.placeholder = L("Hugging Face durchsuchen oder Link einfügen (z. B. qwen3.6 27b)",
-                      "Search Hugging Face or paste a link (e.g. qwen3.6 27b)");
+    q.placeholder = L("Hugging Face durchsuchen, Link oder Pfad zu einer .gguf einfügen (z. B. qwen3.6 27b)",
+                      "Search Hugging Face, paste a link or a path to a .gguf (e.g. qwen3.6 27b)");
     const hf = document.createElement("div");
     hf.className = "mm-hf";
     form.onclick = (e) => e.stopPropagation();
-    form.onsubmit = (e) => { e.preventDefault(); hfSearch(q.value, hf); };
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      const text = q.value.trim();
+      if (/^[~/].*\.gguf$/i.test(text)) { addLocal(text); return; }  // Pfad zu einer eigenen GGUF-Datei
+      hfSearch(text, hf);
+    };
     modelMenu.appendChild(form);
     modelMenu.appendChild(hf);
+    const local = document.createElement("div");
+    local.className = "mm-hf";
+    modelMenu.appendChild(local);
+    localModels(local);
     const presetTitle = document.createElement("div");
     presetTitle.className = "mm-title";
     presetTitle.textContent = L("VORAUSWAHL", "PRESETS");
@@ -2427,12 +2460,12 @@
     box.innerHTML = "";
     const title = document.createElement("div");
     title.className = "mm-hint";
-    title.textContent = repo + " · " + L("Ollama lädt die Datei direkt von Hugging Face.", "Ollama downloads the file straight from Hugging Face.");
+    title.textContent = repo + " · " + L("Orbwise lädt die Datei nach ~/models und startet sie mit llama.cpp.",
+                                         "Orbwise downloads the file to ~/models and runs it with llama.cpp.");
     box.appendChild(title);
     const items = only ? data.quants.filter((x) => x.tag.toLowerCase() === only.toLowerCase()) : data.quants;
     if (!items.length) {
-      box.insertAdjacentHTML("beforeend", `<div class="mm-hint">${L("Keine einzeln ladbare GGUF-Datei (geteilte Dateien kann Ollama nicht laden).",
-                                                                     "No single-file GGUF (Ollama cannot load split files).")}</div>`);
+      box.insertAdjacentHTML("beforeend", `<div class="mm-hint">${L("Keine GGUF-Datei in diesem Repo.", "No GGUF file in this repo.")}</div>`);
       return;
     }
     for (const x of items) {
@@ -2441,18 +2474,65 @@
       mark.textContent = FIT_MARKS[x.fit] + " ";
       const pulling = data.pulling.includes(x.tag);
       const b = hfItem([mark, document.createTextNode(x.quant)],
-                       pulling ? L("LÄDT …", "LOADING …") : x.installed ? L("INSTALLIERT", "INSTALLED")
+                       pulling ? L("LÄDT …", "LOADING …") : x.installed ? L("HERUNTERGELADEN", "DOWNLOADED")
                          : x.recommended ? L("EMPFOHLEN", "RECOMMENDED") : "",
-                       `~${x.download_gb} GB · ${L("braucht", "needs")} ~${x.vram_gb} GB VRAM`);
-      b.disabled = pulling || x.installed;
+                       `~${x.download_gb} GB · ${L("braucht", "needs")} ~${x.vram_gb} GB VRAM`
+                         + (x.parts > 1 ? ` · ${x.parts} ${L("Teile", "parts")}` : "")
+                         + (x.mmproj ? L(" · + Bildmodul", " · + vision") : ""));
+      b.disabled = pulling;
       b.onclick = (e) => { e.stopPropagation(); startPull(x.tag, `${repo} ${x.quant}`, x.fit); };
       box.appendChild(b);
     }
   }
 
+  // GGUF-Dateien in ~/models, die noch kein Modell sind: ein Klick legt es an (läuft mit llama.cpp)
+  async function localModels(box) {
+    let data;
+    try { data = await getJSON("/api/models/local"); } catch { return; }
+    const free = data.items.filter((x) => !x.profile);
+    box.innerHTML = "";
+    const title = document.createElement("div");
+    title.className = "mm-title";
+    title.textContent = L("AUF DER FESTPLATTE", "ON DISK") + ` (${data.dir})`;
+    box.appendChild(title);
+    if (!free.length) {
+      const hint = document.createElement("div");
+      hint.className = "mm-hint";
+      hint.textContent = data.items.length ? L("Alle GGUF-Dateien dort sind schon Modelle.", "All GGUF files there are models already.")
+        : L(`Hier abgelegte GGUF-Dateien erscheinen automatisch – oder einen Pfad oben einfügen.`,
+            `GGUF files placed there show up here – or paste a path above.`);
+      box.appendChild(hint);
+      return;
+    }
+    for (const x of free) {
+      const mark = document.createElement("span");
+      mark.className = "fit-" + x.fit;
+      mark.textContent = FIT_MARKS[x.fit] + " ";
+      const b = hfItem([mark, document.createTextNode(x.label)], data.pulling.includes(x.label) ? L("LÄDT …", "LOADING …") : "",
+                       `${x.rel} · ~${x.size_gb} GB · ${L("braucht", "needs")} ~${x.vram_gb} GB VRAM`
+                         + (x.parts > 1 ? ` · ${x.parts} ${L("Teile", "parts")}` : "")
+                         + (x.mmproj ? L(" · + Bildmodul", " · + vision") : ""));
+      b.onclick = (e) => { e.stopPropagation(); addLocal(x.path, x.label, x.fit); };
+      box.appendChild(b);
+    }
+  }
+
+  async function addLocal(path, label, fit) {
+    if (fit === "big" && !confirm(L(`${label} ist für deinen Grafikspeicher zu groß und wird sehr langsam. Trotzdem hinzufügen?`,
+                                    `${label} is too big for your video memory and will be very slow. Add anyway?`))) return;
+    try {
+      const r = await api("POST", "/api/models/local", { path });
+      toast(L(`Lege ${r.tag} an …`, `Adding ${r.tag} …`));
+      openPresetMenu();
+    } catch { /* Meldung kommt von api() */ }
+  }
+
   async function deleteModel(p) {
     const size = p.size_gb ? L(` Gibt ~${p.size_gb} GB frei.`, ` Frees ~${p.size_gb} GB.`) : "";
-    if (!confirm(L(`${p.label} löschen? Die Modelldateien werden entfernt.`, `Delete ${p.label}? The model files are removed.`) + size)) return;
+    const text = p.keeps_files ? L(`${p.label} aus der Liste entfernen? Die Datei in ~/models bleibt.`,
+                                   `Remove ${p.label} from the list? The file in ~/models stays.`)
+      : L(`${p.label} löschen? Die Modelldateien werden entfernt.`, `Delete ${p.label}? The model files are removed.`) + size;
+    if (!confirm(text)) return;
     try {
       await api("DELETE", `/api/models/${encodeURIComponent(p.name)}`);
       toast(L(`✔ ${p.label} gelöscht`, `✔ ${p.label} deleted`));
@@ -2492,6 +2572,12 @@
     else if (row) updatePullRow(row, ev);
     if (ev.cancelled) { toast(L(`Download von ${ev.tag} abgebrochen`, `Download of ${ev.tag} cancelled`)); return; }
     if (ev.error) { toast(L(`✘ ${ev.tag}: `, `✘ ${ev.tag}: `) + ev.error); return; }
+    if (ev.done && ev.kind === "llamacpp") {
+      toast(L(`✔ llama.cpp ${ev.version || ""} bereit – gilt ab dem nächsten Modellstart.`,
+              `✔ llama.cpp ${ev.version || ""} ready – used from the next model start.`));
+      refreshModelViews();
+      return;
+    }
     if (ev.done) {
       toast(L(`✔ ${ev.tag} geladen – jetzt im Modell-Menü auswählbar.`, `✔ ${ev.tag} downloaded – now selectable in the model menu.`));
       addSystem(L(`Modell ${ev.tag} ist bereit (Menü LLM oben).`, `Model ${ev.tag} is ready (LLM menu at the top).`));

@@ -11,7 +11,9 @@ import logging
 import os
 import re
 import shutil
+import tarfile
 import time
+import zipfile
 from datetime import datetime
 from pathlib import Path
 
@@ -824,6 +826,7 @@ def create_app(cfg: Config) -> FastAPI:
                     "profiles": [{"name": "demo", "label": "Demo (Fake-LLM)", "backend": "fake", "model": "fake",
                                   "base_url": "", "managed": False, "active": True}]}
         from . import bonsai as bonsai_mod
+        from . import llamacpp as llamacpp_mod
         from . import models as mdl
         profiles = llm.describe()
         sizes: dict[str, int] = {}
@@ -842,6 +845,10 @@ def create_app(cfg: Config) -> FastAPI:
             size = sizes.get(p["model"]) or sizes.get(f"{p['model']}:latest") if p["backend"] == "ollama" else None
             if p["name"] in bonsai_mod.VARIANTS:
                 size = sum(f.stat().st_size for f in bonsai_mod.model_files(variant=p["name"]))
+            elif (local := llamacpp_mod.local_record(state_file, p["name"])) is not None:
+                size = sum(Path(f).stat().st_size for f in local.get("files", []) if Path(f).is_file())
+                p["engine"] = "llama.cpp"
+                p["keeps_files"] = not local.get("downloaded")
             p["size_gb"] = round(size / 1e9, 1) if size else None
         return {"active": llm.active, "switching": llm.switching, "profiles": profiles,
                 "pulls": [{"tag": t, **pull_state.get(t, {})} for t in sorted(pulls)]}
@@ -887,11 +894,11 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.get("/api/models/hf/quants")
     async def hf_quants(repo: str):
+        from . import llamacpp
         from . import models as mdl
         gpu = await asyncio.to_thread(mdl.detect_gpu)
-        installed = await asyncio.to_thread(mdl.installed_models, cfg.llm.base_url)
         try:
-            items = await asyncio.to_thread(mdl.hf_quants, repo, gpu["vram_gb"], installed)
+            items = await asyncio.to_thread(mdl.hf_quants, repo, gpu["vram_gb"], llamacpp.models_dir(cfg))
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
         except httpx.HTTPStatusError as e:
@@ -900,6 +907,144 @@ def create_app(cfg: Config) -> FastAPI:
         except httpx.HTTPError as e:
             raise HTTPException(502, f"Hugging Face nicht erreichbar: {e}") from e
         return {"repo": repo, "gpu": gpu, "quants": items, "pulling": sorted(pulls)}
+
+    # ---------- Eigene Modelle über llama.cpp (Hugging Face, ~/models) ----------
+    llamacpp_lock = asyncio.Lock()
+    add_lock = asyncio.Lock()  # Profile nacheinander anlegen – sonst bekämen zwei fertige Downloads denselben Port
+
+    def hf_base() -> str:
+        from . import models as mdl
+        return mdl.HF_API[:-4] if mdl.HF_API.endswith("/api") else "https://huggingface.co"
+
+    async def pull_event(tag: str, **data) -> None:
+        pull_state[tag] = data
+        await hub.broadcast({"type": "model_pull", "tag": tag, **data})
+
+    async def ensure_llamacpp(tag: str, gpu: dict, update: bool = False) -> dict:
+        """llama.cpp einrichten (einmalig) bzw. aktualisieren – Statuszeilen gehen als model_pull-Fortschritt raus."""
+        from . import llamacpp
+        async with llamacpp_lock:
+            if llamacpp.installed(cfg) and not update:
+                return llamacpp.manifest(cfg)
+            loop = asyncio.get_running_loop()
+            lines: list[str] = []
+
+            def out(line: str) -> None:
+                lines.append(line)
+                asyncio.run_coroutine_threadsafe(pull_event(tag, status=line.strip()), loop)
+            await pull_event(tag, status="llama.cpp wird eingerichtet …")
+            try:
+                result = await asyncio.to_thread(llamacpp.install, cfg, gpu, out, update)
+            except (httpx.HTTPError, OSError, ValueError, zipfile.BadZipFile, tarfile.TarError) as e:
+                raise LLMError(f"llama.cpp konnte nicht geladen werden: {e}") from e
+            if not result:
+                raise LLMError("llama.cpp konnte nicht eingerichtet werden" + (f": {lines[-1].strip()}" if lines else ""))
+            return result
+
+    async def run_job(tag: str, job) -> None:
+        """Download/Einrichtung als Hintergrund-Aufgabe mit model_pull-Events (Fortschritt, fertig, Fehler, Abbruch)."""
+        try:
+            result = await job()
+            await hub.broadcast({"type": "model_pull", "tag": tag, "done": True, **result})
+        except asyncio.CancelledError:
+            await hub.broadcast({"type": "model_pull", "tag": tag, "cancelled": True})
+            raise
+        except (httpx.HTTPError, LLMError, ValueError, OSError) as e:
+            text = str(e)
+            if isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (401, 403):
+                text = "Hugging Face verlangt eine Anmeldung für dieses Modell (HF_TOKEN setzen)"
+            await hub.broadcast({"type": "model_pull", "tag": tag, "error": text or type(e).__name__})
+        except Exception as e:  # noqa: BLE001 – unerwartet: trotzdem melden, sonst hinge die Anzeige
+            log.exception("Modell-Aufgabe %s fehlgeschlagen", tag)
+            await hub.broadcast({"type": "model_pull", "tag": tag, "error": f"{type(e).__name__}: {e}"})
+        finally:
+            pulls.pop(tag, None)
+            pull_state.pop(tag, None)
+
+    async def pull_gguf(tag: str) -> dict:
+        """hf.co/<repo>:<quant> → Dateien nach ~/models laden, llama.cpp bereitstellen, Profil anlegen."""
+        from . import llamacpp
+        from . import models as mdl
+        repo, _, quant = tag[6:].partition(":")
+        gpu = await asyncio.to_thread(mdl.detect_gpu)
+        items = await asyncio.to_thread(mdl.hf_quants, repo, gpu["vram_gb"], llamacpp.models_dir(cfg))
+        item = next((x for x in items if x["quant"].lower() == quant.lower()), None) if quant else \
+            next((x for x in items if x.get("recommended")), items[0] if items else None)
+        if not item:
+            raise LLMError(f"Keine GGUF-Variante {quant} in {repo} gefunden".replace("  ", " "))
+        await ensure_llamacpp(tag, gpu)
+        last = 0.0
+
+        async def progress(done: int, total: int) -> None:
+            nonlocal last
+            now = time.monotonic()
+            if now - last > 0.5 or done >= total:
+                last = now
+                await pull_event(tag, status="downloading", completed=done, total=total)
+        first, mmproj, _ = await llamacpp.download_quant(cfg, repo, item, progress, hf_base())
+        async with add_lock:
+            name = await asyncio.to_thread(llamacpp.add_model, cfg, state_file, first, mmproj, gpu, llm.profiles,
+                                           True, repo)
+            llm.add_downloaded_models()
+        return {"profile": name}
+
+    async def add_local(tag: str, path: Path) -> dict:
+        from . import llamacpp
+        from . import models as mdl
+        gpu = await asyncio.to_thread(mdl.detect_gpu)
+        await ensure_llamacpp(tag, gpu)
+        async with add_lock:
+            name = await asyncio.to_thread(llamacpp.add_model, cfg, state_file, path, None, gpu, llm.profiles, False)
+            llm.add_downloaded_models()
+        return {"profile": name}
+
+    def start_job(tag: str, job) -> str:
+        existing = next((k for k in pulls if k.lower() == tag.lower()), None)
+        if existing:
+            return existing
+        pulls[tag] = asyncio.create_task(run_job(tag, job))
+        return tag
+
+    @app.get("/api/models/local")
+    async def models_local():
+        """GGUF-Dateien in ~/models (llm.models_dir) – mit dem Profil, das sie schon nutzt."""
+        from . import llamacpp
+        from . import models as mdl
+        gpu = await asyncio.to_thread(mdl.detect_gpu)
+        profiles = llm.profiles if isinstance(llm, LLMRouter) else {}
+        items = await asyncio.to_thread(llamacpp.scan, cfg, profiles, gpu["vram_gb"])
+        return {"dir": llamacpp._short(llamacpp.models_dir(cfg)), "items": items, "gpu": gpu, "pulling": sorted(pulls)}
+
+    @app.post("/api/models/local")
+    async def models_local_add(request: Request):
+        from . import llamacpp
+        if not isinstance(llm, LLMRouter):
+            raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
+        raw = str((await request.json()).get("path", "")).strip()
+        path = Path(os.path.expanduser(raw))
+        if not raw or not path.is_file() or not path.name.lower().endswith(".gguf") or "mmproj" in path.name.lower():
+            raise HTTPException(400, "Keine GGUF-Modelldatei gefunden: " + raw[:200])
+        tag = start_job(llamacpp.label_for(path), lambda: add_local(llamacpp.label_for(path), path))
+        return {"ok": True, "tag": tag}
+
+    @app.get("/api/llamacpp")
+    async def llamacpp_status():
+        from . import llamacpp
+        m = llamacpp.manifest(cfg)
+        return {"installed": llamacpp.installed(cfg), "tag": m.get("tag"), "flavor": m.get("flavor"),
+                "updating": "llama.cpp" in pulls}
+
+    @app.post("/api/llamacpp/update")
+    async def llamacpp_update():
+        """Neuesten llama.cpp-Build laden – laufende Modelle nutzen ihn ab dem nächsten Start."""
+        from . import models as mdl
+
+        async def job() -> dict:
+            gpu = await asyncio.to_thread(mdl.detect_gpu)
+            m = await ensure_llamacpp("llama.cpp", gpu, update=True)
+            return {"kind": "llamacpp", "version": m.get("tag"), "flavor": m.get("flavor")}
+        start_job("llama.cpp", job)
+        return {"ok": True}
 
     async def pull_model(tag: str) -> None:
         from . import models as mdl
@@ -946,13 +1091,15 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(400, "Ungültiger Modellname oder Hugging-Face-Link (geteilte GGUF-Dateien gehen nicht)")
         if tag in mdl.BY_TAG and mdl.BY_TAG[tag].kind != "ollama":
             raise HTTPException(400, prompts.spoken(cfg, "setup_terminal", cmd=f"orbwise model add {tag}"))
+        if mdl.is_hf(tag):  # Hugging Face: Orbwise lädt die GGUF-Datei selbst und startet sie mit llama.cpp
+            return {"ok": True, "tag": start_job(tag, lambda: pull_gguf(tag))}
         if tag not in pulls:
             pulls[tag] = asyncio.create_task(pull_model(tag))
         return {"ok": True, "tag": tag}
 
     @app.delete("/api/models/pull/{tag:path}")
     async def model_pull_cancel(tag: str):
-        task = pulls.get(tag.lower())
+        task = pulls.get(tag) or next((t for k, t in pulls.items() if k.lower() == tag.lower()), None)
         if task is None:
             raise HTTPException(404, "Kein laufender Download")
         task.cancel()
@@ -964,6 +1111,7 @@ def create_app(cfg: Config) -> FastAPI:
     async def model_delete(name: str):
         """Per Oberfläche/CLI hinzugefügtes Modell entfernen und seine Dateien löschen (gibt Speicher frei)."""
         from . import bonsai as bonsai_mod
+        from . import llamacpp as llamacpp_mod
         from . import models as mdl
         if not isinstance(llm, LLMRouter):
             raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
@@ -981,6 +1129,8 @@ def create_app(cfg: Config) -> FastAPI:
         freed = 0
         if name in bonsai_mod.VARIANTS:
             freed = await asyncio.to_thread(bonsai_mod.remove_model_files, None, name)
+        elif llamacpp_mod.local_record(state_file, name) is not None:  # nur selbst geladene Dateien löschen
+            freed = await asyncio.to_thread(llamacpp_mod.forget, cfg, state_file, name)
         elif profile.backend == "ollama" and not any(
                 p.backend == "ollama" and p.model == profile.model for p in llm.profiles.values()):
             try:  # nur löschen, wenn kein anderes Profil dasselbe Ollama-Modell nutzt
