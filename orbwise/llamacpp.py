@@ -32,14 +32,16 @@ import httpx
 from .lang import T
 
 REPO = "ggml-org/llama.cpp"
-RELEASE_API = f"https://api.github.com/repos/{REPO}/releases/latest"
+# Die fertigen Builds stehen in den täglichen Releases b1234 (als Vorabversion markiert) – „latest“ zeigt bei llama.cpp
+# auf ein Release ohne Programme, deshalb die Liste der neuesten Releases
+RELEASE_API = f"https://api.github.com/repos/{REPO}/releases?per_page=20"
 FIRST_PORT = 8090
 CONTEXT_STEPS = (65536, 49152, 32768, 24576, 16384, 12288, 8192)
 SPLIT_RE = re.compile(r"-(\d{5})-of-(\d{5})\.gguf$", re.I)
 # Varianten der fertigen Linux-Builds (Reihenfolge = Vorliebe je GPU; die CPU-Variante geht immer)
 FLAVORS = {
     "rocm": re.compile(r"bin-ubuntu-.*(rocm|hip).*x64\.(zip|tar\.gz)$", re.I),
-    "cuda": re.compile(r"bin-ubuntu-.*cuda.*x64\.(zip|tar\.gz)$", re.I),
+    "cuda": re.compile(r"^llama-.*bin-ubuntu-.*cuda.*x64\.(zip|tar\.gz)$", re.I),  # nicht cudart-… (nur Laufzeit)
     "vulkan": re.compile(r"bin-ubuntu-vulkan-x64\.(zip|tar\.gz)$", re.I),
     "cpu": re.compile(r"bin-ubuntu-x64\.(zip|tar\.gz)$", re.I),
 }
@@ -96,6 +98,27 @@ def flavors_for(gpu: dict) -> list[str]:
     return ["cpu"]
 
 
+def cudart_for(assets: list[dict], asset: dict) -> dict | None:
+    """Die CUDA-Laufzeit zum CUDA-Build (cudart-llama-…-cuda-12.8-x64) – ohne sie fehlen libcudart/libcublas."""
+    m = re.search(r"cuda-([\d.]+)-x64", asset.get("name", ""))
+    if not m:
+        return None
+    return next((a for a in assets if a.get("name", "").startswith("cudart-")
+                 and f"ubuntu-cuda-{m.group(1)}-x64" in a.get("name", "")), None)
+
+
+def pick_release(releases, gpu: dict) -> tuple[dict | None, list[str]]:
+    """Neuestes Release mit einem passenden Build → (Release, geprüfte Tags)."""
+    if isinstance(releases, dict):
+        releases = [releases]
+    seen = []
+    for rel in releases if isinstance(releases, list) else []:
+        seen.append(str(rel.get("tag_name") or "?"))
+        if pick_assets(rel.get("assets") or [], gpu):
+            return rel, seen
+    return None, seen
+
+
 def pick_assets(assets: list[dict], gpu: dict) -> list[tuple[str, dict]]:
     """(Variante, Asset) in der Reihenfolge, in der sie probiert werden."""
     out = []
@@ -130,6 +153,10 @@ def _extract(archive: Path, target: Path) -> None:
                     if dest.exists() or dest.is_symlink():
                         dest.unlink()
                     os.symlink(link, dest)
+                elif member.islnk():  # Hardlink im Archiv: Ziel liegt schon (flach) im Ordner
+                    origin = target / Path(member.linkname).name
+                    if origin.is_file():
+                        shutil.copyfile(origin, dest)
                 elif member.isfile():
                     src = t.extractfile(member)
                     if src is None:
@@ -188,16 +215,20 @@ def install(cfg, gpu: dict, out: Out = print, update: bool = False, client: http
     try:
         r = client.get(release_api or RELEASE_API)
         r.raise_for_status()
-        rel = r.json()
+        rel, seen = pick_release(r.json(), gpu)
+        if rel is None:
+            out(T(f"✘ Kein passender Linux-Build von llama.cpp gefunden (geprüft: {', '.join(seen[:5]) or 'nichts'}) – "
+                  "später erneut versuchen: orbwise model llamacpp --update",
+                  f"✘ No matching Linux build of llama.cpp found (checked: {', '.join(seen[:5]) or 'nothing'}) – "
+                  "try again later: orbwise model llamacpp --update"))
+            return None
         tag = str(rel.get("tag_name") or "unbekannt")
         old = manifest(cfg)
         if update and installed(cfg) and old.get("tag") == tag:
             out(T(f"llama.cpp {tag} ist aktuell.", f"llama.cpp {tag} is up to date."))
             return old
-        choices = pick_assets(rel.get("assets") or [], gpu)
-        if not choices:
-            out(T("✘ Kein passender Linux-Build von llama.cpp gefunden.", "✘ No matching Linux build of llama.cpp found."))
-            return None
+        assets = rel.get("assets") or []
+        choices = pick_assets(assets, gpu)
         for flavor, asset in choices:
             target = base / f"{tag}-{flavor}"
             archive = base / asset["name"]
@@ -207,6 +238,12 @@ def install(cfg, gpu: dict, out: Out = print, update: bool = False, client: http
                 shutil.rmtree(target)
             _extract(archive, target)
             archive.unlink(missing_ok=True)
+            runtime = cudart_for(assets, asset) if flavor == "cuda" else None
+            if runtime:  # CUDA-Laufzeit in denselben Ordner
+                extra = base / runtime["name"]
+                download(runtime["browser_download_url"], extra, client, out)
+                _extract(extra, target)
+                extra.unlink(missing_ok=True)
             why = check_build(target, flavor, run)
             if why:
                 out(T(f"  {flavor}-Build läuft hier nicht ({why}) – versuche den nächsten …",

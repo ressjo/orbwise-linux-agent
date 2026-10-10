@@ -74,10 +74,13 @@ class Fake(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
         base = f"http://127.0.0.1:{self.server.server_port}"
-        if path == "/repos/ggml-org/llama.cpp/releases/latest":
+        if path == "/repos/ggml-org/llama.cpp/releases":
             assets = [{"name": n, "browser_download_url": f"{base}/dl/{n}"} for n in Fake.assets]
-            assets.append({"name": f"llama-{Fake.tag}-bin-ubuntu-arm64.zip", "browser_download_url": f"{base}/dl/x"})
-            return self._send(json.dumps({"tag_name": Fake.tag, "assets": assets}).encode(), ctype="application/json")
+            assets.append({"name": f"llama-{Fake.tag}-bin-ubuntu-arm64.tar.gz", "browser_download_url": f"{base}/dl/x"})
+            # wie bei GitHub heute: das neueste Release hat keine Programme (nur nightly-tag.txt)
+            rels = [{"tag_name": "v0.6.0", "assets": [{"name": "nightly-tag.txt", "browser_download_url": "x"}]},
+                    {"tag_name": Fake.tag, "prerelease": True, "assets": assets}]
+            return self._send(json.dumps(rels).encode(), ctype="application/json")
         if path.startswith("/dl/"):
             return self._send(Fake.assets[path[4:]])
         if path == f"/api/models/{REPO}/tree/main":
@@ -111,9 +114,9 @@ class Fake(BaseHTTPRequestHandler):
 def release(tag="b9999"):
     Fake.tag = tag
     Fake.assets = {
-        f"llama-{tag}-bin-ubuntu-rocm-7.0-x64.zip": _zip({"build/bin/llama-server": BROKEN}),
+        f"llama-{tag}-bin-ubuntu-rocm-10.0-x64.tar.gz": _tgz({"build/bin/llama-server": BROKEN}),
         f"llama-{tag}-bin-ubuntu-vulkan-x64.tar.gz": _tgz({"llama-b/llama-server": WORKS, "llama-b/libllama.so.0": "lib"}),
-        f"llama-{tag}-bin-ubuntu-x64.zip": _zip({"build/bin/llama-server": WORKS}),
+        f"llama-{tag}-bin-ubuntu-x64.tar.gz": _tgz({"build/bin/llama-server": WORKS}),
     }
 
 
@@ -128,7 +131,7 @@ def fake(tmp_path, monkeypatch):
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{srv.server_port}"
     monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
-    monkeypatch.setattr(llamacpp, "RELEASE_API", f"{base}/repos/ggml-org/llama.cpp/releases/latest")
+    monkeypatch.setattr(llamacpp, "RELEASE_API", f"{base}/repos/ggml-org/llama.cpp/releases")
     monkeypatch.setattr(mdl, "HF_API", f"{base}/api")
     yield base
     srv.shutdown()
@@ -145,13 +148,34 @@ AMD = {"vendor": "amd", "name": "RX 7900 XT", "vram_gb": 20.0}
 
 # ---------------------------------------------------------------- Build
 def test_asset_choice_by_gpu():
-    names = ["llama-b1-bin-ubuntu-x64.zip", "llama-b1-bin-ubuntu-vulkan-x64.zip", "llama-b1-bin-ubuntu-arm64.zip",
-             "llama-b1-bin-ubuntu-rocm-7.0-x64.tar.gz", "llama-b1-bin-win-cuda-12.4-x64.zip"]
+    names = ["cudart-llama-b1-bin-ubuntu-cuda-12.8-x64.tar.gz", "cudart-llama-b1-bin-ubuntu-cuda-13.4-x64.tar.gz",
+             "llama-b1-bin-ubuntu-arm64.tar.gz", "llama-b1-bin-ubuntu-cuda-12.8-x64.tar.gz",
+             "llama-b1-bin-ubuntu-cuda-13.4-x64.tar.gz", "llama-b1-bin-ubuntu-openvino-2026.4.1-x64.tar.gz",
+             "llama-b1-bin-ubuntu-rocm-10.0-x64.tar.gz", "llama-b1-bin-ubuntu-vulkan-arm64.tar.gz",
+             "llama-b1-bin-ubuntu-vulkan-x64.tar.gz", "llama-b1-bin-ubuntu-x64.tar.gz", "llama-b1-bin-win-cuda-12.4-x64.zip",
+             "llama-b1-ui.tar.gz"]  # echte Namen (Release b11541)
     assets = [{"name": n} for n in names]
-    pick = lambda gpu: [f for f, _ in llamacpp.pick_assets(assets, gpu)]  # noqa: E731
-    assert pick(AMD) == ["rocm", "vulkan", "cpu"]
-    assert pick({"vendor": "nvidia"}) == ["vulkan", "cpu"]  # kein Linux-CUDA-Build → Vulkan
-    assert pick({"vendor": "none"}) == ["cpu"]
+
+    def pick(gpu):
+        return [(f, a["name"]) for f, a in llamacpp.pick_assets(assets, gpu)]
+    assert pick(AMD) == [("rocm", "llama-b1-bin-ubuntu-rocm-10.0-x64.tar.gz"),
+                         ("vulkan", "llama-b1-bin-ubuntu-vulkan-x64.tar.gz"), ("cpu", "llama-b1-bin-ubuntu-x64.tar.gz")]
+    cuda = llamacpp.pick_assets(assets, {"vendor": "nvidia"})[0][1]
+    assert cuda["name"] == "llama-b1-bin-ubuntu-cuda-12.8-x64.tar.gz"  # nicht das cudart-Paket
+    assert llamacpp.cudart_for(assets, cuda)["name"] == "cudart-llama-b1-bin-ubuntu-cuda-12.8-x64.tar.gz"
+    assert [f for f, _ in pick({"vendor": "none"})] == ["cpu"]
+    rel, seen = llamacpp.pick_release([{"tag_name": "v0.6.0", "assets": [{"name": "nightly-tag.txt"}]},
+                                       {"tag_name": "b1", "assets": assets}], AMD)
+    assert rel["tag_name"] == "b1" and seen == ["v0.6.0", "b1"]
+    assert llamacpp.pick_release({"tag_name": "x", "assets": []}, AMD) == (None, ["x"])
+
+
+def test_cuda_build_gets_its_runtime(setup, fake):
+    Fake.assets = {"llama-b9999-bin-ubuntu-cuda-12.8-x64.tar.gz": _tgz({"build/bin/llama-server": WORKS.replace(
+                       "Vulkan0", "CUDA0")}),
+                   "cudart-llama-b9999-bin-ubuntu-cuda-12.8-x64.tar.gz": _tgz({"libcudart.so.12": "rt"})}
+    m = llamacpp.install(setup, {"vendor": "nvidia", "vram_gb": 12}, lambda _: None)
+    assert m["flavor"] == "cuda" and (llamacpp.root(setup) / "current" / "libcudart.so.12").exists()
 
 
 def test_install_falls_back_to_vulkan_and_updates(setup, fake):
