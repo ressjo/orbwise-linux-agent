@@ -244,12 +244,13 @@ def _mem_mib() -> int:
     return 0
 
 
-def _server_help(directory: Path, env: dict | None, run: Runner) -> str:
-    """Hilfetext eines llama-server aus dem Bonsai-Ordner (einmal je Ordner) – leer, wenn keiner startet."""
-    key = str(directory)
+def _server_help(directory: Path, env: dict | None, run: Runner, binaries: list[Path] | None = None) -> str:
+    """Hilfetext eines llama-server aus dem Bonsai-Ordner bzw. der angegebenen Programmdatei (einmal je Ort) – leer,
+    wenn keiner startet."""
+    key = str(binaries[0]) if binaries else str(directory)
     if key not in _HELP:
         text = ""
-        for binary in sorted((directory / "bin").glob("*/llama-server")):
+        for binary in binaries or sorted((directory / "bin").glob("*/llama-server")):
             try:
                 result = run([str(binary), "--help"], capture_output=True, text=True, timeout=30,
                              env={**os.environ, **(env or {})})
@@ -264,14 +265,20 @@ def _server_help(directory: Path, env: dict | None, run: Runner) -> str:
 
 
 def cache_flags(command: str, env: dict | None = None, run: Runner = subprocess.run, mem_mib: int | None = None) -> str:
-    """Zusätzliche Argumente für den Bonsai-Starter: mehr Checkpoints, ein Prompt-Cache im RAM (höchstens 4 GB bzw.
+    """Zusätzliche Argumente für den Bonsai-Starter bzw. einen direkt gestarteten llama-server: mehr Checkpoints, ein Prompt-Cache im RAM (höchstens 4 GB bzw.
     15 % des Arbeitsspeichers) und das Sichern ruhender Slots. Nur Optionen, die der vorhandene llama-server kennt,
     und nur, wenn der Befehl sie nicht schon selbst setzt – sonst leer."""
     m = re.search(r"(\S*start_llama_server\.sh)\b", command)
-    if not m:
+    direct = re.match(r"\s*(?:\S+=\S*\s+)*(\S*llama-server)(\s|$)", command)  # llama-server direkt (eigenes Modell)
+    if m:
+        help_text = _server_help(Path(os.path.expanduser(m.group(1))).parent.parent, env, run)
+    elif direct:
+        binary = Path(os.path.expanduser(direct.group(1)))
+        if not binary.is_absolute():
+            binary = Path(shutil.which(str(binary)) or binary)
+        help_text = _server_help(binary.parent, env, run, [binary])
+    else:
         return ""
-    directory = Path(os.path.expanduser(m.group(1))).parent.parent
-    help_text = _server_help(directory, env, run)
     if not help_text:
         return ""
     ram = mem_mib if mem_mib is not None else _mem_mib()

@@ -241,7 +241,11 @@ def test_cache_flags_for_the_hybrid_model(tmp_path):
     assert "--cache-ram 1228" in bonsai.cache_flags(script, run=run, mem_mib=8 * 1024)  # 15 % von 8 GB
     own = bonsai.cache_flags(script + " --ctx-checkpoints 8", run=run, mem_mib=31 * 1024)
     assert "--ctx-checkpoints" not in own and "--cache-ram 4096" in own  # vom Nutzer gesetzt – bleibt
-    assert bonsai.cache_flags("llama-server -m x.gguf", run=run) == ""  # kein Bonsai-Starter
+    assert bonsai.cache_flags("python3 serve.py", run=run) == ""  # kein llama-server
+    # eigenes Modell (z. B. Qwen von Hugging Face) mit direkt gestartetem llama-server: dieselben Optionen
+    binary = d / "bin" / "vulkan" / "llama-server"
+    direct = bonsai.cache_flags(f"{binary} -m ~/models/q.gguf -np 1", run=run, mem_mib=31 * 1024)
+    assert direct == "--ctx-checkpoints 32 --cache-ram 4096 --cache-idle-slots"
 
     old = tmp_path / "alt"
     (old / "bin" / "cpu").mkdir(parents=True)
