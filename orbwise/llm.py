@@ -56,6 +56,28 @@ def _check_overflow(status: int, body: str) -> None:
         "for 7–9B models)."), n_ctx, n_prompt)
 
 
+_RUNNER_DIED = re.compile(r"process has terminated|segmentation fault|core dumped|exit status|SIGSEGV|SIGABRT", re.I)
+
+
+def ollama_error(status: int, body: str, model: str) -> str:
+    """Fehlertext von Ollama – stürzt der Modell-Prozess beim Laden ab, mit Erklärung statt nur der Rohmeldung."""
+    raw = body.strip()[:300]
+    try:
+        raw = json.loads(raw).get("error", raw)
+    except (ValueError, AttributeError):
+        pass
+    if _RUNNER_DIED.search(raw):
+        hint = (f"Ollama konnte das Modell {model} nicht laden – der Modell-Prozess ist abgestürzt ({raw}). "
+                "Häufige Ursachen: Ollama kennt den Modelltyp dieser GGUF-Datei noch nicht (sehr neue Modelle, "
+                "besonders von Hugging Face mit separatem Bildmodul/mmproj), oder der Grafikspeicher ist voll bzw. "
+                "der GPU-Treiber hakt. Prüfen: 'ollama run " + model + " hallo' und 'journalctl -u ollama -n 80'.")
+        if model.startswith("hf.co/"):
+            hint += (" Tipp: dasselbe Modell aus der Ollama-Bibliothek nehmen (Vorauswahl) oder die GGUF-Datei mit "
+                     "llama-server betreiben.")
+        return hint
+    return f"Ollama antwortet mit {status}: {raw}" if status != 200 else raw
+
+
 class OllamaLLM:
     def __init__(self, cfg: LLMConfig, transport: httpx.AsyncBaseTransport | None = None):
         self.cfg = cfg
@@ -99,13 +121,13 @@ class OllamaLLM:
             async with self._client.stream("POST", "/api/chat", json=payload) as resp:
                 if resp.status_code != 200:
                     body = (await resp.aread()).decode(errors="replace")
-                    raise LLMError(f"Ollama antwortet mit {resp.status_code}: {body[:300]}")
+                    raise LLMError(ollama_error(resp.status_code, body, self.cfg.model))
                 async for line in resp.aiter_lines():
                     if not line.strip():
                         continue
                     chunk = json.loads(line)
                     if "error" in chunk:
-                        raise LLMError(chunk["error"])
+                        raise LLMError(ollama_error(200, chunk["error"], self.cfg.model))
                     msg = chunk.get("message") or {}
                     if msg.get("thinking"):
                         yield {"type": "reasoning", "text": msg["thinking"]}
@@ -132,7 +154,7 @@ class OllamaLLM:
         except httpx.ConnectError as e:
             raise LLMError(f"Ollama unter {self.cfg.base_url} nicht erreichbar") from e
         if resp.status_code != 200:
-            raise LLMError(f"Ollama antwortet mit {resp.status_code}: {resp.text[:300]}")
+            raise LLMError(ollama_error(resp.status_code, resp.text, self.cfg.model))
         return strip_think(resp.json().get("message", {}).get("content", ""))
 
     async def preload(self) -> None:
@@ -147,7 +169,7 @@ class OllamaLLM:
         if resp.status_code == 404 or "not found" in resp.text.lower():
             raise LLMError(f"Modell {self.cfg.model} fehlt – einmalig laden: ollama pull {self.cfg.model}")
         if resp.status_code != 200:
-            raise LLMError(f"Ollama antwortet mit {resp.status_code}: {resp.text[:200]}")
+            raise LLMError(ollama_error(resp.status_code, resp.text, self.cfg.model))
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         payload: dict[str, Any] = {"model": self.cfg.embed_model, "input": texts, "keep_alive": self.cfg.keep_alive}
