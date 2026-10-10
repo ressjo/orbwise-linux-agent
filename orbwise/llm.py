@@ -72,8 +72,8 @@ def ollama_error(status: int, body: str, model: str) -> str:
                 "besonders von Hugging Face mit separatem Bildmodul/mmproj), oder der Grafikspeicher ist voll bzw. "
                 "der GPU-Treiber hakt. Prüfen: 'ollama run " + model + " hallo' und 'journalctl -u ollama -n 80'.")
         if model.startswith("hf.co/"):
-            hint += (" Tipp: dasselbe Modell aus der Ollama-Bibliothek nehmen (Vorauswahl) oder die GGUF-Datei mit "
-                     "llama-server betreiben.")
+            hint += (" Lösung: Einstellungen → Modelle → beim Modell „MIT LLAMA.CPP NEU LADEN“ – dann läuft es mit "
+                     "llama-server statt Ollama.")
         return hint
     return f"Ollama antwortet mit {status}: {raw}" if status != 200 else raw
 
@@ -83,6 +83,7 @@ class OllamaLLM:
         self.cfg = cfg
         # Embeddings auf der CPU rechnen (spart Grafikspeicher, wenn ein anderes Modell die GPU belegt)
         self.embed_on_cpu = False
+        self.embed_gpu_broken = False  # Embedding-Modell stürzte auf der GPU ab → bis zum Neustart auf der CPU
         self._client = httpx.AsyncClient(base_url=cfg.base_url, timeout=cfg.request_timeout, transport=transport)
 
     async def close(self) -> None:
@@ -173,10 +174,19 @@ class OllamaLLM:
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         payload: dict[str, Any] = {"model": self.cfg.embed_model, "input": texts, "keep_alive": self.cfg.keep_alive}
-        if self.embed_on_cpu:
+        if self.embed_on_cpu or self.embed_gpu_broken:
             payload["options"] = {"num_gpu": 0}
         try:
             resp = await self._client.post("/api/embed", json=payload)
+            if resp.status_code != 200 and "options" not in payload and _RUNNER_DIED.search(resp.text):
+                # Embedding-Modell stürzt auf der GPU ab (Treiber/VRAM) → auf der CPU weiter, sonst fiele die
+                # Gedächtnis-Suche auf reine Volltextsuche zurück
+                cpu = await self._client.post("/api/embed", json={**payload, "options": {"num_gpu": 0}})
+                if cpu.status_code == 200:
+                    log.warning("Embedding-Modell %s stürzt auf der GPU ab (%s) – rechne bis zum Neustart auf der CPU",
+                                self.cfg.embed_model, resp.text[:120])
+                    self.embed_gpu_broken = True
+                    resp = cpu
         except httpx.HTTPError as e:
             raise LLMError(f"Ollama für Embeddings nicht erreichbar: {e}") from e
         if resp.status_code != 200:

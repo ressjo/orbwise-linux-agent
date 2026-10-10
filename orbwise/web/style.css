@@ -909,3 +909,4 @@ details.card[open] > summary .caret { transform: rotate(180deg); }
 .mm-llamacpp { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
 .mm-link { border: 1px solid var(--border-strong); border-radius: 6px; background: none; color: var(--accent); font-size: 11.5px; padding: 3px 9px; }
 .mm-link:disabled { opacity: .55; cursor: wait; }
+.mm-convert { margin-top: -2px; font-size: 12px; padding: 7px 12px; }

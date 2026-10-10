@@ -64,6 +64,7 @@ ALL_TOOLS_SECONDS = 10.0
 
 TAINT_SOURCES = {"mail_list", "mail_search", "mail_read", "mail_ask", "daily_briefing",
                  "look_at_screen", "look_at_image"}  # auch Bildschirm/Bild: eine Webseite kann Anweisungen zeigen
+PREWARM_RETRY_S = 600  # nach einem Ladefehler so lange nicht vorwärmen (je Profil)
 AUTO_TOOLS = ("run_shell", "ssh_run", "write_file", "edit_file")  # Auto-Modus „Auto“ gibt diese ohne Root frei
 TAINT_GUARDED = {"shell", "ssh", "portainer", "web", "files", "apps", "obsidian", "trilium", "calendar_tools",
                  "homeassistant", "memory_tools", "reminder_tools", "power", "telegram_tools"}
@@ -167,6 +168,7 @@ class Agent:
         # Wessen Prompt der Modell-Server gerade im Cache hat: (Profil, Chat, Epoche) – fürs Vorwärmen
         self._cache_owner: tuple | None = None
         self._prewarming = False
+        self._prewarm_failed: tuple | None = None  # (Profil, Zeit) des letzten gescheiterten Vorwärmens
         self._compacted_at: tuple | None = None  # (Chat, Epochen, Nachrichten) der letzten Komprimierung
         # Auto-Knopf: "off" = jeder Shell-Befehl fragt, "read" = erkannte lesende Befehle laufen ohne Rückfrage,
         # "files" = zusätzlich Dateien im eigenen Home anlegen/schreiben/kopieren/verschieben (ohne Root, ohne Löschen),
@@ -626,6 +628,7 @@ class Agent:
             self._plan, self._approved_plan = plan, approved_plan
             self._set_think(think)
             self._tainted = False
+            self._prewarm_failed = None  # eine echte Frage darf es wieder versuchen
             try:
                 return await self._run(user_text, emit, confirm, images)
             finally:
@@ -1256,6 +1259,9 @@ class Agent:
         if self.lock.locked() or getattr(self.llm, "switching", None) or not self.cache_cold() \
                 or getattr(self.llm, "gpu_borrowed", None):  # Bild-Modus hat gerade den Grafikspeicher
             return False
+        failed = self._prewarm_failed
+        if failed and failed[0] == self._profile_key() and time.monotonic() - failed[1] < PREWARM_RETRY_S:
+            return False  # Modell ließ sich eben nicht laden – nicht bei jedem Tastendruck erneut abstürzen lassen
         async with self.lock:
             self._prewarming = True
             try:
@@ -1290,6 +1296,8 @@ class Agent:
                     stats = ev.get("stats") or {}
         except Exception as e:  # noqa: BLE001 – Vorwärmen ist nur eine Beschleunigung
             log.info("Vorwärmen übersprungen: %s", e)
+            if isinstance(e, LLMError):  # Modell lädt nicht → eine Weile nicht mehr probieren (eine Frage schon)
+                self._prewarm_failed = (self._profile_key(), time.monotonic())
             if emit:
                 await emit({"type": "llm_phase", "id": pid, "phase": "done", "prewarm": True, "error": True,
                             "seconds": round(time.monotonic() - started, 1)})

@@ -303,3 +303,87 @@ def test_web_flow(setup, fake, monkeypatch):
         assert client.delete(f"/api/models/{downloaded}").json()["freed_gb"] >= 0 and not folder.exists()
         assert client.delete(f"/api/models/{imported}").status_code == 200 and mine.exists()  # eigene Datei bleibt
         assert client.post("/api/models/local", json={"path": "/gibts/nicht.gguf"}).status_code == 400
+
+
+# ---------------------------------------------------------------- Altes hf.co-Ollama-Modell umstellen
+def test_convert_old_ollama_hf_profile(setup, fake, monkeypatch):
+    from test_models import FakeOllama
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeOllama)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    monkeypatch.setattr(FakeOllama, "deleted", [])
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
+    monkeypatch.setattr(mdl, "detect_gpu", lambda: dict(AMD))
+    setup.llm.base_url = f"http://127.0.0.1:{srv.server_port}"
+    state = setup.memory.dir.parent / "state.json"
+    old_tag = f"hf.co/{REPO}:Q4_K_M"
+    old = mdl.register_model(state, old_tag)
+    mdl.register_model(state, f"hf.co/{REPO}:Q8_0")
+    from orbwise.server import create_app
+    try:
+        with TestClient(create_app(setup), base_url="http://localhost:8765") as client:
+            profiles = {p["name"]: p for p in client.get("/api/models").json()["profiles"]}
+            assert profiles[old]["convert"] == old_tag and "convert" not in profiles["standard"]
+            with client.websocket_connect("ws://localhost:8765/ws", headers={"Origin": "http://localhost:8765"}) as ws:
+                ws.receive_json()
+                client.post("/api/models/pull", json={"tag": old_tag, "replace": old})
+                ev = _until_done(ws, old_tag)
+            assert ev.get("done") and ev["replaced"] == old and "note" not in ev, ev
+            names = {p["name"] for p in client.get("/api/models").json()["profiles"]}
+            assert old not in names and ev["profile"] in names and old_tag not in mdl.added_models(state)
+            assert FakeOllama.deleted == [old_tag]  # Ollama-Kopie weg
+
+            # aktives altes Modell: das neue muss starten – startet es nicht, bleibt das alte und es gibt einen Hinweis
+            other = mdl.slug(f"hf.co/{REPO}:Q8_0")
+            assert client.post(f"/api/models/{other}/activate").status_code == 200
+            with client.websocket_connect("ws://localhost:8765/ws", headers={"Origin": "http://localhost:8765"}) as ws:
+                ws.receive_json()
+                client.post("/api/models/pull", json={"tag": f"hf.co/{REPO}:Q8_0", "replace": other})
+                ev = _until_done(ws, f"hf.co/{REPO}:Q8_0")
+            assert ev.get("done") and "startet aber nicht" in ev["note"], ev
+            active = client.get("/api/models").json()["active"]
+            assert active == other and other in {p["name"] for p in client.get("/api/models").json()["profiles"]}
+    finally:
+        srv.shutdown()
+
+
+# ---------------------------------------------------------------- Robustheit bei abstürzendem Ollama
+def test_embeddings_fall_back_to_cpu_when_the_gpu_runner_crashes(cfg):
+    import httpx
+
+    from orbwise.llm import OllamaLLM
+    calls = []
+
+    def handler(req):
+        body = json.loads(req.content)
+        calls.append(body.get("options"))
+        if not body.get("options"):
+            return httpx.Response(500, json={"error": "llama-server process has terminated: signal: segmentation fault"})
+        return httpx.Response(200, json={"embeddings": [[0.1, 0.2]]})
+    llm = OllamaLLM(cfg.llm, transport=httpx.MockTransport(handler))
+    assert asyncio.run(llm.embed(["x"])) == [[0.1, 0.2]] and llm.embed_gpu_broken
+    asyncio.run(llm.embed(["y"]))
+    assert calls == [None, {"num_gpu": 0}, {"num_gpu": 0}]  # danach gleich auf der CPU
+
+
+def test_prewarm_does_not_retry_a_model_that_fails_to_load(cfg, memory):
+    from orbwise.agent import Agent
+    from orbwise.llm import LLMError
+
+    class Broken:
+        context_size = 16384
+        profile = ProfileConfig(backend="ollama", model="kaputt")
+        active = "kaputt"
+        calls = 0
+
+        async def chat_stream(self, messages, tools=None, **kw):
+            Broken.calls += 1
+            raise LLMError("Ollama konnte das Modell nicht laden – abgestürzt")
+            yield {}
+    llm = Broken()
+    agent = Agent(cfg, llm, memory)
+    assert not asyncio.run(agent.prewarm()) and Broken.calls == 1
+    assert not asyncio.run(agent.prewarm()) and Broken.calls == 1  # gesperrt – kein erneuter Absturz
+    llm.active = "anderes"  # anderes Modell gewählt → wieder vorwärmen
+    asyncio.run(agent.prewarm())
+    assert Broken.calls == 2

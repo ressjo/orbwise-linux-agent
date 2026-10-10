@@ -850,6 +850,8 @@ def create_app(cfg: Config) -> FastAPI:
                 p["engine"] = "llama.cpp"
                 p["keeps_files"] = not local.get("downloaded")
             p["size_gb"] = round(size / 1e9, 1) if size else None
+            if p["backend"] == "ollama" and mdl.is_hf(p["model"]):  # alter Weg → auf llama.cpp umstellen anbieten
+                p["convert"] = p["model"]
         return {"active": llm.active, "switching": llm.switching, "profiles": profiles,
                 "pulls": [{"tag": t, **pull_state.get(t, {})} for t in sorted(pulls)]}
 
@@ -961,8 +963,33 @@ def create_app(cfg: Config) -> FastAPI:
             pulls.pop(tag, None)
             pull_state.pop(tag, None)
 
-    async def pull_gguf(tag: str) -> dict:
-        """hf.co/<repo>:<quant> → Dateien nach ~/models laden, llama.cpp bereitstellen, Profil anlegen."""
+    async def replace_profile(old: str, new: str) -> str:
+        """Altes Ollama-Profil (hf.co/…) durch das neue llama.cpp-Profil ersetzen: war es aktiv, das neue aktivieren;
+        dann das alte entfernen und seine Ollama-Kopie löschen → Hinweis für die Meldung (leer = alles gut)."""
+        from . import models as mdl
+        if old not in llm.profiles or not mdl.removable(state_file, old):
+            return ""
+        note = ""
+        if llm.active == old:
+            try:
+                await activate_model(new)
+            except HTTPException as e:
+                return f"Neues Modell angelegt, startet aber nicht: {e.detail}"
+        model = llm.profiles[old].model
+        await llm.remove_profile(old)
+        mdl.unregister_model(state_file, old)
+        if not any(p.backend == "ollama" and p.model == model for p in llm.profiles.values()):
+            try:
+                async with httpx.AsyncClient(base_url=cfg.llm.base_url, timeout=30) as client:
+                    await client.request("DELETE", "/api/delete", json={"model": model})
+            except httpx.HTTPError as e:
+                note = f"Ollama-Kopie nicht gelöscht: {e}"
+        await hub.broadcast({"type": "models_changed"})
+        return note
+
+    async def pull_gguf(tag: str, replace: str = "") -> dict:
+        """hf.co/<repo>:<quant> → Dateien nach ~/models laden, llama.cpp bereitstellen, Profil anlegen. replace: altes
+        Ollama-Profil desselben Modells, das danach wegfällt."""
         from . import llamacpp
         from . import models as mdl
         repo, _, quant = tag[6:].partition(":")
@@ -986,6 +1013,9 @@ def create_app(cfg: Config) -> FastAPI:
             name = await asyncio.to_thread(llamacpp.add_model, cfg, state_file, first, mmproj, gpu, llm.profiles,
                                            True, repo)
             llm.add_downloaded_models()
+        if replace:
+            note = await replace_profile(replace, name)
+            return {"profile": name, "replaced": replace, **({"note": note} if note else {})}
         return {"profile": name}
 
     async def add_local(tag: str, path: Path) -> dict:
@@ -1086,13 +1116,15 @@ def create_app(cfg: Config) -> FastAPI:
         from . import models as mdl
         if not isinstance(llm, LLMRouter):
             raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
-        tag = mdl.normalize_tag(str((await request.json()).get("tag", "")))
+        body = await request.json()
+        tag = mdl.normalize_tag(str(body.get("tag", "")))
         if not tag:
             raise HTTPException(400, "Ungültiger Modellname oder Hugging-Face-Link (geteilte GGUF-Dateien gehen nicht)")
         if tag in mdl.BY_TAG and mdl.BY_TAG[tag].kind != "ollama":
             raise HTTPException(400, prompts.spoken(cfg, "setup_terminal", cmd=f"orbwise model add {tag}"))
         if mdl.is_hf(tag):  # Hugging Face: Orbwise lädt die GGUF-Datei selbst und startet sie mit llama.cpp
-            return {"ok": True, "tag": start_job(tag, lambda: pull_gguf(tag))}
+            replace = str(body.get("replace") or "")  # altes hf.co-Ollama-Profil umstellen
+            return {"ok": True, "tag": start_job(tag, lambda: pull_gguf(tag, replace))}
         if tag not in pulls:
             pulls[tag] = asyncio.create_task(pull_model(tag))
         return {"ok": True, "tag": tag}

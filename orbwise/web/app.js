@@ -2295,6 +2295,7 @@
       del.onclick = (e) => { e.stopPropagation(); deleteModel(p); };
       row.append(b, del);
       modelMenu.appendChild(row);
+      if (p.convert) modelMenu.appendChild(convertButton(p));
     }
     if (data.active !== "demo") {
       const add = document.createElement("button");
@@ -2305,6 +2306,29 @@
       llamacppRow();
     }
     modelMenu.classList.remove("hidden");
+  }
+
+  // Altes Hugging-Face-Modell über Ollama (stürzt bei neuen Modelltypen oft ab) → mit llama.cpp neu laden
+  function convertButton(p) {
+    const btn = document.createElement("button");
+    btn.className = "model-item add mm-convert";
+    btn.textContent = L("↻ MIT LLAMA.CPP NEU LADEN", "↻ RELOAD WITH LLAMA.CPP");
+    btn.title = L("Lädt die Datei nach ~/models, startet sie mit llama-server und ersetzt dieses Ollama-Modell.",
+                  "Downloads the file to ~/models, runs it with llama-server and replaces this Ollama model.");
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm(L(`${p.label} mit llama.cpp neu laden? Die Datei wird erneut heruntergeladen (~${p.size_gb || "?"} GB); `
+                     + "danach ersetzt das neue Modell das alte.",
+                     `Reload ${p.label} with llama.cpp? The file is downloaded again (~${p.size_gb || "?"} GB); `
+                     + "the new model then replaces the old one."))) return;
+      btn.disabled = true;
+      try {
+        await api("POST", "/api/models/pull", { tag: p.convert, replace: p.name });
+        toast(L(`Lade ${p.label} für llama.cpp …`, `Downloading ${p.label} for llama.cpp …`));
+        openModelMenu();
+      } catch { btn.disabled = false; }
+    };
+    return btn;
   }
 
   // llama.cpp-Build für eigene Modelle: Version und Aktualisieren (neue Modelltypen brauchen oft einen neuen Build)
@@ -2575,6 +2599,12 @@
     if (ev.done && ev.kind === "llamacpp") {
       toast(L(`✔ llama.cpp ${ev.version || ""} bereit – gilt ab dem nächsten Modellstart.`,
               `✔ llama.cpp ${ev.version || ""} ready – used from the next model start.`));
+      refreshModelViews();
+      return;
+    }
+    if (ev.done && ev.replaced) {
+      toast(ev.note ? `⚠ ${ev.note}` : L(`✔ ${ev.tag} läuft jetzt mit llama.cpp – das alte Ollama-Modell ist entfernt.`,
+                                          `✔ ${ev.tag} now runs with llama.cpp – the old Ollama model was removed.`));
       refreshModelViews();
       return;
     }

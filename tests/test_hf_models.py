@@ -122,5 +122,5 @@ def test_runner_crash_is_explained():
     from orbwise.llm import ollama_error
     body = '{"error":"llama-server process has terminated: signal: segmentation fault (core dumped)"}'
     text = ollama_error(500, body, f"hf.co/{REPO}:UD-Q4_K_XL")
-    assert "abgestürzt" in text and "segmentation fault" in text and "llama-server betreiben" in text
+    assert "abgestürzt" in text and "segmentation fault" in text and "MIT LLAMA.CPP NEU LADEN" in text
     assert ollama_error(500, '{"error":"model not found"}', "x") == "Ollama antwortet mit 500: model not found"
