@@ -571,6 +571,7 @@ def create_app(cfg: Config) -> FastAPI:
         await startup.set("model", "running", T("starte ", "starting ") + label + " …")
         try:
             async with agent.lock:
+                llm.apply_mode(mode_info()["mode"])  # Coding kann ein eigenes Kontextfenster haben
                 await llm.start(model_progress)
                 await startup.set("model", "running", T(f"lade {llm.profile.model} in den Speicher …",
                                                         f"loading {llm.profile.model} into memory …"))
@@ -1388,17 +1389,23 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
         if name not in llm.profiles:
             raise HTTPException(404, "Unbekanntes Profil")
+        body = await request.json()
         try:
-            ctx = int((await request.json()).get("ctx", 0))
+            ctx = int(body.get("ctx", 0))
         except (TypeError, ValueError):
             raise HTTPException(400, "ctx fehlt") from None
-        active = name == llm.active
+        mode = str(body.get("mode") or llm.mode)
+        if mode not in ("tools", "coding"):
+            raise HTTPException(400, "Unbekannter Modus")
+        if ctx == 0 and mode != "coding":
+            raise HTTPException(400, "ctx fehlt")
+        active = name == llm.active and mode == llm.mode
         if active:
             await hub.broadcast({"type": "model_switching", "name": name, "label": llm.profiles[name].label})
             llm.switching = name
         try:
             async with agent.lock:  # wartet, bis eine laufende Antwort fertig ist
-                await llm.set_context(name, ctx, model_progress)
+                await llm.set_context(name, ctx, model_progress, mode=mode)
                 if active:
                     await llm.warm()  # Ollama: gleich mit der neuen Größe laden
         except LLMError as e:
@@ -1584,8 +1591,36 @@ def create_app(cfg: Config) -> FastAPI:
         # Eigenes Modell für diesen Modus gewählt? Dann im Hintergrund umschalten
         target = mode_models().get(mode)
         if isinstance(llm, LLMRouter) and target and target != llm.active and target in llm.profiles:
+            await llm.set_mode(mode, restart=False)  # das neue Modell startet gleich mit dem Fenster des Modus
             background.append(asyncio.create_task(switch_model_quietly(target)))
+        elif isinstance(llm, LLMRouter):
+            background.append(asyncio.create_task(switch_context_quietly(mode)))
         return mode_info()
+
+    async def switch_context_quietly(mode: str) -> None:
+        """Eigenes Kontextfenster des Modus: Server des aktiven Modells damit neu starten (wenn es abweicht)."""
+        wanted = llm.wanted_context(llm.active, mode)
+        if not wanted or wanted == llm.profile.num_ctx or llm.profile.backend == "ollama" and not llm.profile.server:
+            await llm.set_mode(mode)  # Ollama: neues num_ctx gilt ab der nächsten Anfrage, kein Neustart nötig
+            return
+        name = llm.active
+        await hub.broadcast({"type": "model_switching", "name": name, "label": llm.profile.label})
+        llm.switching = name
+        try:
+            async with agent.lock:
+                await llm.set_mode(mode, model_progress)
+        except LLMError as e:
+            await hub.broadcast({"type": "model_error", "name": name, "text": str(e)})
+            return
+        finally:
+            llm.switching = None
+            await idle_if_free()
+        await hub.broadcast({"type": "model_active", "name": name})
+        agent._cache_owner = None
+        agent.build_messages()
+        await hub.broadcast({"type": "context", **(agent.last_context or {})})
+        await hub.broadcast({"type": "models_changed"})
+        hub.prewarm_soon()
 
     async def switch_model_quietly(name: str) -> None:
         with contextlib.suppress(HTTPException):

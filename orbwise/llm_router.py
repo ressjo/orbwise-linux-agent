@@ -214,8 +214,18 @@ def tail_log(lines: int = 15) -> str:
 KV_TYPES = ("f16", "q8_0", "q4_0")
 
 
-def _flash_attn_flag(command: str, env: dict) -> str:
-    """-fa on (neuere llama-server) bzw. -fa (ältere) – je nachdem, was die Hilfe des Servers nennt."""
+def _server_ctx(server: ServerConfig) -> int | None:
+    """Kontextgröße laut Startbefehl (BONSAI_CTX oder -c/--ctx-size)."""
+    env = str((server.env or {}).get("BONSAI_CTX", "")).strip()
+    if env.isdigit():
+        return int(env)
+    m = re.findall(r"(?:^|\s)(?:-c|--ctx-size)\s+(\d+)", server.command)
+    return int(m[-1]) if m else None
+
+
+def _help_text(command: str, env: dict) -> str:
+    """--help des llama-server, den dieser Startbefehl nutzt (direkt oder über den Bonsai-Starter) – leer, wenn
+    unbekannt. Einmal je Programm (bonsai._server_help merkt es sich)."""
     try:
         from .bonsai import _server_help
         m = re.match(r"\s*(?:\S+=\S*\s+)*(\S*llama-server)(\s|$)", command)
@@ -228,8 +238,27 @@ def _flash_attn_flag(command: str, env: dict) -> str:
             text = _server_help(Path(os.path.expanduser(script)).parent.parent, env, subprocess.run)
         else:
             text = ""
-    except Exception:  # noqa: BLE001 – im Zweifel die neuere Form
+    except Exception:  # noqa: BLE001 – unbekannt
         text = ""
+    return text
+
+
+def kv_types(command: str, env: dict) -> list[str]:
+    """Angebotene KV-Cache-Stufen: f16/q8_0/q4_0 (falls der Server sie kennt) und zusätzlich 2-/3-Bit-Typen, die ein
+    Build anbietet (Forks) – laut „allowed values“ von --cache-type-k."""
+    text = _help_text(command, env)
+    m = re.search(r"--cache-type-k[^\n]*(?:\n[^\n-][^\n]*)*?allowed values:\s*([\w ,]+)", text)
+    if not m:
+        return list(KV_TYPES)
+    allowed = [t.strip().lower() for t in m.group(1).split(",") if t.strip()]
+    base = [t for t in KV_TYPES if t in allowed] or list(KV_TYPES)
+    low = [t for t in allowed if re.match(r"^(?:t|i)?q[23](?!\d)", t) and t not in base]  # q2_0, tq3_0, iq2_xs …
+    return base + low
+
+
+def _flash_attn_flag(command: str, env: dict) -> str:
+    """-fa on (neuere llama-server) bzw. -fa (ältere) – je nachdem, was die Hilfe des Servers nennt."""
+    text = _help_text(command, env)
     line = next((x for x in text.splitlines() if "--flash-attn" in x), "")
     if line and not re.search(r"\b(on|off|auto)\b", line):  # alte Builds: nur ein Schalter ohne Wert
         return "-fa"
@@ -257,6 +286,11 @@ class LLMRouter:
         # (release(restart=…)), bevor das Sprachmodell wieder gebraucht wird – siehe imagegen.py
         self.gpu_borrowed = None
         state = self._read_state()
+        self.mode = "tools"  # Tools oder Coding – Coding kann je Modell ein eigenes Kontextfenster haben
+        for p in self.profiles.values():  # eigener Server: die Größe steht im Startbefehl (BONSAI_CTX / -c)
+            if p.server and (n := _server_ctx(p.server)):
+                p.num_ctx = n
+        self._base_ctx = {name: p.num_ctx for name, p in self.profiles.items()}  # ohne Oberflächen-Einstellung
         for name, n in (state.get("context") or {}).items():  # in der Oberfläche eingestellt
             if name in self.profiles and isinstance(n, int):
                 self._apply_context(name, n)
@@ -427,6 +461,9 @@ class LLMRouter:
                 old = self.servers.get(previous)
                 if old and previous != name:
                     await old.stop()
+                n = self.wanted_context(name)  # Fenster des aktuellen Modus (Coding kann ein eigenes haben)
+                if previous != name and n and n != self.profiles[name].num_ctx:
+                    self._apply_context(name, n)
                 await self._prepare(name, progress)
             except LLMError:
                 # Zurück zum vorherigen Profil
@@ -528,7 +565,7 @@ class LLMRouter:
                     await running.stop_foreign()  # lief schon vor Orbwise → sonst blieben die alten Optionen
             apply()
             self.detected_ctx.pop(name, None)
-            if self.state_path:
+            if self.state_path and key:
                 data = self._read_state()
                 data.setdefault(key, {})[name] = value
                 self.state_path.parent.mkdir(parents=True, exist_ok=True)
@@ -541,14 +578,63 @@ class LLMRouter:
                     await old_client.close()
                 await self.detect_context()
 
-    async def set_context(self, name: str, n: int, progress: Progress | None = None) -> None:
-        """Kontextfenster ändern und merken (state.json). Beim aktiven Profil wird ein eigener Server neu gestartet,
-        Ollama lädt das Modell bei der nächsten Anfrage mit der neuen Größe."""
+    # ---------- Kontext je Modus (Tools / Coding) ----------
+    def wanted_context(self, name: str, mode: str | None = None) -> int | None:
+        """Gewünschtes Fenster eines Profils im Modus: Coding eigener Wert, sonst der Tools-Wert bzw. der Start-Wert."""
+        state = self._read_state()
+        own = (state.get("context_coding") or {}).get(name) if (mode or self.mode) == "coding" else None
+        return own or (state.get("context") or {}).get(name) or self._base_ctx.get(name)
+
+    def apply_mode(self, mode: str) -> None:
+        """Beim Start (bevor ein Server läuft): Fenster aller Profile für den Modus setzen."""
+        self.mode = mode
+        for name, p in self.profiles.items():
+            n = self.wanted_context(name, mode)
+            if n and n != p.num_ctx:
+                self._apply_context(name, n)
+
+    async def set_mode(self, mode: str, progress: Progress | None = None, restart: bool = True) -> bool:
+        """Modus gewechselt: hat das aktive Modell dort ein anderes Fenster, startet sein Server damit neu → True.
+        restart=False: das aktive Modell nicht anfassen (gleich wird ohnehin ein anderes aktiviert)."""
+        self.mode = mode
+        for name, p in self.profiles.items():
+            n = self.wanted_context(name, mode)
+            if name != self.active and n and n != p.num_ctx:
+                self._apply_context(name, n)  # läuft nicht – gilt beim nächsten Start
+        n = self.wanted_context(self.active, mode)
+        if not restart or not n or n == self.profile.num_ctx:
+            return False
+        name = self.active
+        await self._reconfigure(name, lambda: self._apply_context(name, n), None, None, progress)
+        return True
+
+    async def set_context(self, name: str, n: int, progress: Progress | None = None, mode: str | None = None) -> None:
+        """Kontextfenster ändern und merken (state.json; Coding getrennt). Beim aktiven Profil im aktuellen Modus wird
+        ein eigener Server neu gestartet, Ollama lädt das Modell bei der nächsten Anfrage mit der neuen Größe.
+        n = 0 im Coding-Modus: eigene Größe aufheben (wieder wie Tools)."""
         if name not in self.profiles:
             raise LLMError(f"Unbekanntes Profil '{name}'")
-        if not 1024 <= n <= 262144:
-            raise LLMError("Kontextfenster bitte zwischen 1.024 und 262.144 Token")
-        await self._reconfigure(name, lambda: self._apply_context(name, n), "context", n, progress)
+        mode = mode or self.mode
+        key = "context_coding" if mode == "coding" else "context"
+        if n == 0 and mode == "coding":
+            data = self._read_state()
+            (data.get(key) or {}).pop(name, None)
+            self.state_path and self.state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
+            n = self.wanted_context(name, "tools") or 0
+            if mode != self.mode or not n or n == self.profiles[name].num_ctx:
+                return
+            await self._reconfigure(name, lambda: self._apply_context(name, n), None, None, progress)
+            return
+        if not 1024 <= n <= 1048576:
+            raise LLMError("Kontextfenster bitte zwischen 1.024 und 1.048.576 Token")
+        if mode != self.mode:  # anderer Modus: nur merken – gilt beim Wechsel dorthin
+            data = self._read_state()
+            data.setdefault(key, {})[name] = n
+            if self.state_path:
+                self.state_path.parent.mkdir(parents=True, exist_ok=True)
+                self.state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
+            return
+        await self._reconfigure(name, lambda: self._apply_context(name, n), key, n, progress)
         got = self.detected_ctx.get(name) if name == self.active else None
         if got and got != n:
             raise LLMError(f"Der Modell-Server meldet weiterhin {got} Token Kontext statt {n} – er wurde "
@@ -576,8 +662,10 @@ class LLMRouter:
         """KV-Cache-Stufe (f16/q8_0/q4_0) ändern und merken; beim aktiven Profil startet der Server neu."""
         if name not in self.profiles:
             raise LLMError(f"Unbekanntes Profil '{name}'")
-        if kv not in KV_TYPES:
-            raise LLMError("KV-Cache-Stufe bitte f16, q8_0 oder q4_0")
+        p = self.profiles[name]
+        allowed = kv_types(p.server.command, p.server.env) if p.server else list(KV_TYPES)
+        if kv not in allowed:
+            raise LLMError(f"KV-Cache-Stufe bitte eine von: {', '.join(allowed)}")
         if not self.profiles[name].server:
             raise LLMError("Bei Ollama gilt die KV-Cache-Stufe für den ganzen Ollama-Dienst: sudo systemctl edit ollama "
                            "→ Environment=\"OLLAMA_FLASH_ATTENTION=1\" \"OLLAMA_KV_CACHE_TYPE=q8_0\"")
@@ -612,11 +700,15 @@ class LLMRouter:
         return est, "" if est else "Modelldatei ohne lesbare Architektur-Angaben"
 
     def describe(self) -> list[dict]:
+        state = self._read_state()
+        ctx, coding = state.get("context") or {}, state.get("context_coding") or {}
         return [{"name": n, "label": p.label, "backend": p.backend, "model": p.model, "base_url": p.base_url,
                  "managed": p.server is not None, "active": n == self.active,
                  "num_ctx": self.detected_ctx.get(n) or p.num_ctx or self.cfg.num_ctx,
+                 "ctx_tools": ctx.get(n) or self._base_ctx.get(n), "ctx_coding": coding.get(n),
                  "kv": cache_type(p.server.command, p.server.env) if p.server else None,
-                 "kv_settable": p.server is not None}
+                 "kv_settable": p.server is not None,
+                 "kv_options": kv_types(p.server.command, p.server.env) if p.server else []}
                 for n, p in self.profiles.items()]
 
     async def close(self) -> None:

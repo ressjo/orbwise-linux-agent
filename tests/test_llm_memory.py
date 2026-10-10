@@ -153,6 +153,65 @@ def test_flash_attention_in_the_log():
     assert flash_attn("llama_context: flash_attn = auto") is None and flash_attn("") is None
 
 
+def test_large_windows_follow_the_model():
+    info = {"ctx": 65536, "kv_per_token": 1024, "kv_vram": 64 * 1024 ** 2, "kv_ram": 0, "model_ram_offload": 0,
+            "ctx_train": 262144}
+    opts = [o["ctx"] for o in recommend(info, {"vram_total": 100 * GB, "vram_used": 10 * GB})["options"]]
+    assert opts[-2:] == [196608, 262144]  # über 128k, aber nicht über das, was das Modell kennt
+
+
+def test_coding_has_its_own_window(tmp_path):
+    cfg = LLMConfig(profiles={
+        "big": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8090/v1", model="x",
+                             server=ServerConfig(command="llama-server -m x.gguf -c 65536 -np 1")),
+        "qwen": ProfileConfig(model="qwen3:8b"),
+    }, active="qwen")
+    state = tmp_path / "state.json"
+    router = LLMRouter(cfg, state_path=state)
+    assert router.profiles["big"].num_ctx == 65536  # aus dem Startbefehl
+    run(router.set_context("big", 196608, mode="coding"))  # anderer Modus: nur merken
+    assert router.profiles["big"].server.command.endswith("-c 65536 -np 1")
+    assert {p["name"]: p["ctx_coding"] for p in router.describe()}["big"] == 196608
+    run(router.set_mode("coding"))  # nicht aktiv: Startbefehl gleich umgestellt
+    assert "-c 196608" in router.profiles["big"].server.command and router.mode == "coding"
+    run(router.set_mode("tools"))
+    assert "-c 65536" in router.profiles["big"].server.command
+    run(router.set_context("qwen", 32768, mode="coding"))
+    assert run(router.set_mode("coding")) is True and router.context_size == 32768  # aktiv (Ollama): neues num_ctx
+    run(router.set_context("qwen", 0, mode="coding"))  # wieder wie Tools
+    assert router.context_size == 16384 and "qwen" not in json.loads(state.read_text())["context_coding"]
+    with pytest.raises(LLMError):
+        run(router.set_context("big", 2_000_000))
+    again = LLMRouter(cfg.model_copy(deep=True), state_path=state)
+    again.apply_mode("coding")  # Start im Coding-Modus
+    assert "-c 196608" in again.profiles["big"].server.command
+
+
+def test_kv_levels_come_from_the_server(tmp_path, monkeypatch):
+    from orbwise import bonsai
+    from orbwise.llm_router import kv_types
+    fork = ("-ctk,  --cache-type-k TYPE        KV cache data type for K\n"
+            "                                    allowed values: f32, f16, bf16, q8_0, q4_0, q4_1, q2_0, tq3_0\n"
+            "                                    (default: f16)\n-fa, --flash-attn [on|off|auto]\n")
+    monkeypatch.setattr(bonsai, "_server_help", lambda *a, **k: fork)
+    assert kv_types("llama-server -m x", {}) == ["f16", "q8_0", "q4_0", "q2_0", "tq3_0"]
+    cfg = LLMConfig(profiles={"q": ProfileConfig(model="qwen3:8b"),
+                              "x": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8090/v1", model="x",
+                                                 server=ServerConfig(command="llama-server -m x.gguf -c 4096"))},
+                    active="q")
+    router = LLMRouter(cfg, state_path=tmp_path / "state.json")
+    assert {p["name"]: p["kv_options"] for p in router.describe()}["x"][-1] == "tq3_0"
+    run(router.set_kv("x", "q2_0"))
+    assert router.profiles["x"].server.command.endswith("-ctk q2_0 -ctv q2_0 -fa on")
+    with pytest.raises(LLMError):
+        run(router.set_kv("x", "q5_0"))  # kann der Server, bietet Orbwise aber nicht an
+    official = fork.replace(", q2_0, tq3_0", "")
+    monkeypatch.setattr(bonsai, "_server_help", lambda *a, **k: official)
+    assert kv_types("llama-server -m x", {}) == ["f16", "q8_0", "q4_0"]
+    monkeypatch.setattr(bonsai, "_server_help", lambda *a, **k: "")
+    assert kv_types("llama-server -m x", {}) == ["f16", "q8_0", "q4_0"]  # Hilfe unbekannt: die drei
+
+
 def test_memory_api_in_demo_mode(cfg, monkeypatch):
     from fastapi.testclient import TestClient
 
@@ -276,3 +335,31 @@ def test_hybrid_models_only_count_attention_layers(tmp_path):
     assert gguf_metadata(str(arr))["qwen35.attention.head_count_kv"] == per_layer
     assert kv_per_token_from_info(gguf_metadata(str(arr))) == 16 * 4 * 512 * 2  # 64 KiB pro Token bei f16
     assert kv_per_token_from_info(base) == 64 * 4 * 512 * 2  # ohne Hinweis: alle Schichten (wie bisher)
+
+
+def test_mode_switch_applies_the_coding_window(cfg, monkeypatch):
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from orbwise.server import create_app
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
+    cfg.llm.base_url = "http://127.0.0.1:9"
+    with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
+        r = client.post("/api/models/standard/context", json={"ctx": 32768, "mode": "coding"})
+        assert r.status_code == 200 and r.json()["ctx"] == 32768
+        prof = client.get("/api/models").json()["profiles"][0]
+        assert prof["num_ctx"] == 16384 and prof["ctx_coding"] == 32768  # Tools läuft weiter wie bisher
+        assert client.post("/api/mode", json={"mode": "coding"}).status_code == 200
+        for _ in range(50):
+            if client.get("/api/models").json()["profiles"][0]["num_ctx"] == 32768:
+                break
+            time.sleep(0.05)
+        assert client.get("/api/models").json()["profiles"][0]["num_ctx"] == 32768
+        client.post("/api/mode", json={"mode": "tools"})
+        for _ in range(50):
+            if client.get("/api/models").json()["profiles"][0]["num_ctx"] == 16384:
+                break
+            time.sleep(0.05)
+        assert client.get("/api/models").json()["profiles"][0]["num_ctx"] == 16384

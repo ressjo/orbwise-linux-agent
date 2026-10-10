@@ -2120,7 +2120,7 @@
   // darf (llama-server: genau aus seinem Log, Ollama: geschätzt).
   const gbs = (b) => `${(b / 1024 ** 3).toLocaleString(LOCALE, { maximumFractionDigits: b < 1024 ** 3 ? 2 : 1 })} GB`;
   let lastMem = null;
-  const ctxLabel = (n) => (n % 1024 === 0 ? `${n / 1024}k` : kTok(n));
+  const ctxLabel = (n) => (n >= 1048576 && n % 1048576 === 0 ? `${n / 1048576}M` : n % 1024 === 0 ? `${n / 1024}k` : kTok(n));
   async function loadCtxMemory() {
     try { lastMem = await getJSON("/api/llm/memory"); } catch { return; }
     showMemory(lastMem);
@@ -2179,7 +2179,9 @@
     const p = models.profiles.find((x) => x.active);
     if (!p || models.active === "demo") { box.innerHTML = ""; return; }
     const m = lastMem && lastMem.available && lastMem.profile === p.name ? lastMem : null;
-    const opts = (m && m.recommend && m.recommend.options) || [4096, 8192, 12288, 16384, 24576, 32768, 49152, 65536].map((c) => ({ ctx: c }));
+    const opts = (m && m.recommend && m.recommend.options)
+      || [4096, 8192, 12288, 16384, 24576, 32768, 49152, 65536, 98304, 131072, 196608, 262144].map((c) => ({ ctx: c }));
+    const coding = S.mode === "coding";
     box.innerHTML = `<div class="mm-title"></div><div class="ctx-now"></div><div class="ctx-opts"></div><p class="set-hint"></p>`
       + `<div class="mm-title kv-title"></div><div class="ctx-opts kv-opts"></div><p class="set-hint kv-hint"></p>`
       + `<div class="mm-title smp-title"></div><div class="smp"></div>`
@@ -2192,7 +2194,8 @@
                       "Checks with the active model: window size, memory, token estimate, prompt cache and a full window (may take a few minutes).");
     testBtn.disabled = !!models.switching;
     testBtn.onclick = () => runContextTest(box.querySelector(".ctx-test"), testBtn);
-    box.querySelector(".mm-title").textContent = L(`KONTEXTFENSTER · ${p.label}`, `CONTEXT WINDOW · ${p.label}`);
+    box.querySelector(".mm-title").textContent = L(`KONTEXTFENSTER · ${p.label}`, `CONTEXT WINDOW · ${p.label}`)
+      + (coding ? " · CODING" : " · TOOLS");
     const missing = lastMem && !lastMem.available && lastMem.reason ? lastMem.reason : "";
     box.querySelector(".ctx-now").textContent = L(`Aktuell ${num(p.num_ctx)} Token`, `Currently ${num(p.num_ctx)} tokens`)
       + (m ? ` · KV-Cache ${gbs(m.kv_bytes)}, ${memText(m)}` + (recText(m) ? ` · ${recText(m)}` : "")
@@ -2216,7 +2219,7 @@
         toast(p.managed ? L("Modell-Server startet mit neuem Kontextfenster neu …", "Restarting the model server with the new context window …")
                         : L("Modell wird mit neuem Kontextfenster geladen …", "Reloading the model with the new context window …"));
         const r = await fetch(`/api/models/${encodeURIComponent(p.name)}/context`, {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ctx: o.ctx }) });
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ctx: o.ctx, mode: S.mode }) });
         if (!r.ok) toast(L("Ändern fehlgeschlagen: ", "Change failed: ") + ((await r.json().catch(() => ({}))).detail || r.status));
         else toast(L(`Kontextfenster jetzt ${num(o.ctx)} Token.`, `Context window now ${num(o.ctx)} tokens.`));
         await loadCtxMemory();
@@ -2224,7 +2227,25 @@
       };
       box.querySelector(".ctx-opts").appendChild(b);
     }
-    box.querySelector(".set-hint").textContent = (p.managed
+    if (coding && p.ctx_coding) {  // eigene Coding-Größe → zurück zu der von Tools
+      const back = document.createElement("button");
+      back.type = "button";
+      back.className = "mm-link";
+      back.textContent = L(`WIE TOOLS (${ctxLabel(p.ctx_tools || p.num_ctx)})`, `SAME AS TOOLS (${ctxLabel(p.ctx_tools || p.num_ctx)})`);
+      back.onclick = async () => {
+        try {
+          await api("POST", `/api/models/${encodeURIComponent(p.name)}/context`, { ctx: 0, mode: "coding" });
+          toast(L("Coding nutzt wieder das Fenster von Tools.", "Coding uses the Tools window again."));
+        } catch { /* Meldung kommt von api() */ }
+        await loadCtxMemory();
+        renderCtxSettings();
+      };
+      box.querySelector(".ctx-opts").appendChild(back);
+    }
+    box.querySelector(".set-hint").textContent = (coding
+      ? L("Im Coding-Modus kann jedes Modell ein eigenes Fenster haben (z. B. größer für viel Code) – beim Wechsel zwischen Tools und Coding startet der Modell-Server dann neu. ",
+          "In Coding mode every model can have its own window (e.g. larger for lots of code) – switching between Tools and Coding then restarts the model server. ")
+      : "") + (p.managed
       ? L("Zum Ändern startet der Modell-Server neu (dauert etwas). ", "Changing it restarts the model server (takes a while). ")
       : L("Zum Ändern lädt Ollama das Modell neu. ", "Changing it makes Ollama reload the model. "))
       + L("Größeres Fenster = längere Chats bis zum Zusammenfassen, braucht aber mehr Grafikspeicher. Liegt der KV-Cache im RAM, wird alles deutlich langsamer. "
@@ -2234,13 +2255,21 @@
   }
 
   // KV-Cache-Stufe: f16 (voll), q8_0 (~halber Speicher), q4_0 (~ein Viertel) – nur bei eigenem llama-server
-  const KV_LEVELS = [
-    { kv: "f16", factor: 2, label: "f16", note: () => L("Standard, volle Qualität", "default, full quality") },
-    { kv: "q8_0", factor: 34 / 32, label: "q8", note: () => L("~halber Speicher, kaum Verlust", "~half the memory, hardly any loss") },
-    { kv: "q4_0", factor: 18 / 32, label: "q4", note: () => L("~ein Viertel, leicht ungenauer", "~a quarter, slightly less accurate") },
-  ];
+  const KV_KNOWN = {
+    f16: { factor: 2, label: "f16", note: () => L("Standard, volle Qualität", "default, full quality") },
+    q8_0: { factor: 34 / 32, label: "q8", note: () => L("~halber Speicher, kaum Verlust", "~half the memory, hardly any loss") },
+    q4_0: { factor: 18 / 32, label: "q4", note: () => L("~ein Viertel, leicht ungenauer", "~a quarter, slightly less accurate") },
+  };
+  function kvLevel(kv) {
+    if (KV_KNOWN[kv]) return { kv, ...KV_KNOWN[kv] };
+    const bits = Number(((kv.match(/q(\d)/) || [])[1]) || 16);
+    return { kv, factor: (bits * 32 + 16) / 8 / 32, label: kv,
+             note: () => bits <= 2 ? L("~1/8 Speicher, deutlich ungenauer", "~1/8 of the memory, noticeably less accurate")
+                                    : L("~1/6 Speicher, ungenauer", "~1/6 of the memory, less accurate") };
+  }
   function renderKvSettings(box, p, m, models) {
-    const current = KV_LEVELS.find((x) => x.kv === p.kv) || KV_LEVELS[0];
+    const KV_LEVELS = (p.kv_options && p.kv_options.length ? p.kv_options : ["f16", "q8_0", "q4_0"]).map(kvLevel);
+    const current = KV_LEVELS.find((x) => x.kv === p.kv) || kvLevel(p.kv || "f16");
     box.querySelector(".kv-title").textContent = L("KV-CACHE", "KV CACHE") + (p.kv_settable ? ` · ${current.label}` : "");
     const opts = box.querySelector(".kv-opts");
     for (const lv of KV_LEVELS) {
@@ -2265,10 +2294,12 @@
       };
       opts.appendChild(b);
     }
+    const low = KV_LEVELS.some((x) => /^(?:t|i)?q[23](?!\d)/.test(x.kv));
     box.querySelector(".kv-hint").textContent = p.kv_settable
       ? L("Ein kleinerer KV-Cache lässt mehr Kontext in den Grafikspeicher – danach bietet das Kontextfenster oben entsprechend mehr an. "
-          + "Zum Ändern startet der Modell-Server neu.",
-          "A smaller KV cache fits more context into VRAM – the context window above then offers more. Changing it restarts the model server.")
+          + "Zum Ändern startet der Modell-Server neu." + (low ? "" : " 2-Bit: kann dieser llama-server nicht (das offizielle llama.cpp bietet höchstens 4 Bit)."),
+          "A smaller KV cache fits more context into VRAM – the context window above then offers more. Changing it restarts the model server."
+          + (low ? "" : " 2-bit: not supported by this llama-server (official llama.cpp goes down to 4 bits)."))
       : L("Bei Ollama gilt die Stufe für den ganzen Dienst: sudo systemctl edit ollama → "
           + 'Environment="OLLAMA_FLASH_ATTENTION=1" "OLLAMA_KV_CACHE_TYPE=q8_0", dann sudo systemctl restart ollama.',
           "With Ollama the level applies to the whole service: sudo systemctl edit ollama → "

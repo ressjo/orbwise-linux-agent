@@ -16,7 +16,8 @@ from typing import Any
 
 MIB = 1024 ** 2
 RESERVE = 600 * MIB  # Rest im Grafikspeicher lassen (Desktop, Rechenpuffer)
-STEPS = (2048, 4096, 8192, 12288, 16384, 24576, 32768, 49152, 65536, 98304, 131072)
+STEPS = (2048, 4096, 8192, 12288, 16384, 24576, 32768, 49152, 65536, 98304, 131072, 196608, 262144, 393216,
+         524288, 1048576)
 
 _BUF = re.compile(r"(\S+)\s+(KV|model|compute) buffer size\s*=\s*([\d.]+)\s*MiB")
 _CTX = re.compile(r"\bn_ctx\s*=\s*(\d+)")
@@ -189,6 +190,15 @@ def gguf_metadata(path: str, wanted: tuple[str, ...] = (".block_count", ".attent
     return out
 
 
+def type_bytes(kind: str) -> float:
+    """Bytes je KV-Element; unbekannte Typen (z. B. 2-/3-Bit aus Forks) aus der Bit-Zahl im Namen geschätzt."""
+    kind = kind.lower()
+    if kind in CACHE_BYTES:
+        return CACHE_BYTES[kind]
+    m = re.search(r"q(\d)", kind)
+    return (int(m.group(1)) * 32 + 16) / 8 / 32 if m else 2.0  # Bits + Skalierung je 32er-Block
+
+
 def cache_type(command: str, env: dict) -> str:
     """KV-Cache-Stufe aus dem Startbefehl (V-Cache, sonst K-Cache) bzw. BONSAI_KV4 – Standard f16."""
     v = re.findall(r"(?:-ctv|--cache-type-v)\s+(\S+)", command)
@@ -203,7 +213,7 @@ def cache_bytes(command: str, env: dict) -> float:
     found = re.findall(r"(?:-ctk|-ctv|--cache-type-[kv])\s+(\S+)", command)
     if not found and str(env.get("BONSAI_KV4", "")).strip() in ("1", "true", "yes"):
         found = ["q4_0"]
-    sizes = [CACHE_BYTES.get(t.lower(), 2.0) for t in found] or [2.0]
+    sizes = [type_bytes(t) for t in found] or [2.0]
     return sum(sizes) / len(sizes)
 
 
