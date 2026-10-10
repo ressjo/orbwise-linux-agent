@@ -2166,8 +2166,9 @@
       L(`Modell ${gbs(m.model_bytes)}`, `Model ${gbs(m.model_bytes)}`) + memText(m).replace(/^[^·]*/, ""),
       m.source === "estimate" ? L("KV-Cache aus der Modell-Architektur geschätzt.", "KV cache estimated from the model architecture.")
         : L("Genau laut llama-server-Log.", "Exact, from the llama-server log."),
+      m.flash_attn ? L(`Flash-Attention ${m.flash_attn === "on" ? "aktiv" : "aus"}.`, `Flash attention ${m.flash_attn === "on" ? "on" : "off"}.`) : "",
       L("Ändern: Einstellungen → Modelle → Kontextfenster.", "Change it: Settings → Models → Context window."),
-    ].join("\n");
+    ].filter(Boolean).join("\n");
   }
   setInterval(() => { if (S.connected && (app.classList.contains("drawer-open") || !$("set-models").classList.contains("hidden"))) loadCtxMemory(); }, 10000);
 

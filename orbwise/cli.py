@@ -99,6 +99,17 @@ def cmd_doctor(args) -> None:
                  else T("    Server läuft gerade nicht", "    Server is not running"),
                  T("startet automatisch beim Aktivieren", "starts automatically when activated") if p.server
                  else T("Server von Hand starten", "start the server manually"))
+            if ps["online"] and p.server and name == router.active:
+                from .llm_memory import flash_attn
+                from .llm_router import _log_path
+                try:
+                    log_text = _log_path().read_text(errors="replace")[-300_000:].rsplit("===== Starte:", 1)[-1]
+                except OSError:
+                    log_text = ""
+                fa = flash_attn(log_text)
+                if fa:
+                    line(fa == "on", f"    Flash-Attention {T('aktiv', 'on') if fa == 'on' else T('aus', 'off')}",
+                         T("llama.cpp aktualisieren oder -fa on im Startbefehl", "update llama.cpp or add -fa on"))
             if ps["online"]:
                 n_ctx = asyncio.run(OpenAICompatLLM(p).server_context())
                 if n_ctx:

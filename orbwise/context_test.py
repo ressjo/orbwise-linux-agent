@@ -126,7 +126,7 @@ class ContextTest:
             await self._fill(window, limit)
             if self.llama:
                 await self._overflow(window)
-        order = ("model", "window", "budget", "memory", "stage", "estimate", "cache", "followup", "fill", "overflow")
+        order = ("model", "window", "budget", "memory", "flash", "stage", "estimate", "cache", "followup", "fill", "overflow")
         return self._result([self.checks[k] for k in order if k in self.checks])
 
     def _result(self, checks: list[dict]) -> dict:
@@ -182,6 +182,7 @@ class ContextTest:
         if not info:
             self.checks["memory"] = _check("warn", "memory", title, reason or T("Keine Angaben.", "No data."))
             return
+        self._flash(info.get("flash_attn"))
         gb = lambda b: f"{b / 1024 ** 3:.1f} GB".replace(".", ",")  # noqa: E731
         kv = info.get("kv_vram", 0) + info.get("kv_ram", 0)
         spill = info.get("kv_ram", 0) + info.get("model_ram_offload", 0)
@@ -201,6 +202,20 @@ class ContextTest:
         self.checks["memory"] = _check("ok", "memory", title, T(
             f"KV-Cache {gb(kv)} komplett im Grafikspeicher{est}.{more}",
             f"KV cache {gb(kv)} fully in VRAM{est}.{more}"))
+
+    def _flash(self, state: str | None) -> None:
+        """Flash-Attention (aus dem Startlog des llama-server): spart Speicher für den Kontext, macht lange Prompts
+        schneller und ist Voraussetzung für einen q8/q4-KV-Cache."""
+        title = "Flash-Attention"
+        if state == "on":
+            self.checks["flash"] = _check("ok", "flash", title, T("aktiv.", "active."))
+        elif state == "off":
+            self.checks["flash"] = _check("warn", "flash", title, T(
+                "aus – der Kontext braucht mehr Grafikspeicher, lange Prompts werden langsamer eingelesen und ein "
+                "q8/q4-KV-Cache geht nicht. Abhilfe: llama.cpp aktualisieren (Einstellungen → Modelle) oder "
+                "„-fa on“ im Startbefehl.",
+                "off – the context needs more VRAM, long prompts are read more slowly and a q8/q4 KV cache is not "
+                "possible. Fix: update llama.cpp (Settings → Models) or add “-fa on” to the start command."))
 
     # ------------------------------------------------------------------ 3. Stufe
     def _stage(self, plan, limit: int, window: int, first: dict | None, loaded: int, total: int) -> None:

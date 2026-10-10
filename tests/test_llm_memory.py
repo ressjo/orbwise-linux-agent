@@ -144,6 +144,15 @@ def test_kv_api(cfg, monkeypatch, tmp_path):
         assert client.post("/api/models/other/kv", json={"kv": "q3"}).status_code == 400
 
 
+def test_flash_attention_in_the_log():
+    from orbwise.llm_memory import flash_attn
+    assert flash_attn("llama_context: flash_attn    = auto\nllama_context: Flash Attention was auto, set to enabled") == "on"
+    assert flash_attn("llama_context: Flash Attention was auto, set to disabled") == "off"
+    assert flash_attn("llama_new_context_with_model: flash_attn = 0\n") == "off"  # ältere Builds
+    assert flash_attn("llama_context: flash_attn = 1") == "on"
+    assert flash_attn("llama_context: flash_attn = auto") is None and flash_attn("") is None
+
+
 def test_memory_api_in_demo_mode(cfg, monkeypatch):
     from fastapi.testclient import TestClient
 

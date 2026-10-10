@@ -50,7 +50,23 @@ def parse_llama_log(text: str) -> dict | None:
     train = re.findall(r"\bn_ctx_train\s*=\s*(\d+)", block)
     out["ctx_train"] = int(train[-1]) if train else None
     out["source"] = "log"
+    out["flash_attn"] = flash_attn(block)
     return out
+
+
+def flash_attn(text: str) -> str | None:
+    """Flash-Attention laut llama-server-Log: 'on', 'off' oder None (nicht erkennbar). Neuere Builds melden
+    „Flash Attention was auto, set to enabled“, ältere „flash_attn = 1“."""
+    decided = re.findall(r"Flash Attention was \w+, set to (enabled|disabled)", text, re.I)
+    if decided:
+        return "on" if decided[-1].lower() == "enabled" else "off"
+    values = re.findall(r"\bflash_attn\s*=\s*(\w+)", text)
+    value = values[-1].lower() if values else ""
+    if value in ("1", "true", "enabled", "on"):
+        return "on"
+    if value in ("0", "false", "disabled", "off"):
+        return "off"
+    return None
 
 
 def kv_per_token_from_info(model_info: dict, bytes_per: float = 2.0) -> int | None:
