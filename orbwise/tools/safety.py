@@ -133,11 +133,47 @@ WARN_PATTERNS = [
 ]
 
 
+_HEREDOC = re.compile(r"<<(-?)[ \t]*(['\"]?)([\w.-]+)\2")
+
+
+def strip_heredocs(cmd: str) -> str:
+    """Den Text von Heredocs (cat > x.sh <<'EOF' … EOF) entfernen – das ist Inhalt, kein Befehl. Bei ungequotetem
+    Begrenzer bleibt eine Befehlsersetzung im Text ($(…), `…`) als Platzhalter stehen, damit sie auffällt."""
+    out, pos = [], 0
+    for m in _HEREDOC.finditer(cmd):
+        if m.start() < pos:
+            continue
+        nl = cmd.find("\n", m.end())
+        if nl < 0:
+            break
+        strip_tabs, quoted, word = m.group(1) == "-", bool(m.group(2)), m.group(3)
+        end = re.compile(r"^" + ("\t*" if strip_tabs else "") + re.escape(word) + r"[ \t]*$", re.M)
+        e = end.search(cmd, nl + 1)
+        body_end = e.start() if e else len(cmd)
+        body = cmd[nl + 1:body_end]
+        out.append(cmd[pos:nl + 1])
+        if not quoted and ("$(" in body or "`" in body):  # als No-op-Argument behalten: $(…) wird mitgeprüft
+            out.append(': "' + body.replace("\\", "\\\\").replace('"', '\\"') + '"\n')
+        pos = e.end() if e else len(cmd)
+    out.append(cmd[pos:])
+    return "".join(out)
+
+
 def _tokens(cmd: str) -> list[str]:
-    lex = shlex.shlex(cmd, posix=True, punctuation_chars=";&|()<>")
+    """Wörter und Operatoren; Zeilenumbrüche trennen Befehle wie ';' (sonst wäre „ls⏎rm -rf ~“ ein harmloses ls)."""
+    cmd = strip_heredocs(cmd.replace("\\\n", " "))
+    lex = shlex.shlex(cmd, posix=True, punctuation_chars=";&|()<>\n")
+    lex.whitespace = " \t\r"
     lex.whitespace_split = True
     lex.commenters = ""
-    return list(lex)
+    out = []
+    for t in lex:
+        if "\n" in t and not t.strip(";&|()<>\n"):  # Operator-Gruppe mit Zeilenumbruch, z. B. „&&⏎“ oder „⏎⏎“
+            rest = t.replace("\n", "")
+            out.extend([rest, "\n"] if rest else ["\n"])
+        else:
+            out.append(t)
+    return out
 
 
 def _segments(tokens: list[str]) -> list[list[str]]:
@@ -394,9 +430,9 @@ def classify_command(command: str, cwd: str | None = None) -> tuple[str, str]:
             if target not in ("/dev/null",) and not target.startswith("&"):
                 reasons.append(T("schreibt in eine Datei", "writes to a file"))
                 break
-    if SECRET_VARS.search(cmd) or re.search(r"\benviron\b", cmd):
+    if SECRET_VARS.search(cmd) or re.search(r"\benviron\b", _scan_text(cmd)):
         reasons.append(secrets)
-    if "$(" in cmd or "`" in cmd:
+    if substitutions(cmd) or "<(" in cmd or ">(" in cmd:
         reasons.append(T("enthält Befehlsersetzung", "contains command substitution"))
     for pattern, reason in WARN_PATTERNS:
         if pattern.search(cmd):
@@ -405,6 +441,21 @@ def classify_command(command: str, cwd: str | None = None) -> tuple[str, str]:
     if reasons:
         return CONFIRM, "; ".join(dict.fromkeys(reasons))
     return SAFE, T("nur lesender Befehl", "read-only command")
+
+
+# Lesende Befehle, die trotzdem ins Netz gehen (DNS-Anfragen können Daten hinaustragen: dig geheim.example.com)
+NET_LOOKUP = {"dig", "host", "nslookup", "whois", "traceroute", "tracepath", "mtr", "getent", "ping", "drill"}
+
+
+def local_read_only(command: str, cwd: str | None = None) -> bool:
+    """Rein lesend und lokal (echo, cd, ls, cat …): darf auch nach fremden Inhalten ohne Rückfrage laufen."""
+    if classify_command(command, cwd)[0] != SAFE:
+        return False
+    try:
+        tokens = _tokens(command.strip())
+    except ValueError:
+        return False
+    return not any(os.path.basename(t) in NET_LOOKUP for t in tokens)
 
 
 def file_edit_ok(command: str, cwd: str | None = None) -> bool:
@@ -497,6 +548,59 @@ def _write_targets(name: str, args: list[str]) -> list[str]:
     return []
 
 
+def substitutions(cmd: str) -> list[str]:
+    """Inhalt von $(…), `…` (auch in doppelten Anführungszeichen – dort wird es ebenfalls ausgeführt) und <(…)/>(…)."""
+    out, i, quote = [], 0, ""
+    while i < len(cmd):
+        c = cmd[i]
+        if c == "\\":
+            i += 2
+            continue
+        if quote == "'":
+            quote = "" if c == "'" else quote
+        elif c == "'" and not quote:
+            quote = "'"
+        elif c == '"':
+            quote = "" if quote == '"' else '"'
+        elif (cmd.startswith("$(", i) and not cmd.startswith("$((", i)) or (not quote and cmd[i:i + 2] in ("<(", ">(")):
+            depth, j = 1, i + 2
+            while j < len(cmd) and depth:
+                depth += {"(": 1, ")": -1}.get(cmd[j], 0)
+                j += 1
+            out.append(cmd[i + 2:j - 1])
+            i = j
+            continue
+        elif c == "`":
+            j = cmd.find("`", i + 1)
+            j = len(cmd) if j < 0 else j
+            out.append(cmd[i + 1:j])
+            i = j + 1
+            continue
+        i += 1
+    return out
+
+
+# echo/printf mit reinem Text: Wörter darin (sudo, environ …) sind Text, kein Befehl
+_TEXT_ARGS = re.compile(r"""(?<![\w./-])(echo|printf)((?:[ \t]+(?:'[^']*'|"[^"$`\\]*"|-[A-Za-z]+))*)(?=[ \t]*(?:$|[;&|>\n)]))""",
+                        re.M)
+
+
+# Führen Text als Befehl aus (echo "sudo …" | bash, bash <<EOF): dann bleibt der Text Teil der Prüfung
+_RUNS_TEXT = {"eval", "xargs", "watch", "source", ".", "python", "python3", "perl", "ruby", "node", "php", "lua",
+              "awk", "gawk", "sed", "su", "script", "flock", "parallel", "tmux", "screen", "systemd-run", "at", "batch"}
+
+
+def _scan_text(cmd: str) -> str:
+    """Der Befehl ohne Heredoc-Text und ohne reinen Text in echo/printf – für die Suche nach Schlüsselwörtern."""
+    try:
+        names = {os.path.basename(t) for t in _tokens(cmd)}
+    except ValueError:
+        return cmd
+    if names & (SHELLS | _RUNS_TEXT):
+        return cmd
+    return _TEXT_ARGS.sub(lambda m: m.group(1), strip_heredocs(cmd))
+
+
 def auto_shell_ok(command: str, cwd: str | None = None, _depth: int = 0) -> tuple[bool, str]:
     """Auto-Modus „Auto“: läuft dieser Befehl ohne Rückfrage? Alles ohne Root – außer Löschen, Ausschalten,
     Senden ins Netz, Startdateien/Autostart/Zugangsdaten. Liefert (ok, Grund fürs Nachfragen)."""
@@ -513,13 +617,21 @@ def auto_shell_ok(command: str, cwd: str | None = None, _depth: int = 0) -> tupl
     cmd = command.strip()
     if not cmd or _depth > 3:
         return False, T("Befehl konnte nicht sicher analysiert werden", "the command could not be analysed safely")
-    for pattern, reason in BLOCK_PATTERNS + WARN_PATTERNS:
+    for pattern, reason in BLOCK_PATTERNS:
         if pattern.search(cmd):
             return False, reason() + still
-    if _ROOT_WORD.search(cmd):
+    scan = _scan_text(cmd)
+    for pattern, reason in WARN_PATTERNS:
+        if pattern.search(scan):
+            return False, reason() + still
+    if _ROOT_WORD.search(scan):
         return False, root
-    if SECRET_VARS.search(cmd) or re.search(r"\benviron\b", cmd):
+    if SECRET_VARS.search(cmd) or re.search(r"\benviron\b", scan):
         return False, secrets
+    for inner in substitutions(strip_heredocs(cmd)):  # echo "$(rm -rf ~)" führt rm aus
+        ok, why = auto_shell_ok(inner, cwd, _depth + 1) if inner.strip() else (True, "")
+        if not ok:
+            return ok, why
     try:
         tokens = _tokens(cmd)
     except ValueError:

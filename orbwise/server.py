@@ -396,6 +396,11 @@ def create_app(cfg: Config) -> FastAPI:
     llm = FakeLLM(language=cfg.language) if fake else LLMRouter(cfg.llm, state_path=cfg.memory.dir.parent / "state.json")
     memory = Memory(cfg.memory, llm)
     agent = Agent(cfg, llm, memory)
+    # Auto-Knopf überlebt einen Neustart – sonst liefen Telegram/Routinen bis zum Öffnen des Dashboards mit „Nur lesen“
+    auto_file = cfg.memory.dir.parent / "auto_mode"
+    with contextlib.suppress(OSError):
+        if (saved := auto_file.read_text(encoding="utf-8").strip()) in ("off", "read", "files", "auto"):
+            agent.auto_mode = saved
     reminders = ReminderStore(cfg.memory.dir.parent / "reminders.json")
     agent.services["reminders"] = reminders
     routines = RoutineStore(cfg.memory.dir.parent / "routines.json")
@@ -1634,6 +1639,8 @@ def create_app(cfg: Config) -> FastAPI:
                 elif t == "auto_mode":
                     mode = str(data.get("mode", "read"))
                     hub.agent.auto_mode = mode if mode in ("off", "read", "files", "auto") else "read"
+                    with contextlib.suppress(OSError):
+                        auto_file.write_text(hub.agent.auto_mode, encoding="utf-8")
                 elif t == "plan_mode":
                     hub.plan_mode = bool(data.get("enabled"))
                 elif t in ("plan_accept", "plan_revise", "plan_discard"):

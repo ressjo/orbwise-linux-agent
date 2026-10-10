@@ -43,6 +43,7 @@ from .tools.registry import (
     missing_args,
     tool_schemas,
 )
+from .tools.safety import local_read_only
 from .tools.system import _os_name
 
 log = logging.getLogger(__name__)
@@ -63,6 +64,7 @@ ALL_TOOLS_SECONDS = 10.0
 
 TAINT_SOURCES = {"mail_list", "mail_search", "mail_read", "mail_ask", "daily_briefing",
                  "look_at_screen", "look_at_image"}  # auch Bildschirm/Bild: eine Webseite kann Anweisungen zeigen
+AUTO_TOOLS = ("run_shell", "ssh_run", "write_file", "edit_file")  # Auto-Modus „Auto“ gibt diese ohne Root frei
 TAINT_GUARDED = {"shell", "ssh", "portainer", "web", "files", "apps", "obsidian", "trilium", "calendar_tools",
                  "homeassistant", "memory_tools", "reminder_tools", "power", "telegram_tools"}
 
@@ -1311,6 +1313,8 @@ class Agent:
         from .tools.safety import auto_shell_ok
         if name == "run_shell":
             return auto_shell_ok(str(args.get("command") or ""), cwd)
+        if name == "ssh_run":  # auf dem anderen Rechner: dieselben Regeln (sudo fragt dort nach dem Passwort)
+            return auto_shell_ok(str(args.get("command") or ""), None)
         path = str(args.get("path") or "")
         if protected_path(path, cwd):
             return False, T("ändert Startdateien, Autostart, Zugangsdaten oder Orbwise selbst – fragt auch im "
@@ -1513,10 +1517,14 @@ class Agent:
         risk, reason = spec.assess(ctx, args)
         if risk == CONFIRM and self.auto_mode == "files" and not self._plan and self._file_edit_ok(name, args, cwd):
             risk, reason = SAFE, prompts.text(self.cfg, "auto_files")
-        elif risk == CONFIRM and self.auto_mode == "auto" and not self._plan and name in ("run_shell", "write_file", "edit_file"):
+        elif risk == CONFIRM and self.auto_mode == "auto" and not self._plan and name in AUTO_TOOLS:
             ok, why = self._auto_ok(name, args, cwd)
             risk, reason = (SAFE, prompts.text(self.cfg, "auto_full")) if ok else (risk, why or reason)
-        if risk == SAFE and getattr(self, "_tainted", False) and spec.group in TAINT_GUARDED:
+        # Nach fremden Inhalten (Mail, Bild, Bildschirm) fragt alles nach, was etwas tut – rein lesende, lokale
+        # Shell-Befehle (echo, cd, ls …) können nichts verändern und nichts hinausschicken, die laufen weiter
+        if risk == SAFE and getattr(self, "_tainted", False) and spec.group in TAINT_GUARDED \
+                and not (reason != prompts.text(self.cfg, "auto_full") and name in ("run_shell", "ssh_run")
+                         and local_read_only(str(args.get("command") or ""))):
             risk, reason = CONFIRM, prompts.text(self.cfg, "tainted_confirm")
         if risk == SAFE and name in ("run_shell", "ssh_run") and self.auto_mode == "off":
             risk, reason = CONFIRM, prompts.text(self.cfg, "auto_read_off")
