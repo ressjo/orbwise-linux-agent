@@ -1416,6 +1416,44 @@ def create_app(cfg: Config) -> FastAPI:
         await hub.broadcast({"type": "models_changed"})
         return {"ok": True, "ctx": llm.context_size if active else ctx}
 
+    @app.post("/api/models/{name}/kv")
+    async def set_model_kv(name: str, request: Request):
+        """KV-Cache-Stufe (f16/q8_0/q4_0) eines eigenen llama-server – kleinerer Cache = mehr Kontext im VRAM."""
+        from .llm_router import KV_TYPES
+        if not isinstance(llm, LLMRouter):
+            raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
+        if name not in llm.profiles:
+            raise HTTPException(404, "Unbekanntes Profil")
+        kv = str((await request.json()).get("kv", ""))
+        if kv not in KV_TYPES:
+            raise HTTPException(400, "KV-Cache-Stufe bitte f16, q8_0 oder q4_0")
+        if not llm.profiles[name].server:
+            try:
+                await llm.set_kv(name, kv)
+            except LLMError as e:
+                raise HTTPException(400, str(e)) from e
+        active = name == llm.active
+        if active:
+            await hub.broadcast({"type": "model_switching", "name": name, "label": llm.profiles[name].label})
+            llm.switching = name
+        try:
+            async with agent.lock:  # wartet, bis eine laufende Antwort fertig ist
+                await llm.set_kv(name, kv, model_progress)
+        except LLMError as e:
+            await hub.broadcast({"type": "model_error", "name": name, "text": str(e)})
+            raise HTTPException(502, str(e)) from e
+        finally:
+            llm.switching = None
+            await idle_if_free()
+        if active:
+            await hub.broadcast({"type": "model_active", "name": name})
+            agent._cache_owner = None  # neu gestartet = leerer Cache
+            agent.build_messages()
+            await hub.broadcast({"type": "context", **(agent.last_context or {})})
+            hub.prewarm_soon()
+        await hub.broadcast({"type": "models_changed"})
+        return {"ok": True, "kv": kv}
+
     @app.get("/api/reminders")
     async def get_reminders():
         return [{"id": r.id, "text": r.text, "due": r.due, "kind": r.kind} for r in reminders.upcoming()]

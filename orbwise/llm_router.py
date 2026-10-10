@@ -18,6 +18,7 @@ import httpx
 from .config import LLMConfig, ProfileConfig, ServerConfig
 from .lang import T
 from .llm import ContextOverflow, LLMError, OllamaLLM, OpenAICompatLLM
+from .llm_memory import cache_type
 
 log = logging.getLogger(__name__)
 
@@ -210,6 +211,31 @@ def tail_log(lines: int = 15) -> str:
     return "Letzte Zeilen aus ~/.local/state/orbwise-llm.log:\n" + "\n".join(text)
 
 
+KV_TYPES = ("f16", "q8_0", "q4_0")
+
+
+def _flash_attn_flag(command: str, env: dict) -> str:
+    """-fa on (neuere llama-server) bzw. -fa (ältere) – je nachdem, was die Hilfe des Servers nennt."""
+    try:
+        from .bonsai import _server_help
+        m = re.match(r"\s*(?:\S+=\S*\s+)*(\S*llama-server)(\s|$)", command)
+        if m:
+            binary = Path(os.path.expanduser(m.group(1)))
+            text = _server_help(binary.parent, {k: os.path.expanduser(str(v)) for k, v in env.items()},
+                                subprocess.run, [binary])
+        elif "start_llama_server.sh" in command:
+            script = re.search(r"(\S*start_llama_server\.sh)", command).group(1)
+            text = _server_help(Path(os.path.expanduser(script)).parent.parent, env, subprocess.run)
+        else:
+            text = ""
+    except Exception:  # noqa: BLE001 – im Zweifel die neuere Form
+        text = ""
+    line = next((x for x in text.splitlines() if "--flash-attn" in x), "")
+    if line and not re.search(r"\b(on|off|auto)\b", line):  # alte Builds: nur ein Schalter ohne Wert
+        return "-fa"
+    return "-fa on"
+
+
 class LLMRouter:
     """Bietet dieselbe Schnittstelle wie OllamaLLM (chat_stream, chat, embed, status, close)."""
 
@@ -230,9 +256,13 @@ class LLMRouter:
         # Hat der Bild-Modus den Grafikspeicher geliehen (Sprachmodell beendet)? Dann gibt dieser Aufruf ihn zurück
         # (release(restart=…)), bevor das Sprachmodell wieder gebraucht wird – siehe imagegen.py
         self.gpu_borrowed = None
-        for name, n in (self._read_state().get("context") or {}).items():  # in der Oberfläche eingestellt
+        state = self._read_state()
+        for name, n in (state.get("context") or {}).items():  # in der Oberfläche eingestellt
             if name in self.profiles and isinstance(n, int):
                 self._apply_context(name, n)
+        for name, kv in (state.get("kv_cache") or {}).items():
+            if name in self.profiles and kv in KV_TYPES and self.profiles[name].server:
+                self._apply_kv(name, kv)
         self._build_client()
 
     def add_downloaded_models(self) -> list[str]:
@@ -451,26 +481,41 @@ class LLMRouter:
             p.server = p.server.model_copy(update={"env": env, "command": command})
             self.servers.pop(name, None)  # neuer Startbefehl
 
-    async def set_context(self, name: str, n: int, progress: Progress | None = None) -> None:
-        """Kontextfenster ändern und merken (state.json). Beim aktiven Profil wird ein eigener Server neu gestartet,
-        Ollama lädt das Modell bei der nächsten Anfrage mit der neuen Größe."""
-        if name not in self.profiles:
-            raise LLMError(f"Unbekanntes Profil '{name}'")
-        if not 1024 <= n <= 262144:
-            raise LLMError("Kontextfenster bitte zwischen 1.024 und 262.144 Token")
+    def _apply_kv(self, name: str, kv: str) -> None:
+        """KV-Cache-Stufe eines eigenen llama-server setzen (wirkt beim nächsten Start): -ctk/-ctv im Startbefehl,
+        beim Bonsai-Starter q4_0 über BONSAI_KV4. Ein quantisierter V-Cache braucht Flash-Attention."""
+        p = self.profiles[name]
+        if not p.server:
+            raise LLMError("Die KV-Cache-Stufe lässt sich nur bei einem eigenen Modell-Server einstellen")
+        env = dict(p.server.env or {})
+        command = re.sub(r"\s+(?:-ctk|-ctv|--cache-type-k|--cache-type-v)\s+\S+", "", p.server.command)
+        env.pop("BONSAI_KV4", None)
+        if kv != "f16":
+            if "start_llama_server.sh" in command and kv == "q4_0":
+                env["BONSAI_KV4"] = "1"  # der Starter setzt dann selbst alles Nötige
+            else:
+                command += f" -ctk {kv} -ctv {kv}"
+                if not re.search(r"(^|\s)(-fa|--flash-attn)(\s|=|$)", command):
+                    command += " " + _flash_attn_flag(command, env)
+        p.server = p.server.model_copy(update={"env": env, "command": command})
+        self.servers.pop(name, None)  # neuer Startbefehl
+
+    async def _reconfigure(self, name: str, apply, key: str, value, progress: Progress | None) -> None:
+        """Startoptionen eines Profils ändern und merken (state.json[key]); beim aktiven Profil wird ein eigener
+        Server neu gestartet (Ollama lädt bei der nächsten Anfrage neu)."""
         if self.gpu_borrowed and name == self.active:
             await self.gpu_borrowed(restart=False)
         async with self._lock:
             running = self.servers.get(name) or (self.server_for(name) if name == self.active else None)
             if running:
-                await running.stop()  # gibt den Grafikspeicher frei, bevor mit neuer Größe gestartet wird
+                await running.stop()  # gibt den Grafikspeicher frei, bevor mit neuen Optionen gestartet wird
                 if name == self.active:
-                    await running.stop_foreign()  # lief schon vor Orbwise → sonst bliebe die alte Größe
-            self._apply_context(name, n)
+                    await running.stop_foreign()  # lief schon vor Orbwise → sonst blieben die alten Optionen
+            apply()
             self.detected_ctx.pop(name, None)
             if self.state_path:
                 data = self._read_state()
-                data.setdefault("context", {})[name] = n
+                data.setdefault(key, {})[name] = value
                 self.state_path.parent.mkdir(parents=True, exist_ok=True)
                 self.state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
             if name == self.active:
@@ -480,10 +525,30 @@ class LLMRouter:
                 if old_client is not None and old_client is not self.ollama:
                     await old_client.close()
                 await self.detect_context()
-                got = self.detected_ctx.get(name)
-                if got and got != n:
-                    raise LLMError(f"Der Modell-Server meldet weiterhin {got} Token Kontext statt {n} – er wurde "
-                                   "nicht neu gestartet oder übernimmt die Größe nicht (Startbefehl prüfen).")
+
+    async def set_context(self, name: str, n: int, progress: Progress | None = None) -> None:
+        """Kontextfenster ändern und merken (state.json). Beim aktiven Profil wird ein eigener Server neu gestartet,
+        Ollama lädt das Modell bei der nächsten Anfrage mit der neuen Größe."""
+        if name not in self.profiles:
+            raise LLMError(f"Unbekanntes Profil '{name}'")
+        if not 1024 <= n <= 262144:
+            raise LLMError("Kontextfenster bitte zwischen 1.024 und 262.144 Token")
+        await self._reconfigure(name, lambda: self._apply_context(name, n), "context", n, progress)
+        got = self.detected_ctx.get(name) if name == self.active else None
+        if got and got != n:
+            raise LLMError(f"Der Modell-Server meldet weiterhin {got} Token Kontext statt {n} – er wurde "
+                           "nicht neu gestartet oder übernimmt die Größe nicht (Startbefehl prüfen).")
+
+    async def set_kv(self, name: str, kv: str, progress: Progress | None = None) -> None:
+        """KV-Cache-Stufe (f16/q8_0/q4_0) ändern und merken; beim aktiven Profil startet der Server neu."""
+        if name not in self.profiles:
+            raise LLMError(f"Unbekanntes Profil '{name}'")
+        if kv not in KV_TYPES:
+            raise LLMError("KV-Cache-Stufe bitte f16, q8_0 oder q4_0")
+        if not self.profiles[name].server:
+            raise LLMError("Bei Ollama gilt die KV-Cache-Stufe für den ganzen Ollama-Dienst: sudo systemctl edit ollama "
+                           "→ Environment=\"OLLAMA_FLASH_ATTENTION=1\" \"OLLAMA_KV_CACHE_TYPE=q8_0\"")
+        await self._reconfigure(name, lambda: self._apply_kv(name, kv), "kv_cache", kv, progress)
 
     async def memory_info(self) -> tuple[dict | None, str]:
         """Speicher des aktiven Modells samt Kontext (VRAM/RAM) → (Werte, Grund falls keine).
@@ -516,7 +581,9 @@ class LLMRouter:
     def describe(self) -> list[dict]:
         return [{"name": n, "label": p.label, "backend": p.backend, "model": p.model, "base_url": p.base_url,
                  "managed": p.server is not None, "active": n == self.active,
-                 "num_ctx": self.detected_ctx.get(n) or p.num_ctx or self.cfg.num_ctx}
+                 "num_ctx": self.detected_ctx.get(n) or p.num_ctx or self.cfg.num_ctx,
+                 "kv": cache_type(p.server.command, p.server.env) if p.server else None,
+                 "kv_settable": p.server is not None}
                 for n, p in self.profiles.items()]
 
     async def close(self) -> None:

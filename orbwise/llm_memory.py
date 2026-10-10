@@ -173,6 +173,15 @@ def gguf_metadata(path: str, wanted: tuple[str, ...] = (".block_count", ".attent
     return out
 
 
+def cache_type(command: str, env: dict) -> str:
+    """KV-Cache-Stufe aus dem Startbefehl (V-Cache, sonst K-Cache) bzw. BONSAI_KV4 – Standard f16."""
+    v = re.findall(r"(?:-ctv|--cache-type-v)\s+(\S+)", command)
+    k = re.findall(r"(?:-ctk|--cache-type-k)\s+(\S+)", command)
+    if v or k:
+        return (v or k)[-1].lower()
+    return "q4_0" if str(env.get("BONSAI_KV4", "")).strip() in ("1", "true", "yes") else "f16"
+
+
 def cache_bytes(command: str, env: dict) -> float:
     """Bytes pro KV-Element aus dem Startbefehl (-ctk/-ctv bzw. --cache-type-k/v) – Bonsai: BONSAI_KV4=1 → q4_0."""
     found = re.findall(r"(?:-ctk|-ctv|--cache-type-[kv])\s+(\S+)", command)

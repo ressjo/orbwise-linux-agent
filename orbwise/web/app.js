@@ -2164,7 +2164,7 @@
       L(`Kontextfenster ${num(m.ctx)} Token · KV-Cache ${gbs(m.kv_bytes)} (${gbs(m.kv_per_token * 1000)} pro 1.000 Token)`,
         `Context window ${num(m.ctx)} tokens · KV cache ${gbs(m.kv_bytes)} (${gbs(m.kv_per_token * 1000)} per 1,000 tokens)`),
       L(`Modell ${gbs(m.model_bytes)}`, `Model ${gbs(m.model_bytes)}`) + memText(m).replace(/^[^·]*/, ""),
-      m.source === "estimate" ? L("Ollama: KV-Cache aus der Modell-Architektur geschätzt (f16).", "Ollama: KV cache estimated from the model architecture (f16).")
+      m.source === "estimate" ? L("KV-Cache aus der Modell-Architektur geschätzt.", "KV cache estimated from the model architecture.")
         : L("Genau laut llama-server-Log.", "Exact, from the llama-server log."),
       L("Ändern: Einstellungen → Modelle → Kontextfenster.", "Change it: Settings → Models → Context window."),
     ].join("\n");
@@ -2180,7 +2180,9 @@
     const m = lastMem && lastMem.available && lastMem.profile === p.name ? lastMem : null;
     const opts = (m && m.recommend && m.recommend.options) || [4096, 8192, 12288, 16384, 24576, 32768, 49152, 65536].map((c) => ({ ctx: c }));
     box.innerHTML = `<div class="mm-title"></div><div class="ctx-now"></div><div class="ctx-opts"></div><p class="set-hint"></p>`
+      + `<div class="mm-title kv-title"></div><div class="ctx-opts kv-opts"></div><p class="set-hint kv-hint"></p>`
       + `<button type="button" class="btn small ctx-test-btn"></button><div class="ctx-test"></div>`;
+    renderKvSettings(box, p, m, models);
     const testBtn = box.querySelector(".ctx-test-btn");
     testBtn.textContent = L("Kontext testen", "Test context");
     testBtn.title = L("Prüft mit dem aktiven Modell: Fenstergröße, Speicher, Token-Schätzung, Prompt-Cache und ein volles Fenster (kann einige Minuten dauern).",
@@ -2226,6 +2228,48 @@
           + "Unter 16k arbeitet Orbwise im Sparmodus: wenige Werkzeuge vorab (der Rest kommt bei Bedarf), kürzere Werkzeug-Ergebnisse, alte Ergebnisse werden früher ausgeblendet.",
           "A bigger window means longer chats before summarising but needs more VRAM. If the KV cache lands in RAM, everything gets much slower. "
           + "Below 16k Orbwise runs in lean mode: few tools up front (the rest on demand), shorter tool results, old results are hidden sooner.");
+  }
+
+  // KV-Cache-Stufe: f16 (voll), q8_0 (~halber Speicher), q4_0 (~ein Viertel) – nur bei eigenem llama-server
+  const KV_LEVELS = [
+    { kv: "f16", factor: 2, label: "f16", note: () => L("Standard, volle Qualität", "default, full quality") },
+    { kv: "q8_0", factor: 34 / 32, label: "q8", note: () => L("~halber Speicher, kaum Verlust", "~half the memory, hardly any loss") },
+    { kv: "q4_0", factor: 18 / 32, label: "q4", note: () => L("~ein Viertel, leicht ungenauer", "~a quarter, slightly less accurate") },
+  ];
+  function renderKvSettings(box, p, m, models) {
+    const current = KV_LEVELS.find((x) => x.kv === p.kv) || KV_LEVELS[0];
+    box.querySelector(".kv-title").textContent = L("KV-CACHE", "KV CACHE") + (p.kv_settable ? ` · ${current.label}` : "");
+    const opts = box.querySelector(".kv-opts");
+    for (const lv of KV_LEVELS) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "ctx-opt" + (p.kv_settable && lv.kv === current.kv ? " on" : "");
+      b.innerHTML = "<span></span><small></small>";
+      b.querySelector("span").textContent = lv.label;
+      const size = m && m.kv_bytes ? `KV ${gbs(m.kv_bytes * lv.factor / current.factor)} · ` : "";
+      b.querySelector("small").textContent = size + lv.note();
+      b.disabled = !p.kv_settable || !!models.switching;
+      b.onclick = async () => {
+        if (lv.kv === current.kv) return;
+        opts.querySelectorAll(".ctx-opt").forEach((x) => { x.disabled = true; });
+        toast(L(`Modell-Server startet mit KV-Cache ${lv.label} neu …`, `Restarting the model server with KV cache ${lv.label} …`));
+        const r = await fetch(`/api/models/${encodeURIComponent(p.name)}/kv`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kv: lv.kv }) });
+        if (!r.ok) toast(L("Ändern fehlgeschlagen: ", "Change failed: ") + ((await r.json().catch(() => ({}))).detail || r.status));
+        else toast(L(`KV-Cache jetzt ${lv.label}.`, `KV cache now ${lv.label}.`));
+        await loadCtxMemory();
+        renderCtxSettings();
+      };
+      opts.appendChild(b);
+    }
+    box.querySelector(".kv-hint").textContent = p.kv_settable
+      ? L("Ein kleinerer KV-Cache lässt mehr Kontext in den Grafikspeicher – danach bietet das Kontextfenster oben entsprechend mehr an. "
+          + "Zum Ändern startet der Modell-Server neu.",
+          "A smaller KV cache fits more context into VRAM – the context window above then offers more. Changing it restarts the model server.")
+      : L("Bei Ollama gilt die Stufe für den ganzen Dienst: sudo systemctl edit ollama → "
+          + 'Environment="OLLAMA_FLASH_ATTENTION=1" "OLLAMA_KV_CACHE_TYPE=q8_0", dann sudo systemctl restart ollama.',
+          "With Ollama the level applies to the whole service: sudo systemctl edit ollama → "
+          + 'Environment="OLLAMA_FLASH_ATTENTION=1" "OLLAMA_KV_CACHE_TYPE=q8_0", then sudo systemctl restart ollama.');
   }
 
   async function runContextTest(out, btn) {

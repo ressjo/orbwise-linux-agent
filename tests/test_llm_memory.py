@@ -3,10 +3,11 @@
 import json
 
 import httpx
+import pytest
 from conftest import run
 
 from orbwise.config import LLMConfig, ProfileConfig, ServerConfig
-from orbwise.llm import OllamaLLM
+from orbwise.llm import LLMError, OllamaLLM
 from orbwise.llm_memory import kv_per_token_from_info, parse_llama_log, recommend, summary
 from orbwise.llm_router import LLMRouter
 
@@ -83,6 +84,64 @@ def test_context_setting_is_applied_and_remembered(tmp_path):
     again = LLMRouter(cfg.model_copy(deep=True), state_path=state)  # nach Neustart wieder angewendet
     assert again.profiles["bonsai"].server.env["BONSAI_CTX"] == "16384" and again.context_size == 24576
     assert {p["name"]: p["num_ctx"] for p in again.describe()}["other"] == 12288
+
+
+def test_kv_cache_level_is_applied_and_remembered(tmp_path, monkeypatch):
+    from orbwise import bonsai
+    from orbwise.llm_memory import cache_type
+    monkeypatch.setattr(bonsai, "_server_help", lambda *a, **k: "-fa,   --flash-attn [on|off|auto]  set Flash Attention")
+    cfg = LLMConfig(profiles={
+        "qwen": ProfileConfig(model="qwen3:8b"),
+        "bonsai": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8080/v1", model="bonsai",
+                                server=ServerConfig(command="~/bonsai/scripts/start_llama_server.sh -np 1",
+                                                    env={"BONSAI_CTX": "8192"})),
+        "other": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8090/v1", model="x",
+                               server=ServerConfig(command="llama-server -m x.gguf -c 4096 -ctk q4_0 -ctv q4_0 -np 1")),
+    }, active="qwen")
+    state = tmp_path / "state.json"
+    router = LLMRouter(cfg, state_path=state)
+    kv = {p["name"]: (p["kv"], p["kv_settable"]) for p in router.describe()}
+    assert kv == {"qwen": (None, False), "bonsai": ("f16", True), "other": ("q4_0", True)}
+    run(router.set_kv("other", "q8_0"))
+    assert router.profiles["other"].server.command == "llama-server -m x.gguf -c 4096 -np 1 -ctk q8_0 -ctv q8_0 -fa on"
+    run(router.set_kv("other", "f16"))
+    assert router.profiles["other"].server.command == "llama-server -m x.gguf -c 4096 -np 1 -fa on"
+    run(router.set_kv("bonsai", "q4_0"))  # Bonsai-Starter: über seine eigene Einstellung
+    assert router.profiles["bonsai"].server.env["BONSAI_KV4"] == "1" and "-ctk" not in router.profiles["bonsai"].server.command
+    run(router.set_kv("bonsai", "q8_0"))
+    b = router.profiles["bonsai"].server
+    assert "BONSAI_KV4" not in b.env and b.command.endswith("-ctk q8_0 -ctv q8_0 -fa on") and cache_type(b.command, b.env) == "q8_0"
+    with pytest.raises(LLMError):
+        run(router.set_kv("qwen", "q8_0"))  # Ollama: gilt für den ganzen Dienst
+    with pytest.raises(LLMError):
+        run(router.set_kv("other", "q2"))
+    assert json.loads(state.read_text())["kv_cache"] == {"other": "f16", "bonsai": "q8_0"}
+    again = LLMRouter(cfg.model_copy(deep=True), state_path=state)  # nach Neustart wieder angewendet
+    assert {p["name"]: p["kv"] for p in again.describe()}["bonsai"] == "q8_0"
+    monkeypatch.setattr(bonsai, "_server_help", lambda *a, **k: "-fa,   --flash-attn   enable Flash Attention")
+    run(again.set_kv("other", "q4_0"))  # älterer Build: -fa ohne Wert
+    assert again.profiles["other"].server.command == "llama-server -m x.gguf -c 4096 -np 1 -ctk q4_0 -ctv q4_0 -fa"
+    assert cache_type("x", {"BONSAI_KV4": "1"}) == "q4_0" and cache_type("x --cache-type-v q8_0", {}) == "q8_0"
+
+
+def test_kv_api(cfg, monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+
+    from orbwise.server import create_app
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
+    cfg.llm.base_url = "http://127.0.0.1:9"
+    cfg.llm.profiles = {"qwen": ProfileConfig(model="qwen3:8b"),
+                        "other": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8091/v1", model="x",
+                                               server=ServerConfig(command="llama-server -m x.gguf -c 4096 -fa on"))}
+    cfg.llm.active = "qwen"
+    with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
+        assert client.post("/api/models/other/kv", json={"kv": "q8_0"}).json() == {"ok": True, "kv": "q8_0"}
+        p = {x["name"]: x for x in client.get("/api/models").json()["profiles"]}
+        assert p["other"]["kv"] == "q8_0" and p["other"]["kv_settable"] and not p["qwen"]["kv_settable"]
+        r = client.post("/api/models/qwen/kv", json={"kv": "q8_0"})
+        assert r.status_code == 400 and "OLLAMA_KV_CACHE_TYPE" in r.json()["detail"]
+        assert client.post("/api/models/other/kv", json={"kv": "q3"}).status_code == 400
 
 
 def test_memory_api_in_demo_mode(cfg, monkeypatch):
