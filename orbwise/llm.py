@@ -56,6 +56,49 @@ def _check_overflow(status: int, body: str) -> None:
         "for 7–9B models)."), n_ctx, n_prompt)
 
 
+# Sampling-Werte, die Orbwise je Modell und Modus mitschickt (Name → (min, max, ganzzahlig))
+SAMPLING_LIMITS = {"temperature": (0.0, 2.0, False), "top_p": (0.0, 1.0, False), "top_k": (0, 200, True),
+                   "min_p": (0.0, 1.0, False), "presence_penalty": (-2.0, 2.0, False),
+                   "repeat_penalty": (0.5, 2.0, False)}
+SAMPLING_ALIASES = {"repetition_penalty": "repeat_penalty", "temp": "temperature"}
+SAMPLING_PRESETS = {
+    "qwen": {"label": "Qwen (Empfehlung)",
+             "think": {"temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "presence_penalty": 0.0,
+                       "repeat_penalty": 1.0},
+             "fast": {"temperature": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0.0, "presence_penalty": 1.5,
+                      "repeat_penalty": 1.0}},
+}
+
+
+def clean_sampling(raw) -> dict[str, float]:
+    """Ein Satz Sampling-Werte geprüft: unbekannte Namen und Werte außerhalb der Grenzen → ValueError; leere Felder
+    (None, "") fallen weg."""
+    out: dict[str, float] = {}
+    for key, value in (raw or {}).items():
+        name = SAMPLING_ALIASES.get(key, key)
+        if name not in SAMPLING_LIMITS:
+            raise ValueError(f"Unbekannter Sampling-Wert: {key}")
+        if value is None or value == "":
+            continue
+        lo, hi, whole = SAMPLING_LIMITS[name]
+        try:
+            num = float(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"{name}: keine Zahl") from None
+        if not lo <= num <= hi or num != num:
+            raise ValueError(f"{name} muss zwischen {lo:g} und {hi:g} liegen")
+        out[name] = int(num) if whole else num
+    return out
+
+
+def sampling_for(sampling: dict | None, thinking: bool, temperature: float | None) -> dict[str, float]:
+    """Werte für diese Anfrage: der Satz des Modus (think/fast), ohne eigene Temperatur die des Profils."""
+    values = dict((sampling or {}).get("think" if thinking else "fast") or {})
+    if "temperature" not in values and temperature is not None:
+        values["temperature"] = temperature
+    return values
+
+
 _RUNNER_DIED = re.compile(r"process has terminated|segmentation fault|core dumped|exit status|SIGSEGV|SIGABRT", re.I)
 
 
@@ -84,6 +127,7 @@ class OllamaLLM:
         # Embeddings auf der CPU rechnen (spart Grafikspeicher, wenn ein anderes Modell die GPU belegt)
         self.embed_on_cpu = False
         self.embed_gpu_broken = False  # Embedding-Modell stürzte auf der GPU ab → bis zum Neustart auf der CPU
+        self.sampling: dict = {}  # Sampling-Sätze des Profils (think/fast), siehe sampling_for
         self._client = httpx.AsyncClient(base_url=cfg.base_url, timeout=cfg.request_timeout, transport=transport)
 
     async def close(self) -> None:
@@ -99,7 +143,7 @@ class OllamaLLM:
             "messages": ollama_messages(messages),
             "stream": stream,
             "keep_alive": self.cfg.keep_alive,
-            "options": {"temperature": self.cfg.temperature, "num_ctx": self.cfg.num_ctx},
+            "options": {**sampling_for(self.sampling, bool(think), self.cfg.temperature), "num_ctx": self.cfg.num_ctx},
             "think": think,
         }
         if max_tokens:
@@ -354,11 +398,11 @@ class OpenAICompatLLM:
             "model": p.model,
             "messages": to_openai_messages(messages),
             "stream": stream,
-            "temperature": p.temperature,
             "cache_prompt": True,
         }
         # Qwen-basierte Modelle (auch Bonsai): Denkmodus aus – deutlich schneller; per Anfrage einschaltbar
         thinking = bool(p.think if think is None else think)
+        payload.update(sampling_for(p.sampling, thinking, p.temperature))  # llama-server: Felder oben im Request
         payload["chat_template_kwargs"] = {"enable_thinking": thinking}
         if thinking and effort:  # Vorlagen mit Stufen (gpt-oss) nutzen es, alle anderen ignorieren es
             payload["chat_template_kwargs"]["reasoning_effort"] = effort

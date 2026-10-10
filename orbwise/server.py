@@ -1416,6 +1416,33 @@ def create_app(cfg: Config) -> FastAPI:
         await hub.broadcast({"type": "models_changed"})
         return {"ok": True, "ctx": llm.context_size if active else ctx}
 
+    @app.get("/api/models/{name}/sampling")
+    async def get_model_sampling(name: str):
+        from .llm import SAMPLING_LIMITS, SAMPLING_PRESETS
+        if not isinstance(llm, LLMRouter):
+            raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
+        if name not in llm.profiles:
+            raise HTTPException(404, "Unbekanntes Profil")
+        p = llm.profiles[name]
+        return {"think": p.sampling.get("think") or {}, "fast": p.sampling.get("fast") or {},
+                "temperature": p.temperature, "presets": SAMPLING_PRESETS,
+                "limits": {k: [lo, hi] for k, (lo, hi, _) in SAMPLING_LIMITS.items()}}
+
+    @app.post("/api/models/{name}/sampling")
+    async def set_model_sampling(name: str, request: Request):
+        """Sampling-Werte je Modus (mit/ohne Denken) – gilt ab der nächsten Antwort."""
+        if not isinstance(llm, LLMRouter):
+            raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
+        if name not in llm.profiles:
+            raise HTTPException(404, "Unbekanntes Profil")
+        body = await request.json()
+        try:
+            sets = await llm.set_sampling(name, body.get("think"), body.get("fast"))
+        except LLMError as e:
+            raise HTTPException(400, str(e)) from e
+        await hub.broadcast({"type": "models_changed"})
+        return {"ok": True, **sets}
+
     @app.post("/api/models/{name}/kv")
     async def set_model_kv(name: str, request: Request):
         """KV-Cache-Stufe (f16/q8_0/q4_0) eines eigenen llama-server – kleinerer Cache = mehr Kontext im VRAM."""

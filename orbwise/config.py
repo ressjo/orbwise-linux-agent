@@ -43,6 +43,9 @@ class ProfileConfig(BaseModel):
     # Vor dem Aktivieren alle Ollama-Modelle aus dem Grafikspeicher entladen
     unload_ollama: bool = False
     server: ServerConfig | None = None
+    # Sampling je Modus, z. B. {"think": {"temperature": 1.0, "top_p": 0.95}, "fast": {"presence_penalty": 1.5}} –
+    # fehlende Werte: Standard des Servers/Modells (temperature: siehe oben); in der Oberfläche einstellbar
+    sampling: dict[str, dict[str, float]] = Field(default_factory=dict)
 
     @field_validator("backend")
     @classmethod

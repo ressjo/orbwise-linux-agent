@@ -329,6 +329,13 @@ start. Deleting a model with 🗑 removes files Orbwise downloaded; files you pu
 Gated repositories need a Hugging Face token in `HF_TOKEN`. Ollama is still used for the memory embeddings and the
 Ollama presets above.
 
+**Context window, KV cache and sampling per model** (Settings → Models, for the active model): the context window
+(4k–128k), the KV cache level (f16 / q8 ≈ half / q4 ≈ a quarter of the memory – own llama-server only; with Ollama it
+is service-wide via `OLLAMA_KV_CACHE_TYPE`) and the sampling values for **thinking** and **non-thinking** answers
+(temperature, top_p, top_k, min_p, presence and repeat penalty; a **Qwen** preset fills in the vendor recommendation).
+Context and KV cache restart the model server; sampling applies from the next answer. Empty sampling fields keep the
+model's defaults.
+
 Orbwise can know several language models and switch between them – click the **model chip** at the top or run
 `orbwise model <name>` (`orbwise model` lists all profiles). The choice is remembered.
 

@@ -2182,8 +2182,10 @@
     const opts = (m && m.recommend && m.recommend.options) || [4096, 8192, 12288, 16384, 24576, 32768, 49152, 65536].map((c) => ({ ctx: c }));
     box.innerHTML = `<div class="mm-title"></div><div class="ctx-now"></div><div class="ctx-opts"></div><p class="set-hint"></p>`
       + `<div class="mm-title kv-title"></div><div class="ctx-opts kv-opts"></div><p class="set-hint kv-hint"></p>`
+      + `<div class="mm-title smp-title"></div><div class="smp"></div>`
       + `<button type="button" class="btn small ctx-test-btn"></button><div class="ctx-test"></div>`;
     renderKvSettings(box, p, m, models);
+    renderSampling(box, p);
     const testBtn = box.querySelector(".ctx-test-btn");
     testBtn.textContent = L("Kontext testen", "Test context");
     testBtn.title = L("Prüft mit dem aktiven Modell: Fenstergröße, Speicher, Token-Schätzung, Prompt-Cache und ein volles Fenster (kann einige Minuten dauern).",
@@ -2271,6 +2273,82 @@
           + 'Environment="OLLAMA_FLASH_ATTENTION=1" "OLLAMA_KV_CACHE_TYPE=q8_0", dann sudo systemctl restart ollama.',
           "With Ollama the level applies to the whole service: sudo systemctl edit ollama → "
           + 'Environment="OLLAMA_FLASH_ATTENTION=1" "OLLAMA_KV_CACHE_TYPE=q8_0", then sudo systemctl restart ollama.');
+  }
+
+  // Sampling je Modell und Modus (mit/ohne Denken) – gilt ab der nächsten Antwort
+  const SAMPLING_FIELDS = [
+    ["temperature", L("Temperatur", "Temperature"), 0.05], ["top_p", "top_p", 0.05], ["top_k", "top_k", 1],
+    ["min_p", "min_p", 0.01], ["presence_penalty", "presence", 0.1], ["repeat_penalty", "repeat", 0.05],
+  ];
+  async function renderSampling(box, p) {
+    let data;
+    try { data = await getJSON(`/api/models/${encodeURIComponent(p.name)}/sampling`); } catch { return; }
+    box.querySelector(".smp-title").textContent = L(`SAMPLING · ${p.label}`, `SAMPLING · ${p.label}`);
+    const wrap = box.querySelector(".smp");
+    wrap.innerHTML = `<div class="smp-cols"></div><div class="smp-btns"></div><p class="set-hint"></p>`;
+    const cols = wrap.querySelector(".smp-cols");
+    const inputs = { think: {}, fast: {} };
+    for (const [mode, title] of [["think", L("Mit Denken", "Thinking")], ["fast", L("Ohne Denken", "Non-thinking")]]) {
+      const col = document.createElement("div");
+      col.className = "smp-col";
+      col.innerHTML = `<b></b>`;
+      col.querySelector("b").textContent = title;
+      for (const [key, label, step] of SAMPLING_FIELDS) {
+        const row = document.createElement("label");
+        row.className = "smp-row";
+        row.innerHTML = `<span></span><input type="number">`;
+        row.querySelector("span").textContent = label;
+        const inp = row.querySelector("input");
+        const [lo, hi] = data.limits[key] || [];
+        Object.assign(inp, { min: lo, max: hi, step });
+        inp.placeholder = key === "temperature" && data.temperature != null ? String(data.temperature) : L("Standard", "default");
+        if (data[mode][key] != null) inp.value = data[mode][key];
+        inputs[mode][key] = inp;
+        col.appendChild(row);
+      }
+      cols.appendChild(col);
+    }
+    const btns = wrap.querySelector(".smp-btns");
+    const fill = (sets) => {
+      for (const mode of ["think", "fast"]) {
+        for (const [key] of SAMPLING_FIELDS) inputs[mode][key].value = sets && sets[mode][key] != null ? sets[mode][key] : "";
+      }
+    };
+    for (const [id, preset] of Object.entries(data.presets || {})) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "mm-link";
+      b.textContent = preset.label.toUpperCase();
+      b.dataset.preset = id;
+      b.onclick = () => fill(preset);
+      btns.appendChild(b);
+    }
+    const reset = document.createElement("button");
+    reset.type = "button";
+    reset.className = "mm-link";
+    reset.textContent = L("ZURÜCKSETZEN", "RESET");
+    reset.onclick = () => fill(null);
+    const save = document.createElement("button");
+    save.type = "button";
+    save.className = "btn small smp-save";
+    save.textContent = L("Speichern", "Save");
+    save.onclick = async () => {
+      const body = { think: {}, fast: {} };
+      for (const mode of ["think", "fast"]) {
+        for (const [key] of SAMPLING_FIELDS) {
+          const v = inputs[mode][key].value.trim();
+          if (v !== "") body[mode][key] = Number(v);
+        }
+      }
+      try {
+        await api("POST", `/api/models/${encodeURIComponent(p.name)}/sampling`, body);
+        toast(L("Sampling gespeichert – gilt ab der nächsten Antwort.", "Sampling saved – applies from the next answer."));
+      } catch { /* Meldung kommt von api() */ }
+    };
+    btns.append(reset, save);
+    wrap.querySelector(".set-hint").textContent = L(
+      "Welcher Satz gilt, entscheidet der Denken-Knopf im Chat. Leere Felder: Standard des Modells (Temperatur: die des Profils). Kein Neustart nötig.",
+      "The think button in the chat decides which set applies. Empty fields: the model's default (temperature: the profile's). No restart needed.");
   }
 
   async function runContextTest(out, btn) {

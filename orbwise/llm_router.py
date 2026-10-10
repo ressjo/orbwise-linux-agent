@@ -17,7 +17,7 @@ import httpx
 
 from .config import LLMConfig, ProfileConfig, ServerConfig
 from .lang import T
-from .llm import ContextOverflow, LLMError, OllamaLLM, OpenAICompatLLM
+from .llm import ContextOverflow, LLMError, OllamaLLM, OpenAICompatLLM, clean_sampling
 from .llm_memory import cache_type
 
 log = logging.getLogger(__name__)
@@ -260,6 +260,19 @@ class LLMRouter:
         for name, n in (state.get("context") or {}).items():  # in der Oberfläche eingestellt
             if name in self.profiles and isinstance(n, int):
                 self._apply_context(name, n)
+        for name, p in self.profiles.items():  # aus der config.yaml: Namen vereinheitlichen, Unsinn melden
+            if p.sampling:
+                try:
+                    p.sampling = {m: clean_sampling(p.sampling.get(m)) for m in ("think", "fast")}
+                except ValueError as e:
+                    log.warning("Sampling-Werte im Profil '%s' ungültig: %s", name, e)
+                    p.sampling = {}
+        for name, sets in (state.get("sampling") or {}).items():
+            if name in self.profiles and isinstance(sets, dict):
+                try:
+                    self.profiles[name].sampling = {m: clean_sampling(sets.get(m)) for m in ("think", "fast")}
+                except ValueError as e:
+                    log.warning("Gespeicherte Sampling-Werte für '%s' ungültig: %s", name, e)
         for name, kv in (state.get("kv_cache") or {}).items():
             if name in self.profiles and kv in KV_TYPES and self.profiles[name].server:
                 self._apply_kv(name, kv)
@@ -351,9 +364,11 @@ class LLMRouter:
     def _client_for(self, p: ProfileConfig):
         if p.backend == "openai":
             return OpenAICompatLLM(p, timeout=self.cfg.request_timeout, transport=self.transport)
-        return OllamaLLM(self.cfg.model_copy(update={
+        client = OllamaLLM(self.cfg.model_copy(update={
             "base_url": p.base_url, "model": p.model, "temperature": p.temperature,
             "num_ctx": p.num_ctx, "think": p.think}), transport=self.transport)
+        client.sampling = p.sampling
+        return client
 
     def _build_client(self) -> None:
         self.client = self._client_for(self.profile)
@@ -538,6 +553,24 @@ class LLMRouter:
         if got and got != n:
             raise LLMError(f"Der Modell-Server meldet weiterhin {got} Token Kontext statt {n} – er wurde "
                            "nicht neu gestartet oder übernimmt die Größe nicht (Startbefehl prüfen).")
+
+    async def set_sampling(self, name: str, think: dict | None, fast: dict | None) -> dict:
+        """Sampling-Werte je Modus festlegen und merken – gilt ab der nächsten Anfrage, ohne Neustart."""
+        if name not in self.profiles:
+            raise LLMError(f"Unbekanntes Profil '{name}'")
+        try:
+            sets = {"think": clean_sampling(think), "fast": clean_sampling(fast)}
+        except ValueError as e:
+            raise LLMError(str(e)) from e
+        self.profiles[name].sampling = sets
+        if self.state_path:
+            data = self._read_state()
+            data.setdefault("sampling", {})[name] = sets
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            self.state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
+        if name == self.active and isinstance(self.client, OllamaLLM):
+            self.client.sampling = sets  # OpenAI-Client liest das Profil selbst
+        return sets
 
     async def set_kv(self, name: str, kv: str, progress: Progress | None = None) -> None:
         """KV-Cache-Stufe (f16/q8_0/q4_0) ändern und merken; beim aktiven Profil startet der Server neu."""

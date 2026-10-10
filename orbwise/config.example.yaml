@@ -44,6 +44,9 @@ llm:
   #     embed_on_cpu: true             # run memory embeddings on the CPU (VRAM is scarce)
   #     unload_ollama: true            # unload Ollama models from VRAM first
   #     # temperature: 0.6 · think: false – also per profile; empty = the values of the llm block
+  #     # sampling:                    # per mode; easier: Settings → Models → Sampling (e.g. the Qwen preset)
+  #     #   think: {temperature: 1.0, top_p: 0.95, top_k: 20, min_p: 0.0, presence_penalty: 0.0}
+  #     #   fast:  {temperature: 0.7, top_p: 0.8, top_k: 20, min_p: 0.0, presence_penalty: 1.5}
   #     server:                        # Orbwise starts/stops the server itself
   #       command: ~/bonsai/scripts/start_llama_server.sh -np 1 --api-key <random-password>
   #       env:
