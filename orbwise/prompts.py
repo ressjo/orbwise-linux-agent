@@ -230,7 +230,7 @@ TEXTS = {
         "auto_read_off": "nur lesend – Auto ist aus, darum frage ich trotzdem",
         "auto_files": "ändert nur Dateien in deinem Home (Auto: Dateien bearbeiten)",
         "auto_full": "ohne Root-Rechte (Auto)",
-        "tainted_confirm": "Nach dem Lesen einer E-Mail oder eines Bildschirm-/Bildinhalts – Schutz vor versteckten "
+        "tainted_confirm": "Nach dem Lesen einer E-Mail, Webseite oder eines Bildschirm-/Bildinhalts – Schutz vor versteckten "
                            "Anweisungen. Nur erlauben, wenn du diese Aktion selbst verlangt hast.",
         "plan_mode": "PLANMODUS: Führe noch nichts aus, was etwas verändert. Du darfst mit lesenden Werkzeugen "
                      "nachsehen (Systeminfo, Dateien, Pakete suchen, Status …), um den Plan konkret zu machen. "
@@ -274,7 +274,7 @@ TEXTS = {
         "auto_read_off": "read-only – Auto is off, so I ask anyway",
         "auto_files": "only changes files in your home folder (Auto: edit files)",
         "auto_full": "without root privileges (Auto)",
-        "tainted_confirm": "After reading an e-mail or screen/image content – protection against hidden "
+        "tainted_confirm": "After reading an e-mail, web page or screen/image content – protection against hidden "
                            "instructions. Only allow it if you asked for this action yourself.",
         "plan_mode": "PLAN MODE: Do not run anything that changes something yet. You may look things up with "
                      "read-only tools (system info, files, package search, status …) to make the plan concrete. "

@@ -814,8 +814,14 @@ Orbwise can run commands on your system, so:
 - **Confirmation required:** everything that changes something (installs, updates, `rm`, writing files, service
   control, killing processes, unknown programs, command substitution `$(…)`) shows a dialog with the exact
   command. Confirm by click, `Enter`/`Esc` or voice ("yes"/"no").
-- **Read-only commands** (`ls`, `df`, `systemctl status`, `grep`, …) run directly – except while an e-mail or screen content is
-  part of the chat (it could contain hidden instructions), then every action needs confirmation.
+- **Read-only commands** (`ls`, `df`, `systemctl status`, `grep`, …) run directly. While an e-mail, a fetched web page
+  or screen/image content is part of the chat (it could contain hidden instructions), every action that changes
+  something or reaches the network needs confirmation; purely local read-only commands (`cd`, `ls`, `echo`) still run.
+- **Data-leak guard:** whatever leaves the machine – web searches, fetched URLs, opened websites, `curl`/`wget`
+  URLs and data – is checked first. Access keys/tokens, passwords, IBANs, card numbers, e-mail addresses, phone
+  numbers, long encoded parameters and text copied from your own files, mails or documents (read in this chat) make
+  Orbwise ask, showing what it found (masked) – in every auto mode. Values you typed yourself in your last message
+  don't trigger it.
 - **Blocklist:** `rm -rf /`, formatting or overwriting disks, fork bombs, `chmod -R … /` and similar are never run –
   not even after confirmation.
 - **Local only:** the server listens on `127.0.0.1` and checks the `Host` header and `Origin` – other websites

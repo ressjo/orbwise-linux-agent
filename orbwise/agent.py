@@ -31,6 +31,7 @@ from .llm import ContextOverflow, LLMError, strip_think
 from .memory import Memory, est_tokens
 from .memory.context import TRIM_NOTE, msg_tokens, render_transcript, shrink_tool_results
 from .memory.index import shared_words
+from .tools.leakguard import LOCAL_DATA_TOOLS, find_leak, outbound_text
 from .tools.proc import clip, clip_saved
 from .tools.registry import (
     BLOCKED,
@@ -62,8 +63,8 @@ CORRECTION = re.compile(r"^\W*(?:nein\b|falsch|stimmt nicht|das (?:ist|war) (?:f
 # Alle Werkzeuge gehen nur mit, wenn ihre Beschreibungen in höchstens so vielen Sekunden eingelesen sind
 ALL_TOOLS_SECONDS = 10.0
 
-TAINT_SOURCES = {"mail_list", "mail_search", "mail_read", "mail_ask", "daily_briefing",
-                 "look_at_screen", "look_at_image"}  # auch Bildschirm/Bild: eine Webseite kann Anweisungen zeigen
+TAINT_SOURCES = {"mail_list", "mail_search", "mail_read", "mail_ask", "daily_briefing", "fetch_url",
+                 "look_at_screen", "look_at_image"}  # Webseiten, Bildschirm, Bild: können Anweisungen enthalten
 PREWARM_RETRY_S = 600  # nach einem Ladefehler so lange nicht vorwärmen (je Profil)
 AUTO_TOOLS = ("run_shell", "ssh_run", "write_file", "edit_file")  # Auto-Modus „Auto“ gibt diese ohne Root frei
 TAINT_GUARDED = {"shell", "ssh", "portainer", "web", "files", "apps", "obsidian", "trilium", "calendar_tools",
@@ -1536,7 +1537,23 @@ class Agent:
             risk, reason = CONFIRM, prompts.text(self.cfg, "tainted_confirm")
         if risk == SAFE and name in ("run_shell", "ssh_run") and self.auto_mode == "off":
             risk, reason = CONFIRM, prompts.text(self.cfg, "auto_read_off")
+        if risk != BLOCKED:  # Datenabfluss-Wächter: private Daten verlassen den Rechner nie unbemerkt
+            leak = self._leak(name, args)
+            if leak:
+                risk, reason = CONFIRM, leak + (f"; {reason}" if risk == CONFIRM and reason else "")
         return risk, reason
+
+    def _leak(self, name: str, args: dict) -> str | None:
+        """Würde dieser Aufruf private Daten ins Internet schicken? (siehe tools/leakguard.py)"""
+        out = outbound_text(name, args)
+        if not out:
+            return None
+        conv = self.memory.conversation
+        msgs = conv.epoch_messages()
+        user = next((m.get("content") or "" for m in reversed(msgs) if m.get("role") == "user"), "")
+        local = [m.get("full_content") or m.get("content") or "" for m in msgs
+                 if m.get("role") == "tool" and m.get("tool_name") in LOCAL_DATA_TOOLS]
+        return find_leak(out, user if isinstance(user, str) else "", local)
 
     def _runs_unasked(self, call: dict) -> bool:
         """Läuft dieser Aufruf ohne Rückfrage (und bringt keine fremden Inhalte)? Dann darf er parallel laufen."""
