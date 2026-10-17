@@ -1530,10 +1530,81 @@ def create_app(cfg: Config) -> FastAPI:
             if at is not None and ep.get("summary"):
                 epochs.append({"at": at, "summary": ep["summary"], "ts": ep.get("ts"), "reason": ep.get("reason", "")})
         first = conv.epochs[0].get("summary", "") if conv.epochs else ""  # Zusammenfassung aus älteren Versionen
+        turns = user_turns(conv)
+        start = conv.epoch["start"]
         return {"summary": first, "chat": {"id": conv.chat_id, "title": conv.meta.get("title", "")},
-                "messages": [{"role": m["role"], "content": m["content"],
-                              **({"images": m["attachments"]} if m.get("attachments") else {})} for _, m in shown],
-                "epochs": epochs}
+                "messages": [{"role": m["role"], "content": m["content"], "turn": turns.get(i, 0),
+                              "editable": i >= start,
+                              **({"images": m["attachments"]} if m.get("attachments") else {})} for i, m in shown],
+                "turns": max(turns.values(), default=0), "epochs": epochs}
+
+    def user_turns(conv) -> dict[int, int]:
+        """Index im Verlauf → Nummer der Nutzerfrage (1, 2, …), zu der die Nachricht gehört (Antworten zählen zur
+        Frage davor) – so kann die Oberfläche „Frage 3 bearbeiten / neu generieren“ sagen."""
+        out, n = {}, 0
+        for i, m in enumerate(conv.history):
+            if m["role"] == "user":
+                n += 1
+            out[i] = n
+        return out
+
+    @app.post("/api/chats/active/rewind")
+    async def rewind(request: Request):
+        """Frage `turn` neu stellen: mit neuem Text (Bearbeiten) oder unverändert (Neu generieren). Alles ab dieser
+        Frage wird verworfen – nur innerhalb des noch nicht zusammengefassten Teils des Chats."""
+        not_busy()
+        body = await request.json()
+        try:
+            turn = int(body.get("turn", 0))
+        except (TypeError, ValueError):
+            raise HTTPException(400, "turn fehlt") from None
+        conv = memory.active
+        idx = next((i for i, t in user_turns(conv).items()
+                    if t == turn and conv.history[i]["role"] == "user"), None)
+        if idx is None:
+            raise HTTPException(404, "Diese Nachricht gibt es nicht (mehr)")
+        old = conv.history[idx]
+        text = str(body.get("text") if body.get("text") is not None else old.get("content") or "").strip()
+        if not text:
+            raise HTTPException(400, "Leere Nachricht")
+        images = list(old.get("attachments") or []) if body.get("text") is None else []
+        try:
+            conv.truncate(idx)
+        except ValueError as e:
+            raise HTTPException(409, str(e)) from e
+        conv.save()
+        agent._cache_owner = None  # Ende des Chats geändert – der Cache-Anfang passt aber meist noch
+        await hub.broadcast({"type": "chat_reload", "turn": turn})  # Oberfläche schneidet ab dieser Frage ab
+        await hub.submit(text, images=images or None)
+        return {"ok": True, "turn": turn}
+
+    @app.get("/api/chats/{chat_id}/export")
+    async def export_chat(chat_id: str):
+        """Chat als Markdown-Datei: Fragen, Antworten, Werkzeug-Aufrufe als kurze Zeile, Zusammenfassungen als Zitat."""
+        chat_or_404(chat_id)
+        conv = memory.active if memory.active.chat_id == chat_id else memory._loaded(chat_id) \
+            or memory.chats.open(chat_id)
+        title = conv.meta.get("title") or T("Chat", "Chat")
+        when = datetime.fromtimestamp(conv.meta.get("created") or time.time()).strftime("%d.%m.%Y %H:%M")
+        lines = [f"# {title}", "", f"*{when} · Orbwise*", ""]
+        summaries = {ep.get("start", 0): ep.get("summary") for ep in conv.epochs if ep.get("summary")}
+        for i, m in enumerate(conv.history):
+            if summaries.get(i):
+                lines += ["> " + line for line in str(summaries[i]).splitlines()] + [""]
+            if m["role"] == "user" and m.get("content"):
+                lines += [f"## {T('Du', 'You')}", "", str(m["content"]), ""]
+            elif m["role"] == "assistant":
+                for call in m.get("tool_calls") or []:
+                    fn = call.get("function", {})
+                    args = fn.get("arguments")
+                    args = args if isinstance(args, dict) else {}
+                    first = next((str(v) for v in args.values() if isinstance(v, (str, int, float))), "")
+                    lines.append(f"🔧 {fn.get('name', '?')}" + (f": `{first[:160]}`" if first else ""))
+                if m.get("content"):
+                    lines += ["", f"## {cfg.assistant_name or 'Orbwise'}", "", str(m["content"]), ""]
+        safe = re.sub(r"[^\w.-]+", "_", title)[:60].strip("_") or "chat"
+        return Response("\n".join(lines).rstrip() + "\n", media_type="text/markdown; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="{safe}.md"'})
 
     # ---------- Chat-Historie ----------
     def chat_or_404(chat_id: str) -> None:

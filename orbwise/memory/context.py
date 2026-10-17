@@ -177,6 +177,13 @@ class Conversation:
         self.epochs = [new_epoch()]
         self.save()
 
+    def truncate(self, index: int) -> None:
+        """Alles ab history[index] verwerfen (Nachricht bearbeiten / neu generieren). Nur innerhalb der aktuellen
+        Epoche – Älteres steckt schon in der Zusammenfassung und lässt sich nicht mehr umschreiben."""
+        if not self.epoch["start"] <= index <= len(self.history):
+            raise ValueError("Diese Nachricht liegt vor der letzten Zusammenfassung des Chats")
+        del self.history[index:]
+
     # ---------- Alte Werkzeug-Ergebnisse ausblenden (wie Claude Codes Microcompact) ----------
     def tool_steps(self) -> list[tuple[int, list[int]]]:
         """Werkzeug-Schritte der Epoche: (Index des Aufrufs, Indizes seiner Ergebnisse)."""

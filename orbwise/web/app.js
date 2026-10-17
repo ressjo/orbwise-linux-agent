@@ -355,8 +355,12 @@
         if (ev.state === "idle") stopSaying();
         break;
       case "user":
-        addUser(ev.text, ev.source, ev.images);
+        S.turns = (S.turns || 0) + 1;
+        addUser(ev.text, ev.source, ev.images, S.turns, true);
         if (ev.source === "voice") S.voiceUsed = true;
+        break;
+      case "chat_reload":  // Nachricht bearbeitet / neu generiert: Chat ab dieser Frage abschneiden (gleich folgt sie neu)
+        cutChat(ev.turn);
         break;
       case "assistant_start":
         startAssistant(ev.id, ev.plan);
@@ -657,8 +661,11 @@
     return el;
   }
 
-  function addUser(text, source, images) {
+  function addUser(text, source, images, turn, editable) {
     const el = addMsg("user", source === "voice" ? L("DU · SPRACHE", "YOU · VOICE") : L("DU", "YOU"), escapeHtml(text));
+    el._raw = text;
+    if (turn) el.dataset.turn = turn;
+    userActions(el, editable !== false && !!turn);
     if (images && images.length) {
       const box = document.createElement("div");
       box.className = "msg-images";
@@ -705,6 +712,7 @@
   function startAssistant(id, plan) {
     const el = addMsg("assistant streaming" + (plan ? " plan" : ""), "JARVIS", "");
     el.dataset.msg = id;
+    if (S.turns) el.dataset.turn = S.turns;
     // statt eines blinkenden Cursors: was das Modell gerade macht (Einlesen, Denken, Aufruf schreiben …)
     const live = liveLine(L("wartet auf das Modell", "waiting for the model"));
     el.appendChild(live);
@@ -804,12 +812,126 @@
     if (dirty.has(a)) { dirty.delete(a); renderAssistant(a); scrollChat(); }
     a.el.classList.remove("streaming");
     a.live.remove();
-    if (a.steps.length) a.el.appendChild(statsLine(a, cancelled));
+    a.el._raw = a.raw.trim();
+    assistantActions(a.el);
+    if (a.steps.length) ensureActions(a.el).appendChild(statsLine(a, cancelled));
     if (!a.raw.trim()) {
       a.el.querySelector(".body").innerHTML = cancelled ? "<em>(abgebrochen)</em>" : "";
       if (!cancelled && !a.el.querySelector(".tool-chip")) a.el.remove();
     }
     delete assistants[id];
+    markLast();
+  }
+
+  // ---------------------------------------------------------------- Aktionen an Nachrichten
+  // Kopieren, Bearbeiten (eigene Nachricht), Neu generieren (letzte Antwort), 👍/👎, Statistik – erscheinen beim
+  // Darüberfahren bzw. an der letzten Antwort; am Handy immer (dezent).
+  function ensureActions(el) {
+    let bar = el.querySelector(":scope > .msg-actions");
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.className = "msg-actions";
+      el.appendChild(bar);
+    }
+    return bar;
+  }
+  function actBtn(icon, title, onclick, cls = "") {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "ma-btn " + cls;
+    b.title = title;
+    b.setAttribute("aria-label", title);
+    b.innerHTML = `<svg class="i"><use href="#i-${icon}"/></svg>`;
+    b.onclick = (e) => { e.stopPropagation(); onclick(b); };
+    return b;
+  }
+  async function copyText(text, btn) {
+    try { await navigator.clipboard.writeText(text); } catch {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+    }
+    if (btn) { btn.classList.add("ok"); setTimeout(() => btn.classList.remove("ok"), 1200); }
+    toast(L("Kopiert.", "Copied."));
+  }
+  const isBusy = () => !!S.serverState && S.serverState !== "idle";
+  function userActions(el, editable) {
+    const bar = ensureActions(el);
+    bar.appendChild(actBtn("copy", L("Kopieren", "Copy"), (b) => copyText(el._raw || "", b)));
+    if (editable) bar.appendChild(actBtn("edit", L("Bearbeiten und neu senden", "Edit and resend"), () => editUser(el)));
+  }
+  function assistantActions(el) {
+    const bar = ensureActions(el);
+    if (bar.querySelector(".ma-copy")) return;
+    bar.prepend(actBtn("copy", L("Antwort kopieren (Markdown)", "Copy answer (Markdown)"), (b) => copyText(el._raw || "", b), "ma-copy"));
+    if (el.dataset.turn && !el.classList.contains("locked")) {
+      bar.insertBefore(actBtn("redo", L("Neu generieren", "Regenerate"), () => rewind(Number(el.dataset.turn)), "ma-regen"),
+                       bar.querySelector(".ma-copy").nextSibling);
+    }
+  }
+  // „Letzte Antwort“: dort bleiben die Aktionen sichtbar und nur dort gibt es „Neu generieren“
+  function markLast() {
+    chat.querySelectorAll(".msg.last").forEach((x) => x.classList.remove("last"));
+    const msgs = chat.querySelectorAll(".msg.assistant:not(.streaming):not(.error)");
+    if (msgs.length) msgs[msgs.length - 1].classList.add("last");
+  }
+  async function rewind(turn, text) {
+    if (isBusy()) { toast(L("Jarvis arbeitet gerade – erst abwarten oder STOP.", "Jarvis is busy – wait or press STOP.")); return false; }
+    try {
+      await api("POST", "/api/chats/active/rewind", text == null ? { turn } : { turn, text });
+      return true;
+    } catch { return false; }  // Meldung kommt von api()
+  }
+  function editUser(el) {
+    if (el.querySelector(".msg-edit")) return;
+    if (isBusy()) { toast(L("Jarvis arbeitet gerade – erst abwarten oder STOP.", "Jarvis is busy – wait or press STOP.")); return; }
+    const turn = Number(el.dataset.turn);
+    const body = el.querySelector(".body");
+    const form = document.createElement("form");
+    form.className = "msg-edit";
+    form.innerHTML = `<textarea rows="3"></textarea><div class="me-btns"><span class="me-hint"></span>`
+      + `<button type="button" class="btn small ghost me-cancel"></button><button type="submit" class="btn small primary"></button></div>`;
+    const ta = form.querySelector("textarea");
+    ta.value = el._raw || "";
+    form.querySelector(".me-cancel").textContent = L("Abbrechen", "Cancel");
+    form.querySelector("[type=submit]").textContent = L("Senden", "Send");
+    const later = (S.turns || turn) - turn;
+    form.querySelector(".me-hint").textContent = later > 0
+      ? L(`Die ${later + 1} Antworten ab hier werden ersetzt.`, `The ${later + 1} answers from here are replaced.`)
+      : L("Enter sendet · Esc bricht ab", "Enter sends · Esc cancels");
+    const close = () => { form.remove(); body.hidden = false; el.classList.remove("editing"); };
+    form.querySelector(".me-cancel").onclick = close;
+    ta.onkeydown = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); close(); }
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); }
+    };
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      const text = ta.value.trim();
+      if (!text) return;
+      if (later > 0 && !confirm(L(`Ab dieser Nachricht neu beginnen? Die ${later + 1} Antworten danach werden ersetzt.`,
+                                  `Restart from this message? The ${later + 1} answers after it are replaced.`))) return;
+      if (await rewind(turn, text)) close();
+    };
+    body.hidden = true;
+    el.classList.add("editing");
+    el.insertBefore(form, el.querySelector(".msg-actions"));
+    ta.style.height = Math.min(320, Math.max(72, body.scrollHeight + 24)) + "px";
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+  }
+  function cutChat(turn) {
+    if (!turn) return;
+    const first = [...chat.children].find((el) => Number(el.dataset.turn) >= turn);
+    if (first) {
+      let el = first;
+      while (el) { const next = el.nextElementSibling; el.remove(); el = next; }
+    }
+    S.turns = turn - 1;  // die neu gestellte Frage bekommt gleich wieder diese Nummer
+    markLast();
   }
 
   // ---------------------------------------------------------------- 👍/👎 (Lernen aus Erfahrung)
@@ -817,7 +939,7 @@
   function addFeedback(id) {
     const a = assistants[id];
     if (!a || a.el.querySelector(".msg-feedback")) return;
-    const bar = document.createElement("div");
+    const bar = document.createElement("span");
     bar.className = "msg-feedback";
     bar.innerHTML = `<button type="button" data-good="1" title="${L("Hilfreich", "Helpful")}">👍</button>`
       + `<button type="button" data-good="0" title="${L("Nicht gut – Jarvis lernt daraus", "Not good – Jarvis learns from it")}">👎</button>`
@@ -838,7 +960,7 @@
       bar.querySelector(".fb-note").textContent = good ? L("Danke!", "Thanks!")
         : L("Danke – Jarvis denkt in einer ruhigen Minute darüber nach.", "Thanks – Jarvis will think about it when idle.");
     }));
-    a.el.appendChild(bar);
+    ensureActions(a.el).appendChild(bar);
   }
 
   // ---------------------------------------------------------------- Planmodus
@@ -1707,6 +1829,12 @@
   }
   setDrawer(store.get("drawer", "") === "open" && window.innerWidth > 1200);
   $("btn-activity").onclick = () => setDrawer(!app.classList.contains("drawer-open"), true);
+  // Wird das Fenster schmal (Handy-Breite), legt sich ein offenes Panel nicht über den ganzen Chat
+  let lastWidth = window.innerWidth;
+  window.addEventListener("resize", () => {
+    if (lastWidth >= 900 && window.innerWidth < 900 && app.classList.contains("drawer-open")) setDrawer(false);
+    lastWidth = window.innerWidth;
+  });
   $("drawer-close").onclick = () => setDrawer(false, true);
   function activityArrived() {
     if (app.classList.contains("drawer-open")) return;
@@ -3062,39 +3190,153 @@
       ul.innerHTML = `<li class="empty">${q ? L("Nichts gefunden.", "Nothing found.") : L("Noch keine Chats.", "No chats yet.")}</li>`;
       return;
     }
+    let group = "";
     for (const c of list) {
+      const g = chatGroup(c);
+      if (g !== group) {
+        group = g;
+        const h = document.createElement("li");
+        h.className = "chat-group";
+        h.textContent = g;
+        ul.appendChild(h);
+      }
       const li = document.createElement("li");
-      li.className = "chat-item" + (c.active ? " active" : "");
-      li.innerHTML = `<button class="star${c.starred ? " on" : ""}" title="${c.starred ? L("Markierung entfernen", "Remove mark") : L("Als wichtig markieren", "Mark as important")}">${c.starred ? "★" : "☆"}</button>
-        <div><div class="t"></div><div class="m"></div><div class="p"></div></div>
-        <button class="del" title="${L("Chat löschen (auch aus dem Gedächtnis)", "Delete chat (also from memory)")}">✕</button>`;
+      li.className = "chat-item" + (c.active ? " active" : "") + (c.starred ? " pinned" : "");
+      li.title = c.preview || c.title;
+      li.innerHTML = `<div class="ci-main"><div class="t"></div></div><span class="ci-when"></span>`
+        + `<button class="ci-more" type="button" aria-label="${L("Aktionen", "Actions")}"><svg class="i"><use href="#i-more"/></svg></button>`;
       li.querySelector(".t").textContent = c.title;
-      li.querySelector(".m").textContent = `${chatWhen(c.updated)} · ${c.messages} ${L("Nachr.", "msgs")}` + (c.active ? L(" · aktiv", " · active") : "");
-      li.querySelector(".p").textContent = c.preview || "";
-      li.onclick = () => { if (!c.active) api("POST", `/api/chats/${c.id}/activate`).catch(() => {}); };
-      li.querySelector(".t").ondblclick = (e) => {
-        e.stopPropagation();
-        const title = prompt(L("Neuer Titel:", "New title:"), c.title);
-        if (title && title.trim()) api("PATCH", `/api/chats/${c.id}`, { title }).then(loadChats).catch(() => {});
-      };
-      li.querySelector(".star").onclick = (e) => {
-        e.stopPropagation();
-        api("POST", `/api/chats/${c.id}/star`, { starred: !c.starred }).then(loadChats).catch(() => {});
-      };
-      li.querySelector(".del").onclick = (e) => {
-        e.stopPropagation();
-        const extra = c.legacy ? L("\n\nHinweis: Dieser Chat stammt von vor der Chat-Historie – ältere Tagebuch-Einträge "
-          + "daraus lassen sich nicht zuordnen und bleiben im Gedächtnis.",
-          "\n\nNote: this chat predates the chat history – older journal entries from it cannot be attributed and stay in memory.") : "";
-        if (confirm(L(`„${c.title}“ löschen?\n\nDer Chat wird auch aus Jarvis' Gedächtnis entfernt (Tagebuch, Suche, `
-            + `Tageszusammenfassung). Gelernte Fakten bleiben.`, `Delete “${c.title}”?\n\nThe chat is also removed from `
-            + `Jarvis' memory (journal, search, daily summary). Learned facts are kept.`) + extra)) {
-          api("DELETE", `/api/chats/${c.id}`).then(() => { toast(L("Chat gelöscht.", "Chat deleted.")); loadChats(); }).catch(() => {});
-        }
-      };
+      li.querySelector(".ci-when").textContent = chatShortWhen(c.updated);
+      li.onclick = () => { if (!c.active && !li.querySelector("input")) api("POST", `/api/chats/${c.id}/activate`).catch(() => {}); };
+      li.querySelector(".ci-more").onclick = (e) => { e.stopPropagation(); chatMenu(e.currentTarget, c, li); };
       ul.appendChild(li);
     }
   }
+
+  // Gruppen wie in LM Studio/ChatGPT: Angeheftet · Heute · Gestern · Letzte 7 Tage · Letzte 30 Tage · Älter
+  function chatGroup(c) {
+    if (c.starred) return L("Angeheftet", "Pinned");
+    const day = (ts) => { const d = new Date(ts); d.setHours(0, 0, 0, 0); return d.getTime(); };
+    const diff = Math.round((day(Date.now()) - day((c.updated || 0) * 1000)) / 86400000);
+    if (diff <= 0) return L("Heute", "Today");
+    if (diff === 1) return L("Gestern", "Yesterday");
+    if (diff < 7) return L("Letzte 7 Tage", "Previous 7 days");
+    if (diff < 30) return L("Letzte 30 Tage", "Previous 30 days");
+    return L("Älter", "Older");
+  }
+  function chatShortWhen(ts) {
+    if (!ts) return "";
+    const d = new Date(ts * 1000);
+    if (d.toDateString() === new Date().toDateString()) return d.toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit" });
+    return d.toLocaleDateString(LOCALE, { day: "2-digit", month: "2-digit" });
+  }
+
+  // Kleines Menü an einem Knopf (Chatliste, Kopfzeile)
+  let openMenu = null;
+  function closeMenu() { if (openMenu) { openMenu.remove(); openMenu = null; } }
+  document.addEventListener("click", closeMenu);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenu(); });
+  function popMenu(anchor, items) {
+    closeMenu();
+    const m = document.createElement("div");
+    m.className = "pop-menu";
+    m.setAttribute("role", "menu");
+    for (const it of items) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "pm-item" + (it.danger ? " danger" : "");
+      b.setAttribute("role", "menuitem");
+      b.innerHTML = `<svg class="i"><use href="#i-${it.icon}"/></svg><span></span>`;
+      b.querySelector("span").textContent = it.label;
+      b.onclick = (e) => { e.stopPropagation(); closeMenu(); it.run(); };
+      m.appendChild(b);
+    }
+    document.body.appendChild(m);
+    const r = anchor.getBoundingClientRect();
+    const w = m.offsetWidth, h = m.offsetHeight;
+    m.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, r.right - w)) + "px";
+    m.style.top = (r.bottom + h + 8 > window.innerHeight ? r.top - h - 4 : r.bottom + 4) + "px";
+    openMenu = m;
+    m.querySelector("button").focus();
+  }
+  function chatMenu(anchor, c, li) {
+    popMenu(anchor, [
+      { icon: "edit", label: L("Umbenennen", "Rename"), run: () => renameInline(li.querySelector(".t"), c) },
+      { icon: "pin", label: c.starred ? L("Lösen", "Unpin") : L("Anheften", "Pin"),
+        run: () => api("POST", `/api/chats/${c.id}/star`, { starred: !c.starred }).then(loadChats).catch(() => {}) },
+      { icon: "download", label: L("Als Markdown exportieren", "Export as Markdown"), run: () => exportChat(c.id) },
+      { icon: "trash", label: L("Löschen", "Delete"), danger: true, run: () => deleteChat(c) },
+    ]);
+  }
+  function renameInline(target, c) {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "rename-input";
+    input.value = c.title;
+    input.maxLength = 120;
+    const old = target.textContent;
+    target.textContent = "";
+    target.appendChild(input);
+    input.focus();
+    input.select();
+    let done = false;
+    const finish = (save) => {
+      if (done) return;
+      done = true;
+      const title = input.value.trim();
+      input.remove();
+      target.textContent = save && title ? title : old;
+      if (save && title && title !== c.title) {
+        api("PATCH", `/api/chats/${c.id}`, { title }).then(() => {
+          loadChats();
+          if (c.active || c.id === S.chatId) $("chat-title").textContent = title;
+        }).catch(() => {});
+      }
+    };
+    input.onclick = (e) => e.stopPropagation();
+    input.onkeydown = (e) => {
+      if (e.key === "Enter") { e.preventDefault(); finish(true); }
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(false); }
+    };
+    input.onblur = () => finish(true);
+  }
+  function exportChat(id) {
+    const a = document.createElement("a");
+    a.href = `/api/chats/${encodeURIComponent(id)}/export`;
+    a.download = "";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+  function deleteChat(c) {
+    const extra = c.legacy ? L("\n\nHinweis: Dieser Chat stammt von vor der Chat-Historie – ältere Tagebuch-Einträge "
+      + "daraus lassen sich nicht zuordnen und bleiben im Gedächtnis.",
+      "\n\nNote: this chat predates the chat history – older journal entries from it cannot be attributed and stay in memory.") : "";
+    if (confirm(L(`„${c.title}“ löschen?\n\nDer Chat wird auch aus Jarvis' Gedächtnis entfernt (Tagebuch, Suche, `
+        + `Tageszusammenfassung). Gelernte Fakten bleiben.`, `Delete “${c.title}”?\n\nThe chat is also removed from `
+        + `Jarvis' memory (journal, search, daily summary). Learned facts are kept.`) + extra)) {
+      api("DELETE", `/api/chats/${c.id}`).then(() => { toast(L("Chat gelöscht.", "Chat deleted.")); loadChats(); }).catch(() => {});
+    }
+  }
+  // Kopfzeile: Titel anklicken benennt um, ⋯ bietet Exportieren/Löschen für den offenen Chat
+  async function activeChat() {
+    try { return (await getJSON("/api/chats")).find((x) => x.active) || null; } catch { return null; }
+  }
+  $("chat-title").onclick = async () => {
+    const c = await activeChat();
+    if (c) renameInline($("chat-title"), c);
+  };
+  $("chat-more").onclick = async (e) => {
+    e.stopPropagation();
+    const anchor = e.currentTarget;
+    const c = await activeChat();
+    if (!c) return;
+    popMenu(anchor, [
+      { icon: "edit", label: L("Umbenennen", "Rename"), run: () => renameInline($("chat-title"), c) },
+      { icon: "download", label: L("Als Markdown exportieren", "Export as Markdown"), run: () => exportChat(c.id) },
+      { icon: "trash", label: L("Löschen", "Delete"), danger: true, run: () => deleteChat(c) },
+    ]);
+  };
   $("chat-search").addEventListener("input", () => {
     clearTimeout(chatSearchTimer);
     chatSearchTimer = setTimeout(loadChats, 250);
@@ -3408,11 +3650,16 @@
       if (h.summary) addSystem(L("Frühere Gesprächsteile sind im Gedächtnis zusammengefasst.", "Earlier parts of this chat are summarised in memory."));
       const dividers = {};
       for (const ep of h.epochs || []) dividers[ep.at] = ep;
+      S.turns = h.turns || 0;
       h.messages.forEach((m, i) => {
         if (dividers[i]) { chat.appendChild(compactDivider(dividers[i].summary, dividers[i].ts)); }
-        if (m.role === "user") addUser(m.content, "", m.images);
-        else addMsg("assistant", "JARVIS", renderMarkdown(m.content));
+        if (m.role === "user") { addUser(m.content, "", m.images, m.turn, m.editable); return; }
+        const el = addMsg("assistant" + (m.editable === false ? " locked" : ""), "JARVIS", renderMarkdown(m.content));
+        el._raw = m.content;
+        if (m.turn) el.dataset.turn = m.turn;
+        assistantActions(el);
       });
+      markLast();
     } catch { /* egal */ }
   }
 
