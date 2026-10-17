@@ -2498,6 +2498,7 @@
         <div class="seg md-mode"><button type="button" data-m="tools">Tools</button><button type="button" data-m="coding">Coding</button></div></div>
         <div class="ctx-now"></div><div class="ctx-opts"></div><p class="set-hint"></p></section>
       <section class="md-sec md-kv"><div class="md-sec-head"><h4></h4></div><div class="ctx-opts kv-opts"></div><p class="set-hint kv-hint"></p></section>
+      <section class="md-sec md-spec"><div class="md-sec-head"><h4></h4></div><div class="ctx-opts spec-opts"></div><div class="spec-stats"></div><p class="set-hint"></p></section>
       <section class="md-sec md-smp"><div class="md-sec-head"><h4></h4></div><div class="smp"></div></section>
       <section class="md-sec md-diag"><div class="md-sec-head"><h4></h4></div>
         <div class="md-btns"><button type="button" class="btn small ctx-test-btn"></button><button type="button" class="btn small md-log-btn"></button></div>
@@ -2529,6 +2530,8 @@
       [L("Braucht", "Needs"), p.vram_gb ? `~${fmt(p.vram_gb, 1)} GB VRAM` : null, p.fit],
       [L("Kontext", "Context"), p.num_ctx ? ctxLabel(modelCtx(p, "tools")) + (p.ctx_coding ? ` · Coding ${ctxLabel(p.ctx_coding)}` : "") : null],
       [L("KV-Cache", "KV cache"), p.kv || (p.backend === "ollama" ? L("Ollama-Dienst", "Ollama service") : null)],
+      [L("Beschleunigung", "Speed-up"), p.spec && p.spec !== "off" ? (p.spec === "mtp" ? "MTP" : L("N-Gramm", "N-gram"))
+        : (p.spec_options || []).some((o) => o.mode === "mtp" && o.ok) ? L("MTP möglich", "MTP available") : null],
       [L("Bilder", "Images"), p.vision === undefined ? null : p.vision ? L("ja (Bildmodul)", "yes (vision module)") : L("nein", "no")],
     ];
     const dl = box.querySelector(".md-facts");
@@ -2552,6 +2555,7 @@
     updateDetailMemory();
     renderCtxSection(box.querySelector(".md-ctx"), p);
     renderKvSettings(box.querySelector(".md-kv"), p);
+    renderSpec(box.querySelector(".md-spec"), p);
     renderSampling(box.querySelector(".md-smp"), p);
     renderDiag(box.querySelector(".md-diag"), p);
   }
@@ -2699,6 +2703,57 @@
           + 'Environment="OLLAMA_FLASH_ATTENTION=1" "OLLAMA_KV_CACHE_TYPE=q8_0", dann sudo systemctl restart ollama.',
           "With Ollama the level applies to the whole service: sudo systemctl edit ollama → "
           + 'Environment="OLLAMA_FLASH_ATTENTION=1" "OLLAMA_KV_CACHE_TYPE=q8_0", then sudo systemctl restart ollama.');
+  }
+
+  // Spekulatives Decoding: das Modell schlägt mehrere Token vor, der Server prüft sie auf einmal – schneller antworten
+  function renderSpec(sec, p) {
+    sec.querySelector("h4").textContent = L("Schneller antworten (spekulatives Decoding)", "Faster answers (speculative decoding)");
+    const opts = sec.querySelector(".spec-opts");
+    const labels = { off: L("Aus", "Off"), mtp: "MTP", ngram: L("N-Gramm", "N-gram") };
+    for (const o of p.spec_options || []) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "ctx-opt" + (o.mode === (p.spec || "off") ? " on" : "") + (o.ok ? "" : " na");
+      b.innerHTML = "<span></span><small></small>";
+      b.querySelector("span").textContent = labels[o.mode] || o.mode;
+      b.querySelector("small").textContent = !o.ok ? o.why
+        : o.mode === "off" ? L("Standard", "default")
+        : o.mode === "mtp" ? (o.layers ? L("im Modell eingebaut · ~1,5–3× schneller", "built into the model · ~1.5–3× faster")
+                                       : L("MTP-Datei neben dem Modell · ~1,5–3× schneller", "MTP file next to the model · ~1.5–3× faster"))
+        : L("für Code und Wiederholungen · kein Extra-Speicher", "for code and repetition · no extra memory");
+      b.title = b.querySelector("small").textContent;
+      b.disabled = !o.ok || !!MP.data.switching;
+      b.onclick = async () => {
+        if (o.mode === (p.spec || "off")) return;
+        opts.querySelectorAll(".ctx-opt").forEach((x) => { x.disabled = true; });
+        if (p.active) toast(L("Modell-Server startet neu …", "Restarting the model server …"));
+        try {
+          await api("POST", `/api/models/${encodeURIComponent(p.name)}/spec`, { mode: o.mode });
+          toast(o.mode === "off" ? L("Spekulatives Decoding aus.", "Speculative decoding off.")
+                                 : L(`${labels[o.mode]} an – die Trefferquote steht hier nach den nächsten Antworten.`,
+                                     `${labels[o.mode]} on – the hit rate shows up here after the next answers.`));
+        } catch { /* Meldung kommt von api() */ }
+        refreshModelViews();
+      };
+      opts.appendChild(b);
+    }
+    const stats = sec.querySelector(".spec-stats");
+    if (p.active && p.spec && p.spec !== "off") {
+      getJSON("/api/models/spec/stats").then((d) => {
+        const st = d.stats;
+        stats.textContent = st ? L(`Trefferquote zuletzt ${Math.round(st.rate * 100)} % (${num(st.accepted)} von ${num(st.generated)} vorgeschlagenen Token angenommen)`,
+                                   `Last hit rate ${Math.round(st.rate * 100)} % (${num(st.accepted)} of ${num(st.generated)} proposed tokens accepted)`)
+          : L("Noch keine Trefferquote – sie erscheint nach der nächsten Antwort.", "No hit rate yet – it appears after the next answer.");
+        stats.classList.toggle("low", !!st && st.rate < 0.3);
+      }).catch(() => {});
+    }
+    sec.querySelector(".set-hint").textContent = L(
+      "Das Modell schlägt mehrere Token auf einmal vor, der Server prüft sie in einem Durchgang – die Antwort bleibt gleich, kommt aber schneller. "
+      + "MTP nutzt eigene Vorhersage-Schichten des Modells (kostet etwas Grafikspeicher), N-Gramm wiederholt Stellen aus dem Kontext. "
+      + "Bei hoher Temperatur oder freiem Text bringt es weniger; unter 30 % Trefferquote lieber aus. " + (p.active ? "Zum Ändern startet der Modell-Server neu." : "Gilt ab dem nächsten Laden."),
+      "The model proposes several tokens at once and the server checks them in one pass – same answer, just faster. "
+      + "MTP uses the model's own prediction layers (costs a little VRAM), N-gram repeats passages from the context. "
+      + "It helps less at high temperature or with free text; below a 30 % hit rate better turn it off. " + (p.active ? "Changing it restarts the model server." : "Applies the next time it is loaded."));
   }
 
   // Sampling je Modell und Modus (mit/ohne Denken) – gilt ab der nächsten Antwort

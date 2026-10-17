@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Speculative decoding (MTP / n-gram):** the models page detects whether a model has multi-token-prediction
+  layers (`nextn_predict_layers` in the GGUF or an `mtp-*.gguf` next to it, now downloaded with Hugging Face models)
+  and whether the llama.cpp build supports `--spec-type draft-mtp` / n-gram, offers Off / MTP / N-gram per model
+  (remembered, server restart for the loaded one) and shows the draft hit rate from the server log. MTP sidecar files
+  no longer show up as separate models.
 - **PDFs in the chat:** attach PDFs like images (paperclip, drag and drop; up to 50 MB). They are read locally
   (pypdf, new dependency), shown as a card with title and page count, and their text goes to the model with the
   question – shortened to ~40 % of the context window with a note if needed; scanned PDFs without text are flagged

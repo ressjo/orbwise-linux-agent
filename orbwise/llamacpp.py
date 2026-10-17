@@ -326,6 +326,8 @@ async def download_quant(cfg, repo: str, item: dict, progress: Callable[[int, in
     """Alle Teile einer Quantisierung (und das Bildmodul) nach ~/models/<nutzer>_<repo>/ → (erste Datei, mmproj,
     alle Dateien). Prüft vorher den freien Speicherplatz."""
     parts = [(f["path"], int(f.get("size") or 0)) for f in item["files"]]
+    if item.get("mtp"):  # MTP-Kopf für spekulatives Decoding (klein; einschalten auf der Modellseite)
+        parts.append((item["mtp"]["path"], int(item["mtp"].get("size") or 0)))
     if item.get("mmproj"):
         parts.append((item["mmproj"]["path"], int(item["mmproj"].get("size") or 0)))
     target = repo_dir(cfg, repo)
@@ -468,9 +470,9 @@ def make_profile(cfg, name: str, gguf: Path, mmproj: Path | None, gpu: dict, por
 def add_model(cfg, state_path: Path, gguf: Path, mmproj: Path | None, gpu: dict, profiles: dict,
               downloaded: bool, repo: str = "") -> str:
     """Profil anlegen und merken, welche Dateien dazugehören → Profilname."""
-    from .models import register_profile
+    from .models import is_sidecar, register_profile
     gguf = gguf.expanduser().resolve()
-    if not gguf.is_file() or not gguf.name.lower().endswith(".gguf") or "mmproj" in gguf.name.lower():
+    if not gguf.is_file() or not gguf.name.lower().endswith(".gguf") or is_sidecar(gguf.name):
         raise ValueError(T(f"Keine GGUF-Datei: {gguf}", f"Not a GGUF file: {gguf}"))
     if mmproj is None:
         mmproj = find_mmproj(gguf.parent)
@@ -543,7 +545,7 @@ def find_mmproj(directory: Path) -> Path | None:
 def scan(cfg, profiles: dict, vram_gb: float = 0.0, depth: int = 3) -> list[dict]:
     """GGUF-Dateien in models_dir: je Modell eine Zeile (geteilte Dateien zusammengefasst, Bildmodul dazu), mit dem
     Profil, das sie schon nutzt."""
-    from .models import Preset, fit, need_gb
+    from .models import Preset, fit, is_sidecar, need_gb
     base = models_dir(cfg)
     if not base.is_dir():
         return []
@@ -551,7 +553,7 @@ def scan(cfg, profiles: dict, vram_gb: float = 0.0, depth: int = 3) -> list[dict
     out = []
     for path in sorted(base.rglob("*.gguf")):
         rel = path.relative_to(base)
-        if len(rel.parts) > depth or "mmproj" in path.name.lower():
+        if len(rel.parts) > depth or is_sidecar(path.name):
             continue
         m = SPLIT_RE.search(path.name)
         if m and int(m.group(1)) != 1:

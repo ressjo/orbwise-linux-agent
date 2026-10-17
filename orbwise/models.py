@@ -230,6 +230,22 @@ def need_gb(size_gb: float) -> float:
     return round(size_gb + 1.5, 1)
 
 
+def is_sidecar(name: str) -> bool:
+    """Beidateien neben einem Modell (Bildmodul mmproj, MTP-Kopf mtp-*) – selbst kein Modell."""
+    name = name.rsplit("/", 1)[-1].lower()
+    return "mmproj" in name or "mtp-" in name
+
+
+def _pick_mtp(files: list[dict], quant: str) -> dict | None:
+    """MTP-Kopf eines Repos (mtp-*.gguf, für spekulatives Decoding): gleiche Quantisierung, sonst Q8_0, sonst der erste."""
+    found = sorted((f for f in files if "mtp-" in f["path"].rsplit("/", 1)[-1].lower()), key=lambda f: f["path"])
+    for pref in (quant, "q8_0", "f16"):
+        hit = next((f for f in found if pref.lower() in f["path"].rsplit("/", 1)[-1].lower()), None)
+        if hit:
+            return hit
+    return found[0] if found else None
+
+
 def _pick_mmproj(files: list[dict]) -> dict | None:
     """Bildmodul eines Repos: F16 bevorzugt (BF16 können nicht alle Builds), sonst das erste."""
     found = sorted((f for f in files if "mmproj" in f["path"].rsplit("/", 1)[-1].lower()), key=lambda f: f["path"])
@@ -255,7 +271,7 @@ def hf_quants(repo: str, vram_gb: float, models_dir: Path | None = None, base: s
     groups: dict[str, dict] = {}
     for f in files:
         name = f["path"].rsplit("/", 1)[-1]
-        if "mmproj" in name.lower():
+        if is_sidecar(name):
             continue
         q = QUANT_RE.search(SPLIT_RE.sub(".gguf", name))
         if not q:
@@ -273,7 +289,7 @@ def hf_quants(repo: str, vram_gb: float, models_dir: Path | None = None, base: s
         tag = f"hf.co/{repo}:{quant}"
         p = Preset(tag, label_of(tag), round(size, 1), need_gb(size + extra), "", "")
         items.append({"tag": tag, "quant": quant, "file": parts[0]["path"], "files": parts, "parts": len(parts),
-                      "mmproj": mmproj, "download_gb": round(size + extra, 1), "vram_gb": p.vram_gb,
+                      "mmproj": mmproj, "mtp": _pick_mtp(files, quant), "download_gb": round(size + extra, 1), "vram_gb": p.vram_gb,
                       "fit": fit(p, vram_gb),
                       "installed": bool(target and all((target / f["path"].rsplit("/", 1)[-1]).exists()
                                                        for f in parts))})

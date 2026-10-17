@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import signal
 import subprocess
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -265,6 +266,96 @@ def _flash_attn_flag(command: str, env: dict) -> str:
     return "-fa on"
 
 
+# ---------------------------------------------------------------- Spekulatives Decoding (MTP / N-Gramm)
+# Das Modell schlägt mehrere Token auf einmal vor, der Server prüft sie in einem Durchgang – bei einem einzelnen
+# Nutzer (Grafikkarte wartet meist auf den Speicher) fast gratis. MTP: eigene Vorhersage-Schichten des Modells (im
+# GGUF als <arch>.nextn_predict_layers oder als Beidatei mtp-*.gguf). N-Gramm: wiederholt Stellen, die schon im
+# Kontext stehen (Code, Werkzeug-Aufrufe) – geht mit jedem Modell, kostet keinen Grafikspeicher.
+SPEC_MODES = ("off", "mtp", "ngram")
+_SPEC_FLAGS = re.compile(r"\s+(?:--spec-type|--spec-draft-model|-md|--model-draft|--spec-draft-n-max)\s+\S+|\s+--spec-default\b")
+_mtp_cache: dict[tuple, dict] = {}
+
+
+def spec_support(command: str, env: dict) -> dict:
+    """Was kann dieser llama-server? Laut --help: --spec-type mit draft-mtp bzw. ngram-mod."""
+    text = _help_text(command, env)
+    return {"mtp": "draft-mtp" in text, "ngram": "ngram-mod" in text or "--spec-default" in text,
+            "default_flag": "--spec-default" in text, "known": bool(text)}
+
+
+def find_mtp(gguf: Path) -> Path | None:
+    """MTP-Beidatei (mtp-*.gguf) neben dem Modell – bevorzugt die mit derselben Quantisierung."""
+    found = sorted(p for p in gguf.parent.glob("*.gguf") if "mtp-" in p.name.lower() and p != gguf)
+    from .models import QUANT_RE
+    q = QUANT_RE.search(gguf.name)
+    if q:
+        same = next((p for p in found if q.group(1).lower() in p.name.lower()), None)
+        if same:
+            return same
+    return found[0] if found else None
+
+
+def mtp_source(command: str) -> dict:
+    """Hat das Modell MTP-Schichten? → {"layers": n (im Modell), "sidecar": Pfad oder None}."""
+    m = re.search(r"(?:^|\s)(?:-m|--model)\s+(\S+)", command)
+    if not m:
+        return {"layers": 0, "sidecar": None}
+    path = Path(os.path.expanduser(m.group(1)))
+    try:
+        key = (str(path), path.stat().st_mtime)
+    except OSError:
+        return {"layers": 0, "sidecar": None}
+    if key not in _mtp_cache:
+        from .llm_memory import gguf_metadata
+        try:
+            meta = gguf_metadata(str(path), (".nextn_predict_layers",))
+        except Exception:  # noqa: BLE001 – unlesbar = keine Angabe
+            meta = {}
+        layers = next((int(v) for v in meta.values() if isinstance(v, int)), 0)
+        sidecar = find_mtp(path)
+        _mtp_cache[key] = {"layers": layers, "sidecar": str(sidecar) if sidecar else None}
+    return _mtp_cache[key]
+
+
+def spec_mode(command: str) -> str:
+    if "draft-mtp" in command:
+        return "mtp"
+    if "--spec-default" in command or re.search(r"--spec-type\s+ngram", command):
+        return "ngram"
+    return "off"
+
+
+def spec_options(server: ServerConfig | None) -> list[dict]:
+    """Angebotene Stufen mit „geht“ und Grund, falls nicht."""
+    if server is None:
+        why = T("nur mit llama.cpp (Ollama kann das nicht)", "llama.cpp only (Ollama can't do this)")
+        return [{"mode": "off", "ok": True}, {"mode": "mtp", "ok": False, "why": why},
+                {"mode": "ngram", "ok": False, "why": why}]
+    sup = spec_support(server.command, server.env or {})
+    old = T("dieser llama.cpp-Build kann das noch nicht – unter Modelle aktualisieren",
+            "this llama.cpp build can't do this yet – update it under Models")
+    src = mtp_source(server.command)
+    has_mtp = bool(src["layers"] or src["sidecar"])
+    mtp = {"mode": "mtp", "ok": sup["mtp"] and has_mtp, "layers": src["layers"], "sidecar": src["sidecar"]}
+    if not has_mtp:
+        mtp["why"] = T("das Modell hat keine MTP-Schichten", "the model has no MTP layers")
+    elif not sup["mtp"]:
+        mtp["why"] = old
+    ngram = {"mode": "ngram", "ok": sup["ngram"]}
+    if not sup["ngram"]:
+        ngram["why"] = old
+    return [{"mode": "off", "ok": True}, mtp, ngram]
+
+
+def spec_stats(log_text: str) -> dict | None:
+    """Trefferquote der Vorschläge aus dem Log des llama-server (letzte Antwort)."""
+    hits = re.findall(r"draft acceptance(?: rate)? = ([\d.]+) \(\s*(\d+) accepted /\s*(\d+) generated\)", log_text)
+    if not hits:
+        return None
+    rate, accepted, generated = hits[-1]
+    return {"rate": float(rate), "accepted": int(accepted), "generated": int(generated)}
+
+
 class LLMRouter:
     """Bietet dieselbe Schnittstelle wie OllamaLLM (chat_stream, chat, embed, status, close)."""
 
@@ -310,6 +401,12 @@ class LLMRouter:
         for name, kv in (state.get("kv_cache") or {}).items():
             if name in self.profiles and kv in KV_TYPES and self.profiles[name].server:
                 self._apply_kv(name, kv)
+        for name, mode in (state.get("speculative") or {}).items():
+            if name in self.profiles and mode in SPEC_MODES and self.profiles[name].server:
+                try:
+                    self._apply_spec(name, mode)
+                except LLMError as e:  # z. B. MTP-Datei inzwischen gelöscht
+                    log.warning("Spekulatives Decoding für '%s' nicht gesetzt: %s", name, e)
         self._build_client()
 
     def add_downloaded_models(self) -> list[str]:
@@ -552,6 +649,37 @@ class LLMRouter:
         p.server = p.server.model_copy(update={"env": env, "command": command})
         self.servers.pop(name, None)  # neuer Startbefehl
 
+    def _apply_spec(self, name: str, mode: str) -> None:
+        """Spekulatives Decoding eines eigenen llama-server setzen (wirkt beim nächsten Start)."""
+        p = self.profiles[name]
+        if not p.server:
+            raise LLMError(T("Spekulatives Decoding geht nur mit llama.cpp, nicht mit Ollama.",
+                             "Speculative decoding only works with llama.cpp, not with Ollama."))
+        command = _SPEC_FLAGS.sub("", p.server.command)
+        if mode == "mtp":
+            src = mtp_source(command)
+            if not src["layers"] and not src["sidecar"]:
+                raise LLMError(T("Das Modell hat keine MTP-Schichten.", "The model has no MTP layers."))
+            command += " --spec-type draft-mtp"
+            if not src["layers"] and src["sidecar"]:
+                command += f" --spec-draft-model {shlex.quote(src['sidecar'])}"
+        elif mode == "ngram":
+            command += " --spec-default" if spec_support(command, p.server.env or {})["default_flag"] \
+                else " --spec-type ngram-mod"
+        p.server = p.server.model_copy(update={"command": command})
+        self.servers.pop(name, None)  # neuer Startbefehl
+
+    async def set_spec(self, name: str, mode: str, progress: Progress | None = None) -> None:
+        """off / mtp / ngram ändern und merken; beim aktiven Profil startet der Server neu."""
+        if name not in self.profiles:
+            raise LLMError(f"Unbekanntes Profil '{name}'")
+        if mode not in SPEC_MODES:
+            raise LLMError(T("Bitte off, mtp oder ngram", "Please off, mtp or ngram"))
+        option = next(o for o in spec_options(self.profiles[name].server) if o["mode"] == mode)
+        if not option["ok"]:
+            raise LLMError(option.get("why") or "nicht möglich")
+        await self._reconfigure(name, lambda: self._apply_spec(name, mode), "speculative", mode, progress)
+
     async def _reconfigure(self, name: str, apply, key: str, value, progress: Progress | None) -> None:
         """Startoptionen eines Profils ändern und merken (state.json[key]); beim aktiven Profil wird ein eigener
         Server neu gestartet (Ollama lädt bei der nächsten Anfrage neu)."""
@@ -708,7 +836,9 @@ class LLMRouter:
                  "ctx_tools": ctx.get(n) or self._base_ctx.get(n), "ctx_coding": coding.get(n),
                  "kv": cache_type(p.server.command, p.server.env) if p.server else None,
                  "kv_settable": p.server is not None,
-                 "kv_options": kv_types(p.server.command, p.server.env) if p.server else []}
+                 "kv_options": kv_types(p.server.command, p.server.env) if p.server else [],
+                 "spec": spec_mode(p.server.command) if p.server else "off",
+                 "spec_options": spec_options(p.server)}
                 for n, p in self.profiles.items()]
 
     async def close(self) -> None:

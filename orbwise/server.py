@@ -860,7 +860,7 @@ def create_app(cfg: Config) -> FastAPI:
                 p["repo"] = local.get("repo") or ""
             if files:
                 size = sum(Path(f).stat().st_size for f in files)
-                weights = [f for f in files if "mmproj" not in Path(f).name.lower()]
+                weights = [f for f in files if not mdl.is_sidecar(Path(f).name)]
                 p["path"] = llamacpp_mod._tilde(weights[0] if weights else files[0])
                 p["vision"] = len(weights) < len(files)
                 q = mdl.QUANT_RE.search(mdl.SPLIT_RE.sub(".gguf", Path(weights[0]).name)) if weights else None
@@ -1092,11 +1092,12 @@ def create_app(cfg: Config) -> FastAPI:
     @app.post("/api/models/local")
     async def models_local_add(request: Request):
         from . import llamacpp
+        from . import models as mdl
         if not isinstance(llm, LLMRouter):
             raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
         raw = str((await request.json()).get("path", "")).strip()
         path = Path(os.path.expanduser(raw))
-        if not raw or not path.is_file() or not path.name.lower().endswith(".gguf") or "mmproj" in path.name.lower():
+        if not raw or not path.is_file() or not path.name.lower().endswith(".gguf") or mdl.is_sidecar(path.name):
             raise HTTPException(400, "Keine GGUF-Modelldatei gefunden: " + raw[:200])
         tag = start_job(llamacpp.label_for(path), lambda: add_local(llamacpp.label_for(path), path))
         return {"ok": True, "tag": tag}
@@ -1540,6 +1541,50 @@ def create_app(cfg: Config) -> FastAPI:
             hub.prewarm_soon()
         await hub.broadcast({"type": "models_changed"})
         return {"ok": True, "kv": kv}
+
+    @app.post("/api/models/{name}/spec")
+    async def set_model_spec(name: str, request: Request):
+        """Spekulatives Decoding: off / mtp (eigene Vorhersage-Schichten des Modells) / ngram – schneller antworten."""
+        from .llm_router import SPEC_MODES, spec_options
+        if not isinstance(llm, LLMRouter):
+            raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
+        if name not in llm.profiles:
+            raise HTTPException(404, "Unbekanntes Profil")
+        mode = str((await request.json()).get("mode", ""))
+        if mode not in SPEC_MODES:
+            raise HTTPException(400, "Bitte off, mtp oder ngram")
+        option = next(o for o in spec_options(llm.profiles[name].server) if o["mode"] == mode)
+        if not option["ok"]:
+            raise HTTPException(400, option.get("why") or "nicht möglich")
+        active = name == llm.active
+        if active:
+            await hub.broadcast({"type": "model_switching", "name": name, "label": llm.profiles[name].label})
+            llm.switching = name
+        try:
+            async with agent.lock:  # wartet, bis eine laufende Antwort fertig ist
+                await llm.set_spec(name, mode, model_progress)
+        except LLMError as e:
+            await hub.broadcast({"type": "model_error", "name": name, "text": str(e)})
+            raise HTTPException(502, str(e)) from e
+        finally:
+            llm.switching = None
+            await idle_if_free()
+        if active:
+            await hub.broadcast({"type": "model_active", "name": name})
+            agent._cache_owner = None  # neu gestartet = leerer Cache
+            hub.prewarm_soon()
+        await hub.broadcast({"type": "models_changed"})
+        return {"ok": True, "spec": mode}
+
+    @app.get("/api/models/spec/stats")
+    async def model_spec_stats():
+        """Trefferquote der Vorschläge (laut Log des laufenden llama-server) – zeigt, ob es etwas bringt."""
+        from .llm_router import _log_path, spec_stats
+        try:
+            text = (await asyncio.to_thread(_log_path().read_text, errors="replace"))[-400_000:]
+        except OSError:
+            return {"stats": None}
+        return {"stats": spec_stats(text.rsplit("===== Starte:", 1)[-1])}
 
     @app.get("/api/reminders")
     async def get_reminders():

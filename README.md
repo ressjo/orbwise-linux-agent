@@ -422,6 +422,17 @@ shows the full command; restored checkpoints appear in the same log.
 - **Vision model** (screen understanding): on a small GPU it can push the language model out of VRAM; the next step
   then reads the chat again (the activity shows it). `vision.keep_alive: 2m` unloads it soon afterwards.
 
+### Faster answers: speculative decoding (MTP / n-gram)
+
+**Models → Faster answers** lets llama.cpp models propose several tokens at once, which the server then verifies in a
+single pass – the answer stays the same, it just arrives sooner. **MTP** uses the model's own multi-token-prediction
+layers (GLM-4.5, DeepSeek-V3, Qwen3.5/3.6 and others – either inside the GGUF as `nextn_predict_layers` or as an
+`mtp-*.gguf` file next to it, which Orbwise downloads together with the model) and costs a little VRAM; **n-gram**
+repeats passages already in the context (code, tool calls) and works with any model at no memory cost. Orbwise only
+offers what both the model and the llama.cpp build support (`--spec-type` in `llama-server --help`; otherwise it
+suggests updating llama.cpp) and shows the hit rate from the server log – below ~30 % it is better switched off.
+Not available for Ollama models.
+
 ### API server for other programs (OpenAI compatible)
 
 Like the server mode of LM Studio: **Models → API server** turns on an OpenAI-compatible endpoint at
