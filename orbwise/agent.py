@@ -69,6 +69,13 @@ PREWARM_RETRY_S = 600  # nach einem Ladefehler so lange nicht vorwärmen (je Pro
 AUTO_TOOLS = ("run_shell", "ssh_run", "write_file", "edit_file")  # Auto-Modus „Auto“ gibt diese ohne Root frei
 TAINT_GUARDED = {"shell", "ssh", "portainer", "web", "files", "apps", "obsidian", "trilium", "calendar_tools",
                  "homeassistant", "memory_tools", "reminder_tools", "power", "telegram_tools"}
+# Lesende Werkzeuge dieser Gruppen laufen auch nach fremden Inhalten ohne Rückfrage: lokal lesen kann nichts
+# verändern (Geheimes sperrt files.is_secret_path), und was hinausgeht (Suchbegriff, URL) prüft der Datenabfluss-Wächter
+TAINT_READ_OK = {"read_file", "list_directory", "find_files", "search_file_contents", "search_nas",
+                 "web_search", "fetch_url", "recall", "list_reminders", "calendar_events", "calendar_free",
+                 "ha_find", "ha_state", "obsidian_search", "obsidian_read", "obsidian_ask", "trilium_search",
+                 "trilium_read", "portainer_containers", "portainer_stacks", "portainer_logs",
+                 "portainer_check_updates", "list_installed_apps"}
 
 
 def is_taint_source(name: str, result: str) -> bool:
@@ -1541,9 +1548,10 @@ class Agent:
         elif risk == CONFIRM and self.auto_mode == "auto" and not self._plan and name in AUTO_TOOLS:
             ok, why = self._auto_ok(name, args, cwd)
             risk, reason = (SAFE, prompts.text(self.cfg, "auto_full")) if ok else (risk, why or reason)
-        # Nach fremden Inhalten (Mail, Bild, Bildschirm) fragt alles nach, was etwas tut – rein lesende, lokale
-        # Shell-Befehle (echo, cd, ls …) können nichts verändern und nichts hinausschicken, die laufen weiter
+        # Nach fremden Inhalten (Mail, Webseite, Bild, PDF) fragt alles nach, was etwas verändert oder startet –
+        # lesende Werkzeuge und rein lesende, lokale Shell-Befehle (echo, cd, ls …) laufen weiter
         if risk == SAFE and getattr(self, "_tainted", False) and spec.group in TAINT_GUARDED \
+                and name not in TAINT_READ_OK \
                 and not (reason != prompts.text(self.cfg, "auto_full") and name in ("run_shell", "ssh_run")
                          and local_read_only(str(args.get("command") or ""))):
             risk, reason = CONFIRM, prompts.text(self.cfg, "tainted_confirm")

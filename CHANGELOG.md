@@ -5,6 +5,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **Auto mode after foreign content:** after a web page, e-mail, PDF or image, reading tools (web search,
+  `fetch_url`, reading and listing files, recall, calendar/notes/Home Assistant/Portainer lookups) no longer ask –
+  only actions that change or start something do; the data-leak guard still checks what goes out.
+
 ### Added
 - **Speculative decoding (MTP / n-gram):** the models page detects whether a model has multi-token-prediction
   layers (`nextn_predict_layers` in the GGUF or an `mtp-*.gguf` next to it, now downloaded with Hugging Face models)
