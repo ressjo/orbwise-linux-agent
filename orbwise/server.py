@@ -872,6 +872,7 @@ def create_app(cfg: Config) -> FastAPI:
             if size:
                 p["vram_gb"] = mdl.need_gb(round(size / 1e9, 1))
                 p["fit"] = mdl.fit_need(p["vram_gb"], gpu["vram_gb"]) if gpu["vram_gb"] else None
+            p["prefill_tps"] = agent.prefill_speed(p["name"])
             if p["backend"] == "ollama" and mdl.is_hf(p["model"]):  # alter Weg → auf llama.cpp umstellen anbieten
                 p["convert"] = p["model"]
         return {"active": llm.active, "switching": llm.switching, "profiles": profiles, "gpu": gpu,
@@ -1541,6 +1542,44 @@ def create_app(cfg: Config) -> FastAPI:
             hub.prewarm_soon()
         await hub.broadcast({"type": "models_changed"})
         return {"ok": True, "kv": kv}
+
+    @app.post("/api/models/{name}/ubatch")
+    async def set_model_ubatch(name: str, request: Request):
+        """Batch-Größe (-ub) eines eigenen llama-server – größer = langer Text wird schneller eingelesen, mehr VRAM."""
+        from .llm_router import UBATCH_SIZES
+        if not isinstance(llm, LLMRouter):
+            raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
+        if name not in llm.profiles:
+            raise HTTPException(404, "Unbekanntes Profil")
+        try:
+            size = int((await request.json()).get("size", 0))
+        except (TypeError, ValueError):
+            size = 0
+        if size not in UBATCH_SIZES:
+            raise HTTPException(400, "Batch-Größe bitte 512, 1024 oder 2048")
+        if not llm.profiles[name].server:
+            raise HTTPException(400, T("Die Batch-Größe lässt sich nur bei llama.cpp einstellen, nicht bei Ollama.",
+                                       "The batch size can only be set for llama.cpp, not for Ollama."))
+        active = name == llm.active
+        if active:
+            await hub.broadcast({"type": "model_switching", "name": name, "label": llm.profiles[name].label})
+            llm.switching = name
+        try:
+            async with agent.lock:  # wartet, bis eine laufende Antwort fertig ist
+                await llm.set_ubatch(name, size, model_progress)
+        except LLMError as e:
+            await hub.broadcast({"type": "model_error", "name": name, "text": str(e)})
+            raise HTTPException(502, str(e)) from e
+        finally:
+            llm.switching = None
+            await idle_if_free()
+        agent.forget_prefill(name)  # die alte Geschwindigkeit gilt nicht mehr – die nächste Antwort misst neu
+        if active:
+            await hub.broadcast({"type": "model_active", "name": name})
+            agent._cache_owner = None  # neu gestartet = leerer Cache
+            hub.prewarm_soon()
+        await hub.broadcast({"type": "models_changed"})
+        return {"ok": True, "ubatch": size}
 
     @app.post("/api/models/{name}/spec")
     async def set_model_spec(name: str, request: Request):

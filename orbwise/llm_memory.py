@@ -126,7 +126,8 @@ def summary(info: dict[str, Any]) -> dict:
     """Zusammenfassung für die Oberfläche (Bytes)."""
     kv = info.get("kv_vram", 0) + info.get("kv_ram", 0)
     model = info.get("model_vram", 0) + info.get("model_ram", 0)
-    return {**info, "kv_bytes": kv, "model_bytes": model,
+    compute = info.get("compute_vram", 0) + info.get("compute_ram", 0)  # Rechenpuffer – wächst mit der Batch-Größe
+    return {**info, "kv_bytes": kv, "model_bytes": model, "compute_bytes": compute,
             "kv_vram_share": round(info.get("kv_vram", 0) / kv, 3) if kv else None,
             "model_vram_share": round(info.get("model_vram", 0) / model, 3) if model else None}
 

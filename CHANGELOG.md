@@ -11,6 +11,9 @@ All notable changes to this project are documented here. The format follows
   only actions that change or start something do; the data-leak guard still checks what goes out.
 
 ### Added
+- **Batch size for prompt processing:** per llama.cpp model 512 / 1024 / 2048 (`-ub`, with `-b` to match) on the
+  models page, remembered and applied on the next server start; the page shows the measured prompt speed (reset after
+  a change) and the compute buffer from the server log.
 - **Speculative decoding (MTP / n-gram):** the models page detects whether a model has multi-token-prediction
   layers (`nextn_predict_layers` in the GGUF or an `mtp-*.gguf` next to it, now downloaded with Hugging Face models)
   and whether the llama.cpp build supports `--spec-type draft-mtp` / n-gram, offers Off / MTP / N-gram per model

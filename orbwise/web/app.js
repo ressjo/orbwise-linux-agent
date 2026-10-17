@@ -2498,6 +2498,7 @@
         <div class="seg md-mode"><button type="button" data-m="tools">Tools</button><button type="button" data-m="coding">Coding</button></div></div>
         <div class="ctx-now"></div><div class="ctx-opts"></div><p class="set-hint"></p></section>
       <section class="md-sec md-kv"><div class="md-sec-head"><h4></h4></div><div class="ctx-opts kv-opts"></div><p class="set-hint kv-hint"></p></section>
+      <section class="md-sec md-batch"><div class="md-sec-head"><h4></h4></div><div class="ctx-opts batch-opts"></div><div class="batch-stats"></div><p class="set-hint"></p></section>
       <section class="md-sec md-spec"><div class="md-sec-head"><h4></h4></div><div class="ctx-opts spec-opts"></div><div class="spec-stats"></div><p class="set-hint"></p></section>
       <section class="md-sec md-smp"><div class="md-sec-head"><h4></h4></div><div class="smp"></div></section>
       <section class="md-sec md-diag"><div class="md-sec-head"><h4></h4></div>
@@ -2530,6 +2531,7 @@
       [L("Braucht", "Needs"), p.vram_gb ? `~${fmt(p.vram_gb, 1)} GB VRAM` : null, p.fit],
       [L("Kontext", "Context"), p.num_ctx ? ctxLabel(modelCtx(p, "tools")) + (p.ctx_coding ? ` · Coding ${ctxLabel(p.ctx_coding)}` : "") : null],
       [L("KV-Cache", "KV cache"), p.kv || (p.backend === "ollama" ? L("Ollama-Dienst", "Ollama service") : null)],
+      [L("Batch", "Batch"), p.ubatch && p.ubatch !== 512 ? String(p.ubatch) : null],
       [L("Beschleunigung", "Speed-up"), p.spec && p.spec !== "off" ? (p.spec === "mtp" ? "MTP" : L("N-Gramm", "N-gram"))
         : (p.spec_options || []).some((o) => o.mode === "mtp" && o.ok) ? L("MTP möglich", "MTP available") : null],
       [L("Bilder", "Images"), p.vision === undefined ? null : p.vision ? L("ja (Bildmodul)", "yes (vision module)") : L("nein", "no")],
@@ -2555,6 +2557,7 @@
     updateDetailMemory();
     renderCtxSection(box.querySelector(".md-ctx"), p);
     renderKvSettings(box.querySelector(".md-kv"), p);
+    renderBatch(box.querySelector(".md-batch"), p);
     renderSpec(box.querySelector(".md-spec"), p);
     renderSampling(box.querySelector(".md-smp"), p);
     renderDiag(box.querySelector(".md-diag"), p);
@@ -2703,6 +2706,56 @@
           + 'Environment="OLLAMA_FLASH_ATTENTION=1" "OLLAMA_KV_CACHE_TYPE=q8_0", dann sudo systemctl restart ollama.',
           "With Ollama the level applies to the whole service: sudo systemctl edit ollama → "
           + 'Environment="OLLAMA_FLASH_ATTENTION=1" "OLLAMA_KV_CACHE_TYPE=q8_0", then sudo systemctl restart ollama.');
+  }
+
+  // Batch-Größe (-ub): größer = lange Eingaben (Werkzeuge, Dateien, PDFs) werden schneller eingelesen, kostet VRAM
+  function renderBatch(sec, p) {
+    sec.querySelector("h4").textContent = L("Einlesen (Batch-Größe)", "Prompt processing (batch size)");
+    const big = ((MP.data && MP.data.gpu) || {}).vram_gb >= 16;
+    const notes = {
+      512: L("Standard", "default"),
+      1024: L("schneller, etwas mehr VRAM", "faster, a bit more VRAM") + (big ? L(" · empfohlen", " · recommended") : ""),
+      2048: L("am schnellsten bei langen Eingaben, mehr VRAM", "fastest for long inputs, more VRAM"),
+    };
+    const opts = sec.querySelector(".batch-opts");
+    const current = p.ubatch || 512;
+    for (const n of [512, 1024, 2048]) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "ctx-opt" + (p.ubatch_settable && n === current ? " on" : "") + (p.ubatch_settable ? "" : " na");
+      b.innerHTML = "<span></span><small></small>";
+      b.querySelector("span").textContent = String(n);
+      b.querySelector("small").textContent = p.ubatch_settable ? notes[n] : L("nur mit llama.cpp", "llama.cpp only");
+      b.disabled = !p.ubatch_settable || !!MP.data.switching;
+      b.onclick = async () => {
+        if (n === current) return;
+        opts.querySelectorAll(".ctx-opt").forEach((x) => { x.disabled = true; });
+        if (p.active) toast(L(`Modell-Server startet mit Batch-Größe ${n} neu …`, `Restarting the model server with batch size ${n} …`));
+        try {
+          await api("POST", `/api/models/${encodeURIComponent(p.name)}/ubatch`, { size: n });
+          toast(L(`Batch-Größe jetzt ${n} – die Einlese-Geschwindigkeit wird bei der nächsten längeren Antwort neu gemessen.`,
+                  `Batch size now ${n} – the prompt speed is measured again with the next longer answer.`));
+        } catch { /* Meldung kommt von api() */ }
+        await loadCtxMemory();
+        refreshModelViews();
+      };
+      opts.appendChild(b);
+    }
+    const m = p.active && lastMem && lastMem.available && lastMem.profile === p.name ? lastMem : null;
+    sec.querySelector(".batch-stats").textContent = [
+      p.prefill_tps ? L(`Einlesen zuletzt ~${num(Math.round(p.prefill_tps))} Token/s`, `Prompt processing last ~${num(Math.round(p.prefill_tps))} tokens/s`)
+        : p.active ? L("Noch nicht gemessen – das passiert bei der nächsten längeren Antwort.", "Not measured yet – happens with the next longer answer.") : "",
+      m && m.compute_bytes ? L(`Rechenpuffer ${gbs(m.compute_bytes)}`, `compute buffer ${gbs(m.compute_bytes)}`) : "",
+    ].filter(Boolean).join(" · ");
+    sec.querySelector(".set-hint").textContent = L(
+      "Wie viele Token der Server auf einmal verarbeitet, wenn er die Eingabe einliest. Größer lastet die Grafikkarte besser aus – "
+      + "spürbar bei langen Eingaben (Werkzeug-Ergebnisse, Dateien, PDFs, erster Start eines Chats), kaum bei kurzen Fragen. "
+      + "Kostet einen größeren Rechenpuffer im Grafikspeicher; das Kontextfenster bietet dann ggf. weniger an. "
+      + "Vergleichen: „Kontext testen“ unten zeigt die Token/s für ein volles Fenster. " + (p.active ? "Zum Ändern startet der Modell-Server neu." : "Gilt ab dem nächsten Laden."),
+      "How many tokens the server processes at once when reading the input. Bigger keeps the GPU busier – "
+      + "noticeable with long inputs (tool results, files, PDFs, the first message of a chat), hardly with short questions. "
+      + "Costs a larger compute buffer in VRAM; the context window may then offer less. "
+      + "Compare: “Test context” below shows tokens/s for a full window. " + (p.active ? "Changing it restarts the model server." : "Applies the next time it is loaded."));
   }
 
   // Spekulatives Decoding: das Modell schlägt mehrere Token vor, der Server prüft sie auf einmal – schneller antworten

@@ -98,3 +98,50 @@ def test_hit_rate_from_the_log():
            "slot print_timing: id  0 | draft acceptance = 0.64286 (   90 accepted /   140 generated), mean len =  2.50\n")
     assert spec_stats(log) == {"rate": 0.64286, "accepted": 90, "generated": 140}
     assert spec_stats("nichts") is None
+
+
+# ---------------------------------------------------------------- Batch-Größe fürs Einlesen
+def test_batch_size_is_applied_and_remembered(tmp_path, monkeypatch):
+    monkeypatch.setattr(bonsai, "_server_help", lambda *a, **k: NEW_HELP)
+    cmd = "llama-server -m x.gguf -c 8192 -np 1"
+    r = router(tmp_path, cmd, cmd + " -b 4096 --ubatch-size 256")
+    assert {p["name"]: (p["ubatch"], p["ubatch_settable"]) for p in r.describe()} == \
+        {"ollama": (None, False), "mtp": (512, True), "plain": (256, True)}
+    run(r.set_ubatch("mtp", 2048))
+    assert r.profiles["mtp"].server.command == cmd + " -ub 2048 -b 2048"
+    run(r.set_ubatch("mtp", 1024))
+    assert r.profiles["mtp"].server.command == cmd + " -ub 1024 -b 2048"
+    run(r.set_ubatch("plain", 512))
+    assert r.profiles["plain"].server.command == cmd  # Standard: keine eigenen Flags
+    with pytest.raises(LLMError):
+        run(r.set_ubatch("ollama", 1024))
+    with pytest.raises(LLMError):
+        run(r.set_ubatch("mtp", 333))
+    assert json.loads((tmp_path / "state.json").read_text())["ubatch"] == {"mtp": 1024, "plain": 512}
+    again = router(tmp_path, cmd, cmd)
+    assert again.profiles["mtp"].server.command == cmd + " -ub 1024 -b 2048"
+
+
+def test_batch_api_resets_the_measured_speed(cfg, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from orbwise.server import create_app
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
+    monkeypatch.setattr(bonsai, "_server_help", lambda *a, **k: NEW_HELP)
+    cfg.llm.base_url = "http://127.0.0.1:9"
+    cfg.llm.profiles = {"qwen": ProfileConfig(model="qwen3:8b"),
+                        "other": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8091/v1", model="x",
+                                               server=ServerConfig(command="llama-server -m x.gguf -c 4096"))}
+    cfg.llm.active = "qwen"
+    app = create_app(cfg)
+    with TestClient(app, base_url="http://localhost:8765") as client:
+        agent = app.state.hub.agent
+        agent._prefill_tps["other"] = 900.0
+        assert {p["name"]: p["prefill_tps"] for p in client.get("/api/models").json()["profiles"]}["other"] == 900.0
+        assert client.post("/api/models/other/ubatch", json={"size": 2048}).json() == {"ok": True, "ubatch": 2048}
+        p = {x["name"]: x for x in client.get("/api/models").json()["profiles"]}["other"]
+        assert p["ubatch"] == 2048 and p["prefill_tps"] is None
+        assert client.post("/api/models/other/ubatch", json={"size": 300}).status_code == 400
+        r = client.post("/api/models/qwen/ubatch", json={"size": 1024})
+        assert r.status_code == 400 and "Ollama" in r.json()["detail"]

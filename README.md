@@ -422,6 +422,14 @@ shows the full command; restored checkpoints appear in the same log.
 - **Vision model** (screen understanding): on a small GPU it can push the language model out of VRAM; the next step
   then reads the chat again (the activity shows it). `vision.keep_alive: 2m` unloads it soon afterwards.
 
+### Faster prompt processing: batch size
+
+**Models → Prompt processing (batch size)** sets llama-server's micro-batch (`-ub`, default 512) per model to 1024 or
+2048 (`-b` grows with it). Bigger batches keep the GPU busier while reading long inputs – tool results, files, PDFs,
+the first message of a chat – at the cost of a larger compute buffer in VRAM (shown next to the setting, together
+with the measured prompt speed; the measurement restarts after a change). Short questions hardly change. Compare
+with **Test context**, which reads a full window and reports tokens/s. llama.cpp models only.
+
 ### Faster answers: speculative decoding (MTP / n-gram)
 
 **Models → Faster answers** lets llama.cpp models propose several tokens at once, which the server then verifies in a

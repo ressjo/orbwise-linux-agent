@@ -266,6 +266,19 @@ def _flash_attn_flag(command: str, env: dict) -> str:
     return "-fa on"
 
 
+# ---------------------------------------------------------------- Batch-Größe fürs Einlesen
+# -ub (physische Micro-Batch, Standard 512): größer = größere Matrix-Multiplikationen beim Einlesen langer Prompts,
+# die GPU wird besser ausgelastet; kostet einen größeren Rechenpuffer im Grafikspeicher. -b (logische Batch, Standard
+# 2048) muss mindestens so groß sein.
+UBATCH_SIZES = (512, 1024, 2048)
+_BATCH_FLAGS = re.compile(r"\s+(?:-ub|--ubatch-size|-b|--batch-size)\s+\d+")
+
+
+def ubatch_of(command: str) -> int:
+    m = re.findall(r"(?:^|\s)(?:-ub|--ubatch-size)\s+(\d+)", command)
+    return int(m[-1]) if m else 512
+
+
 # ---------------------------------------------------------------- Spekulatives Decoding (MTP / N-Gramm)
 # Das Modell schlägt mehrere Token auf einmal vor, der Server prüft sie in einem Durchgang – bei einem einzelnen
 # Nutzer (Grafikkarte wartet meist auf den Speicher) fast gratis. MTP: eigene Vorhersage-Schichten des Modells (im
@@ -401,6 +414,9 @@ class LLMRouter:
         for name, kv in (state.get("kv_cache") or {}).items():
             if name in self.profiles and kv in KV_TYPES and self.profiles[name].server:
                 self._apply_kv(name, kv)
+        for name, n in (state.get("ubatch") or {}).items():
+            if name in self.profiles and n in UBATCH_SIZES and self.profiles[name].server:
+                self._apply_ubatch(name, n)
         for name, mode in (state.get("speculative") or {}).items():
             if name in self.profiles and mode in SPEC_MODES and self.profiles[name].server:
                 try:
@@ -649,6 +665,28 @@ class LLMRouter:
         p.server = p.server.model_copy(update={"env": env, "command": command})
         self.servers.pop(name, None)  # neuer Startbefehl
 
+    def _apply_ubatch(self, name: str, n: int) -> None:
+        """Batch-Größe eines eigenen llama-server setzen (wirkt beim nächsten Start)."""
+        p = self.profiles[name]
+        if not p.server:
+            raise LLMError(T("Die Batch-Größe lässt sich nur bei llama.cpp einstellen, nicht bei Ollama.",
+                             "The batch size can only be set for llama.cpp, not for Ollama."))
+        command = _BATCH_FLAGS.sub("", p.server.command)
+        if n != 512:
+            command += f" -ub {n} -b {max(2048, n)}"
+        p.server = p.server.model_copy(update={"command": command})
+        self.servers.pop(name, None)  # neuer Startbefehl
+
+    async def set_ubatch(self, name: str, n: int, progress: Progress | None = None) -> None:
+        """Batch-Größe ändern und merken; beim aktiven Profil startet der Server neu."""
+        if name not in self.profiles:
+            raise LLMError(f"Unbekanntes Profil '{name}'")
+        if n not in UBATCH_SIZES:
+            raise LLMError(T("Batch-Größe bitte 512, 1024 oder 2048", "Batch size please 512, 1024 or 2048"))
+        if not self.profiles[name].server:
+            self._apply_ubatch(name, n)  # meldet den Grund
+        await self._reconfigure(name, lambda: self._apply_ubatch(name, n), "ubatch", n, progress)
+
     def _apply_spec(self, name: str, mode: str) -> None:
         """Spekulatives Decoding eines eigenen llama-server setzen (wirkt beim nächsten Start)."""
         p = self.profiles[name]
@@ -837,6 +875,7 @@ class LLMRouter:
                  "kv": cache_type(p.server.command, p.server.env) if p.server else None,
                  "kv_settable": p.server is not None,
                  "kv_options": kv_types(p.server.command, p.server.env) if p.server else [],
+                 "ubatch": ubatch_of(p.server.command) if p.server else None, "ubatch_settable": p.server is not None,
                  "spec": spec_mode(p.server.command) if p.server else "off",
                  "spec_options": spec_options(p.server)}
                 for n, p in self.profiles.items()]

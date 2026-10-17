@@ -546,6 +546,22 @@ class Agent:
         except (OSError, ValueError) as e:
             log.info("Einlese-Geschwindigkeit nicht gespeichert: %s", e)
 
+    def prefill_speed(self, profile: str) -> float | None:
+        """Gemessene Einlese-Geschwindigkeit eines Profils (Token/s, geglättet) – für die Modellseite."""
+        return self._prefill_tps.get(profile)
+
+    def forget_prefill(self, profile: str) -> None:
+        """Nach einer Änderung am Modell-Server (z. B. Batch-Größe) neu messen statt den alten Wert nachzuziehen."""
+        self._prefill_tps.pop(profile, None)
+        self._saved_tps.pop(profile, None)
+        try:
+            data = json.loads(self._state_path.read_text(encoding="utf-8"))
+            if profile in (data.get("prefill_tps") or {}):
+                del data["prefill_tps"][profile]
+                self._state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
+        except (OSError, ValueError, AttributeError):
+            pass
+
     def _unit(self, name: str, small: bool) -> str:
         """Auswahl-Einheit eines Werkzeugs – leer für die Grundausstattung des kleinen Fensters (immer geladen)."""
         if not name or (small and name in toolselect.SMALL_CORE):
