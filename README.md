@@ -59,7 +59,7 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **Tools & Coding mode** | Switch top left: **Tools** (assistant – all tools, web, Paperless, mail, smart home, voice) or **Coding** – only files, shell, web search and memory (≈ 2k instead of ≈ 10k tokens of tool descriptions, so far more context for code), a developer prompt, no voice, wider chat. Files are changed with **edit_file** (replace a snippet instead of rewriting the file) and multi-step work gets a **task list** shown as a checklist in the answer. Each mode has its own chat history; a coding chat can have a **project folder** (shell starts there, relative paths refer to it). Pick a model while in a mode and Orbwise remembers it for that mode (e.g. a coder model) – switching then reloads it |
 | **Plan mode** | **Plan** button: Jarvis thinks it through, only looks things up (read-only) and presents a step-by-step plan – **RUN**, **CHANGE** (say what should be different) or **DISCARD**; also by voice ("yes") and via Telegram (`/plan …`) |
 | **Auto mode** | Drop-down button next to *Think*: **Off** – every shell command asks · **Read only** (default) – recognised read-only commands (`ls`, `df`, `docker ps`, `git status`, `nmcli device status`, `apt list --installed`, `journalctl` …) run without asking · **Read + edit files** – also create, write, copy and move files in your own home (`write_file`, `mkdir`, `touch`, `cp`, `mv`, `tee`, `>`), never with root, never deleting, never hidden files (shell start files, autostart, `~/.ssh`, `~/.config` …), launchers (`.desktop`, `~/bin`) or credentials · **Auto** – everything without root runs without asking (`python …`, `cd … && make`, `git commit`, `pip install --user`, `systemctl --user restart` …, plus `write_file`); still asking: deleting (`rm`, `find -delete`, `git clean` …), sudo, shutting down, sending over the network (`git push`, `ssh`, uploads), start-up files/autostart/`~/.ssh`/Orbwise's own config and credentials. Note: a script or `python -c` can do anything you may do – Auto only catches what is visible in the command. Plan mode and untrusted content (mail, screen) still ask. The rules live in code, so they cost no prompt context |
-| **Images in the chat** | Attach images to a message (image button, paste with Ctrl+V or drag them onto the input field) – models that can see images (Bonsai 2 with its vision module, Ollama vision models) get them directly, others hand them to the local vision model via `look_at_image` |
+| **Images and PDFs in the chat** | Attach images or PDFs to a message (paperclip button, paste with Ctrl+V or drag them onto the input field) – models that can see images (Bonsai 2 with its vision module, Ollama vision models) get them directly, others hand them to the local vision model via `look_at_image`; PDFs are read locally and their text goes along with the question |
 | **Screen & images** | "What's that error message?", "What does this window say?", "Help me with this dialog" – Orbwise takes a screenshot and asks a **local vision model** (e.g. Qwen2.5-VL); also for image files and photos sent from the phone. Nothing leaves your PC |
 | **Telegram** | Chat with Orbwise from your phone (text or voice messages, own chat in the sidebar), reminders also arrive on the phone, confirmations via ✅/❌ buttons, **files in both directions** (PDFs/photos → PC or Paperless, local files and Paperless documents → phone), `/stop` cancels what is running |
 | **Obsidian** | Search, read and ask questions about notes in your vault, create/append/update notes, open them in Obsidian |
@@ -790,6 +790,13 @@ an OpenAI-compatible server works too). Screenshots use whatever your desktop ha
 with e-mails, screen content is treated as untrusted: after looking at the screen, actions in that chat need
 confirmation, so a web page cannot slip instructions to Orbwise.
 
+**PDFs** (up to 50 MB, 4 files per message) are read locally with pypdf – nothing leaves the machine. The chat shows
+the file with its page count; the text goes to the model together with your question, page by page. Long documents
+are shortened to about 40 % of the context window and the model is told so (it says that only the beginning was
+read). Scanned PDFs without a text layer are flagged right away when attaching. A PDF counts as foreign content like
+an e-mail (actions in that chat need confirmation), and the data-leak guard knows its text. Regenerating or editing
+the question keeps the PDF.
+
 ### Morning briefing
 
 "Good morning", "briefing" or "what's on today?" gives you a short overview. Choose its items and their order in
@@ -990,6 +997,7 @@ from their original sources, and their licenses apply:
 | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) + Whisper models | speech recognition | MIT |
 | Language models via Ollama / Bonsai-demo (Qwen, Llama, Mistral, gpt-oss, Bonsai, …) | chat | per model – see its model card |
 | [ddgs](https://pypi.org/project/ddgs/), [trafilatura](https://github.com/adbar/trafilatura), [caldav](https://github.com/python-caldav/caldav) | web search, page text, calendar | MIT · Apache-2.0 · GPL-3.0-or-later OR Apache-2.0 |
+| [pypdf](https://github.com/py-pdf/pypdf) | reading attached PDFs | BSD-3-Clause |
 
 If you redistribute Orbwise together with these components (e.g. as a package or image), you must comply with
 their licenses as well. Using the "Hey Jarvis" wake word model commercially is not allowed by its license.

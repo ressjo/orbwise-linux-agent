@@ -42,6 +42,8 @@
       <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
       <symbol id="i-chip" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></symbol>
       <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></symbol>
+      <symbol id="i-clip" viewBox="0 0 24 24"><path d="m20 11.5-8.2 8.2a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></symbol>
+      <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></symbol>
       <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
       <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4Z"/><path d="M10 21h4"/></symbol>
     </defs>
@@ -155,8 +157,8 @@
       <footer class="composer-wrap">
         <div class="attach-row hidden" id="attach-row"></div>
         <form class="composer" id="form">
-          <button type="button" class="mic attach-btn" id="btn-attach" title="Bild anhängen (auch einfügen mit Strg+V oder hineinziehen)" aria-label="Bild anhängen"><svg class="i"><use href="#i-image"/></svg></button>
-          <input type="file" id="attach-input" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
+          <button type="button" class="mic attach-btn" id="btn-attach" title="Bild oder PDF anhängen (auch einfügen mit Strg+V oder hineinziehen)" aria-label="Bild oder PDF anhängen"><svg class="i"><use href="#i-clip"/></svg></button>
+          <input type="file" id="attach-input" accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,.pdf" multiple hidden>
           <button type="button" class="mic" id="btn-mic" title="Halten zum Sprechen (Leertaste) · kurz tippen = zuhören bis Stille" aria-label="Mikrofon"><svg class="i"><use href="#i-mic"/></svg></button>
           <input id="input" type="text" autocomplete="off" placeholder="Frag Jarvis oder sag „Hey Jarvis“ …">
           <button type="button" class="chip-toggle" id="btn-plan" title="Planmodus: Jarvis schaut nur lesend nach und legt erst einen Plan vor – ausgeführt wird nach deiner Freigabe."><svg class="i"><use href="#i-plan"/></svg><span>Plan</span></button>

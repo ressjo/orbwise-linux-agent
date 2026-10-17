@@ -274,7 +274,11 @@ class Hub:
                 self.resolve(cid, False)
         self.speaker.stop()
         await self.broadcast({"type": "audio_stop"})
-        await self.broadcast({"type": "user", "text": text, "source": source, "images": images or []})
+        from . import attachments
+        docs = [d for d in (attachments.doc(self.cfg, n) for n in images or [] if attachments.is_doc(n)) if d]
+        await self.broadcast({"type": "user", "text": text, "source": source,
+                              "images": [n for n in images or [] if not attachments.is_doc(n)],
+                              "files": [attachments.doc_info(d) for d in docs]})
         task = asyncio.create_task(self._run(text, self.plan_mode if plan is None else plan, approved_plan, images))
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
@@ -1294,14 +1298,19 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(404, "Lektion nicht gefunden")
         return {"ok": True}
 
-    # ---------- Angehängte Bilder im Chat ----------
+    # ---------- Angehängte Bilder und PDFs im Chat ----------
     @app.post("/api/attachments")
     async def attachment_upload(request: Request):
         from . import attachments
-        try:
-            name = attachments.save_data_url(cfg, str((await request.json()).get("data") or ""))
+        body = await request.json()
+        title = Path(str(body.get("name") or "")).name[:120]
+        try:  # PDFs werden dabei ausgelesen – kann bei großen Dateien einen Moment dauern
+            name = await asyncio.to_thread(attachments.save_data_url, cfg, str(body.get("data") or ""), title)
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
+        if attachments.is_doc(name):
+            d = attachments.doc(cfg, name) or {"name": name, "title": title, "pages": 0, "text": ""}
+            return {"name": name, "url": f"/api/attachments/{name}", "doc": attachments.doc_info(d)}
         vision = await agent.llm.supports_images() if hasattr(agent.llm, "supports_images") else False
         return {"name": name, "url": f"/api/attachments/{name}", "vision": vision}
 
@@ -1310,9 +1319,9 @@ def create_app(cfg: Config) -> FastAPI:
         from . import attachments
         path = attachments.path_of(cfg, name)
         if not path:
-            raise HTTPException(404, "Bild nicht gefunden")
+            raise HTTPException(404, "Datei nicht gefunden")
         return FileResponse(path, media_type=attachments.MIME.get(path.suffix, "image/png"),
-                            headers={"Cache-Control": "private, max-age=86400"})
+                            headers={"Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff"})
 
     # ---------- Bild-Modus (Qwen-Image-2.1 über stable-diffusion.cpp, siehe imagegen.py) ----------
     image_task: list[asyncio.Task] = []
@@ -1565,9 +1574,11 @@ def create_app(cfg: Config) -> FastAPI:
     async def history():
         """Der ganze sichtbare Chat (die letzten 40 Nachrichten) – auch komprimierte Teile; dazu, wo eine
         Komprimierung stattfand (Trenner mit aufklappbarer Zusammenfassung)."""
+        from . import attachments
         conv = memory.active
         shown = [(i, m) for i, m in enumerate(conv.history)
-                 if m["role"] in ("user", "assistant") and m.get("content")][-40:]
+                 if m["role"] in ("user", "assistant")
+                 and (m.get("content") or m.get("attachments") or m.get("docs"))][-40:]
         epochs = []
         for ep in conv.epochs[1:]:
             at = next((pos for pos, (i, _) in enumerate(shown) if i >= ep.get("start", 0)), None)
@@ -1579,7 +1590,9 @@ def create_app(cfg: Config) -> FastAPI:
         return {"summary": first, "chat": {"id": conv.chat_id, "title": conv.meta.get("title", "")},
                 "messages": [{"role": m["role"], "content": m["content"], "turn": turns.get(i, 0),
                               "editable": i >= start,
-                              **({"images": m["attachments"]} if m.get("attachments") else {})} for i, m in shown],
+                              **({"images": m["attachments"]} if m.get("attachments") else {}),
+                              **({"files": [attachments.doc_info(d) for d in m["docs"]]} if m.get("docs") else {})}
+                             for i, m in shown],
                 "turns": max(turns.values(), default=0), "epochs": epochs}
 
     def user_turns(conv) -> dict[int, int]:
@@ -1609,9 +1622,10 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(404, "Diese Nachricht gibt es nicht (mehr)")
         old = conv.history[idx]
         text = str(body.get("text") if body.get("text") is not None else old.get("content") or "").strip()
-        if not text:
+        # angehängte Bilder und PDFs bleiben – beim Neu-Generieren und beim Bearbeiten der Frage
+        images = list(old.get("attachments") or []) + [d["name"] for d in old.get("docs") or []]
+        if not text and not images:
             raise HTTPException(400, "Leere Nachricht")
-        images = list(old.get("attachments") or []) if body.get("text") is None else []
         try:
             conv.truncate(idx)
         except ValueError as e:
@@ -1625,6 +1639,7 @@ def create_app(cfg: Config) -> FastAPI:
     @app.get("/api/chats/{chat_id}/export")
     async def export_chat(chat_id: str):
         """Chat als Markdown-Datei: Fragen, Antworten, Werkzeug-Aufrufe als kurze Zeile, Zusammenfassungen als Zitat."""
+        from . import attachments
         chat_or_404(chat_id)
         conv = memory.active if memory.active.chat_id == chat_id else memory._loaded(chat_id) \
             or memory.chats.open(chat_id)
@@ -1635,8 +1650,9 @@ def create_app(cfg: Config) -> FastAPI:
         for i, m in enumerate(conv.history):
             if summaries.get(i):
                 lines += ["> " + line for line in str(summaries[i]).splitlines()] + [""]
-            if m["role"] == "user" and m.get("content"):
-                lines += [f"## {T('Du', 'You')}", "", str(m["content"]), ""]
+            files = [f"📎 {d['title']} ({attachments.pages_text(d['pages'])})" for d in m.get("docs") or []]
+            if m["role"] == "user" and (m.get("content") or files):
+                lines += [f"## {T('Du', 'You')}", "", *files, *([""] if files else []), str(m.get("content") or ""), ""]
             elif m["role"] == "assistant":
                 for call in m.get("tool_calls") or []:
                     fn = call.get("function", {})

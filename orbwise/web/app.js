@@ -356,7 +356,7 @@
         break;
       case "user":
         S.turns = (S.turns || 0) + 1;
-        addUser(ev.text, ev.source, ev.images, S.turns, true);
+        addUser(ev.text, ev.source, ev.images, S.turns, true, ev.files);
         if (ev.source === "voice") S.voiceUsed = true;
         break;
       case "chat_reload":  // Nachricht bearbeitet / neu generiert: Chat ab dieser Frage abschneiden (gleich folgt sie neu)
@@ -664,7 +664,7 @@
     return el;
   }
 
-  function addUser(text, source, images, turn, editable) {
+  function addUser(text, source, images, turn, editable, files) {
     const el = addMsg("user", source === "voice" ? L("DU · SPRACHE", "YOU · VOICE") : L("DU", "YOU"), escapeHtml(text));
     el._raw = text;
     if (turn) el.dataset.turn = turn;
@@ -679,6 +679,14 @@
         img.loading = "lazy";
         img.onclick = () => window.open(img.src, "_blank");
         box.appendChild(img);
+      }
+      el.querySelector(".body").prepend(box);
+    }
+    if (files && files.length) {
+      const box = document.createElement("div");
+      box.className = "msg-files";
+      for (const d of files) {
+        box.appendChild(fileChip(d.title, d, () => window.open(`/api/attachments/${encodeURIComponent(d.name)}`, "_blank", "noopener")));
       }
       el.querySelector(".body").prepend(box);
     }
@@ -1586,21 +1594,46 @@
   }
   $("input").addEventListener("input", prewarmSoon);
 
-  // ---------------------------------------------------------------- Bilder anhängen (Büroklammer, Strg+V, Ziehen)
-  const ATT = { items: [] };  // { name, url, pending }
+  // ---------------------------------------------------------------- Bilder und PDFs anhängen (Büroklammer, Strg+V, Ziehen)
+  const ATT = { items: [] };  // { name, url, pending, pdf, title, doc }
+  const isPdf = (f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name || "");
+  function docLine(d) {
+    if (!d) return L("wird gelesen …", "reading …");
+    if (d.scanned) return L("kein Text – gescannt?", "no text – scanned?");
+    return d.pages === 1 ? L("1 Seite", "1 page") : L(`${d.pages} Seiten`, `${d.pages} pages`);
+  }
+  function fileChip(title, d, onclick) {
+    const chip = document.createElement(onclick ? "button" : "div");
+    if (onclick) { chip.type = "button"; chip.onclick = onclick; }
+    chip.className = "file-chip" + (d && d.scanned ? " warn" : "");
+    chip.innerHTML = `<svg class="i"><use href="#i-file"/></svg><span class="fc-text"><b></b><small></small></span>`;
+    chip.querySelector("b").textContent = title;
+    chip.querySelector("small").textContent = docLine(d) + (d && d.truncated ? L(" · gekürzt", " · shortened") : "");
+    chip.title = d && d.scanned ? L("Dieses PDF enthält keinen auslesbaren Text (vermutlich ein Scan) – das Modell sieht nur den Dateinamen.",
+                                    "This PDF has no extractable text (probably a scan) – the model only sees the file name.") : title;
+    return chip;
+  }
   function renderAttachments() {
     const row = $("attach-row");
     row.innerHTML = "";
     row.classList.toggle("hidden", !ATT.items.length);
     for (const it of ATT.items) {
-      const chip = document.createElement("div");
-      chip.className = "attach-chip" + (it.pending ? " loading" : "");
-      chip.innerHTML = `<img alt=""><button type="button" aria-label="${L("Entfernen", "Remove")}">✕</button>`;
-      chip.querySelector("img").src = it.preview || it.url;
-      chip.querySelector("button").onclick = () => { ATT.items = ATT.items.filter((x) => x !== it); renderAttachments(); };
+      let chip;
+      if (it.pdf) {
+        chip = fileChip(it.title, it.pending ? null : it.doc);
+        chip.classList.add("attach-file");
+        if (it.pending) chip.classList.add("loading");
+        chip.insertAdjacentHTML("beforeend", `<button type="button" class="fc-x" aria-label="${L("Entfernen", "Remove")}">✕</button>`);
+      } else {
+        chip = document.createElement("div");
+        chip.className = "attach-chip" + (it.pending ? " loading" : "");
+        chip.innerHTML = `<img alt=""><button type="button" aria-label="${L("Entfernen", "Remove")}">✕</button>`;
+        chip.querySelector("img").src = it.preview || it.url;
+      }
+      chip.querySelector("button:last-child").onclick = () => { ATT.items = ATT.items.filter((x) => x !== it); renderAttachments(); };
       row.appendChild(chip);
     }
-    if (ATT.items.length && ATT.vision === false) {
+    if (ATT.items.some((it) => !it.pdf) && ATT.vision === false) {
       const hint = document.createElement("span");
       hint.className = "attach-hint";
       hint.textContent = L("Das Modell sieht keine Bilder – das Vision-Modell schaut es sich an.",
@@ -1610,17 +1643,21 @@
   }
   function attachFiles(files) {
     for (const f of files) {
-      if (!f.type.startsWith("image/")) continue;
-      if (ATT.items.length >= 4) { toast(L("Höchstens 4 Bilder pro Nachricht.", "At most 4 images per message.")); break; }
-      if (f.size > 20e6) { toast(L("Bild zu groß (höchstens 20 MB).", "Image too large (20 MB max).")); continue; }
-      const it = { pending: true, preview: URL.createObjectURL(f) };
+      const pdf = isPdf(f);
+      if (!pdf && !f.type.startsWith("image/")) { toast(L(`${f.name}: nur Bilder und PDFs.`, `${f.name}: images and PDFs only.`)); continue; }
+      if (ATT.items.length >= 4) { toast(L("Höchstens 4 Dateien pro Nachricht.", "At most 4 files per message.")); break; }
+      if (f.size > (pdf ? 50e6 : 20e6)) {
+        toast(pdf ? L("PDF zu groß (höchstens 50 MB).", "PDF too large (50 MB max).") : L("Bild zu groß (höchstens 20 MB).", "Image too large (20 MB max)."));
+        continue;
+      }
+      const it = pdf ? { pending: true, pdf: true, title: f.name } : { pending: true, preview: URL.createObjectURL(f) };
       ATT.items.push(it);
       const reader = new FileReader();
       reader.onload = async () => {
         try {
-          const r = await api("POST", "/api/attachments", { data: reader.result });
-          Object.assign(it, { name: r.name, url: r.url, pending: false });
-          ATT.vision = r.vision;
+          const r = await api("POST", "/api/attachments", { data: reader.result, name: f.name });
+          Object.assign(it, { name: r.name, url: r.url, pending: false, doc: r.doc });
+          if (!pdf) ATT.vision = r.vision;
         } catch { ATT.items = ATT.items.filter((x) => x !== it); }
         renderAttachments();
       };
@@ -1648,7 +1685,7 @@
   $("form").addEventListener("submit", (e) => {
     e.preventDefault();
     const text = $("input").value.trim();
-    if (ATT.items.some((it) => it.pending)) { toast(L("Bild wird noch hochgeladen …", "Image still uploading …")); return; }
+    if (ATT.items.some((it) => it.pending)) { toast(L("Datei wird noch hochgeladen …", "File still uploading …")); return; }
     const images = ATT.items.map((it) => it.name).filter(Boolean);
     if (!text && !images.length) return;
     if (!S.connected) { toast(L("Keine Verbindung zum Server.", "No connection to the server.")); return; }
@@ -3935,7 +3972,7 @@
       S.turns = h.turns || 0;
       h.messages.forEach((m, i) => {
         if (dividers[i]) { chat.appendChild(compactDivider(dividers[i].summary, dividers[i].ts)); }
-        if (m.role === "user") { addUser(m.content, "", m.images, m.turn, m.editable); return; }
+        if (m.role === "user") { addUser(m.content, "", m.images, m.turn, m.editable, m.files); return; }
         const el = addMsg("assistant" + (m.editable === false ? " locked" : ""), "JARVIS", renderMarkdown(m.content));
         el._raw = m.content;
         if (m.turn) el.dataset.turn = m.turn;

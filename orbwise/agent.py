@@ -29,7 +29,7 @@ from .config import Config
 from .context_plan import SUMMARY_MIN, THINK_LEVELS, ContextPlan, plan_for
 from .llm import ContextOverflow, LLMError, strip_think
 from .memory import Memory, est_tokens
-from .memory.context import TRIM_NOTE, msg_tokens, render_transcript, shrink_tool_results
+from .memory.context import PROMPT_KEYS, TRIM_NOTE, msg_tokens, render_transcript, shrink_tool_results
 from .memory.index import shared_words
 from .tools.leakguard import LOCAL_DATA_TOOLS, find_leak, outbound_text
 from .tools.proc import clip, clip_saved
@@ -283,6 +283,9 @@ class Agent:
         out = {k: v for k, v in m.items() if k in ("role", "content", "tool_calls", "tool_name")}
         if m.get("note"):
             out["content"] = m["note"] + (m.get("content") or "")
+        if m.get("docs"):  # angehängte PDFs: ausgelesener Text hinter der Frage
+            from . import attachments
+            out["content"] = (out.get("content") or "") + "".join("\n\n" + attachments.doc_block(d) for d in m["docs"])
         if m.get("attachments"):
             from . import attachments
             paths = [p for p in (attachments.path_of(self.cfg, n) for n in m["attachments"]) if p]
@@ -316,7 +319,7 @@ class Agent:
         if trim:  # Notbremse – normalerweise kommt vorher das Ausblenden bzw. die Komprimierung
             history = conv.trimmed_history(max(budget, 1000))
         else:
-            history = [{k: v for k, v in m.items() if k in ("role", "content", "tool_calls", "tool_name", "note", "attachments")}
+            history = [{k: v for k, v in m.items() if k in PROMPT_KEYS or k == "note"}
                        for m in conv.epoch_messages()]
         messages = [{"role": "system", "content": system}, *(self._prompt_message(m) for m in history)]
         if summary:  # vor die erste Nutzernachricht – in deren [Kontext]-Block
@@ -753,9 +756,10 @@ class Agent:
         self._turn_time = now.strftime("%H:%M")
         self._turn_stamp = prompts.note_stamp(self.cfg, now)
         conv = self.memory.conversation
-        # Steht noch Mail-Text im Prompt, kann er auch in späteren Anfragen wirken – dann bleibt der Schutz an
-        self._tainted = any(m.get("role") == "tool" and is_taint_source(m.get("tool_name", ""), m.get("full_content")
-                                                                       or m.get("content") or "")
+        # Steht noch Mail-Text (oder ein angehängtes PDF) im Prompt, kann er auch in späteren Anfragen wirken – dann
+        # bleibt der Schutz an
+        self._tainted = any(m.get("docs") or m.get("role") == "tool" and is_taint_source(
+                                m.get("tool_name", ""), m.get("full_content") or m.get("content") or "")
                             for m in conv.epoch_messages())
         start_len = len(conv.history)
         await emit({"type": "state", "state": "thinking"})
@@ -769,7 +773,15 @@ class Agent:
             store.add_candidate({"kind": "correction", **self._last_turn, "correction": user_text[:500]})
             store.mark_helped(self._last_turn.get("lessons") or [], -1)
         await self._check_vision()
-        conv.add({"role": "user", "content": user_text, **({"attachments": list(images)} if images else {})})
+        from . import attachments
+        pics = [n for n in images or [] if not attachments.is_doc(n)]
+        # angehängte PDFs: ihr Text kommt mit – zusammen höchstens ~40 % des Fensters (geschätzte Token × 3 Zeichen)
+        docs = [d for d in (attachments.doc(self.cfg, n) for n in images or [] if attachments.is_doc(n)) if d]
+        docs = attachments.fit_docs(docs, int(self.context_budget() * 0.4 * 3)) if docs else []
+        conv.add({"role": "user", "content": user_text, **({"attachments": pics} if pics else {}),
+                  **({"docs": docs} if docs else {})})
+        if docs:  # ein PDF ist fremder Inhalt wie eine Mail – versteckte Anweisungen darin dürfen nichts auslösen
+            self._tainted = True
         self._turn_open = True
         spoken: list[str] = []
         tool_notes: list[str] = []
@@ -1553,6 +1565,7 @@ class Agent:
         user = next((m.get("content") or "" for m in reversed(msgs) if m.get("role") == "user"), "")
         local = [m.get("full_content") or m.get("content") or "" for m in msgs
                  if m.get("role") == "tool" and m.get("tool_name") in LOCAL_DATA_TOOLS]
+        local += [d.get("text") or "" for m in msgs for d in m.get("docs") or ()]  # angehängte PDFs
         return find_leak(out, user if isinstance(user, str) else "", local)
 
     def _runs_unasked(self, call: dict) -> bool:

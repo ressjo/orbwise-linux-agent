@@ -21,7 +21,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-PROMPT_KEYS = ("role", "content", "tool_calls", "tool_name", "attachments")  # was davon an das Modell geht
+PROMPT_KEYS = ("role", "content", "tool_calls", "tool_name", "attachments", "docs")  # was davon an das Modell geht
 CLEAR_MIN_CHARS = 600  # kürzere Werkzeug-Ergebnisse lohnen das Ausblenden nicht
 CLEAR_ARG_CHARS = 800  # längere Aufruf-Argumente (z. B. der Inhalt von write_file) werden beim Ausblenden gekürzt
 
@@ -35,6 +35,8 @@ def msg_tokens(msg: dict) -> int:
     n = est_tokens((msg.get("note") or "") + (msg.get("content") or "")) + 4
     if msg.get("attachments"):  # angehängte Bilder (grob – je nach Modell und Größe)
         n += 800 * len(msg["attachments"])
+    for d in msg.get("docs") or ():  # angehängte PDFs (ausgelesener Text)
+        n += est_tokens(d.get("text") or "") + 30
     if msg.get("tool_calls"):
         n += est_tokens(json.dumps(msg["tool_calls"], ensure_ascii=False))
     return n

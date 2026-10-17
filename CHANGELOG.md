@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **PDFs in the chat:** attach PDFs like images (paperclip, drag and drop; up to 50 MB). They are read locally
+  (pypdf, new dependency), shown as a card with title and page count, and their text goes to the model with the
+  question – shortened to ~40 % of the context window with a note if needed; scanned PDFs without text are flagged
+  when attaching. PDFs count as foreign content (actions need confirmation), the data-leak guard knows their text,
+  and regenerate/edit/export keep them. The attach button now has a paperclip icon.
 - **API server (OpenAI compatible):** Models → API server turns on `/v1/models`, `/v1/chat/completions` (with
   streaming) and `/v1/completions` at `http://127.0.0.1:8765/v1` for VS Code (Continue, Cline), Open WebUI or scripts.
   Off by default, with its own API key (show, copy, renew), local only. Programs get the loaded model without system
