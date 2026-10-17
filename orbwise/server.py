@@ -841,20 +841,59 @@ def create_app(cfg: Config) -> FastAPI:
                 pass
         added = mdl.added_profiles(state_file)  # state.json nur einmal lesen
         added_slugs = {mdl.slug(t) for t in mdl.added_models(state_file)}
+        gpu = await gpu_info()
         for p in profiles:
             p["deletable"] = p["name"] in added or p["name"] in added_slugs
             size = sizes.get(p["model"]) or sizes.get(f"{p['model']}:latest") if p["backend"] == "ollama" else None
+            p["engine"] = "Ollama" if p["backend"] == "ollama" else "llama.cpp" if p["managed"] else "OpenAI-API"
+            files: list[str] = []
             if p["name"] in bonsai_mod.VARIANTS:
-                size = sum(f.stat().st_size for f in bonsai_mod.model_files(variant=p["name"]))
+                files = [str(f) for f in bonsai_mod.model_files(variant=p["name"])]
+                p["engine"] = "Bonsai (llama.cpp)"
             elif (local := llamacpp_mod.local_record(state_file, p["name"])) is not None:
-                size = sum(Path(f).stat().st_size for f in local.get("files", []) if Path(f).is_file())
-                p["engine"] = "llama.cpp"
+                files = [f for f in local.get("files", []) if Path(f).is_file()]
                 p["keeps_files"] = not local.get("downloaded")
+                p["repo"] = local.get("repo") or ""
+            if files:
+                size = sum(Path(f).stat().st_size for f in files)
+                weights = [f for f in files if "mmproj" not in Path(f).name.lower()]
+                p["path"] = llamacpp_mod._tilde(weights[0] if weights else files[0])
+                p["vision"] = len(weights) < len(files)
+                q = mdl.QUANT_RE.search(mdl.SPLIT_RE.sub(".gguf", Path(weights[0]).name)) if weights else None
+                p["quant"] = q.group(1) if q else None
+            elif p["backend"] == "ollama":
+                q = re.search(r":((?:UD-)?I?Q\d\w*|[bf]f16)$", p["model"], re.I)
+                p["quant"] = q.group(1) if q else None
             p["size_gb"] = round(size / 1e9, 1) if size else None
+            if size:
+                p["vram_gb"] = mdl.need_gb(round(size / 1e9, 1))
+                p["fit"] = mdl.fit_need(p["vram_gb"], gpu["vram_gb"]) if gpu["vram_gb"] else None
             if p["backend"] == "ollama" and mdl.is_hf(p["model"]):  # alter Weg → auf llama.cpp umstellen anbieten
                 p["convert"] = p["model"]
-        return {"active": llm.active, "switching": llm.switching, "profiles": profiles,
+        return {"active": llm.active, "switching": llm.switching, "profiles": profiles, "gpu": gpu,
                 "pulls": [{"tag": t, **pull_state.get(t, {})} for t in sorted(pulls)]}
+
+    gpu_cache: dict = {}
+
+    async def gpu_info() -> dict:
+        """Grafikkarte einmal erkennen (nvidia-smi/sysfs) – ändert sich nicht, solange Orbwise läuft."""
+        if not gpu_cache:
+            from . import models as mdl
+            gpu_cache.update(await asyncio.to_thread(mdl.detect_gpu))
+        return gpu_cache
+
+    @app.get("/api/models/log")
+    async def model_server_log(lines: int = 200):
+        """Ausgabe des letzten Modell-Server-Starts (llama-server) – zum Nachsehen, warum etwas nicht lädt."""
+        from .llm_router import _log_path
+        try:
+            text = (await asyncio.to_thread(_log_path().read_text, errors="replace"))[-200_000:]
+        except OSError:
+            return {"lines": [], "file": "~/.local/state/orbwise-llm.log"}
+        last = text.rsplit("===== Starte:", 1)
+        body = ("===== Starte:" + last[1]) if len(last) == 2 else text
+        body = re.sub(r"(--api-key\s+)\S+", r"\1•••", body)
+        return {"lines": body.splitlines()[-max(1, min(lines, 2000)):], "file": "~/.local/state/orbwise-llm.log"}
 
     @app.post("/api/askpass")
     async def askpass_request(request: Request):

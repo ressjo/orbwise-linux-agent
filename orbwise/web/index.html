@@ -42,6 +42,7 @@
       <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
       <symbol id="i-chip" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></symbol>
       <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
       <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4Z"/><path d="M10 21h4"/></symbol>
     </defs>
   </svg>
@@ -70,6 +71,7 @@
         <ul class="chat-list" id="chat-list"></ul>
       </div>
       <nav class="side-nav">
+        <button class="nav-item" data-sheet="models" title="Modelle"><svg class="i"><use href="#i-chip"/></svg><span>Modelle</span></button>
         <button class="nav-item" data-sheet="planner" title="Planer"><svg class="i"><use href="#i-calendar"/></svg><span>Planer</span></button>
         <button class="nav-item" data-sheet="memory" title="Gedächtnis"><svg class="i"><use href="#i-brain"/></svg><span>Gedächtnis</span></button>
         <button class="nav-item" data-sheet="settings" title="Einstellungen"><svg class="i"><use href="#i-settings"/></svg><span>Einstellungen</span></button>
@@ -323,22 +325,29 @@
     </div>
   </section>
 
+  <section class="sheet sheet-xl hidden" id="sheet-models" aria-label="Modelle">
+    <div class="sheet-head"><h2>Modelle</h2>
+      <div class="mp-headinfo"><div class="mp-gpu" id="mp-gpu"></div><div class="mp-runtime" id="mp-runtime"></div></div>
+      <button class="icon-btn" data-close-sheet title="Schließen" aria-label="Schließen"><svg class="i"><use href="#i-x"/></svg></button></div>
+    <div class="mp-bar-row"><div class="seg mp-tabs" id="mp-tabs" role="tablist"><button type="button" data-mtab="mine" class="on">Meine Modelle</button><button type="button" data-mtab="add">Hinzufügen</button></div></div>
+    <div class="mp-pulls hidden" id="mp-pulls"></div>
+    <div class="mp" id="mp-mine">
+      <div class="mp-list" id="mp-list" role="list"></div>
+      <div class="mp-detail" id="mp-detail"></div>
+    </div>
+    <div class="mp-addtab hidden" id="mp-add"></div>
+  </section>
+
   <section class="sheet sheet-wide hidden" id="sheet-settings" aria-label="Einstellungen">
     <div class="sheet-head"><h2>Einstellungen</h2>
       <button class="icon-btn" data-close-sheet title="Schließen" aria-label="Schließen"><svg class="i"><use href="#i-x"/></svg></button></div>
     <div class="settings">
       <nav class="settings-nav">
-        <button class="set-tab active" data-section="models">Modelle</button>
+        <button class="set-tab active" data-section="general">Allgemein</button>
         <button class="set-tab" data-section="voice">Stimme</button>
-        <button class="set-tab" data-section="general">Allgemein</button>
         <button class="set-tab" data-section="status">Status</button>
       </nav>
       <div class="settings-body">
-        <div class="set-section" id="set-models">
-          <p class="set-hint">Wähle das Sprachmodell, lade neue herunter oder lösche nicht mehr benötigte.</p>
-          <div class="model-menu inline" id="model-menu" role="list"></div>
-          <div class="ctx-set" id="ctx-set"></div>
-        </div>
         <div class="set-section hidden" id="set-voice">
           <div class="model-menu voice-menu inline" id="voice-menu" role="list">
             <div id="voice-list"></div>
@@ -351,7 +360,7 @@
             <p class="fx-hint">Tiefere, sonore Stimme mit leichtem Hall und digitalem Schimmer.</p>
           </div>
         </div>
-        <div class="set-section hidden" id="set-general">
+        <div class="set-section" id="set-general">
           <div class="set-row"><div><b>Sprachausgabe</b><small>Antworten werden vorgelesen.</small></div>
             <button class="switch" data-mirror="btn-tts">Aus</button></div>
           <div class="set-row"><div><b>Wake-Word</b><small>„Hey Jarvis“ startet die Spracheingabe.</small></div>

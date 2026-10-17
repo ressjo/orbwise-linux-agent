@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Models page (like LM Studio):** a new **Models** entry in the sidebar lists every model with engine,
+  quantization, size and whether it fits in VRAM; the detail view loads a model with one click and shows its memory
+  use (model + KV cache, Flash Attention), the context window (separately for Tools and Coding), KV cache, sampling,
+  the context test and the log of the last llama-server start (API key masked). Changes to a model that is not loaded
+  apply the next time it is loaded. The **Add** tab bundles Hugging Face search, GGUF files in `~/models` and the
+  presets; downloads show above both tabs. The header shows the GPU with live VRAM use and the llama.cpp build with
+  update/install. The model chip at the top is now a quick switch with a link to the page.
+- **Chat actions:** copy any message, edit your own message (the chat continues from there), regenerate the last
+  answer, export a chat as Markdown. The chat list is grouped by date (pinned, today, yesterday, …) with a ⋯ menu
+  for rename, pin, export and delete; click the chat title to rename it.
 - **Learning from experience:** Orbwise notes failed-then-solved tool runs, your corrections and 👎 (new buttons under
   each answer) and, while idle, turns them into short lessons. Only lessons matching the current question go into
   its context note, under a small fixed budget (≈2 % of the window below 16k, ≈3 % above) – the prompt does not grow

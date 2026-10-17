@@ -212,10 +212,10 @@ class ContextTest:
         elif state == "off":
             self.checks["flash"] = _check("warn", "flash", title, T(
                 "aus – der Kontext braucht mehr Grafikspeicher, lange Prompts werden langsamer eingelesen und ein "
-                "q8/q4-KV-Cache geht nicht. Abhilfe: llama.cpp aktualisieren (Einstellungen → Modelle) oder "
+                "q8/q4-KV-Cache geht nicht. Abhilfe: llama.cpp aktualisieren (Modelle in der Seitenleiste) oder "
                 "„-fa on“ im Startbefehl.",
                 "off – the context needs more VRAM, long prompts are read more slowly and a q8/q4 KV cache is not "
-                "possible. Fix: update llama.cpp (Settings → Models) or add “-fa on” to the start command."))
+                "possible. Fix: update llama.cpp (Models in the sidebar) or add “-fa on” to the start command."))
 
     # ------------------------------------------------------------------ 3. Stufe
     def _stage(self, plan, limit: int, window: int, first: dict | None, loaded: int, total: int) -> None:

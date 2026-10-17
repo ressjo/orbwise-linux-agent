@@ -119,9 +119,13 @@ def recommend(vram_gb: float) -> str:
 
 def fit(p: Preset, vram_gb: float) -> str:
     """ok = passt komplett in den Grafikspeicher, tight = teilweise im RAM (langsamer), big = zu groß."""
-    if vram_gb >= p.vram_gb:
+    return fit_need(p.vram_gb, vram_gb)
+
+
+def fit_need(need_gb: float, vram_gb: float) -> str:
+    if vram_gb >= need_gb:
         return "ok"
-    if vram_gb >= p.vram_gb * 0.7 or (vram_gb == 0 and p.vram_gb <= 5):
+    if vram_gb >= need_gb * 0.7 or (vram_gb == 0 and need_gb <= 5):
         return "tight"
     return "big"
 

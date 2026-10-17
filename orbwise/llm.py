@@ -115,7 +115,7 @@ def ollama_error(status: int, body: str, model: str) -> str:
                 "besonders von Hugging Face mit separatem Bildmodul/mmproj), oder der Grafikspeicher ist voll bzw. "
                 "der GPU-Treiber hakt. Prüfen: 'ollama run " + model + " hallo' und 'journalctl -u ollama -n 80'.")
         if model.startswith("hf.co/"):
-            hint += (" Lösung: Einstellungen → Modelle → beim Modell „MIT LLAMA.CPP NEU LADEN“ – dann läuft es mit "
+            hint += (" Lösung: Modelle (Seitenleiste) → das Modell wählen → ⋯ → „Mit llama.cpp neu laden“ – dann läuft es mit "
                      "llama-server statt Ollama.")
         return hint
     return f"Ollama antwortet mit {status}: {raw}" if status != 200 else raw

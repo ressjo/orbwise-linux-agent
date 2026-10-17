@@ -68,7 +68,7 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **Learning from experience** | Short lessons from errors, your corrections and 👎 ("docker on the NAS needs sudo") – thought about while idle, only matching ones go along with a question under a small fixed limit, so the context window does not grow; viewable, editable and deletable under Memory → Experience |
 | **Memory** | Remembers everything permanently (see below), `remember` / `recall` / `forget`, **chat history** with search, favourites, rename and delete; the search index repairs itself if it gets damaged |
 | **Dashboard** | Animated neural-network orb: thinking pulse, **tool symbols** next to the orb (CLI, cloud for the web, mail, Paperless) with a beam of dots flowing to them, golden neurons when memory is used, a **context ring** showing how full the model's context is; calm, modern layout: collapsible sidebar with chats, a big orb with greeting and suggestions on an empty chat that shrinks to a live strip once you talk, a live line in each answer showing what the model is doing (reading the prompt, thinking, writing a call) and a small time/token summary afterwards, an activity panel with live telemetry (tokens/s, context, GPU, VRAM, RAM, power), Planner and Memory sheets, a settings page; works on the phone too |
-| **Models & voices** | **Settings → Models:** switch model profiles, download models with progress, cancel downloads, delete models · **Settings → Voice:** choose, download (whole Piper catalogue), upload your own (`.onnx` + `.json`) and delete voices, "Jarvis" voice effect · **Think** button for reasoning models |
+| **Models & voices** | **Models page** (sidebar, like LM Studio): all models with engine, quantization, size and VRAM fit; load with one click (quick switch on the model chip at the top); per model context window (Tools/Coding), KV cache, sampling, context test and llama-server log; add models from Hugging Face, `~/models` or presets with download progress and cancel; delete models · **Settings → Voice:** choose, download (whole Piper catalogue), upload your own (`.onnx` + `.json`) and delete voices, "Jarvis" voice effect · **Think** button for reasoning models |
 | **Safety** | Confirmation for everything that changes the system, blocklist for destructive commands, root only via a one-time password prompt, keys and passwords are never read or sent, local-only server – see [Security](#security) |
 
 ## Requirements
@@ -291,10 +291,10 @@ everything from the other chats.
 
 ## Models & profiles
 
-**Adding models after installation:** click the **model chip** at the top (or **Settings → Models**) → **+ ADD MODEL** and pick one of the
-presets (with the same fit marks and download progress; a running download can be cancelled there with
-**✕ CANCEL**). Models added this way – including Bonsai – can be deleted in the same menu with 🗑, which also removes
-their files (the active model and models from `config.yaml` stay). Or run
+**Adding models after installation:** open **Models** in the sidebar (or **Manage models …** on the model chip at the
+top) → **Add** and pick one of the presets (with the same fit marks and download progress; a running download can be
+cancelled there with **✕ CANCEL**). Models added this way – including Bonsai – can be deleted on the model page via
+**⋯ → Delete**, which also removes their files (the loaded model and models from `config.yaml` stay). Or run
 
 ```bash
 orbwise model add              # interactive list of presets for your GPU
@@ -325,18 +325,19 @@ Pick it in the model list like any other model; the context size can be changed 
 have show up under **ON DISK (~/models)** – one click turns them into a model without downloading (pasting a path to a
 `.gguf` into the search field works too). New model types often need a newer llama.cpp: **UPDATE** next to the
 llama.cpp line (or `orbwise model llamacpp --update`) fetches the latest build; running models switch on their next
-start. Deleting a model with 🗑 removes files Orbwise downloaded; files you put into `~/models` yourself stay.
+start. Deleting a model (**⋯ → Delete**) removes files Orbwise downloaded; files you put into `~/models` yourself stay.
 Gated repositories need a Hugging Face token in `HF_TOKEN`. Ollama is still used for the memory embeddings and the
 Ollama presets above.
 
-**Context window, KV cache and sampling per model** (Settings → Models, for the active model): the context window
-(4k–128k), the KV cache level (f16 / q8 ≈ half / q4 ≈ a quarter of the memory – own llama-server only; with Ollama it
+**Context window, KV cache and sampling per model** (Models page, for any model – changes to a model that is not
+loaded apply the next time it is loaded): the context window (4k–256k, separately for Tools and Coding), the KV cache level (f16 / q8 ≈ half / q4 ≈ a quarter of the memory – own llama-server only; with Ollama it
 is service-wide via `OLLAMA_KV_CACHE_TYPE`) and the sampling values for **thinking** and **non-thinking** answers
 (temperature, top_p, top_k, min_p, presence and repeat penalty; a **Qwen** preset fills in the vendor recommendation).
 Context and KV cache restart the model server; sampling applies from the next answer. Empty sampling fields keep the
 model's defaults.
 
-Orbwise can know several language models and switch between them – click the **model chip** at the top or run
+Orbwise can know several language models and switch between them – click the **model chip** at the top (quick
+switch), **Load** on the models page, or run
 `orbwise model <name>` (`orbwise model` lists all profiles). The choice is remembered.
 
 - `backend: ollama` – models from Ollama (Qwen 3 recommended for tool use)
@@ -803,7 +804,7 @@ from the `amdgpu` driver.
 **Context in memory** shows how big the model's KV cache is and where it lives – green in VRAM, orange in RAM (slow) –
 plus a recommendation: "up to ~32k possible" when VRAM is free, or "better 12k" when parts already spill into RAM.
 For a llama-server started by Orbwise (Bonsai) the numbers come straight from its log; for Ollama they are estimated
-from the model architecture. **Settings → Models → Context window** changes the size per model (4k … 128k, each
+from the model architecture. **Models → Context window** changes the size per model (4k … 128k, each
 with its KV-cache size and a warning if it won't fit); Orbwise restarts the model server or makes Ollama reload the
 model and remembers the choice.
 

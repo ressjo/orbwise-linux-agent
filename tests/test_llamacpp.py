@@ -321,6 +321,9 @@ def test_web_flow(setup, fake, monkeypatch):
         a, b = profiles[imported], profiles[downloaded]
         assert a["engine"] == b["engine"] == "llama.cpp" and a["managed"] and a["deletable"]
         assert a["keeps_files"] and not b["keeps_files"] and a["base_url"] != b["base_url"]
+        assert a["quant"] == b["quant"] == "Q4_K_M" and a["path"].endswith("Mine-Q4_K_M.gguf")
+        assert b["vision"] and not a["vision"] and b["repo"] == REPO and a["fit"] == "ok"
+        assert client.get("/api/models").json()["gpu"]["vendor"] == "amd"
         assert client.get("/api/models/local").json()["items"][0]["profile"] == imported
         folder = llamacpp.models_dir(setup) / "tiny_Tiny-GGUF"
         assert (folder / "Tiny-Q4_K_M.gguf").exists() and (folder / "mmproj-F16.gguf").exists()
@@ -411,3 +414,15 @@ def test_prewarm_does_not_retry_a_model_that_fails_to_load(cfg, memory):
     llm.active = "anderes"  # anderes Modell gewählt → wieder vorwärmen
     asyncio.run(agent.prewarm())
     assert Broken.calls == 2
+
+
+def test_server_log_shows_last_start_without_key(setup, monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    (tmp_path / "orbwise-llm.log").write_text("===== Starte: alt --api-key aaa\nalte Zeile\n"
+                                              "===== Starte: llama-server -m x.gguf --api-key geheim123\nload_tensors: ok\n")
+    from orbwise.server import create_app
+    with TestClient(create_app(setup), base_url="http://localhost:8765") as client:
+        data = client.get("/api/models/log").json()
+    assert data["lines"] == ["===== Starte: llama-server -m x.gguf --api-key •••", "load_tensors: ok"]

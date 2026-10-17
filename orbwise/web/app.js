@@ -1787,7 +1787,8 @@
     app.classList.remove("side-open");
     if (name === "planner") loadPlanner();
     if (name === "memory") loadMemory();
-    if (name === "settings") showSection(section || "models");
+    if (name === "settings") showSection(section || "general");
+    if (name === "models") renderModelsPage();
   }
   function closeSheet() {
     if (!openSheetName) return false;
@@ -1800,7 +1801,6 @@
   function showSection(section) {
     document.querySelectorAll(".set-tab").forEach((t) => t.classList.toggle("active", t.dataset.section === section));
     document.querySelectorAll(".set-section").forEach((el) => el.classList.toggle("hidden", el.id !== "set-" + section));
-    if (section === "models") { openModelMenu(); loadCtxMemory().then(renderCtxSettings); }
     if (section === "voice") openVoiceMenu();
     if (section === "status") loadStatus();
   }
@@ -1878,7 +1878,6 @@
   // Stimmen-Menü an der VOICE-Pille: auswählen, anhören, löschen, hinzufügen (wie das Modell-Menü)
   const voiceMenu = $("voice-menu");
   async function openVoiceMenu(catalog = false) {
-    closeModelMenu();
     const list = $("voice-list");
     let data;
     try { data = await getJSON("/api/voices"); } catch { toast(L("Stimmen nicht ladbar", "Could not load voices")); return; }
@@ -2208,6 +2207,8 @@
   }
 
   function showMetrics(m) {
+    S.metrics = m;
+    if (openSheetName === "models") updateGpuChip();
     const g = m.gpu;
     const gb = (b) => (b === null || b === undefined ? null : b / 1024 ** 3);
     if (g) {
@@ -2252,7 +2253,7 @@
   async function loadCtxMemory() {
     try { lastMem = await getJSON("/api/llm/memory"); } catch { return; }
     showMemory(lastMem);
-    if (!$("set-models").classList.contains("hidden")) renderCtxSettings();
+    if (openSheetName === "models") updateDetailMemory();
   }
   function memText(m) {
     const share = m.kv_vram_share ?? 1;
@@ -2295,91 +2296,312 @@
       m.source === "estimate" ? L("KV-Cache aus der Modell-Architektur geschätzt.", "KV cache estimated from the model architecture.")
         : L("Genau laut llama-server-Log.", "Exact, from the llama-server log."),
       m.flash_attn ? L(`Flash-Attention ${m.flash_attn === "on" ? "aktiv" : "aus"}.`, `Flash attention ${m.flash_attn === "on" ? "on" : "off"}.`) : "",
-      L("Ändern: Einstellungen → Modelle → Kontextfenster.", "Change it: Settings → Models → Context window."),
+      L("Ändern: Modelle (Seitenleiste) → Kontextfenster.", "Change it: Models (sidebar) → Context window."),
     ].filter(Boolean).join("\n");
   }
-  setInterval(() => { if (S.connected && (app.classList.contains("drawer-open") || !$("set-models").classList.contains("hidden"))) loadCtxMemory(); }, 10000);
+  setInterval(() => { if (S.connected && (app.classList.contains("drawer-open") || openSheetName === "models")) loadCtxMemory(); }, 10000);
 
-  async function renderCtxSettings() {
-    const box = $("ctx-set");
-    let models;
-    try { models = await getJSON("/api/models"); } catch { return; }
-    const p = models.profiles.find((x) => x.active);
-    if (!p || models.active === "demo") { box.innerHTML = ""; return; }
-    const m = lastMem && lastMem.available && lastMem.profile === p.name ? lastMem : null;
+  // ---------------------------------------------------------------- Modellseite (wie LM Studio)
+  // Links die eigenen Modelle, rechts alles zum gewählten: laden, Speicher, Kontextfenster, KV-Cache, Sampling,
+  // Diagnose. Zweiter Reiter: neue Modelle von Hugging Face, aus ~/models oder der Vorauswahl.
+  const MP = { tab: "mine", sel: null, data: null, ctxMode: null };
+  const FIT_MARKS = { ok: "✔", tight: "~", big: "✘" };
+  const fitText = (fit) => ({ ok: L("passt in den Grafikspeicher", "fits in VRAM"),
+                              tight: L("teils im RAM (langsamer)", "partly in RAM (slower)"),
+                              big: L("zu groß für den Grafikspeicher", "too big for VRAM") })[fit] || "";
+  const modelCtx = (p, mode) => {
+    const tools = p.active && S.mode !== "coding" ? p.num_ctx : (p.ctx_tools || p.num_ctx);
+    if (mode !== "coding") return tools;
+    return p.active && S.mode === "coding" ? p.num_ctx : (p.ctx_coding || tools);
+  };
+
+  function openModelsPage(tab) {
+    if (tab) MP.tab = tab;
+    openSheet("models");
+  }
+  async function renderModelsPage() {
+    try { MP.data = await getJSON("/api/models"); } catch { toast(L("Modelle nicht ladbar", "Could not load models")); return; }
+    renderModelsHead();
+    renderPulls();
+    document.querySelectorAll("#mp-tabs button").forEach((b) => b.classList.toggle("on", b.dataset.mtab === MP.tab));
+    $("mp-mine").classList.toggle("hidden", MP.tab !== "mine");
+    $("mp-add").classList.toggle("hidden", MP.tab !== "add");
+    if (MP.tab === "mine") { renderModelList(); renderModelDetail(); }
+    else if (!$("mp-add").childElementCount) renderAddTab();
+  }
+  document.querySelectorAll("#mp-tabs button").forEach((b) => {
+    b.onclick = () => { MP.tab = b.dataset.mtab; renderModelsPage(); };
+  });
+  // nach Wechsel, Download oder Änderung neu zeichnen – Eingaben im Hinzufügen-Reiter bleiben stehen
+  function refreshModelViews() {
+    if (openSheetName === "models") renderModelsPage();
+  }
+
+  // Kopf: Grafikkarte mit Belegung (live aus den Metriken) und llama.cpp-Version
+  function renderModelsHead() {
+    updateGpuChip();
+    renderLlamacppChip();
+  }
+  function updateGpuChip() {
+    const g = (MP.data && MP.data.gpu) || {};
+    const live = S.metrics && S.metrics.gpu;
+    const box = $("mp-gpu");
+    if (!g.vendor || g.vendor === "none") { box.textContent = L("keine GPU erkannt – Modelle laufen auf der CPU", "no GPU detected – models run on the CPU"); }
+    else {
+      box.innerHTML = `<svg class="i"><use href="#i-chip"/></svg><span class="mg-name"></span><span class="mg-bar"><i></i></span><span class="mg-val"></span>`;
+      box.querySelector(".mg-name").textContent = g.name || g.vendor.toUpperCase();
+      const used = live && live.vram_used != null ? live.vram_used / 1024 ** 3 : null;
+      const total = live && live.vram_total ? live.vram_total / 1024 ** 3 : g.vram_gb;
+      box.querySelector(".mg-bar i").style.width = used != null && total ? `${Math.min(100, (100 * used) / total)}%` : "0";
+      box.querySelector(".mg-val").textContent = used != null
+        ? `${fmt(used, 1)} / ${fmt(total, 0)} GB` : `${fmt(total, 0)} GB VRAM`;
+      box.title = L("Grafikspeicher: belegt / gesamt", "Video memory: used / total");
+    }
+  }
+  async function renderLlamacppChip() {
+    const box = $("mp-runtime");
+    let st;
+    try { st = await getJSON("/api/llamacpp"); } catch { box.textContent = ""; return; }
+    box.innerHTML = `<span></span><button type="button" class="mm-link"></button>`;
+    box.querySelector("span").textContent = st.installed ? `llama.cpp ${st.tag || ""}` + (st.flavor ? ` · ${st.flavor}` : "")
+      : L("llama.cpp nicht installiert", "llama.cpp not installed");
+    box.title = L("Startet Modelle von Hugging Face und aus ~/models. Neue Modelltypen brauchen oft einen neuen Build.",
+                  "Runs models from Hugging Face and ~/models. New model types often need a newer build.");
+    const btn = box.querySelector("button");
+    btn.textContent = st.updating ? L("WIRD GELADEN …", "DOWNLOADING …") : st.installed ? L("AKTUALISIEREN", "UPDATE") : L("INSTALLIEREN", "INSTALL");
+    btn.disabled = st.updating;
+    btn.onclick = async () => {
+      btn.disabled = true;
+      btn.textContent = L("WIRD GELADEN …", "DOWNLOADING …");
+      try { await api("POST", "/api/llamacpp/update"); renderPulls(); } catch { btn.disabled = false; }
+    };
+  }
+
+  // laufende Downloads stehen über beiden Reitern
+  async function renderPulls() {
+    const box = $("mp-pulls");
+    let pulls = (MP.data && MP.data.pulls) || [];
+    if (MP.data && MP.data.active === "demo") pulls = [];
+    box.innerHTML = "";
+    for (const d of pulls) box.appendChild(pullRow(d));
+    box.classList.toggle("hidden", !pulls.length);
+  }
+
+  // ---- Reiter „Meine Modelle“: Liste
+  function renderModelList() {
+    const d = MP.data;
+    const list = $("mp-list");
+    list.innerHTML = "";
+    if (!MP.sel || !d.profiles.some((p) => p.name === MP.sel)) MP.sel = (d.profiles.find((p) => p.active) || d.profiles[0] || {}).name;
+    for (const p of d.profiles) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "mp-row" + (p.name === MP.sel ? " sel" : "") + (p.active ? " active" : "");
+      row.innerHTML = `<i class="mp-dot"></i><span class="mp-main"><span class="mp-name"></span><span class="mp-meta"></span></span><span class="mp-tag"></span>`;
+      row.querySelector(".mp-name").textContent = p.label;
+      row.querySelector(".mp-meta").textContent = [p.engine, p.quant, p.size_gb ? `${fmt(p.size_gb, 1)} GB` : "",
+                                                   p.num_ctx ? ctxLabel(modelCtx(p, "tools")) : ""].filter(Boolean).join(" · ");
+      const tag = row.querySelector(".mp-tag");
+      if (p.name === d.switching) { tag.textContent = L("LÄDT …", "LOADING …"); row.classList.add("loading"); }
+      else if (p.active) tag.textContent = L("GELADEN", "LOADED");
+      else if (p.fit) { tag.textContent = FIT_MARKS[p.fit]; tag.className = "mp-tag fit-" + p.fit; tag.title = fitText(p.fit); }
+      row.onclick = () => {
+        MP.sel = p.name;
+        list.querySelectorAll(".mp-row").forEach((r) => r.classList.toggle("sel", r === row));
+        $("mp-detail").scrollTop = 0;
+        renderModelDetail();
+      };
+      row.ondblclick = () => activateModel(p);
+      list.appendChild(row);
+    }
+    if (d.active !== "demo") {
+      const add = document.createElement("button");
+      add.type = "button";
+      add.className = "mp-add-btn";
+      add.innerHTML = `<svg class="i"><use href="#i-plus"/></svg><span></span>`;
+      add.querySelector("span").textContent = L("Modell hinzufügen", "Add model");
+      add.onclick = () => { MP.tab = "add"; renderModelsPage(); };
+      list.appendChild(add);
+    }
+  }
+
+  async function activateModel(p) {
+    if (p.active || (MP.data && MP.data.switching)) return;
+    if (p.fit === "big" && !confirm(L(`${p.label} ist für deinen Grafikspeicher zu groß und wird sehr langsam. Trotzdem laden?`,
+                                      `${p.label} is too big for your video memory and will be very slow. Load anyway?`))) return;
+    MP.data.switching = p.name;
+    if (openSheetName === "models") { renderModelList(); renderModelDetail(); }
+    const r = await fetch(`/api/models/${encodeURIComponent(p.name)}/activate`, { method: "POST" });
+    if (!r.ok && r.status !== 502) toast(L("Umschalten fehlgeschlagen", "Switching failed"));
+    refreshModelViews();
+  }
+
+  // ---- Reiter „Meine Modelle“: Details zum gewählten Modell
+  function renderModelDetail() {
+    const d = MP.data;
+    const box = $("mp-detail");
+    const p = d.profiles.find((x) => x.name === MP.sel);
+    if (!p) { box.innerHTML = ""; return; }
+    const demo = d.active === "demo";
+    box.innerHTML = `
+      <div class="md-head">
+        <div class="md-title"><h3></h3><span class="md-badge"></span></div>
+        <div class="md-actions"><button type="button" class="btn primary small md-load"></button>
+          <button type="button" class="icon-btn md-more" aria-label="${L("Weitere Aktionen", "More actions")}"><svg class="i"><use href="#i-more"/></svg></button></div>
+      </div>
+      <div class="md-sub"></div>
+      <dl class="md-facts"></dl>
+      <div class="md-mem hidden"><div class="md-mem-head"><b></b><span></span></div><div class="tm-bar"><i class="vram"></i><i class="ram"></i></div></div>
+      <section class="md-sec md-ctx"><div class="md-sec-head"><h4></h4>
+        <div class="seg md-mode"><button type="button" data-m="tools">Tools</button><button type="button" data-m="coding">Coding</button></div></div>
+        <div class="ctx-now"></div><div class="ctx-opts"></div><p class="set-hint"></p></section>
+      <section class="md-sec md-kv"><div class="md-sec-head"><h4></h4></div><div class="ctx-opts kv-opts"></div><p class="set-hint kv-hint"></p></section>
+      <section class="md-sec md-smp"><div class="md-sec-head"><h4></h4></div><div class="smp"></div></section>
+      <section class="md-sec md-diag"><div class="md-sec-head"><h4></h4></div>
+        <div class="md-btns"><button type="button" class="btn small ctx-test-btn"></button><button type="button" class="btn small md-log-btn"></button></div>
+        <div class="ctx-test"></div><pre class="md-log hidden"></pre></section>`;
+    box.querySelector("h3").textContent = p.label;
+    const badge = box.querySelector(".md-badge");
+    badge.textContent = p.name === d.switching ? L("lädt …", "loading …") : p.active ? L("geladen", "loaded") : "";
+    badge.hidden = !badge.textContent;
+    const load = box.querySelector(".md-load");
+    load.textContent = p.name === d.switching ? L("Lädt …", "Loading …") : p.active ? L("Geladen", "Loaded") : L("Laden", "Load");
+    load.disabled = p.active || !!d.switching;
+    load.onclick = () => activateModel(p);
+    const more = box.querySelector(".md-more");
+    const items = [];
+    if (p.repo) items.push({ icon: "download", label: L("Auf Hugging Face ansehen", "View on Hugging Face"),
+                             run: () => window.open(`https://huggingface.co/${p.repo}`, "_blank", "noopener") });
+    if (p.convert) items.push({ icon: "redo", label: L("Mit llama.cpp neu laden", "Reload with llama.cpp"), run: () => convertModel(p) });
+    if (p.deletable) items.push({ icon: "trash", danger: true, disabled: p.active,
+                                  label: p.keeps_files ? L("Aus der Liste entfernen", "Remove from list") : L("Löschen", "Delete"),
+                                  title: p.active ? L("Geladenes Modell – erst ein anderes laden", "Loaded model – load another one first") : "",
+                                  run: () => deleteModel(p) });
+    more.hidden = !items.length;
+    more.onclick = (e) => { e.stopPropagation(); popMenu(more, items); };
+    box.querySelector(".md-sub").textContent = p.path || (p.backend === "ollama" ? `Ollama · ${p.model}` : p.model);
+    const facts = [
+      [L("Engine", "Engine"), p.engine],
+      [L("Quantisierung", "Quantization"), p.quant],
+      [L("Größe", "Size"), p.size_gb ? `${fmt(p.size_gb, 1)} GB` : null],
+      [L("Braucht", "Needs"), p.vram_gb ? `~${fmt(p.vram_gb, 1)} GB VRAM` : null, p.fit],
+      [L("Kontext", "Context"), p.num_ctx ? ctxLabel(modelCtx(p, "tools")) + (p.ctx_coding ? ` · Coding ${ctxLabel(p.ctx_coding)}` : "") : null],
+      [L("KV-Cache", "KV cache"), p.kv || (p.backend === "ollama" ? L("Ollama-Dienst", "Ollama service") : null)],
+      [L("Bilder", "Images"), p.vision === undefined ? null : p.vision ? L("ja (Bildmodul)", "yes (vision module)") : L("nein", "no")],
+    ];
+    const dl = box.querySelector(".md-facts");
+    for (const [k, v, fit] of facts) {
+      if (!v) continue;
+      const wrap = document.createElement("div");
+      wrap.innerHTML = "<dt></dt><dd></dd>";
+      wrap.querySelector("dt").textContent = k;
+      wrap.querySelector("dd").textContent = v;
+      if (fit) {
+        const s = document.createElement("span");
+        s.className = "md-fit fit-" + fit;
+        s.textContent = ` ${FIT_MARKS[fit]} ${fitText(fit)}`;
+        wrap.querySelector("dd").appendChild(s);
+      }
+      dl.appendChild(wrap);
+    }
+    if (!dl.childElementCount) dl.remove();
+    const secs = box.querySelectorAll(".md-sec");
+    if (demo) { secs.forEach((s) => s.remove()); load.hidden = true; return; }
+    updateDetailMemory();
+    renderCtxSection(box.querySelector(".md-ctx"), p);
+    renderKvSettings(box.querySelector(".md-kv"), p);
+    renderSampling(box.querySelector(".md-smp"), p);
+    renderDiag(box.querySelector(".md-diag"), p);
+  }
+
+  // Speicher des geladenen Modells (alle 10 s frisch, ohne den Rest neu zu zeichnen)
+  function updateDetailMemory() {
+    const box = $("mp-detail").querySelector(".md-mem");
+    const p = MP.data && MP.data.profiles.find((x) => x.name === MP.sel);
+    if (!box || !p) return;
+    const m = p.active && lastMem && lastMem.available && lastMem.profile === p.name ? lastMem : null;
+    box.classList.toggle("hidden", !m);
+    if (!m) return;
+    const share = m.kv_vram_share ?? 1;
+    box.querySelector("b").textContent = L(`Im Speicher: Modell ${gbs(m.model_bytes)} + KV-Cache ${gbs(m.kv_bytes)}`,
+                                           `In memory: model ${gbs(m.model_bytes)} + KV cache ${gbs(m.kv_bytes)}`);
+    box.querySelector(".md-mem-head span").textContent = memText(m) + (m.flash_attn ? ` · Flash-Attention ${m.flash_attn === "on" ? L("an", "on") : L("aus", "off")}` : "");
+    box.querySelector(".vram").style.width = `${share * 100}%`;
+    box.querySelector(".ram").style.width = `${(1 - share) * 100}%`;
+    box.classList.toggle("warn", (m.recommend || {}).verdict === "reduce");
+  }
+
+  function renderCtxSection(sec, p) {
+    const mode = MP.ctxMode || (S.mode === "coding" ? "coding" : "tools");
+    const cur = modelCtx(p, mode);
+    sec.querySelector("h4").textContent = L("Kontextfenster", "Context window");
+    sec.querySelectorAll(".md-mode button").forEach((b) => {
+      b.classList.toggle("on", b.dataset.m === mode);
+      b.onclick = () => { MP.ctxMode = b.dataset.m; renderCtxSection(sec, p); };
+    });
+    const m = p.active && lastMem && lastMem.available && lastMem.profile === p.name ? lastMem : null;
     const opts = (m && m.recommend && m.recommend.options)
       || [4096, 8192, 12288, 16384, 24576, 32768, 49152, 65536, 98304, 131072, 196608, 262144].map((c) => ({ ctx: c }));
-    const coding = S.mode === "coding";
-    box.innerHTML = `<div class="mm-title"></div><div class="ctx-now"></div><div class="ctx-opts"></div><p class="set-hint"></p>`
-      + `<div class="mm-title kv-title"></div><div class="ctx-opts kv-opts"></div><p class="set-hint kv-hint"></p>`
-      + `<div class="mm-title smp-title"></div><div class="smp"></div>`
-      + `<button type="button" class="btn small ctx-test-btn"></button><div class="ctx-test"></div>`;
-    renderKvSettings(box, p, m, models);
-    renderSampling(box, p);
-    const testBtn = box.querySelector(".ctx-test-btn");
-    testBtn.textContent = L("Kontext testen", "Test context");
-    testBtn.title = L("Prüft mit dem aktiven Modell: Fenstergröße, Speicher, Token-Schätzung, Prompt-Cache und ein volles Fenster (kann einige Minuten dauern).",
-                      "Checks with the active model: window size, memory, token estimate, prompt cache and a full window (may take a few minutes).");
-    testBtn.disabled = !!models.switching;
-    testBtn.onclick = () => runContextTest(box.querySelector(".ctx-test"), testBtn);
-    box.querySelector(".mm-title").textContent = L(`KONTEXTFENSTER · ${p.label}`, `CONTEXT WINDOW · ${p.label}`)
-      + (coding ? " · CODING" : " · TOOLS");
-    const missing = lastMem && !lastMem.available && lastMem.reason ? lastMem.reason : "";
-    box.querySelector(".ctx-now").textContent = L(`Aktuell ${num(p.num_ctx)} Token`, `Currently ${num(p.num_ctx)} tokens`)
-      + (m ? ` · KV-Cache ${gbs(m.kv_bytes)}, ${memText(m)}` + (recText(m) ? ` · ${recText(m)}` : "")
-        + (m.source === "estimate" ? L(" (geschätzt)", " (estimated)") : "")
-        : missing ? L(` · keine Speicherangaben: ${missing}`, ` · no memory data: ${missing}`) : "");
+    const missing = p.active && lastMem && !lastMem.available && lastMem.reason ? lastMem.reason : "";
+    sec.querySelector(".ctx-now").textContent = (mode === "coding" && !p.ctx_coding
+      ? L(`Coding nutzt das Fenster von Tools: ${num(cur)} Token`, `Coding uses the Tools window: ${num(cur)} tokens`)
+      : L(`Aktuell ${num(cur)} Token`, `Currently ${num(cur)} tokens`))
+      + (m && recText(m) ? ` · ${recText(m)}` : "")
+      + (missing ? L(` · keine Speicherangaben: ${missing}`, ` · no memory data: ${missing}`) : "");
+    const box = sec.querySelector(".ctx-opts");
+    box.innerHTML = "";
+    const busy = !!MP.data.switching;
+    const apply = async (ctx) => {
+      box.querySelectorAll("button").forEach((x) => { x.disabled = true; });
+      const restart = p.active && (mode === "coding") === (S.mode === "coding");
+      if (restart) toast(p.managed ? L("Modell-Server startet mit neuem Kontextfenster neu …", "Restarting the model server with the new context window …")
+                                   : L("Modell wird mit neuem Kontextfenster geladen …", "Reloading the model with the new context window …"));
+      const r = await fetch(`/api/models/${encodeURIComponent(p.name)}/context`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ctx, mode }) });
+      if (!r.ok) toast(L("Ändern fehlgeschlagen: ", "Change failed: ") + ((await r.json().catch(() => ({}))).detail || r.status));
+      else toast(ctx ? L(`Kontextfenster (${mode === "coding" ? "Coding" : "Tools"}) jetzt ${num(ctx)} Token.`, `Context window (${mode === "coding" ? "Coding" : "Tools"}) now ${num(ctx)} tokens.`)
+                     : L("Coding nutzt wieder das Fenster von Tools.", "Coding uses the Tools window again."));
+      await loadCtxMemory();
+      refreshModelViews();
+    };
+    if (mode === "coding") {
+      const same = document.createElement("button");
+      same.type = "button";
+      same.className = "ctx-opt" + (p.ctx_coding ? "" : " on");
+      same.innerHTML = "<span></span><small></small>";
+      same.querySelector("span").textContent = L("wie Tools", "as Tools");
+      same.querySelector("small").textContent = ctxLabel(modelCtx(p, "tools"));
+      same.disabled = busy;
+      same.onclick = () => { if (p.ctx_coding) apply(0); };
+      box.appendChild(same);
+    }
     for (const o of opts) {
       const b = document.createElement("button");
       b.type = "button";
-      b.className = "ctx-opt" + (o.ctx === p.num_ctx ? " on" : "") + (o.fits === false ? " big" : "");
+      const on = o.ctx === cur && (mode !== "coding" || p.ctx_coding);
+      b.className = "ctx-opt" + (on ? " on" : "") + (o.fits === false ? " big" : "");
       b.innerHTML = "<span></span><small></small>";
       b.querySelector("span").textContent = ctxLabel(o.ctx);
       const lean = o.ctx < 16384 ? L("Sparmodus", "lean mode") : "";
-      b.querySelector("small").textContent = (o.kv_bytes ? `KV ${gbs(o.kv_bytes)}` + (o.fits === false ? L(" · zu groß", " · too big") : "") : "")
-        + (lean && o.kv_bytes ? " · " : "") + lean;
-      b.disabled = !!models.switching;
-      b.onclick = async () => {
-        if (o.ctx === p.num_ctx) return;
+      b.querySelector("small").textContent = [o.kv_bytes ? `KV ${gbs(o.kv_bytes)}` + (o.fits === false ? L(" · zu groß", " · too big") : "") : "", lean]
+        .filter(Boolean).join(" · ");
+      b.disabled = busy;
+      b.onclick = () => {
+        if (on) return;
         if (o.fits === false && !confirm(L(`${ctxLabel(o.ctx)} passt voraussichtlich nicht in den Grafikspeicher – Teile landen im RAM und alles wird deutlich langsamer. Trotzdem?`,
                                           `${ctxLabel(o.ctx)} probably doesn't fit in VRAM – parts move to RAM and everything gets much slower. Continue?`))) return;
-        box.querySelectorAll(".ctx-opt").forEach((x) => { x.disabled = true; });
-        toast(p.managed ? L("Modell-Server startet mit neuem Kontextfenster neu …", "Restarting the model server with the new context window …")
-                        : L("Modell wird mit neuem Kontextfenster geladen …", "Reloading the model with the new context window …"));
-        const r = await fetch(`/api/models/${encodeURIComponent(p.name)}/context`, {
-          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ctx: o.ctx, mode: S.mode }) });
-        if (!r.ok) toast(L("Ändern fehlgeschlagen: ", "Change failed: ") + ((await r.json().catch(() => ({}))).detail || r.status));
-        else toast(L(`Kontextfenster jetzt ${num(o.ctx)} Token.`, `Context window now ${num(o.ctx)} tokens.`));
-        await loadCtxMemory();
-        renderCtxSettings();
+        apply(o.ctx);
       };
-      box.querySelector(".ctx-opts").appendChild(b);
+      box.appendChild(b);
     }
-    if (coding && p.ctx_coding) {  // eigene Coding-Größe → zurück zu der von Tools
-      const back = document.createElement("button");
-      back.type = "button";
-      back.className = "mm-link";
-      back.textContent = L(`WIE TOOLS (${ctxLabel(p.ctx_tools || p.num_ctx)})`, `SAME AS TOOLS (${ctxLabel(p.ctx_tools || p.num_ctx)})`);
-      back.onclick = async () => {
-        try {
-          await api("POST", `/api/models/${encodeURIComponent(p.name)}/context`, { ctx: 0, mode: "coding" });
-          toast(L("Coding nutzt wieder das Fenster von Tools.", "Coding uses the Tools window again."));
-        } catch { /* Meldung kommt von api() */ }
-        await loadCtxMemory();
-        renderCtxSettings();
-      };
-      box.querySelector(".ctx-opts").appendChild(back);
-    }
-    box.querySelector(".set-hint").textContent = (coding
-      ? L("Im Coding-Modus kann jedes Modell ein eigenes Fenster haben (z. B. größer für viel Code) – beim Wechsel zwischen Tools und Coding startet der Modell-Server dann neu. ",
-          "In Coding mode every model can have its own window (e.g. larger for lots of code) – switching between Tools and Coding then restarts the model server. ")
-      : "") + (p.managed
-      ? L("Zum Ändern startet der Modell-Server neu (dauert etwas). ", "Changing it restarts the model server (takes a while). ")
+    sec.querySelector(".set-hint").textContent = (mode === "coding"
+      ? L("Coding kann ein eigenes Fenster haben (z. B. größer für viel Code) – beim Wechsel zwischen Tools und Coding startet der Modell-Server dann neu. ",
+          "Coding can have its own window (e.g. larger for lots of code) – switching between Tools and Coding then restarts the model server. ")
+      : "") + (!p.active ? L("Gilt ab dem nächsten Laden. ", "Applies the next time it is loaded. ")
+      : p.managed ? L("Zum Ändern startet der Modell-Server neu. ", "Changing it restarts the model server. ")
       : L("Zum Ändern lädt Ollama das Modell neu. ", "Changing it makes Ollama reload the model. "))
-      + L("Größeres Fenster = längere Chats bis zum Zusammenfassen, braucht aber mehr Grafikspeicher. Liegt der KV-Cache im RAM, wird alles deutlich langsamer. "
-          + "Unter 16k arbeitet Orbwise im Sparmodus: wenige Werkzeuge vorab (der Rest kommt bei Bedarf), kürzere Werkzeug-Ergebnisse, alte Ergebnisse werden früher ausgeblendet.",
-          "A bigger window means longer chats before summarising but needs more VRAM. If the KV cache lands in RAM, everything gets much slower. "
-          + "Below 16k Orbwise runs in lean mode: few tools up front (the rest on demand), shorter tool results, old results are hidden sooner.");
+      + L("Größer = längere Chats bis zum Zusammenfassen, braucht aber mehr Grafikspeicher. Unter 16k arbeitet Orbwise im Sparmodus (weniger Werkzeuge vorab, kürzere Ergebnisse).",
+          "Bigger = longer chats before summarising, but needs more VRAM. Below 16k Orbwise runs in lean mode (fewer tools up front, shorter results).");
   }
 
   // KV-Cache-Stufe: f16 (voll), q8_0 (~halber Speicher), q4_0 (~ein Viertel) – nur bei eigenem llama-server
@@ -2395,12 +2617,13 @@
              note: () => bits <= 2 ? L("~1/8 Speicher, deutlich ungenauer", "~1/8 of the memory, noticeably less accurate")
                                     : L("~1/6 Speicher, ungenauer", "~1/6 of the memory, less accurate") };
   }
-  function renderKvSettings(box, p, m, models) {
-    const KV_LEVELS = (p.kv_options && p.kv_options.length ? p.kv_options : ["f16", "q8_0", "q4_0"]).map(kvLevel);
-    const current = KV_LEVELS.find((x) => x.kv === p.kv) || kvLevel(p.kv || "f16");
-    box.querySelector(".kv-title").textContent = L("KV-CACHE", "KV CACHE") + (p.kv_settable ? ` · ${current.label}` : "");
-    const opts = box.querySelector(".kv-opts");
-    for (const lv of KV_LEVELS) {
+  function renderKvSettings(sec, p) {
+    const m = p.active && lastMem && lastMem.available && lastMem.profile === p.name ? lastMem : null;
+    const levels = (p.kv_options && p.kv_options.length ? p.kv_options : ["f16", "q8_0", "q4_0"]).map(kvLevel);
+    const current = levels.find((x) => x.kv === p.kv) || kvLevel(p.kv || "f16");
+    sec.querySelector("h4").textContent = L("KV-Cache", "KV cache");
+    const opts = sec.querySelector(".kv-opts");
+    for (const lv of levels) {
       const b = document.createElement("button");
       b.type = "button";
       b.className = "ctx-opt" + (p.kv_settable && lv.kv === current.kv ? " on" : "");
@@ -2408,25 +2631,27 @@
       b.querySelector("span").textContent = lv.label;
       const size = m && m.kv_bytes ? `KV ${gbs(m.kv_bytes * lv.factor / current.factor)} · ` : "";
       b.querySelector("small").textContent = size + lv.note();
-      b.disabled = !p.kv_settable || !!models.switching;
+      b.disabled = !p.kv_settable || !!MP.data.switching;
       b.onclick = async () => {
         if (lv.kv === current.kv) return;
         opts.querySelectorAll(".ctx-opt").forEach((x) => { x.disabled = true; });
-        toast(L(`Modell-Server startet mit KV-Cache ${lv.label} neu …`, `Restarting the model server with KV cache ${lv.label} …`));
+        if (p.active) toast(L(`Modell-Server startet mit KV-Cache ${lv.label} neu …`, `Restarting the model server with KV cache ${lv.label} …`));
         const r = await fetch(`/api/models/${encodeURIComponent(p.name)}/kv`, {
           method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kv: lv.kv }) });
         if (!r.ok) toast(L("Ändern fehlgeschlagen: ", "Change failed: ") + ((await r.json().catch(() => ({}))).detail || r.status));
         else toast(L(`KV-Cache jetzt ${lv.label}.`, `KV cache now ${lv.label}.`));
         await loadCtxMemory();
-        renderCtxSettings();
+        refreshModelViews();
       };
       opts.appendChild(b);
     }
-    const low = KV_LEVELS.some((x) => /^(?:t|i)?q[23](?!\d)/.test(x.kv));
-    box.querySelector(".kv-hint").textContent = p.kv_settable
-      ? L("Ein kleinerer KV-Cache lässt mehr Kontext in den Grafikspeicher – danach bietet das Kontextfenster oben entsprechend mehr an. "
-          + "Zum Ändern startet der Modell-Server neu." + (low ? "" : " 2-Bit: kann dieser llama-server nicht (das offizielle llama.cpp bietet höchstens 4 Bit)."),
-          "A smaller KV cache fits more context into VRAM – the context window above then offers more. Changing it restarts the model server."
+    const low = levels.some((x) => /^(?:t|i)?q[23](?!\d)/.test(x.kv));
+    sec.querySelector(".kv-hint").textContent = p.kv_settable
+      ? L("Ein kleinerer KV-Cache lässt mehr Kontext in den Grafikspeicher – das Kontextfenster oben bietet dann mehr an. "
+          + (p.active ? "Zum Ändern startet der Modell-Server neu." : "Gilt ab dem nächsten Laden.")
+          + (low ? "" : " 2-Bit: kann dieser llama-server nicht (das offizielle llama.cpp bietet höchstens 4 Bit)."),
+          "A smaller KV cache fits more context into VRAM – the context window above then offers more. "
+          + (p.active ? "Changing it restarts the model server." : "Applies the next time it is loaded.")
           + (low ? "" : " 2-bit: not supported by this llama-server (official llama.cpp goes down to 4 bits)."))
       : L("Bei Ollama gilt die Stufe für den ganzen Dienst: sudo systemctl edit ollama → "
           + 'Environment="OLLAMA_FLASH_ATTENTION=1" "OLLAMA_KV_CACHE_TYPE=q8_0", dann sudo systemctl restart ollama.',
@@ -2439,11 +2664,11 @@
     ["temperature", L("Temperatur", "Temperature"), 0.05], ["top_p", "top_p", 0.05], ["top_k", "top_k", 1],
     ["min_p", "min_p", 0.01], ["presence_penalty", "presence", 0.1], ["repeat_penalty", "repeat", 0.05],
   ];
-  async function renderSampling(box, p) {
+  async function renderSampling(sec, p) {
+    sec.querySelector("h4").textContent = "Sampling";
     let data;
     try { data = await getJSON(`/api/models/${encodeURIComponent(p.name)}/sampling`); } catch { return; }
-    box.querySelector(".smp-title").textContent = L(`SAMPLING · ${p.label}`, `SAMPLING · ${p.label}`);
-    const wrap = box.querySelector(".smp");
+    const wrap = sec.querySelector(".smp");
     wrap.innerHTML = `<div class="smp-cols"></div><div class="smp-btns"></div><p class="set-hint"></p>`;
     const cols = wrap.querySelector(".smp-cols");
     const inputs = { think: {}, fast: {} };
@@ -2510,6 +2735,32 @@
       "The think button in the chat decides which set applies. Empty fields: the model's default (temperature: the profile's). No restart needed.");
   }
 
+  // Diagnose: Kontext-Test mit dem geladenen Modell und die Ausgabe des letzten Server-Starts
+  function renderDiag(sec, p) {
+    sec.querySelector("h4").textContent = L("Diagnose", "Diagnostics");
+    const testBtn = sec.querySelector(".ctx-test-btn");
+    testBtn.textContent = L("Kontext testen", "Test context");
+    testBtn.title = p.active ? L("Prüft mit diesem Modell: Fenstergröße, Speicher, Token-Schätzung, Prompt-Cache und ein volles Fenster (kann einige Minuten dauern).",
+                                 "Checks with this model: window size, memory, token estimate, prompt cache and a full window (may take a few minutes).")
+      : L("Nur mit dem geladenen Modell möglich.", "Only possible with the loaded model.");
+    testBtn.disabled = !p.active || !!MP.data.switching;
+    testBtn.onclick = () => runContextTest(sec.querySelector(".ctx-test"), testBtn);
+    const logBtn = sec.querySelector(".md-log-btn");
+    const pre = sec.querySelector(".md-log");
+    logBtn.textContent = L("Server-Log", "Server log");
+    logBtn.title = L("Ausgabe des letzten Modell-Server-Starts (llama-server) – zeigt, warum ein Modell nicht lädt.",
+                     "Output of the last model server start (llama-server) – shows why a model doesn't load.");
+    logBtn.hidden = !p.managed;
+    logBtn.onclick = async () => {
+      if (!pre.classList.contains("hidden")) { pre.classList.add("hidden"); return; }
+      let data;
+      try { data = await getJSON("/api/models/log?lines=400"); } catch { return; }
+      pre.textContent = data.lines.length ? data.lines.join("\n") : L(`Noch kein Log (${data.file}).`, `No log yet (${data.file}).`);
+      pre.classList.remove("hidden");
+      pre.scrollTop = pre.scrollHeight;
+    };
+  }
+
   async function runContextTest(out, btn) {
     btn.disabled = true;
     out.textContent = L("Test läuft – das volle Fenster einzulesen kann einige Minuten dauern …",
@@ -2537,161 +2788,79 @@
     }
   }
 
-  // ---------------------------------------------------------------- Modellauswahl
-  const modelMenu = $("model-menu");
-  async function openModelMenu() {
-    closeVoiceMenu();
-    let data;
-    try { data = await getJSON("/api/models"); } catch { toast(L("Modelle nicht ladbar", "Could not load models")); return; }
-    modelMenu.innerHTML = `<div class="mm-title">${L("MODELL WÄHLEN", "CHOOSE MODEL")}</div>`;
-    for (const d of data.pulls || []) modelMenu.appendChild(pullRow(d));
-    for (const p of data.profiles) {
-      const b = document.createElement("button");
-      b.className = "model-item" + (p.active ? " active" : "");
-      b.disabled = !!data.switching;
-      b.innerHTML = `<div class="mi-head"><span class="mi-name"></span><span class="mi-tag"></span></div><div class="mi-sub"></div>`;
-      b.querySelector(".mi-name").textContent = p.label;
-      b.querySelector(".mi-tag").textContent = p.active ? L("AKTIV", "ACTIVE")
-        : p.name === data.switching ? L("LÄDT …", "LOADING …")
-        : p.managed ? L("STARTET SERVER", "STARTS SERVER") : p.backend.toUpperCase();
-      b.querySelector(".mi-sub").textContent = (p.engine ? `${p.engine} · ${p.num_ctx ? Math.round(p.num_ctx / 1024) + "k" : ""}`.replace(/ · $/, "")
-        : `${p.backend} · ${p.model}`) + (p.size_gb ? ` · ${p.size_gb} GB` : "");
-      b.onclick = async () => {
-        closeModelMenu();
-        if (p.active) return;
-        // sofort sperren und markieren – der Aufruf kehrt erst nach dem Wechsel zurück
-        modelMenu.querySelectorAll("button").forEach((x) => { x.disabled = true; });
-        b.querySelector(".mi-tag").textContent = L("LÄDT …", "LOADING …");
-        const r = await fetch(`/api/models/${encodeURIComponent(p.name)}/activate`, { method: "POST" });
-        if (!r.ok && r.status !== 502) toast(L("Umschalten fehlgeschlagen", "Switching failed"));
-      };
-      if (!p.deletable) { modelMenu.appendChild(b); continue; }
-      const row = document.createElement("div");
-      row.className = "model-row";
-      const del = document.createElement("button");
-      del.className = "model-del";
-      del.textContent = "🗑";
-      del.disabled = p.active || !!data.switching;
-      del.title = p.active ? L("Aktives Modell – erst ein anderes wählen", "Active model – choose another one first")
-        : L("Modell löschen", "Delete model");
-      del.onclick = (e) => { e.stopPropagation(); deleteModel(p); };
-      row.append(b, del);
-      modelMenu.appendChild(row);
-      if (p.convert) modelMenu.appendChild(convertButton(p));
-    }
-    if (data.active !== "demo") {
-      const add = document.createElement("button");
-      add.className = "model-item add";
-      add.textContent = L("+ MODELL HINZUFÜGEN …", "+ ADD MODEL …");
-      add.onclick = (e) => { e.stopPropagation(); openPresetMenu(); };
-      modelMenu.appendChild(add);
-      llamacppRow();
-    }
-    modelMenu.classList.remove("hidden");
-  }
-
   // Altes Hugging-Face-Modell über Ollama (stürzt bei neuen Modelltypen oft ab) → mit llama.cpp neu laden
-  function convertButton(p) {
-    const btn = document.createElement("button");
-    btn.className = "model-item add mm-convert";
-    btn.textContent = L("↻ MIT LLAMA.CPP NEU LADEN", "↻ RELOAD WITH LLAMA.CPP");
-    btn.title = L("Lädt die Datei nach ~/models, startet sie mit llama-server und ersetzt dieses Ollama-Modell.",
-                  "Downloads the file to ~/models, runs it with llama-server and replaces this Ollama model.");
-    btn.onclick = async (e) => {
-      e.stopPropagation();
-      if (!confirm(L(`${p.label} mit llama.cpp neu laden? Die Datei wird erneut heruntergeladen (~${p.size_gb || "?"} GB); `
-                     + "danach ersetzt das neue Modell das alte.",
-                     `Reload ${p.label} with llama.cpp? The file is downloaded again (~${p.size_gb || "?"} GB); `
-                     + "the new model then replaces the old one."))) return;
-      btn.disabled = true;
-      try {
-        await api("POST", "/api/models/pull", { tag: p.convert, replace: p.name });
-        toast(L(`Lade ${p.label} für llama.cpp …`, `Downloading ${p.label} for llama.cpp …`));
-        openModelMenu();
-      } catch { btn.disabled = false; }
-    };
-    return btn;
+  async function convertModel(p) {
+    if (!confirm(L(`${p.label} mit llama.cpp neu laden? Die Datei wird erneut heruntergeladen (~${p.size_gb || "?"} GB); `
+                   + "danach ersetzt das neue Modell das alte.",
+                   `Reload ${p.label} with llama.cpp? The file is downloaded again (~${p.size_gb || "?"} GB); `
+                   + "the new model then replaces the old one."))) return;
+    try {
+      await api("POST", "/api/models/pull", { tag: p.convert, replace: p.name });
+      toast(L(`Lade ${p.label} für llama.cpp …`, `Downloading ${p.label} for llama.cpp …`));
+      refreshModelViews();
+    } catch { /* Meldung kommt von api() */ }
   }
 
-  // llama.cpp-Build für eigene Modelle: Version und Aktualisieren (neue Modelltypen brauchen oft einen neuen Build)
-  async function llamacppRow() {
-    let st;
-    try { st = await getJSON("/api/llamacpp"); } catch { return; }
-    if (!st.installed || modelMenu.querySelector(".mm-llamacpp")) return;
-    const row = document.createElement("div");
-    row.className = "mm-hint mm-llamacpp";
-    row.innerHTML = `<span></span> <button type="button" class="mm-link"></button>`;
-    row.querySelector("span").textContent = `llama.cpp ${st.tag || ""}` + (st.flavor ? ` (${st.flavor})` : "")
-      + L(" – startet Modelle von Hugging Face und aus ~/models.", " – runs models from Hugging Face and ~/models.");
-    const btn = row.querySelector("button");
-    btn.textContent = st.updating ? L("WIRD AKTUALISIERT …", "UPDATING …") : L("AKTUALISIEREN", "UPDATE");
-    btn.disabled = st.updating;
-    btn.onclick = async (e) => {
-      e.stopPropagation();
-      btn.disabled = true;
-      btn.textContent = L("WIRD AKTUALISIERT …", "UPDATING …");
-      try { await api("POST", "/api/llamacpp/update"); } catch { btn.disabled = false; }
-    };
-    modelMenu.appendChild(row);
+  async function deleteModel(p) {
+    const size = p.size_gb ? L(` Gibt ~${p.size_gb} GB frei.`, ` Frees ~${p.size_gb} GB.`) : "";
+    const text = p.keeps_files ? L(`${p.label} aus der Liste entfernen? Die Datei in ~/models bleibt.`,
+                                   `Remove ${p.label} from the list? The file in ~/models stays.`)
+      : L(`${p.label} löschen? Die Modelldateien werden entfernt.`, `Delete ${p.label}? The model files are removed.`) + size;
+    if (!confirm(text)) return;
+    try {
+      await api("DELETE", `/api/models/${encodeURIComponent(p.name)}`);
+      toast(L(`✔ ${p.label} gelöscht`, `✔ ${p.label} deleted`));
+      MP.sel = null;
+      refreshModelViews();
+    } catch { /* Meldung kommt von api() */ }
   }
-  // Liste und Kontext-Block nach Wechsel/Änderung neu zeichnen (nicht, solange die Vorauswahl offen ist)
-  function refreshModelViews() {
-    if (openSheetName !== "settings" || $("set-models").classList.contains("hidden") || modelMenu.querySelector(".fit-ok, .fit-tight, .fit-big")) return;
-    openModelMenu();
-    loadCtxMemory().then(renderCtxSettings);
-  }
-  // Vorauswahl bekannter Ollama-Modelle: passend zum Grafikspeicher, Laden mit Fortschritt (model_pull-Events)
-  async function openPresetMenu() {
-    let data;
-    try { data = await getJSON("/api/models/presets"); } catch { toast(L("Vorauswahl nicht ladbar", "Could not load presets")); return; }
-    const g = data.gpu;
-    const gpuText = g.vendor === "none" ? L("keine GPU erkannt", "no GPU detected") : `${g.name || g.vendor} · ${g.vram_gb} GB`;
-    modelMenu.innerHTML = `<div class="mm-title">${L("MODELL HINZUFÜGEN", "ADD MODEL")}</div>
-      <div class="mm-hint"></div>`;
-    modelMenu.querySelector(".mm-hint").textContent = gpuText + " · " +
-      L("✔ passt · ~ teils im RAM (langsamer) · ✘ zu groß", "✔ fits · ~ partly in RAM (slower) · ✘ too big");
-    for (const tag of data.pulling) modelMenu.appendChild(pullRow({ tag }));
-    // Hugging Face: Suchbegriff oder Link einfügen → Repos → Quantisierung mit Größe und Passung
-    const form = document.createElement("form");
-    form.className = "mm-search";
-    form.innerHTML = `<input type="search" autocomplete="off" spellcheck="false"><button type="submit">${L("SUCHEN", "SEARCH")}</button>`;
+
+  // ---- Reiter „Hinzufügen“: Hugging Face (Suche, Link, Pfad), Dateien in ~/models, Vorauswahl
+  async function renderAddTab() {
+    const box = $("mp-add");
+    box.innerHTML = `
+      <form class="mp-search" autocomplete="off"><svg class="i"><use href="#i-search"/></svg><input type="search" spellcheck="false">
+        <button type="submit" class="btn primary small"></button></form>
+      <p class="set-hint mp-search-hint"></p>
+      <div class="mm-hf mp-hf"></div>
+      <div class="mp-add-cols"><section class="mp-col mp-disk"></section><section class="mp-col mp-presets"></section></div>`;
+    const form = box.querySelector("form");
     const q = form.querySelector("input");
     q.placeholder = L("Hugging Face durchsuchen, Link oder Pfad zu einer .gguf einfügen (z. B. qwen3.6 27b)",
                       "Search Hugging Face, paste a link or a path to a .gguf (e.g. qwen3.6 27b)");
-    const hf = document.createElement("div");
-    hf.className = "mm-hf";
-    form.onclick = (e) => e.stopPropagation();
+    form.querySelector("button").textContent = L("Suchen", "Search");
+    const hf = box.querySelector(".mp-hf");
     form.onsubmit = (e) => {
       e.preventDefault();
       const text = q.value.trim();
       if (/^[~/].*\.gguf$/i.test(text)) { addLocal(text); return; }  // Pfad zu einer eigenen GGUF-Datei
       hfSearch(text, hf);
     };
-    modelMenu.appendChild(form);
-    modelMenu.appendChild(hf);
-    const local = document.createElement("div");
-    local.className = "mm-hf";
-    modelMenu.appendChild(local);
-    localModels(local);
-    const presetTitle = document.createElement("div");
-    presetTitle.className = "mm-title";
-    presetTitle.textContent = L("VORAUSWAHL", "PRESETS");
-    modelMenu.appendChild(presetTitle);
+    localModels(box.querySelector(".mp-disk"));
+    renderPresets(box.querySelector(".mp-presets"));
+  }
+
+  async function renderPresets(box) {
+    let data;
+    try { data = await getJSON("/api/models/presets"); } catch { box.textContent = L("Vorauswahl nicht ladbar", "Could not load presets"); return; }
+    const g = data.gpu;
+    const gpuText = g.vendor === "none" ? L("keine GPU erkannt", "no GPU detected") : `${g.name || g.vendor} · ${g.vram_gb} GB`;
+    $("mp-add").querySelector(".mp-search-hint").textContent = gpuText + " · "
+      + L("✔ passt · ~ teils im RAM (langsamer) · ✘ zu groß. Orbwise lädt die Datei nach ~/models und startet sie mit llama.cpp.",
+          "✔ fits · ~ partly in RAM (slower) · ✘ too big. Orbwise downloads the file to ~/models and runs it with llama.cpp.");
+    box.innerHTML = `<h4></h4><div class="mm-hf"></div>`;
+    box.querySelector("h4").textContent = L("Vorauswahl", "Presets");
+    const list = box.querySelector(".mm-hf");
     for (const p of data.presets) {
-      const b = document.createElement("button");
-      b.className = "model-item";
       const pulling = data.pulling.includes(p.tag);
-      b.innerHTML = `<div class="mi-head"><span><span class="fit-${p.fit}">${FIT_MARKS[p.fit]}</span> <span class="mi-name"></span></span>
-        <span class="mi-tag"></span></div><div class="mi-sub"></div><div class="mi-note"></div>`;
-      b.querySelector(".mi-name").textContent = p.label;
-      b.querySelector(".mi-tag").textContent = pulling ? L("LÄDT …", "LOADING …")
-        : p.installed ? L("INSTALLIERT", "INSTALLED") : p.recommended ? L("EMPFOHLEN", "RECOMMENDED") : "";
-      b.querySelector(".mi-sub").textContent = (p.kind === "ollama" ? p.tag : L("eigener Server · Terminal", "own server · terminal"))
-        + ` · ~${p.download_gb} GB`;
-      b.querySelector(".mi-note").textContent = p.note;
+      const mark = document.createElement("span");
+      mark.className = "fit-" + p.fit;
+      mark.textContent = FIT_MARKS[p.fit] + " ";
+      const b = hfItem([mark, document.createTextNode(p.label)],
+                       pulling ? L("LÄDT …", "LOADING …") : p.installed ? L("INSTALLIERT", "INSTALLED") : p.recommended ? L("EMPFOHLEN", "RECOMMENDED") : "",
+                       (p.kind === "ollama" ? p.tag : L("eigener Server · Terminal", "own server · terminal")) + ` · ~${p.download_gb} GB`, p.note);
       b.disabled = pulling;
-      b.onclick = async (e) => {
-        e.stopPropagation();
+      b.onclick = () => {
         if (p.kind !== "ollama") {
           toast(L(`${p.label}: Einrichtung im Terminal mit „orbwise model add ${p.tag}“ (lädt ~7 GB und den passenden llama.cpp-Server).`,
                   `${p.label}: set it up in a terminal with “orbwise model add ${p.tag}” (downloads ~7 GB and the matching llama.cpp server).`));
@@ -2699,23 +2868,17 @@
         }
         startPull(p.tag, p.label, p.fit);
       };
-      modelMenu.appendChild(b);
+      list.appendChild(b);
     }
-    const back = document.createElement("button");
-    back.className = "model-item add";
-    back.textContent = L("← ZURÜCK", "← BACK");
-    back.onclick = (e) => { e.stopPropagation(); openModelMenu(); };
-    modelMenu.appendChild(back);
   }
 
-  const FIT_MARKS = { ok: "✔", tight: "~", big: "✘" };
   async function startPull(tag, label, fit) {
     if (fit === "big" && !confirm(L(`${label} ist für deinen Grafikspeicher zu groß und wird sehr langsam. Trotzdem laden?`,
                                     `${label} is too big for your video memory and will be very slow. Download anyway?`))) return;
     try {
       await api("POST", "/api/models/pull", { tag });
       toast(L(`Lade ${tag} …`, `Downloading ${tag} …`));
-      openPresetMenu();  // Fortschritt erscheint oben in der Liste
+      refreshModelViews();  // Fortschritt erscheint oben
     } catch { /* Meldung kommt von api() */ }
   }
 
@@ -2753,7 +2916,7 @@
     for (const r of data.results) {
       const b = hfItem([document.createTextNode(r.repo)], r.downloads ? `⬇ ${r.downloads.toLocaleString(LOCALE)}` : "",
                        L("GGUF · Quantisierung wählen →", "GGUF · choose quantization →"));
-      b.onclick = (e) => { e.stopPropagation(); hfQuants(r.repo, box); };
+      b.onclick = () => hfQuants(r.repo, box);
       box.appendChild(b);
     }
   }
@@ -2765,9 +2928,8 @@
     catch { box.innerHTML = ""; return; }
     box.innerHTML = "";
     const title = document.createElement("div");
-    title.className = "mm-hint";
-    title.textContent = repo + " · " + L("Orbwise lädt die Datei nach ~/models und startet sie mit llama.cpp.",
-                                         "Orbwise downloads the file to ~/models and runs it with llama.cpp.");
+    title.className = "mp-hf-title";
+    title.textContent = repo;
     box.appendChild(title);
     const items = only ? data.quants.filter((x) => x.tag.toLowerCase() === only.toLowerCase()) : data.quants;
     if (!items.length) {
@@ -2786,7 +2948,7 @@
                          + (x.parts > 1 ? ` · ${x.parts} ${L("Teile", "parts")}` : "")
                          + (x.mmproj ? L(" · + Bildmodul", " · + vision") : ""));
       b.disabled = pulling;
-      b.onclick = (e) => { e.stopPropagation(); startPull(x.tag, `${repo} ${x.quant}`, x.fit); };
+      b.onclick = () => startPull(x.tag, `${repo} ${x.quant}`, x.fit);
       box.appendChild(b);
     }
   }
@@ -2796,18 +2958,16 @@
     let data;
     try { data = await getJSON("/api/models/local"); } catch { return; }
     const free = data.items.filter((x) => !x.profile);
-    box.innerHTML = "";
-    const title = document.createElement("div");
-    title.className = "mm-title";
-    title.textContent = L("AUF DER FESTPLATTE", "ON DISK") + ` (${data.dir})`;
-    box.appendChild(title);
+    box.innerHTML = `<h4></h4><div class="mm-hf"></div>`;
+    box.querySelector("h4").textContent = L("Auf der Festplatte", "On disk") + ` · ${data.dir}`;
+    const list = box.querySelector(".mm-hf");
     if (!free.length) {
       const hint = document.createElement("div");
       hint.className = "mm-hint";
       hint.textContent = data.items.length ? L("Alle GGUF-Dateien dort sind schon Modelle.", "All GGUF files there are models already.")
-        : L(`Hier abgelegte GGUF-Dateien erscheinen automatisch – oder einen Pfad oben einfügen.`,
-            `GGUF files placed there show up here – or paste a path above.`);
-      box.appendChild(hint);
+        : L("Hier abgelegte GGUF-Dateien erscheinen automatisch – oder einen Pfad oben einfügen.",
+            "GGUF files placed there show up here – or paste a path above.");
+      list.appendChild(hint);
       return;
     }
     for (const x of free) {
@@ -2818,8 +2978,8 @@
                        `${x.rel} · ~${x.size_gb} GB · ${L("braucht", "needs")} ~${x.vram_gb} GB VRAM`
                          + (x.parts > 1 ? ` · ${x.parts} ${L("Teile", "parts")}` : "")
                          + (x.mmproj ? L(" · + Bildmodul", " · + vision") : ""));
-      b.onclick = (e) => { e.stopPropagation(); addLocal(x.path, x.label, x.fit); };
-      box.appendChild(b);
+      b.onclick = () => addLocal(x.path, x.label, x.fit);
+      list.appendChild(b);
     }
   }
 
@@ -2829,20 +2989,7 @@
     try {
       const r = await api("POST", "/api/models/local", { path });
       toast(L(`Lege ${r.tag} an …`, `Adding ${r.tag} …`));
-      openPresetMenu();
-    } catch { /* Meldung kommt von api() */ }
-  }
-
-  async function deleteModel(p) {
-    const size = p.size_gb ? L(` Gibt ~${p.size_gb} GB frei.`, ` Frees ~${p.size_gb} GB.`) : "";
-    const text = p.keeps_files ? L(`${p.label} aus der Liste entfernen? Die Datei in ~/models bleibt.`,
-                                   `Remove ${p.label} from the list? The file in ~/models stays.`)
-      : L(`${p.label} löschen? Die Modelldateien werden entfernt.`, `Delete ${p.label}? The model files are removed.`) + size;
-    if (!confirm(text)) return;
-    try {
-      await api("DELETE", `/api/models/${encodeURIComponent(p.name)}`);
-      toast(L(`✔ ${p.label} gelöscht`, `✔ ${p.label} deleted`));
-      openModelMenu();
+      refreshModelViews();
     } catch { /* Meldung kommt von api() */ }
   }
 
@@ -2850,7 +2997,7 @@
     return d.total ? Math.floor((100 * (d.completed || 0)) / d.total) : null;
   }
 
-  // Laufender Download im Modell-Menü: Fortschritt live (model_pull-Events) und Abbrechen
+  // Laufender Download: Fortschritt live (model_pull-Events) und Abbrechen
   function pullRow(d) {
     const row = document.createElement("div");
     row.className = "model-pull";
@@ -2858,7 +3005,6 @@
     row.innerHTML = `<div class="mp-head"><span class="mp-text"></span>
       <button class="mp-cancel">✕ ${L("ABBRECHEN", "CANCEL")}</button></div><div class="mp-bar"><i></i></div>`;
     row.querySelector(".mp-cancel").onclick = async (e) => {
-      e.stopPropagation();
       e.target.disabled = true;
       try { await api("DELETE", `/api/models/pull/${encodeURIComponent(d.tag)}`); } catch { /* Meldung kommt von api() */ }
     };
@@ -2873,9 +3019,15 @@
   }
 
   function modelPullEvent(ev) {
-    const row = [...modelMenu.querySelectorAll(".model-pull")].find((r) => r.dataset.tag === ev.tag);
-    if (row && (ev.done || ev.error || ev.cancelled)) row.remove();
+    const page = openSheetName === "models";
+    let row = [...document.querySelectorAll("#mp-pulls .model-pull")].find((r) => r.dataset.tag === ev.tag);
+    if (row && (ev.done || ev.error || ev.cancelled)) { row.remove(); $("mp-pulls").classList.toggle("hidden", !$("mp-pulls").childElementCount); }
     else if (row) updatePullRow(row, ev);
+    else if (page && !(ev.done || ev.error || ev.cancelled)) {  // Download, der nach dem Öffnen der Seite begann
+      row = pullRow(ev);
+      $("mp-pulls").appendChild(row);
+      $("mp-pulls").classList.remove("hidden");
+    }
     if (ev.cancelled) { toast(L(`Download von ${ev.tag} abgebrochen`, `Download of ${ev.tag} cancelled`)); return; }
     if (ev.error) { toast(L(`✘ ${ev.tag}: `, `✘ ${ev.tag}: `) + ev.error); return; }
     if (ev.done && ev.kind === "llamacpp") {
@@ -2891,18 +3043,34 @@
       return;
     }
     if (ev.done) {
-      toast(L(`✔ ${ev.tag} geladen – jetzt im Modell-Menü auswählbar.`, `✔ ${ev.tag} downloaded – now selectable in the model menu.`));
-      addSystem(L(`Modell ${ev.tag} ist bereit (Menü LLM oben).`, `Model ${ev.tag} is ready (LLM menu at the top).`));
+      toast(L(`✔ ${ev.tag} geladen – jetzt unter Modelle auswählbar.`, `✔ ${ev.tag} downloaded – now selectable under Models.`));
+      addSystem(L(`Modell ${ev.tag} ist bereit (Modelle in der Seitenleiste oder oben).`, `Model ${ev.tag} is ready (Models in the sidebar or at the top).`));
+      if (ev.profile) MP.sel = ev.profile;
+      if (page) { MP.tab = "mine"; refreshModelViews(); }
       return;
     }
-    if (row) return;  // Menü offen: Fortschritt steht dort
+    if (row) return;  // Seite offen: Fortschritt steht dort
     const pct = pullPct(ev) !== null ? ` ${pullPct(ev)} %` : "";
     toast(L(`Lade ${ev.tag}: `, `Downloading ${ev.tag}: `) + (ev.status || "") + pct
-      + L(" · abbrechen im LLM-Menü", " · cancel in the LLM menu"));
+      + L(" · abbrechen unter Modelle", " · cancel under Models"));
   }
 
-  function closeModelMenu() { /* Modelle stehen jetzt dauerhaft in den Einstellungen */ }
-  $("pill-llm").onclick = () => openSheet("settings", "models");
+  // Schnellwahl an der Modell-Pille oben: laden mit einem Klick, alles Weitere auf der Modellseite
+  $("pill-llm").onclick = async (e) => {
+    e.stopPropagation();
+    const anchor = $("pill-llm");
+    let data;
+    try { data = await getJSON("/api/models"); } catch { openModelsPage("mine"); return; }
+    const items = data.profiles.map((p) => ({
+      icon: p.active ? "check" : "chip", label: p.label, checked: p.active,
+      sub: p.name === data.switching ? L("lädt …", "loading …")
+        : [p.engine, p.quant, p.size_gb ? `${fmt(p.size_gb, 1)} GB` : "", p.fit && !p.active ? `${FIT_MARKS[p.fit]}` : ""].filter(Boolean).join(" · "),
+      disabled: !!data.switching && !p.active,
+      run: () => { if (!p.active) { MP.data = data; activateModel(p); } },
+    }));
+    items.push({ sep: true }, { icon: "settings", label: L("Modelle verwalten …", "Manage models …"), run: () => openModelsPage("mine") });
+    popMenu(anchor, items);
+  };
 
   let toastTimer;
   function toast(text) {
@@ -3236,18 +3404,23 @@
   function closeMenu() { if (openMenu) { openMenu.remove(); openMenu = null; } }
   document.addEventListener("click", closeMenu);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeMenu(); });
+  // Kleines Menü an einem Knopf. Einträge: {icon, label, run, sub?, checked?, disabled?, danger?, title?} oder {sep: true}
   function popMenu(anchor, items) {
     closeMenu();
     const m = document.createElement("div");
     m.className = "pop-menu";
     m.setAttribute("role", "menu");
     for (const it of items) {
+      if (it.sep) { m.appendChild(Object.assign(document.createElement("div"), { className: "pm-sep" })); continue; }
       const b = document.createElement("button");
       b.type = "button";
-      b.className = "pm-item" + (it.danger ? " danger" : "");
+      b.className = "pm-item" + (it.danger ? " danger" : "") + (it.checked ? " on" : "");
       b.setAttribute("role", "menuitem");
-      b.innerHTML = `<svg class="i"><use href="#i-${it.icon}"/></svg><span></span>`;
-      b.querySelector("span").textContent = it.label;
+      b.innerHTML = `<svg class="i"><use href="#i-${it.icon}"/></svg><span class="pm-text"><span></span></span>`;
+      b.querySelector(".pm-text span").textContent = it.label;
+      if (it.sub) b.querySelector(".pm-text").appendChild(Object.assign(document.createElement("small"), { textContent: it.sub }));
+      b.disabled = !!it.disabled;
+      if (it.title) b.title = it.title;
       b.onclick = (e) => { e.stopPropagation(); closeMenu(); it.run(); };
       m.appendChild(b);
     }
@@ -3257,7 +3430,7 @@
     m.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, r.right - w)) + "px";
     m.style.top = (r.bottom + h + 8 > window.innerHeight ? r.top - h - 4 : r.bottom + 4) + "px";
     openMenu = m;
-    m.querySelector("button").focus();
+    (m.querySelector("button:not(:disabled)") || m).focus();
   }
   function chatMenu(anchor, c, li) {
     popMenu(anchor, [

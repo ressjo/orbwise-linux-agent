@@ -151,11 +151,15 @@ HTML_EN = [
     # Einstellungen
     ('aria-label="Einstellungen">', 'aria-label="Settings">'),
     ('<h2>Einstellungen</h2>', '<h2>Settings</h2>'),
-    ('data-section="models">Modelle<', 'data-section="models">Models<'),
     ('data-section="voice">Stimme<', 'data-section="voice">Voice<'),
     ('data-section="general">Allgemein<', 'data-section="general">General<'),
-    ('>Wähle das Sprachmodell, lade neue herunter oder lösche nicht mehr benötigte.<',
-     '>Choose the language model, download new ones or delete those you no longer need.<'),
+    # Modellseite
+    ('title="Modelle"><svg class="i"><use href="#i-chip"/></svg><span>Modelle<',
+     'title="Models"><svg class="i"><use href="#i-chip"/></svg><span>Models<'),
+    ('aria-label="Modelle">', 'aria-label="Models">'),
+    ('<h2>Modelle</h2>', '<h2>Models</h2>'),
+    ('data-mtab="mine" class="on">Meine Modelle<', 'data-mtab="mine" class="on">My models<'),
+    ('data-mtab="add">Hinzufügen<', 'data-mtab="add">Add<'),
     ('<div class="mm-title">Jarvis-Effekt</div>', '<div class="mm-title">Jarvis effect</div>'),
     ('id="fx-toggle">Aus<', 'id="fx-toggle">Off<'),
     ('aria-label="Effektstärke"', 'aria-label="Effect strength"'),

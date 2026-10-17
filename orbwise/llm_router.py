@@ -191,9 +191,9 @@ def library_hint(command: str) -> str:
     arch = re.search(r"unknown model architecture: '?([\w.-]+)", text)
     if arch:
         return T(f"\n→ Dieser llama-server kennt den Modelltyp „{arch.group(1)}“ noch nicht. Für Modelle aus der "
-                 "Oberfläche: Einstellungen → Modelle → llama.cpp AKTUALISIEREN (oder orbwise model llamacpp --update).",
+                 "Oberfläche: Modelle (Seitenleiste) → llama.cpp AKTUALISIEREN (oder orbwise model llamacpp --update).",
                  f"\n→ This llama-server does not know the model type “{arch.group(1)}” yet. For models added in the "
-                 "web UI: Settings → Models → update llama.cpp (or orbwise model llamacpp --update).")
+                 "web UI: Models (sidebar) → update llama.cpp (or orbwise model llamacpp --update).")
     m = re.search(r"error while loading shared libraries: ([^:\s]+)", text)
     if not m:
         return ""
@@ -515,7 +515,7 @@ class LLMRouter:
                    "model": p.model})
         return st
 
-    # ---------- Kontextgröße (Einstellungen → Modelle) ----------
+    # ---------- Kontextgröße (Modellseite) ----------
     def _apply_context(self, name: str, n: int) -> None:
         """Kontextfenster eines Profils setzen: Ollama über num_ctx, ein eigener llama-server über BONSAI_CTX bzw.
         -c im Startbefehl (wirkt beim nächsten Start)."""
