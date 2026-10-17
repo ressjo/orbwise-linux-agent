@@ -422,6 +422,21 @@ shows the full command; restored checkpoints appear in the same log.
 - **Vision model** (screen understanding): on a small GPU it can push the language model out of VRAM; the next step
   then reads the chat again (the activity shows it). `vision.keep_alive: 2m` unloads it soon afterwards.
 
+### API server for other programs (OpenAI compatible)
+
+Like the server mode of LM Studio: **Models → API server** turns on an OpenAI-compatible endpoint at
+`http://127.0.0.1:8765/v1` (`/v1/models`, `/v1/chat/completions` with streaming, `/v1/completions`). VS Code with
+Continue or Cline, Open WebUI or your own scripts then use the loaded model through Orbwise. It is **off by
+default**, every request needs the API key shown there (`Authorization: Bearer ow-…`, a new key can be created at
+any time), and it is only reachable on this computer.
+
+Programs get the model **raw** – without the Orbwise system prompt, memory or tools, so they cannot do anything on
+the PC. Orbwise sits in front instead of exposing llama-server directly: it starts the model server when needed,
+hands the GPU back from image mode, and knows that its own prompt cache is gone after an API request (the next
+Orbwise answer re-reads the chat). By default the loaded model answers whatever model a program names; with
+**Programs may switch the model** Orbwise loads the named model (for your chat too). With Ollama models, Ollama may
+reload the model with a different context size. For Open WebUI in Docker use `--network=host`.
+
 ### Thinking mode
 
 By default the model answers directly (`think: false`) – fast. The **Think** button turns reasoning on per
@@ -826,7 +841,8 @@ Orbwise can run commands on your system, so:
 - **Blocklist:** `rm -rf /`, formatting or overwriting disks, fork bombs, `chmod -R … /` and similar are never run –
   not even after confirmation.
 - **Local only:** the server listens on `127.0.0.1` and checks the `Host` header and `Origin` – other websites
-  cannot send commands. Another address needs `allow_remote: true` (the dashboard has no login).
+  cannot send commands. The optional OpenAI-compatible API (`/v1`) is off by default, needs its own key and only
+  reaches the bare model, never tools. Another address needs `allow_remote: true` (the dashboard has no login).
 - **Secrets:** files with keys and passwords (`~/.ssh`, `~/.gnupg`, password stores, browser logins, cloud
   credentials, Orbwise's own config, …) are never read by the file tools or sent to the phone – symlinks included;
   shell commands that print them, environment variables or Wi-Fi passwords need confirmation.

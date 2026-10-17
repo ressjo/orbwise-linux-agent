@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **API server (OpenAI compatible):** Models → API server turns on `/v1/models`, `/v1/chat/completions` (with
+  streaming) and `/v1/completions` at `http://127.0.0.1:8765/v1` for VS Code (Continue, Cline), Open WebUI or scripts.
+  Off by default, with its own API key (show, copy, renew), local only. Programs get the loaded model without system
+  prompt, memory or tools; Orbwise starts the model server if needed, takes the GPU back from image mode, notes that
+  its prompt cache is gone and, if allowed, loads the model a program asks for. The page shows the request count and
+  the last client, plus ready-made settings for Continue, Open WebUI and curl.
 - **Models page (like LM Studio):** a new **Models** entry in the sidebar lists every model with engine,
   quantization, size and whether it fits in VRAM; the detail view loads a model with one click and shows its memory
   use (model + KV cache, Flash Attention), the context window (separately for Tools and Coding), KV cache, sampling,

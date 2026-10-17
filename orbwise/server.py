@@ -1241,6 +1241,11 @@ def create_app(cfg: Config) -> FastAPI:
         hub.prewarm_soon()
         return {"ok": True, "active": llm.active}
 
+    # OpenAI-kompatible Schnittstelle (/v1) für andere Programme – aus, bis sie in der Oberfläche eingeschaltet wird
+    from . import api_server
+    api_server.register(app, cfg=cfg, llm=llm, agent=agent, hub=hub, state_file=state_file,
+                        model_progress=model_progress, idle_if_free=idle_if_free)
+
     @app.get("/api/llm/memory")
     async def llm_memory():
         """Wo liegt der Kontext (VRAM/RAM), und wie groß darf das Kontextfenster werden?"""

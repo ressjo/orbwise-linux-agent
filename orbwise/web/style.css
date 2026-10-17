@@ -1052,3 +1052,25 @@ details.card[open] > summary .caret { transform: rotate(180deg); }
   .mp-add-cols { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 520px) { .mp-gpu .mg-name, .mp-gpu .mg-bar { display: none; } .md-head { flex-direction: column; } }
+/* Reiter API-Server */
+#mp-api > * { max-width: 860px; }
+.api-card { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); padding: 2px 16px; }
+.api-card .set-row:last-child { border-bottom: 0; }
+.api-field { display: grid; grid-template-columns: 110px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 11px 0;
+  border-bottom: 1px solid var(--border); }
+.api-label { font-size: 13px; color: var(--muted); }
+.api-field code { font-family: var(--mono); font-size: 12.5px; color: var(--text); overflow-wrap: anywhere; }
+.api-btns { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.api-status { display: flex; align-items: center; gap: 8px; margin: 12px 2px 0; font-size: 12.5px; color: var(--muted); }
+.api-status i { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
+.api-status.on i { background: var(--success); box-shadow: 0 0 0 3px rgba(61,220,151,.15); }
+.api-status.busy i { background: var(--accent); animation: mp-pulse 1s infinite; }
+.api-h { margin: 22px 0 8px; font-size: 14px; font-weight: 600; }
+.api-howto { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.api-how { min-width: 0; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--surface); }
+.api-how b { display: block; font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+.api-how span { font-size: 12.5px; color: var(--muted); }
+.api-how pre { margin: 8px 0 0; padding: 9px 11px; border-radius: 8px; background: #07090d; border: 1px solid var(--border);
+  font-family: var(--mono); font-size: 11.5px; color: var(--text-2); overflow-x: auto; }
+.api-notes { margin-top: 16px; }
+@media (max-width: 640px) { .api-field { grid-template-columns: minmax(0, 1fr); gap: 6px; } .api-btns { justify-content: flex-start; } }

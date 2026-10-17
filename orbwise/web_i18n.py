@@ -160,6 +160,7 @@ HTML_EN = [
     ('<h2>Modelle</h2>', '<h2>Models</h2>'),
     ('data-mtab="mine" class="on">Meine Modelle<', 'data-mtab="mine" class="on">My models<'),
     ('data-mtab="add">Hinzufügen<', 'data-mtab="add">Add<'),
+    ('data-mtab="api">API-Server<', 'data-mtab="api">API server<'),
     ('<div class="mm-title">Jarvis-Effekt</div>', '<div class="mm-title">Jarvis effect</div>'),
     ('id="fx-toggle">Aus<', 'id="fx-toggle">Off<'),
     ('aria-label="Effektstärke"', 'aria-label="Effect strength"'),
