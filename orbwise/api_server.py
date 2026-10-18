@@ -160,6 +160,7 @@ def register(app: FastAPI, *, cfg, llm, agent, hub, state_file: Path, model_prog
             stats["last_error"] = error[:300]
         # Der Modell-Server hat jetzt den Prompt des Programms im Cache – Orbwise liest seinen Chat beim nächsten Mal neu
         agent._cache_owner = None
+        agent.api_used = True
         await broadcast()
 
     async def forward(request: Request, path: str) -> Response:

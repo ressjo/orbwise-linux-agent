@@ -422,6 +422,16 @@ shows the full command; restored checkpoints appear in the same log.
 - **Vision model** (screen understanding): on a small GPU it can push the language model out of VRAM; the next step
   then reads the chat again (the activity shows it). `vision.keep_alive: 2m` unloads it soon afterwards.
 
+### Why was so much read again?
+
+With a warm prompt cache only what is new gets read; a long wait means the server had to read most of the chat
+again. Orbwise compares every request with the previous one and, when more than 5,000 tokens were read again, names
+the reason under the answer and in the activity: tool list changed, old results hidden, after summarising, other chat
+or model, an earlier message edited – or *the server no longer had the beginning* (restart, image mode, another
+program via the API, or a hybrid model such as Qwen3.5+ without a matching checkpoint). In windows from 32k on the
+tool list now stays complete and fixed as long as it takes at most a quarter of the window and under a minute to
+read, so a new topic no longer forces the whole chat to be read again; the step-limit summary keeps the tool list too.
+
 ### Faster prompt processing: batch size
 
 **Models → Prompt processing (batch size)** sets llama-server's micro-batch (`-ub`, default 512) per model to 1024 or

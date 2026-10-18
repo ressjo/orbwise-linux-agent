@@ -1097,6 +1097,25 @@
   const toolsChanged = (added, dropped) => (added && added.length ? L("Werkzeuge dazugeladen: ", "tools added: ") + groupNames(added) : "")
     + (dropped && dropped.length ? (added && added.length ? " · " : "") + L("weggelassen: ", "dropped: ") + groupNames(dropped) : "");
 
+  // Warum der Server viel neu einlesen musste (reread.py) – nur erwähnenswert, wenn es wirklich viel war
+  const REREAD = {
+    first: () => L("erster Aufruf seit dem Start", "first request since start"),
+    model: () => L("anderes Modell", "different model"),
+    chat: () => L("anderer Chat", "different chat"),
+    compact: () => L("nach dem Zusammenfassen", "after summarising"),
+    tools: (r) => L("Werkzeugliste geändert", "tool list changed") + (r.added && r.added.length ? ` (+${r.added.slice(0, 4).join(", ")}${r.added.length > 4 ? " …" : ""})` : ""),
+    system: () => L("Systemteil geändert", "system part changed"),
+    cleared: () => L("alte Ergebnisse ausgeblendet", "old results hidden"),
+    edited: () => L("frühere Nachricht geändert", "earlier message changed"),
+    server: () => L("der Server hatte den Anfang nicht mehr (Neustart, Bild-Modus oder Hybrid-Modell ohne Checkpoint)",
+                    "the server no longer had the beginning (restart, image mode or hybrid model without checkpoint)"),
+    api: () => L("ein anderes Programm hat das Modell über die API benutzt", "another program used the model via the API"),
+  };
+  function rereadText(r) {
+    if (!r || r.reason === "appended" || !r.new || r.new < 5000 || !REREAD[r.reason]) return "";
+    return L(`${num(r.new)} neu eingelesen – Grund: `, `${num(r.new)} re-read – reason: `) + REREAD[r.reason](r);
+  }
+
   function phaseSummary(ev) {
     if (ev.compress) return L(`Chat zusammengefasst · ${num(ev.before)} → ${num(ev.after)} Token · Zusammenfassung ${num(ev.tokens)} Token`,
                               `chat summarised · ${num(ev.before)} → ${num(ev.after)} tokens · summary ${num(ev.tokens)} tokens`);
@@ -1105,7 +1124,8 @@
         ? L(`Chat vorgelesen · ${num(ev.tokens)} Token, davon ${num(ev.tokens - ev.new)} aus dem Cache · ${num(ev.new)} neu in ${secs(ev.seconds)}`,
             `chat pre-read · ${num(ev.tokens)} tokens, ${num(ev.tokens - ev.new)} from the cache · ${num(ev.new)} new in ${secs(ev.seconds)}`)
         : L(`Chat vorgelesen · ${num(ev.tokens)} Token in ${secs(ev.seconds)} – die nächste Frage liest nur noch Neues`,
-            `chat pre-read · ${num(ev.tokens)} tokens in ${secs(ev.seconds)} – the next question only reads what is new`);
+            `chat pre-read · ${num(ev.tokens)} tokens in ${secs(ev.seconds)} – the next question only reads what is new`)
+        + (rereadText(ev.reread) ? ` · ${rereadText(ev.reread)}` : "");
     if (ev.cleared) return L(`Platz geschaffen · ${oldResults(ev.cleared)} ausgeblendet · ${num(ev.before)} → ${num(ev.after)} Token – ohne Zusammenfassen`,
                              `made room · ${oldResults(ev.cleared)} hidden · ${num(ev.before)} → ${num(ev.after)} tokens – no summary needed`);
     if ((ev.tools_added && ev.tools_added.length) || (ev.tools_dropped && ev.tools_dropped.length)) return toolsChanged(ev.tools_added, ev.tools_dropped);
@@ -1121,6 +1141,7 @@
     if (ev.tokens) parts.push(L(`${num(ev.tokens)} Token geschrieben`, `${num(ev.tokens)} tokens written`)
                               + (ev.tps ? `, ${ev.tps} tok/s` : ""));
     if (ev.calls && ev.calls.length) parts.push("→ " + ev.calls.join(", "));
+    if (rereadText(ev.reread)) parts.push(rereadText(ev.reread));
     return parts.join(" · ") || L("fertig", "done");
   }
 
@@ -1234,6 +1255,8 @@
                          + (cached ? L(` (+${num(cached)} Cache)`, ` (+${num(cached)} cached)`) : ""));
     if (written) parts.push(L(`${num(written)} geschrieben`, `${num(written)} written`));
     if (tps) parts.push(`${tps.toLocaleString(LOCALE, { maximumFractionDigits: 1 })} tok/s`);
+    const worst = steps.filter((s) => rereadText(s.reread)).sort((x, y) => y.reread.new - x.reread.new)[0];
+    if (worst) parts.push(rereadText(worst.reread));
     if (steps.some((s) => s.error)) parts.unshift(L("Fehler beim Modell", "model error"));
     else if (cancelled) parts.unshift(L("abgebrochen", "stopped"));
     const el = document.createElement("details");

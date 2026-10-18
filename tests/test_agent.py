@@ -116,7 +116,7 @@ class ToolHappyLLM:
         self.final_requests = []
 
     async def chat_stream(self, messages, tools=None):
-        if tools is None:
+        if "Schrittlimit" in (messages[-1].get("content") or ""):  # Zwischenbilanz (Werkzeugliste bleibt gleich)
             self.final_requests.append(messages[-1]["content"])
             yield {"type": "token", "text": "Bisher erledigt: X."}
             yield {"type": "done", "message": {"role": "assistant", "content": "Bisher erledigt: X."}, "stats": {}}
@@ -146,7 +146,7 @@ def test_step_limit_from_config_ends_with_summary(cfg, memory, monkeypatch):
 
     class Varying(ToolHappyLLM):
         async def chat_stream(self, messages, tools=None):
-            if tools is None:
+            if "Schrittlimit" in (messages[-1].get("content") or ""):
                 async for ev in super().chat_stream(messages, None):
                     yield ev
                 return

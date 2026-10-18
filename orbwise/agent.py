@@ -62,6 +62,7 @@ CORRECTION = re.compile(r"^\W*(?:nein\b|falsch|stimmt nicht|das (?:ist|war) (?:f
 
 # Alle Werkzeuge gehen nur mit, wenn ihre Beschreibungen in höchstens so vielen Sekunden eingelesen sind
 ALL_TOOLS_SECONDS = 10.0
+BIG_TOOLS_SECONDS = 60.0  # ab 32k Fenster: so lange darf das einmalige Einlesen aller Werkzeuge dauern
 
 TAINT_SOURCES = {"mail_list", "mail_search", "mail_read", "mail_ask", "daily_briefing", "fetch_url",
                  "look_at_screen", "look_at_image"}  # Webseiten, Bildschirm, Bild: können Anweisungen enthalten
@@ -175,6 +176,10 @@ class Agent:
         self._full_prompt = 0  # ungekürzte Größe des nächsten Prompts (echte Token, geschätzt)
         # Wessen Prompt der Modell-Server gerade im Cache hat: (Profil, Chat, Epoche) – fürs Vorwärmen
         self._cache_owner: tuple | None = None
+        # Warum der Server neu einlesen musste: Fingerabdruck des vorigen Aufrufs (siehe reread.py)
+        self._prompt_prev = None
+        self._reread: dict | None = None
+        self.api_used = False  # ein anderes Programm hat über /v1 das Modell benutzt (dessen Prompt liegt im Cache)
         self._prewarming = False
         self._prewarm_failed: tuple | None = None  # (Profil, Zeit) des letzten gescheiterten Vorwärmens
         self._compacted_at: tuple | None = None  # (Chat, Epochen, Nachrichten) der letzten Komprimierung
@@ -520,6 +525,12 @@ class Agent:
         if not tps:
             return True
         seconds = tool_tokens * self.token_ratio() / tps
+        # Großes Fenster: Die Werkzeuge stehen ganz vorn im Prompt. Kommt mitten im Chat eine Gruppe dazu, muss der
+        # ganze Chat neu eingelesen werden (bei 60k Token eine Minute und mehr) – ein fester, vollständiger Satz kostet
+        # dagegen nur einmal je Epoche bzw. Neustart. Also alle, solange sie höchstens 25 % des Budgets belegen und
+        # ihr Einlesen keine Minute dauert (auf sehr langsamen Karten bleibt es bei der Auswahl).
+        if self.model_window() >= 32768 and tool_tokens <= 0.25 * self.context_budget() and seconds <= BIG_TOOLS_SECONDS:
+            return True
         all_now = self.memory.conversation.epoch.get("tools", "") is None
         return seconds <= (ALL_TOOLS_SECONDS * 1.25 if all_now else ALL_TOOLS_SECONDS)
 
@@ -545,6 +556,18 @@ class Agent:
             self._saved_tps[key] = tps
         except (OSError, ValueError) as e:
             log.info("Einlese-Geschwindigkeit nicht gespeichert: %s", e)
+
+    def _reread_info(self, stats: dict) -> dict | None:
+        """Grund fürs Neueinlesen des letzten Aufrufs, abgeglichen mit dem, was der Server aus dem Cache nahm."""
+        from . import reread
+        if self._reread is None:
+            return None
+        info = reread.with_server(self._reread, stats, self.api_used)
+        self.api_used = False
+        if info.get("new", 0) >= 5000 and info["reason"] != "appended":
+            log.info("%s Token neu eingelesen – Grund: %s %s", info["new"], info["reason"],
+                     {k: v for k, v in info.items() if k not in ("reason", "new")})
+        return info
 
     def prefill_speed(self, profile: str) -> float | None:
         """Gemessene Einlese-Geschwindigkeit eines Profils (Token/s, geglättet) – für die Modellseite."""
@@ -635,7 +658,12 @@ class Agent:
             ep["used"] = [*(ep.get("used") or [])[-1:], sorted(getattr(self, "_turn_used", set()))]
 
     def _call_llm(self, messages: list[dict], tools: list[dict] | None, **opts):
-        """chat_stream mit Zusatzoptionen (think, max_tokens, tool_choice) – nur die, die das LLM-Objekt kennt."""
+        """chat_stream mit Zusatzoptionen (think, max_tokens, tool_choice) – nur die, die das LLM-Objekt kennt.
+        Merkt sich nebenbei, ob und wo sich der Prompt gegenüber dem vorigen Aufruf geändert hat (self._reread)."""
+        from . import reread
+        fp = reread.fingerprint(self._cache_key(), messages, tools, self.token_ratio())
+        self._reread = reread.compare(fp, self._prompt_prev)
+        self._prompt_prev = fp
         fn = self.llm.chat_stream
         try:
             params = inspect.signature(fn).parameters
@@ -1340,8 +1368,9 @@ class Agent:
             return False
         self._learn_prefill(stats)
         self._cache_owner = key
+        info = self._reread_info(stats)
         if emit:
-            done = {"type": "llm_phase", "id": pid, "phase": "done", "prewarm": True,
+            done = {"type": "llm_phase", "id": pid, "phase": "done", "prewarm": True, "reread": info,
                     "tokens": stats.get("prompt_total") or tokens, "seconds": round(time.monotonic() - started, 1)}
             if stats.get("prompt_tokens") is not None and stats.get("prompt_total"):
                 done["new"] = stats["prompt_tokens"]  # wirklich eingelesen – der Rest kam aus dem Cache
@@ -1477,7 +1506,7 @@ class Agent:
                         self._learn_prefill(stats)
                         self._cache_owner = self._cache_key()  # der Server hat jetzt diesen Chat im Cache
                         current = ""
-                        await phase("done", seconds=round(time.monotonic() - started, 1),
+                        await phase("done", seconds=round(time.monotonic() - started, 1), reread=self._reread_info(stats),
                                     calls=[c.get("function", {}).get("name", "") for c in result.get("tool_calls") or []],
                                     **{k: stats.get(k) for k in ("tokens", "tps", "prompt_tokens", "prompt_total",
                                                                  "prompt_cached", "prompt_ms", "load_ms")
@@ -1529,7 +1558,9 @@ class Agent:
                     kwargs = {} if self._think is None else {"think": self._think}
                     if self._think and self._think_level:
                         kwargs["effort"] = self._think_level
-                async for ev in self._call_llm(messages, None if final else self.schemas, **kwargs):
+                # auch die Zwischenbilanz mit derselben Werkzeugliste – ohne sie stünde vorn im Prompt etwas anderes
+                # und der ganze Chat müsste neu eingelesen werden (und bei der nächsten Frage gleich noch einmal)
+                async for ev in self._call_llm(messages, self.schemas, **kwargs):
                     yield ev
                 return
             except ContextOverflow as e:

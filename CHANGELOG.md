@@ -6,11 +6,18 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **Fewer full re-reads in big windows:** from 32k on all tools go along from the start (if they take ≤ 25 % of the
+  budget and < 60 s to read) instead of growing mid-chat, which re-read the whole chat; the step-limit summary keeps
+  the tool list as well.
 - **Auto mode after foreign content:** after a web page, e-mail, PDF or image, reading tools (web search,
   `fetch_url`, reading and listing files, recall, calendar/notes/Home Assistant/Portainer lookups) no longer ask –
   only actions that change or start something do; the data-leak guard still checks what goes out.
 
 ### Added
+- **Why was it read again?** Every model request is compared with the previous one; when more than 5,000 tokens had
+  to be read again, the answer's stats line and the activity name the reason (tool list changed, old results hidden,
+  summary, other chat/model, edited message, server lost the cache – restart, image mode, API use or hybrid model
+  without checkpoint).
 - **Batch size for prompt processing:** per llama.cpp model 512 / 1024 / 2048 (`-ub`, with `-b` to match) on the
   models page, remembered and applied on the next server start; the page shows the measured prompt speed (reset after
   a change) and the compute buffer from the server log.
