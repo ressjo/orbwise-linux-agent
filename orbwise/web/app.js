@@ -2305,7 +2305,7 @@
     const reset = b.reset_at ? new Date(b.reset_at * 1000).toLocaleDateString(LOCALE, { day: "numeric", month: "short" }) : "";
     const sub = b.limit != null
       ? L(`von ${num(b.limit)} · noch ${num(b.remaining)}`, `of ${num(b.limit)} · ${num(b.remaining)} left`) + (reset ? L(` · neu ab ${reset}`, ` · resets ${reset}`) : "")
-      : L("Anfragen diesen Monat", "requests this month");
+      : L("Anfragen diesen Monat · Abrechnung über Guthaben", "requests this month · billed from credit");
     setTile("brave", b.month, { pct, digits: 0, sub });
     el.title = [
       L("Anfragen an die Brave Search API (Websuche, Briefing-Schlagzeilen, orbwise doctor).", "Requests to the Brave Search API (web search, briefing headlines, orbwise doctor)."),

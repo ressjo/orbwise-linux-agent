@@ -120,15 +120,15 @@ async def _brave_get(key: str, url: str, query: str, n: int, language: str, cfg=
     Anfrage gezählt und das Monatskontingent laut Brave gemerkt (usage.py); ist es aufgebraucht, gar nicht erst fragen."""
     from .. import usage
     if cfg is not None and (until := usage.exhausted(cfg, "brave")):
-        raise RuntimeError("Brave-Kontingent für diesen Monat aufgebraucht – wieder ab "
-                           + datetime.fromtimestamp(until).strftime("%d.%m.%Y"))
+        raise RuntimeError("Brave hat das Monatskontingent als aufgebraucht gemeldet (HTTP 429) – Orbwise fragt bis "
+                           + datetime.fromtimestamp(until).strftime("%d.%m.%Y") + " nicht erneut")
     params: dict[str, str | int] = {"q": query, "count": n, **extra}
     params.update({"country": "DE", "search_lang": "de"} if language == "de" else {"search_lang": "en"})
     headers = {"X-Subscription-Token": key, "Accept": "application/json"}
     async with httpx.AsyncClient(timeout=20, transport=TRANSPORT, headers=headers) as client:
         r = await client.get(url, params=params)
     if cfg is not None and r.status_code in (200, 429):
-        usage.record(cfg, "brave", r.headers, count=r.status_code == 200)
+        usage.record(cfg, "brave", r.headers, count=r.status_code == 200, status=r.status_code)
     if r.status_code in (401, 403) or (r.status_code == 422 and "TOKEN" in r.text.upper()):
         raise RuntimeError(f"Brave-API-Schlüssel ungültig oder ohne Berechtigung (HTTP {r.status_code})")
     if r.status_code == 429:

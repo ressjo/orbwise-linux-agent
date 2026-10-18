@@ -50,8 +50,12 @@ def month_key(now: float | None = None) -> str:
     return datetime.fromtimestamp(now or time.time()).strftime("%Y-%m")
 
 
-def record(cfg, service: str, headers=None, count: bool = True, now: float | None = None) -> None:
-    """Eine Anfrage zählen (count=False: nur das Kontingent aus den Headern übernehmen, z. B. bei HTTP 429)."""
+def record(cfg, service: str, headers=None, count: bool = True, now: float | None = None,
+           status: int = 200) -> None:
+    """Eine Anfrage zählen (count=False: nur das Kontingent aus den Headern übernehmen, z. B. bei HTTP 429).
+    Ein festes Monatskontingent gibt es nur, wenn der Dienst ein Limit > 0 meldet – Brave rechnet inzwischen auch
+    über Guthaben ab und meldet dann 0 als Monatswert, was nicht „aufgebraucht“ heißt. Gesperrt wird nur nach einer
+    echten Absage (HTTP 429 bei Rest 0); jede erfolgreiche Antwort hebt das wieder auf."""
     now = now or time.time()
     data = _read(cfg)
     entry = data.setdefault(service, {})
@@ -59,24 +63,31 @@ def record(cfg, service: str, headers=None, count: bool = True, now: float | Non
     if count:
         key = month_key(now)
         months[key] = int(months.get(key, 0)) + 1
+    if status == 200:
+        entry.pop("blocked_until", None)
     if headers is not None:
         limit = _monthly(headers.get("x-ratelimit-limit"))
         remaining = _monthly(headers.get("x-ratelimit-remaining"))
         reset = _monthly(headers.get("x-ratelimit-reset"))
-        if limit is not None and remaining is not None:
+        if limit is not None and limit > 0 and remaining is not None:
             entry.update(limit=limit, remaining=remaining, at=now)
             if reset is not None:
                 entry["reset_at"] = now + reset
+            if status == 429 and remaining <= 0 and reset:
+                entry["blocked_until"] = now + reset
+        elif limit is not None:  # kein festes Monatslimit (Abrechnung über Guthaben)
+            for key in ("limit", "remaining", "reset_at"):
+                entry.pop(key, None)
+            entry["at"] = now
     data[service] = entry
     _write(cfg, data)
 
 
 def exhausted(cfg, service: str, now: float | None = None) -> float | None:
-    """Aufgebraucht laut der letzten Antwort? → Zeitpunkt, ab dem es wieder geht; sonst None."""
-    entry = _read(cfg).get(service) or {}
-    reset_at = entry.get("reset_at")
-    if entry.get("remaining") == 0 and reset_at and reset_at > (now or time.time()):
-        return float(reset_at)
+    """Hat der Dienst das Monatskontingent als aufgebraucht gemeldet (HTTP 429)? → ab wann es wieder geht; sonst None."""
+    until = (_read(cfg).get(service) or {}).get("blocked_until")
+    if until and until > (now or time.time()):
+        return float(until)
     return None
 
 
@@ -87,7 +98,10 @@ def summary(cfg, now: float | None = None) -> dict:
         entry = _read(cfg).get("brave") or {}
         months = entry.get("months") or {}
         current = month_key(now)
-        out["brave"] = {"month": int(months.get(current, 0)), "limit": entry.get("limit"),
-                        "remaining": entry.get("remaining"), "reset_at": entry.get("reset_at"), "at": entry.get("at"),
+        fixed = (entry.get("limit") or 0) > 0  # ältere Einträge: 0 = kein festes Limit (Guthaben)
+        out["brave"] = {"month": int(months.get(current, 0)), "limit": entry.get("limit") if fixed else None,
+                        "remaining": entry.get("remaining") if fixed else None,
+                        "reset_at": entry.get("reset_at") if fixed else None, "at": entry.get("at"),
+                        "blocked_until": exhausted(cfg, "brave", now),
                         "last_months": sorted(((k, v) for k, v in months.items() if k != current), reverse=True)[:6]}
     return out

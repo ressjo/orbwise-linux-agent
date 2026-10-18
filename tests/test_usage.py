@@ -38,13 +38,36 @@ def test_record_counts_per_month_and_keeps_the_quota(cfg):
     assert usage.summary(cfg) == {}
 
 
-def test_exhausted_only_until_reset(cfg):
+def test_blocked_only_after_a_real_refusal(cfg):
     now = time.time()
-    usage.record(cfg, "brave", httpx.Headers({**BRAVE_HEADERS, "X-RateLimit-Remaining": "0, 0"}), now=now)
+    empty = httpx.Headers({**BRAVE_HEADERS, "X-RateLimit-Remaining": "0, 0"})
+    usage.record(cfg, "brave", empty, now=now)  # HTTP 200 mit Rest 0: Brave hat geantwortet → nicht sperren
+    assert usage.exhausted(cfg, "brave", now=now) is None
+    usage.record(cfg, "brave", empty, count=False, status=429, now=now)
     assert usage.exhausted(cfg, "brave", now=now + 10) == pytest.approx(now + 86400)
     assert usage.exhausted(cfg, "brave", now=now + 90000) is None
-    usage.record(cfg, "brave", httpx.Headers(BRAVE_HEADERS), now=now)
+    usage.record(cfg, "brave", httpx.Headers(BRAVE_HEADERS), now=now)  # wieder erfolgreich → frei
     assert usage.exhausted(cfg, "brave", now=now) is None
+
+
+def test_credit_billing_has_no_monthly_limit(cfg):
+    """Brave mit Guthaben: Monatswert 0 heißt „kein festes Limit“, nicht „aufgebraucht“."""
+    cfg.tools.brave_api_key = "secret"
+    credit = httpx.Headers({"X-RateLimit-Limit": "1, 0", "X-RateLimit-Remaining": "1, 0", "X-RateLimit-Reset": "1, 0"})
+    usage.record(cfg, "brave", credit)
+    usage.record(cfg, "brave", credit, count=False, status=429)
+    s = usage.summary(cfg)["brave"]
+    assert s["month"] == 1 and s["limit"] is None and s["remaining"] is None and s["blocked_until"] is None
+    assert usage.exhausted(cfg, "brave") is None
+
+
+def test_old_usage_file_does_not_block(cfg):
+    """Stand vor dem Fix: remaining 0 gespeichert, ohne Sperre – die Suche muss sofort wieder gehen."""
+    cfg.tools.brave_api_key = "secret"
+    path = cfg.memory.dir.parent / "usage.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"brave": {"months": {}, "limit": 0, "remaining": 0, "reset_at": %d}}' % (time.time() + 9999))
+    assert usage.exhausted(cfg, "brave") is None and usage.summary(cfg)["brave"]["limit"] is None
 
 
 def test_web_search_counts_and_skips_brave_when_used_up(cfg, monkeypatch):
@@ -60,7 +83,8 @@ def test_web_search_counts_and_skips_brave_when_used_up(cfg, monkeypatch):
     run(web.web_search(ctx(cfg), "y"))
     assert len(calls) == 2 and usage.summary(cfg)["brave"]["month"] == 2
 
-    usage.record(cfg, "brave", httpx.Headers({**BRAVE_HEADERS, "X-RateLimit-Remaining": "0, 0"}), count=False)
+    usage.record(cfg, "brave", httpx.Headers({**BRAVE_HEADERS, "X-RateLimit-Remaining": "0, 0"}), count=False,
+                 status=429)
     cfg.tools.search_fallback = True
     monkeypatch.setattr(web, "_ddgs", lambda q, n: [{"title": "D", "href": "https://d.de", "body": "E"}])
     out = run(web.web_search(ctx(cfg), "z"))
