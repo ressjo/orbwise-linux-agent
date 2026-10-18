@@ -7,6 +7,7 @@ import logging
 import re
 import shutil
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import Annotated
 from urllib.parse import quote_plus
 
@@ -114,13 +115,20 @@ TAG_RE = re.compile(r"<[^>]+>")
 BRAVE_NEWS_URL = "https://api.search.brave.com/res/v1/news/search"
 
 
-async def _brave_get(key: str, url: str, query: str, n: int, language: str, **extra) -> dict:
-    """Offizielle Brave Search API – kein Auslesen von Suchseiten, daher kein Bot-Blockieren."""
+async def _brave_get(key: str, url: str, query: str, n: int, language: str, cfg=None, **extra) -> dict:
+    """Offizielle Brave Search API – kein Auslesen von Suchseiten, daher kein Bot-Blockieren. Mit cfg wird die
+    Anfrage gezählt und das Monatskontingent laut Brave gemerkt (usage.py); ist es aufgebraucht, gar nicht erst fragen."""
+    from .. import usage
+    if cfg is not None and (until := usage.exhausted(cfg, "brave")):
+        raise RuntimeError("Brave-Kontingent für diesen Monat aufgebraucht – wieder ab "
+                           + datetime.fromtimestamp(until).strftime("%d.%m.%Y"))
     params: dict[str, str | int] = {"q": query, "count": n, **extra}
     params.update({"country": "DE", "search_lang": "de"} if language == "de" else {"search_lang": "en"})
     headers = {"X-Subscription-Token": key, "Accept": "application/json"}
     async with httpx.AsyncClient(timeout=20, transport=TRANSPORT, headers=headers) as client:
         r = await client.get(url, params=params)
+    if cfg is not None and r.status_code in (200, 429):
+        usage.record(cfg, "brave", r.headers, count=r.status_code == 200)
     if r.status_code in (401, 403) or (r.status_code == 422 and "TOKEN" in r.text.upper()):
         raise RuntimeError(f"Brave-API-Schlüssel ungültig oder ohne Berechtigung (HTTP {r.status_code})")
     if r.status_code == 429:
@@ -129,8 +137,8 @@ async def _brave_get(key: str, url: str, query: str, n: int, language: str, **ex
     return r.json()
 
 
-async def _brave(key: str, query: str, n: int, language: str = "de") -> list[dict]:
-    data = await _brave_get(key, BRAVE_URL, query, n, language)
+async def _brave(key: str, query: str, n: int, language: str = "de", cfg=None) -> list[dict]:
+    data = await _brave_get(key, BRAVE_URL, query, n, language, cfg)
     return [{"title": TAG_RE.sub("", x.get("title", "")), "href": x.get("url", ""),
              "body": TAG_RE.sub("", x.get("description", ""))}
             for x in (data.get("web") or {}).get("results", [])[:n]]
@@ -146,7 +154,7 @@ async def news_headlines(cfg, topic: str, n: int) -> list[dict]:
     tools = cfg.tools
     if tools.brave_key:
         try:
-            data = await _brave_get(tools.brave_key, BRAVE_NEWS_URL, topic, n, cfg.language, freshness="pd")
+            data = await _brave_get(tools.brave_key, BRAVE_NEWS_URL, topic, n, cfg.language, cfg, freshness="pd")
             return [{"title": TAG_RE.sub("", x.get("title", "")), "url": x.get("url", ""),
                      "source": (x.get("meta_url") or {}).get("hostname", "")} for x in data.get("results", [])[:n]]
         except Exception:
@@ -162,10 +170,15 @@ async def search_status(cfg) -> dict:
     if not tools.brave_key:
         return {"mode": "searxng" if tools.searxng_url else "scrape", "online": None}
     try:
-        await _brave(tools.brave_key, "orbwise", 1, cfg.language)
-        return {"mode": "brave", "online": True}
+        await _brave(tools.brave_key, "orbwise", 1, cfg.language, cfg)
+        return {"mode": "brave", "online": True, "usage": usage_summary(cfg)}
     except Exception as e:  # noqa: BLE001
-        return {"mode": "brave", "online": False, "error": str(e)}
+        return {"mode": "brave", "online": False, "error": str(e), "usage": usage_summary(cfg)}
+
+
+def usage_summary(cfg) -> dict:
+    from .. import usage
+    return usage.summary(cfg).get("brave") or {}
 
 
 def _ddgs(query: str, n: int) -> list[dict]:
@@ -185,7 +198,7 @@ async def web_search(
     # wird nur mit search_fallback: true auf das Auslesen ausgewichen (Bot-Sperren vermeiden).
     sources: list[tuple[str, Callable[[], Awaitable[list[dict]]]]] = []
     if tools.brave_key:
-        sources.append(("Brave", lambda: _brave(tools.brave_key, query, n, ctx.cfg.language)))
+        sources.append(("Brave", lambda: _brave(tools.brave_key, query, n, ctx.cfg.language, ctx.cfg)))
     if tools.searxng_url:
         sources.append(("SearXNG", lambda: _searxng(tools.searxng_url, query, n)))
     if not tools.brave_key or tools.search_fallback:

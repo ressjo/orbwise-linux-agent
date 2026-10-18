@@ -14,6 +14,10 @@ All notable changes to this project are documented here. The format follows
   only actions that change or start something do; the data-leak guard still checks what goes out.
 
 ### Added
+- **Brave quota in the activity panel:** Brave Search requests are counted per month and the quota Brave reports
+  (`X-RateLimit-*`) is kept; a tile shows used / limit / remaining / reset date (orange from 80 %, a notice below
+  10 %), `orbwise doctor` prints it, and a used-up quota is not queried again until it resets (with
+  `search_fallback` the result pages are used instead).
 - **Why was it read again?** Every model request is compared with the previous one; when more than 5,000 tokens had
   to be read again, the answer's stats line and the activity name the reason (tool list changed, old results hidden,
   summary, other chat/model, edited message, server lost the cache – restart, image mode, API use or hybrid model

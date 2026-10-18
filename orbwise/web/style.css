@@ -1095,3 +1095,4 @@ button.file-chip:hover { border-color: rgba(76,194,255,.45); }
 .spec-stats:empty, .batch-stats:empty { display: none; }
 .batch-stats { margin-top: 8px; font-size: 12.5px; color: var(--text-2); }
 .spec-stats.low { color: var(--warn); }
+#tele-brave { grid-column: 1 / -1; }

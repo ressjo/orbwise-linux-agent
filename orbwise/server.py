@@ -22,7 +22,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import askpass, metrics, prompts
+from . import askpass, metrics, prompts, usage
 from .agent import Agent
 from .config import BRIEFING_SECTIONS, BriefingConfig, Config, env
 from .lang import T, set_lang
@@ -740,7 +740,7 @@ def create_app(cfg: Config) -> FastAPI:
             if hub.clients:
                 try:
                     data = await asyncio.to_thread(metrics.collect)
-                    await hub.broadcast({"type": "metrics", **data})
+                    await hub.broadcast({"type": "metrics", **data, "usage": usage.summary(cfg)})
                 except Exception as e:  # noqa: BLE001
                     log.debug("Telemetrie fehlgeschlagen: %s", e)
             await asyncio.sleep(2)
@@ -1637,7 +1637,7 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.get("/api/metrics")
     async def get_metrics():
-        return await asyncio.to_thread(metrics.collect)
+        return {**await asyncio.to_thread(metrics.collect), "usage": usage.summary(cfg)}
 
     @app.get("/api/memory/days")
     async def memory_days():

@@ -153,6 +153,7 @@ HTML_EN = [
     ('<h2>Einstellungen</h2>', '<h2>Settings</h2>'),
     ('data-section="voice">Stimme<', 'data-section="voice">Voice<'),
     ('data-section="general">Allgemein<', 'data-section="general">General<'),
+    ('<div class="tele-label">Brave-Suche</div>', '<div class="tele-label">Brave search</div>'),
     # Modellseite
     ('title="Modelle"><svg class="i"><use href="#i-chip"/></svg><span>Modelle<',
      'title="Models"><svg class="i"><use href="#i-chip"/></svg><span>Models<'),

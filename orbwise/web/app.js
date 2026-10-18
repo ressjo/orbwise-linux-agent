@@ -2292,6 +2292,34 @@
         sub: `${L("von", "of")} ${fmt(gb(m.ram.total))} GB` + (m.cpu !== null && m.cpu !== undefined ? ` · CPU ${fmt(m.cpu, 0)} %` : "") });
       pushSpark("ram", gb(m.ram.used));
     }
+    showBraveUsage((m.usage || {}).brave);
+  }
+
+  // Brave Search API: Anfragen diesen Monat und Kontingent laut Brave (Stand der letzten Antwort)
+  let braveWarned = false;
+  function showBraveUsage(b) {
+    const el = $("tele-brave");
+    el.hidden = !b;
+    if (!b) return;
+    const pct = b.limit ? (100 * (b.limit - (b.remaining ?? b.limit))) / b.limit : null;
+    const reset = b.reset_at ? new Date(b.reset_at * 1000).toLocaleDateString(LOCALE, { day: "numeric", month: "short" }) : "";
+    const sub = b.limit != null
+      ? L(`von ${num(b.limit)} · noch ${num(b.remaining)}`, `of ${num(b.limit)} · ${num(b.remaining)} left`) + (reset ? L(` · neu ab ${reset}`, ` · resets ${reset}`) : "")
+      : L("Anfragen diesen Monat", "requests this month");
+    setTile("brave", b.month, { pct, digits: 0, sub });
+    el.title = [
+      L("Anfragen an die Brave Search API (Websuche, Briefing-Schlagzeilen, orbwise doctor).", "Requests to the Brave Search API (web search, briefing headlines, orbwise doctor)."),
+      b.limit != null ? L(`Kontingent laut Brave: ${num(b.limit - b.remaining)} von ${num(b.limit)} verbraucht (Stand der letzten Anfrage).`,
+                          `Quota according to Brave: ${num(b.limit - b.remaining)} of ${num(b.limit)} used (as of the last request).`) : "",
+      (b.last_months || []).length ? L("Frühere Monate: ", "Earlier months: ") + b.last_months.map(([k, v]) => `${k}: ${num(v)}`).join(", ") : "",
+      L("Ist es aufgebraucht, sucht Orbwise mit search_fallback über die Suchseiten weiter, sonst bis zum Monatswechsel nicht.",
+        "Once used up, Orbwise searches via result pages if search_fallback is on, otherwise not until it resets."),
+    ].filter(Boolean).join("\n");
+    if (b.limit && b.remaining != null && b.remaining < 0.1 * b.limit && !braveWarned) {
+      braveWarned = true;
+      toast(L(`Brave-Suche: nur noch ${num(b.remaining)} von ${num(b.limit)} Anfragen diesen Monat.`,
+              `Brave search: only ${num(b.remaining)} of ${num(b.limit)} requests left this month.`));
+    }
   }
 
   // Live-Token/s während des Streamens (gleitendes 2-s-Fenster), danach exakter Ollama-Wert

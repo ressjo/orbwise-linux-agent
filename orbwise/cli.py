@@ -251,6 +251,11 @@ def cmd_doctor(args) -> None:
     if ws["mode"] == "brave":
         fallback = T(" (Rückfall: Suchseiten auslesen)", " (fallback: scraping)") if cfg.tools.search_fallback else ""
         line(ws["online"], "Brave Search API" + fallback, ws.get("error", ""))
+        u = ws.get("usage") or {}
+        if u:
+            quota = (T(f" von {u['limit']}, noch {u['remaining']}", f" of {u['limit']}, {u['remaining']} left")
+                     if u.get("limit") is not None else "")
+            print("  ℹ " + T(f"Diesen Monat {u['month']} Anfragen", f"{u['month']} requests this month") + quota)
     elif ws["mode"] == "searxng":
         print(f"  ℹ SearXNG {cfg.tools.searxng_url} – " + T("Rückfall: Suchseiten auslesen", "fallback: scraping result pages"))
     else:
