@@ -464,6 +464,16 @@ models start with Strata's own recommendation, marked on the model page:
 | 14 – 19 GB | 64k | RTX 4080 + 64 GB RAM (IQ2_XS): 128k – 256k also fine, the KV cache goes to RAM |
 | 20 GB and more | 128k | RX 7900 XT + 32 GB RAM (Coder): KV cache stays in VRAM – 64k is the faster choice |
 
+The card size counts minus the desktop reserve below – with 3 GB kept free, a 20 GB card gets 64k.
+
+**PC freezes while loading (AMD):** Strata fills the VRAM with experts and keeps only 700 MiB free – sized for a card
+without a desktop. When the same AMD card also drives the screen on Linux, the desktop needs VRAM too; amdgpu then
+moves experts into RAM, which Strata already fills, and the PC hangs (Strata issues #560/#516). Orbwise therefore keeps
+**3 GB free on AMD cards** (`strata launch … --set vram-reserve-mib=3072`; Strata's own recommendation), also for
+Strata models added before. Change it on the model page under **Video memory for the desktop** (0.7 / 1.5 / 3 / 4 GB) –
+less only when the desktop runs on another card. If the PC still runs short of RAM: close the browser or other big
+programs while loading, and consider `earlyoom` or `systemd-oomd` so Linux ends a program instead of freezing.
+
 ### Why was so much read again?
 
 With a warm prompt cache only what is new gets read; a long wait means the server had to read most of the chat

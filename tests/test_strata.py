@@ -93,6 +93,21 @@ def test_nvidia_rtx_4080_with_64_gb(monkeypatch):
     assert strata.nvidia_info(run=fake_smi) == {"driver": "580.95.05", "compute_cap": 8.9}
 
 
+def test_vram_reserve_for_the_desktop():
+    """AMD unter Linux: der Desktop braucht Platz auf derselben Karte – sonst schiebt amdgpu Experten in den vollen RAM."""
+    assert strata.default_reserve({"vendor": "amd"}) == 3072 and strata.default_reserve({"vendor": "nvidia"}) == 700
+    cmd = "/x/strata launch --model iq1_m --context 65536 --yes --no-tui --restart"
+    assert strata.reserve_of(cmd) == 700 and strata.with_reserve(cmd, 700) == cmd
+    with_3g = strata.with_reserve(cmd, 3072)
+    assert with_3g.endswith(" --set vram-reserve-mib=3072") and strata.reserve_of(with_3g) == 3072
+    again = strata.with_reserve(with_3g, 4096)
+    assert again.count("vram-reserve-mib") == 1 and strata.reserve_of(again) == 4096
+    assert strata.with_reserve(with_3g, 700) == cmd
+    # 3 GB Reserve auf der RX 7900 XT: weniger Platz für Experten → 64K statt 128K empfohlen
+    assert strata.recommend_context(19.98, 3072) == 65536 and strata.recommend_context(16, 3072) == 65536
+    assert next(o for o in strata.context_options("iq1_m", 20, 31.3, 3072) if o["recommended"])["ctx"] == 65536
+
+
 def test_context_follows_strata_rules():
     assert strata.recommend_context(12) == 32768 and strata.recommend_context(16) == 65536
     assert strata.recommend_context(19.98) == 131072  # RX 7900 XT meldet knapp unter 20 GB
@@ -159,6 +174,18 @@ def test_profile_runs_strata_detached(home, cfg):
     for call in (router.set_kv("s", "q8_0"), router.set_ubatch("s", 1024), router.set_spec("s", "ngram")):
         with pytest.raises(LLMError, match="Strata"):
             run(call)
+    # VRAM-Reserve: gemerkt und nach einem Neustart wieder im Befehl
+    assert info["strata_reserve"] == 700
+    router.unloaded = True  # nicht geladen: gilt beim nächsten Start, ohne Strata hier zu starten
+    run(router.set_strata_reserve("s", 3072))
+    assert "--set vram-reserve-mib=3072" in router.profiles["s"].server.command
+    assert router.describe()[0]["strata_reserve"] == 3072
+    with pytest.raises(LLMError, match="Reserve"):
+        run(router.set_strata_reserve("s", 1000))
+    again = LLMRouter(LLMConfig(profiles={"s": ProfileConfig(**{**p, "server": server})}, active="s"),
+                      state_path=home / "other.json")
+    assert again.describe()[0]["strata_reserve"] == 3072
+    assert strata.reserve_of(strata.make_profile(cfg, "iq1_m", 9999, reserve=3072)["server"]["command"]) == 3072
 
 
 class Health(BaseHTTPRequestHandler):
@@ -247,10 +274,17 @@ def test_api_offers_the_coder_and_checks_tools(cfg, home, health, monkeypatch):
             time.sleep(0.05)
         p = profiles[name]
         assert p["engine"] == "Strata" and p["quant"] == "IQ1_M" and not p["kv_settable"] and p["tools_ok"] is None
-        # Kontext: 20-GB-Karte → 128K empfohlen und angelegt; bei 32 GB RAM bleibt der KV-Cache im VRAM
-        assert "--context 131072" in app.state.hub.agent.llm.profiles[name].server.command
+        # AMD: 3 GB VRAM für den Desktop (sonst friert der PC ein) → auf der 20-GB-Karte 64K statt 128K empfohlen;
+        # bei 32 GB RAM bleibt der KV-Cache im VRAM
+        cmd = app.state.hub.agent.llm.profiles[name].server.command
+        assert "--context 65536" in cmd and "--set vram-reserve-mib=3072" in cmd
+        assert p["strata_reserve"] == 3072 and p["strata_reserve_default"] == 3072
         rec = next(o for o in p["ctx_options"] if o["recommended"])
-        assert rec["ctx"] == 131072 and not rec["kv_in_ram"] and max(o["ctx"] for o in p["ctx_options"]) == 262144
+        assert rec["ctx"] == 65536 and not rec["kv_in_ram"] and max(o["ctx"] for o in p["ctx_options"]) == 262144
+        assert client.post(f"/api/models/{name}/strata-reserve", json={"mib": 1000}).status_code == 400
+        assert client.post("/api/models/qwen/strata-reserve", json={"mib": 3072}).status_code == 400
+        assert client.post(f"/api/models/{name}/strata-reserve", json={"mib": 4096}).json()["mib"] == 4096
+        assert "--set vram-reserve-mib=4096" in app.state.hub.agent.llm.profiles[name].server.command
         assert client.post(f"/api/models/{name}/context", json={"ctx": 393216, "mode": "tools"}).status_code == 400
         assert client.post(f"/api/models/{name}/kv", json={"kv": "q8_0"}).status_code == 400
         assert next(o for o in client.get("/api/strata").json()["options"] if o["model"] == "iq1_m")["added"]
@@ -267,3 +301,29 @@ def test_api_offers_the_coder_and_checks_tools(cfg, home, health, monkeypatch):
                 break
             time.sleep(0.05)
         assert p["tools_ok"] is False  # der Fake liefert keine Werkzeug-Aufrufe
+
+
+def test_older_strata_profile_gets_the_amd_reserve_at_start(cfg, home, monkeypatch):
+    """Vor dem Fix angelegt (ohne Reserve): beim Start bekommt das Profil auf AMD die 3 GB, ohne dass man etwas tut."""
+    from orbwise import models as mdl
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
+    monkeypatch.setattr(mdl, "detect_gpu", lambda: {"vendor": "amd", "name": "RX 7900 XT", "vram_gb": 20.0})
+    state = cfg.memory.dir.parent / "state.json"
+    name = strata.add_model(cfg, state, "iq1_m", {})
+    raw = json.loads(state.read_text())
+    raw.pop("strata_reserve")  # Stand vor dem Fix
+    state.write_text(json.dumps(raw))
+    cfg.llm.base_url = "http://127.0.0.1:9"
+    cfg.llm.profiles = {"qwen": ProfileConfig(model="qwen3:8b")}
+    cfg.llm.active = "qwen"
+    from orbwise.server import create_app
+    app = create_app(cfg)
+    with TestClient(app, base_url="http://localhost:8765"):
+        router = app.state.hub.agent.llm
+        for _ in range(100):
+            if "vram-reserve-mib=3072" in router.profiles[name].server.command:
+                break
+            time.sleep(0.05)
+        assert "--set vram-reserve-mib=3072" in router.profiles[name].server.command
+    assert json.loads(state.read_text())["strata_reserve"] == {name: 3072}

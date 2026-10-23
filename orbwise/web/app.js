@@ -2656,6 +2656,11 @@
         + "size and speculative decoding itself. On the first load Strata downloads its engine and the model (progress above); after that "
         + "the PC can be sluggish for 1–3 minutes while loading.");
       box.querySelector(".md-ctx").after(note);
+      const res = document.createElement("section");
+      res.className = "md-sec md-reserve";
+      res.innerHTML = `<div class="md-sec-head"><h4></h4></div><div class="ctx-opts reserve-opts"></div><p class="set-hint"></p>`;
+      box.querySelector(".md-ctx").after(res);
+      renderReserve(res, p);
     } else {
       renderKvSettings(box.querySelector(".md-kv"), p);
       renderBatch(box.querySelector(".md-batch"), p);
@@ -2817,6 +2822,48 @@
   }
 
   // Batch-Größe (-ub): größer = lange Eingaben (Werkzeuge, Dateien, PDFs) werden schneller eingelesen, kostet VRAM
+  // Strata: Grafikspeicher für den Desktop freihalten – auf AMD unter Linux friert der PC sonst beim Laden ein
+  function renderReserve(sec, p) {
+    sec.querySelector("h4").textContent = L("Grafikspeicher für den Desktop", "Video memory for the desktop");
+    const amd = ((MP.data && MP.data.gpu) || {}).vendor === "amd";
+    const rec = p.strata_reserve_default || 700;
+    const current = p.strata_reserve || 700;
+    const opts = sec.querySelector(".reserve-opts");
+    const notes = { 700: L("Strata-Standard", "Strata default"), 1536: "", 3072: "", 4096: L("sicherer, etwas langsamer", "safer, a bit slower") };
+    for (const mib of [700, 1536, 3072, 4096]) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "ctx-opt" + (mib === current ? " on" : "") + (amd && mib < 3072 ? " big" : "");
+      b.innerHTML = "<span></span><small></small>";
+      b.querySelector("span").textContent = `${fmt(mib / 1024, 1)} GB`;
+      b.querySelector("small").textContent = [mib === rec ? L("empfohlen", "recommended") : "", notes[mib],
+                                              amd && mib < 3072 ? L("Einfrier-Gefahr", "may freeze") : ""].filter(Boolean).join(" · ");
+      b.disabled = !!MP.data.switching;
+      b.onclick = async () => {
+        if (mib === current) return;
+        if (amd && mib < 3072 && !confirm(L("Weniger als 3 GB freihalten? Treibt die AMD-Karte auch den Bildschirm an, kann der PC beim Laden einfrieren. Nur wählen, wenn der Desktop auf einer anderen Grafikkarte läuft.",
+                                            "Keep less than 3 GB free? If the AMD card also drives the screen, the PC can freeze while loading. Only choose this when the desktop runs on another graphics card."))) return;
+        opts.querySelectorAll(".ctx-opt").forEach((x) => { x.disabled = true; });
+        if (isLive(p)) toast(L("Strata startet mit der neuen Reserve neu …", "Restarting Strata with the new reserve …"));
+        try {
+          await api("POST", `/api/models/${encodeURIComponent(p.name)}/strata-reserve`, { mib });
+          toast(L(`Strata hält jetzt ${fmt(mib / 1024, 1)} GB Grafikspeicher frei.`, `Strata now keeps ${fmt(mib / 1024, 1)} GB of video memory free.`));
+        } catch { /* Meldung kommt von api() */ }
+        refreshModelViews();
+      };
+      opts.appendChild(b);
+    }
+    sec.querySelector(".set-hint").textContent = L(
+      "Strata füllt den Grafikspeicher mit Experten. Treibt dieselbe Karte auch den Bildschirm an (AMD unter Linux), braucht der Desktop dort Platz – "
+      + "ist keiner frei, schiebt der Treiber Experten in den RAM, den Strata schon füllt, und der PC friert ein. Für AMD sind 3 GB empfohlen; "
+      + "weniger ist etwas schneller, aber nur sicher, wenn der Desktop auf einer anderen Karte läuft. Mehr Reserve = etwas weniger Kontext empfohlen. "
+      + (isLive(p) ? "Zum Ändern startet Strata neu." : "Gilt ab dem nächsten Laden."),
+      "Strata fills the video memory with experts. If the same card also drives the screen (AMD on Linux), the desktop needs room there – "
+      + "without it the driver moves experts into RAM, which Strata already fills, and the PC freezes. 3 GB is recommended for AMD; "
+      + "less is a bit faster but only safe when the desktop runs on another card. More reserve = a little less context recommended. "
+      + (isLive(p) ? "Changing it restarts Strata." : "Applies the next time it is loaded."));
+  }
+
   function renderBatch(sec, p) {
     sec.querySelector("h4").textContent = L("Einlesen (Batch-Größe)", "Prompt processing (batch size)");
     const big = ((MP.data && MP.data.gpu) || {}).vram_gb >= 16;

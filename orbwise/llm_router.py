@@ -466,6 +466,12 @@ class LLMRouter:
         for name, n in (state.get("ubatch") or {}).items():
             if name in self.profiles and n in UBATCH_SIZES and self.profiles[name].server:
                 self._apply_ubatch(name, n)
+        for name, mib in (state.get("strata_reserve") or {}).items():
+            if name in self.profiles and is_strata(self.profiles[name].server):
+                try:
+                    self._apply_strata_reserve(name, mib)
+                except LLMError as e:
+                    log.warning("VRAM-Reserve für '%s' nicht gesetzt: %s", name, e)
         for name, mode in (state.get("speculative") or {}).items():
             if name in self.profiles and mode in SPEC_MODES and self.profiles[name].server:
                 try:
@@ -799,6 +805,24 @@ class LLMRouter:
             self._apply_ubatch(name, n)  # meldet den Grund
         await self._reconfigure(name, lambda: self._apply_ubatch(name, n), "ubatch", n, progress)
 
+    def _apply_strata_reserve(self, name: str, mib: int) -> None:
+        """Grafikspeicher, den Strata frei lässt (für den Desktop auf derselben Karte) – wirkt beim nächsten Start."""
+        from . import strata
+        p = self.profiles[name]
+        if not is_strata(p.server):
+            raise LLMError(T("Nur bei Strata-Modellen einstellbar.", "Only available for Strata models."))
+        if mib not in strata.RESERVE_STEPS:
+            raise LLMError(T("Reserve bitte 700, 1536, 3072 oder 4096 MiB", "Reserve please 700, 1536, 3072 or 4096 MiB"))
+        p.server = p.server.model_copy(update={"command": strata.with_reserve(p.server.command, mib)})
+        self.servers.pop(name, None)  # neuer Startbefehl
+
+    async def set_strata_reserve(self, name: str, mib: int, progress: Progress | None = None) -> None:
+        """VRAM-Reserve eines Strata-Profils ändern und merken; beim geladenen Profil startet Strata neu."""
+        if name not in self.profiles:
+            raise LLMError(f"Unbekanntes Profil '{name}'")
+        self._apply_strata_reserve(name, mib)  # prüft Profil und Wert
+        await self._reconfigure(name, lambda: self._apply_strata_reserve(name, mib), "strata_reserve", mib, progress)
+
     def _apply_spec(self, name: str, mode: str) -> None:
         """Spekulatives Decoding eines eigenen llama-server setzen (wirkt beim nächsten Start)."""
         p = self.profiles[name]
@@ -1002,9 +1026,11 @@ class LLMRouter:
     def _server_options(p: ProfileConfig) -> dict:
         """Startoptionen für die Modellseite – bei Strata keine: die Engine regelt KV-Cache, Batch und Spekulation."""
         if not p.server or is_strata(p.server):
+            from .strata import reserve_of
             return {"kv": None, "kv_settable": False, "kv_options": [], "ubatch": None, "ubatch_settable": False,
                     "spec": "off", "spec_options": [] if p.server else spec_options(None),
-                    "strata": is_strata(p.server)}
+                    "strata": is_strata(p.server),
+                    **({"strata_reserve": reserve_of(p.server.command)} if is_strata(p.server) else {})}
         return {"kv": cache_type(p.server.command, p.server.env), "kv_settable": True,
                 "kv_options": kv_types(p.server.command, p.server.env),
                 "ubatch": ubatch_of(p.server.command), "ubatch_settable": True,

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import secrets
 import shlex
 import shutil
@@ -146,10 +147,34 @@ def kv_gb(ctx: int) -> float:
     return ctx * KV_BYTES_PER_TOKEN / 1e9
 
 
-def recommend_context(vram_gb: float) -> int:
+# Grafikspeicher, den die Engine frei lässt (MiB). Stratas Standard 700 ist für eine Karte ohne Desktop gedacht: treibt
+# dieselbe AMD-Karte unter Linux den Bildschirm an, verschiebt amdgpu bei vollem VRAM den Experten-Cache in den RAM, den
+# die Experten schon füllen – der PC friert ein. Strata empfiehlt dafür 3072 (serve/server.py desktop_vram_note, #560).
+RESERVE_STEPS = (700, 1536, 3072, 4096)
+DEFAULT_RESERVE = 700
+DESKTOP_RESERVE = 3072
+_RESERVE_RE = re.compile(r"\s+--set\s+vram-reserve-mib=\d+")
+
+
+def default_reserve(gpu: dict | None) -> int:
+    """AMD: der Desktop läuft meist auf derselben Karte – Orbwise läuft als Dienst und sieht das nicht sicher."""
+    return DESKTOP_RESERVE if (gpu or {}).get("vendor") == "amd" else DEFAULT_RESERVE
+
+
+def reserve_of(command: str) -> int:
+    m = re.search(r"--set\s+vram-reserve-mib=(\d+)", command or "")
+    return int(m.group(1)) if m else DEFAULT_RESERVE
+
+
+def with_reserve(command: str, mib: int) -> str:
+    command = _RESERVE_RE.sub("", command)
+    return command if mib == DEFAULT_RESERVE else f"{command} --set vram-reserve-mib={mib}"
+
+
+def recommend_context(vram_gb: float, reserve_mib: int = DEFAULT_RESERVE) -> int:
     """Stratas eigene Regel: der KV-Cache jeder Karte nimmt Experten Platz weg – unter 14 GB 32K, unter 20 GB 64K, sonst
-    128K. VRAM als ganze GB (eine 20-GB-Karte meldet etwas weniger)."""
-    vram = round(vram_gb or 0)
+    128K. VRAM als ganze GB (eine 20-GB-Karte meldet etwas weniger), abzüglich einer größeren Reserve für den Desktop."""
+    vram = round((vram_gb or 0) - max(0, reserve_mib - DEFAULT_RESERVE) / 1024)
     return 32768 if vram < 14 else 65536 if vram < 20 else 131072
 
 
@@ -170,9 +195,9 @@ def _gb(x: float) -> str:
     return T(f"{x:.1f}".replace(".", ","), f"{x:.1f}")
 
 
-def context_options(model: str, vram_gb: float, ram_gb: float) -> list[dict]:
+def context_options(model: str, vram_gb: float, ram_gb: float, reserve_mib: int = DEFAULT_RESERVE) -> list[dict]:
     """Die Kontextstufen für die Modellseite: Empfehlung, KV-Größe und wo der KV-Cache liegt."""
-    rec = recommend_context(vram_gb)
+    rec = recommend_context(vram_gb, reserve_mib)
     out = []
     for ctx in CONTEXTS:
         kv, in_ram = kv_gb(ctx), kv_in_ram(model, ctx, ram_gb)
@@ -188,15 +213,15 @@ def context_options(model: str, vram_gb: float, ram_gb: float) -> list[dict]:
     return out
 
 
-def make_profile(cfg, model: str, port: int, context: int = 65536) -> dict:
+def make_profile(cfg, model: str, port: int, context: int = 65536, reserve: int = DEFAULT_RESERVE) -> dict:
     """Profil für einen von Orbwise gestarteten Strata-Server (abgelöst, eigener Schlüssel über die Umgebung)."""
     m = MODELS[model]
     key = secrets.token_hex(16)
     exe = shlex.quote(str(binary()))
     folder = models_dir(cfg) / model  # je Variante ein Ordner – Fortschritt und Löschen beziehen sich nur auf sie
     data = shlex.quote(str(folder))
-    command = (f"{exe} launch --model {model} --family {m['family']} --context {context} --port {port} "
-               f"--api-key-env {KEY_ENV} --data-dir {data} --yes --no-tui --restart")
+    command = with_reserve(f"{exe} launch --model {model} --family {m['family']} --context {context} --port {port} "
+                           f"--api-key-env {KEY_ENV} --data-dir {data} --yes --no-tui --restart", reserve)
     return {
         "label": m["label"],
         "backend": "openai",
@@ -213,9 +238,10 @@ def make_profile(cfg, model: str, port: int, context: int = 65536) -> dict:
     }
 
 
-def add_model(cfg, state_path: Path, model: str, profiles: dict, context: int = 65536) -> str:
-    """Strata-Modell als Profil anlegen → Profilname. Die Dateien lädt Strata beim ersten Start selbst. `context`: der
-    Server übergibt recommend_context für diese Grafikkarte."""
+def add_model(cfg, state_path: Path, model: str, profiles: dict, context: int = 65536,
+              reserve: int = DEFAULT_RESERVE) -> str:
+    """Strata-Modell als Profil anlegen → Profilname. Die Dateien lädt Strata beim ersten Start selbst. `context` und
+    `reserve`: der Server übergibt recommend_context bzw. default_reserve für diese Grafikkarte."""
     from . import llamacpp
     from .models import register_profile
     if model not in MODELS:
@@ -225,10 +251,11 @@ def add_model(cfg, state_path: Path, model: str, profiles: dict, context: int = 
             raise ValueError(T(f"Diese Variante ist schon als „{p.label or name}“ angelegt.",
                                f"This variant already exists as “{p.label or name}”."))
     name = llamacpp.unique_name(MODELS[model]["label"], set(profiles))
-    register_profile(state_path, name, make_profile(cfg, model, llamacpp.free_port(profiles), context))
+    register_profile(state_path, name, make_profile(cfg, model, llamacpp.free_port(profiles), context, reserve))
     data = llamacpp._read(state_path)
     data.setdefault("local_models", {})[name] = {"files": [], "downloaded": False, "engine": "strata", "repo": "",
                                                  "strata_model": model, "dir": str(models_dir(cfg) / model)}
+    data.setdefault("strata_reserve", {})[name] = reserve  # gewählt – die Vorgabe beim Start überschreibt es nicht
     llamacpp._write(state_path, data)
     return name
 

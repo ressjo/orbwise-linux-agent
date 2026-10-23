@@ -581,8 +581,28 @@ def create_app(cfg: Config) -> FastAPI:
         if not agent.busy():
             await hub.broadcast({"type": "state", "state": "idle"})
 
+    async def strata_reserve_default() -> None:
+        """Strata-Profile ohne gewählte VRAM-Reserve bekommen die Vorgabe für diese Karte (AMD: 3 GB für den Desktop –
+        mit Stratas 700 MiB friert der PC beim Laden ein). Vor dem Start, damit sie gleich gilt."""
+        if not isinstance(llm, LLMRouter):
+            return
+        from . import llamacpp as llamacpp_mod
+        from . import strata as strata_mod
+        data = llamacpp_mod._read(state_file)
+        chosen = data.get("strata_reserve") or {}
+        missing = [n for n, p in llm.profiles.items() if is_strata(p.server) and n not in chosen]
+        if not missing:
+            return
+        mib = strata_mod.default_reserve(await gpu_info())
+        for name in missing:
+            llm._apply_strata_reserve(name, mib)
+            chosen[name] = mib
+        data["strata_reserve"] = chosen
+        llamacpp_mod._write(state_file, data)
+
     async def start_model() -> None:
         # Beim Start das aktive Profil vorbereiten (z. B. llama-server starten); Chats warten so lange
+        await strata_reserve_default()
         name = llm.active
         label = llm.profile.label or llm.profile.model
         if llm.unloaded:  # beim Beenden entladen → bleibt so, bis jemand fragt
@@ -886,8 +906,10 @@ def create_app(cfg: Config) -> FastAPI:
                 if local.get("strata_model") in strata_mod.MODELS:
                     if ram_total is None:
                         ram_total = ((await asyncio.to_thread(metrics.collect)).get("ram") or {}).get("total") or 0
-                    p["ctx_options"] = strata_mod.context_options(local["strata_model"], gpu.get("vram_gb") or 0,
-                                                                  ram_total / 1024 ** 3)
+                    p["ctx_options"] = strata_mod.context_options(
+                        local["strata_model"], gpu.get("vram_gb") or 0, ram_total / 1024 ** 3,
+                        p.get("strata_reserve") or strata_mod.DEFAULT_RESERVE)
+                    p["strata_reserve_default"] = strata_mod.default_reserve(gpu)
             elif local is not None:
                 files = [f for f in local.get("files", []) if Path(f).is_file()]
                 p["keeps_files"] = not local.get("downloaded")
@@ -1177,7 +1199,8 @@ def create_app(cfg: Config) -> FastAPI:
         ok, note = strata.gpu_supported(gpu)
         if not ok:
             raise HTTPException(400, note)
-        context = strata.recommend_context(gpu.get("vram_gb") or 0)
+        reserve = strata.default_reserve(gpu)  # AMD: Platz für den Desktop, sonst friert der PC beim Laden ein
+        context = strata.recommend_context(gpu.get("vram_gb") or 0, reserve)
 
         async def job() -> dict:
             async def step(done: int, total: int) -> None:
@@ -1185,7 +1208,8 @@ def create_app(cfg: Config) -> FastAPI:
                 await hub.broadcast({"type": "model_pull", "tag": "Strata", "completed": done, "total": total})
             await strata.install(step)
             async with add_lock:
-                name = await asyncio.to_thread(strata.add_model, cfg, state_file, model, llm.profiles, context)
+                name = await asyncio.to_thread(strata.add_model, cfg, state_file, model, llm.profiles, context,
+                                               reserve)
                 llm.add_downloaded_models()
             await hub.broadcast({"type": "models_changed"})
             return {"profile": name, "kind": "strata", "version": strata.version()}
@@ -1380,6 +1404,7 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
         if name not in llm.profiles:
             raise HTTPException(404, "Unbekanntes Profil")
+        await strata_reserve_default()  # z. B. gerade angelegtes oder älteres Strata-Profil
         await hub.broadcast({"type": "model_switching", "name": name, "label": llm.profiles[name].label})
         llm.switching = name
         try:
@@ -1744,6 +1769,43 @@ def create_app(cfg: Config) -> FastAPI:
             hub.prewarm_soon()
         await hub.broadcast({"type": "models_changed"})
         return {"ok": True, "ubatch": size}
+
+    @app.post("/api/models/{name}/strata-reserve")
+    async def set_strata_reserve(name: str, request: Request):
+        """Grafikspeicher, den Strata frei lässt – für den Desktop auf derselben (AMD-)Karte, sonst friert der PC ein."""
+        from . import strata
+        if not isinstance(llm, LLMRouter):
+            raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
+        if name not in llm.profiles:
+            raise HTTPException(404, "Unbekanntes Profil")
+        if not is_strata(llm.profiles[name].server):
+            raise HTTPException(400, T("Nur bei Strata-Modellen einstellbar.", "Only available for Strata models."))
+        try:
+            mib = int((await request.json()).get("mib", 0))
+        except (TypeError, ValueError):
+            mib = 0
+        if mib not in strata.RESERVE_STEPS:
+            raise HTTPException(400, T("Reserve bitte 700, 1536, 3072 oder 4096 MiB",
+                                       "Reserve please 700, 1536, 3072 or 4096 MiB"))
+        active = name == llm.active and not llm.unloaded
+        if active:
+            await hub.broadcast({"type": "model_switching", "name": name, "label": llm.profiles[name].label})
+            llm.switching = name
+        try:
+            async with agent.lock:  # wartet, bis eine laufende Antwort fertig ist
+                await llm.set_strata_reserve(name, mib, model_progress)
+        except LLMError as e:
+            await hub.broadcast({"type": "model_error", "name": name, "text": str(e)})
+            raise HTTPException(502, str(e)) from e
+        finally:
+            llm.switching = None
+            await idle_if_free()
+        if active:
+            await hub.broadcast({"type": "model_active", "name": name})
+            agent._cache_owner = None  # neu gestartet = leerer Cache
+            hub.prewarm_soon()
+        await hub.broadcast({"type": "models_changed"})
+        return {"ok": True, "mib": mib}
 
     @app.post("/api/models/{name}/spec")
     async def set_model_spec(name: str, request: Request):
