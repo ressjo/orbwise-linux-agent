@@ -14,6 +14,12 @@ All notable changes to this project are documented here. The format follows
   only actions that change or start something do; the data-leak guard still checks what goes out.
 
 ### Added
+- **Strata engine for Qwen3.8-Flash-Next:** Models → Add offers the large MoE model with the variant that fits VRAM +
+  RAM (32 GB RAM → Coder IQ1_M). Orbwise installs the Strata terminal like its `install.sh` (manifest SHA-256, signed
+  feed check), runs it as a detached model server (new `server.detached`, `stop_command`, `ready_key`,
+  `progress_dir`/`progress_gb` options: start command returns, stop via `strata launch --stop`, ready on
+  `/health` `loaded`, download progress while loading), checks tool calling once after the first load, and hides
+  the llama.cpp-only settings for it. Deleting the model removes its folder in `~/models/strata`.
 - **Brave quota in the activity panel:** Brave Search requests are counted per month and the quota Brave reports
   (`X-RateLimit-*`) is kept; a tile shows used / limit / remaining / reset date (orange from 80 %, a notice below
   10 %), `orbwise doctor` prints it, and a used-up quota is not queried again until it resets (with

@@ -422,6 +422,28 @@ shows the full command; restored checkpoints appear in the same log.
 - **Vision model** (screen understanding): on a small GPU it can push the language model out of VRAM; the next step
   then reads the chat again (the activity shows it). `vision.keep_alive: 2m` unloads it soon afterwards.
 
+### Large MoE models with Strata (Qwen3.8-Flash-Next)
+
+Qwen3.8-Flash-Next (~125B parameters, 6B active per token, plus a ~29 GB lookup table) does not fit on a gaming card
+with llama.cpp. [Strata](https://github.com/Niko1221/Strata) (MIT, a separate engine that uses parts of ggml) keeps
+the most-used experts in VRAM, all of them in RAM and the lookup table on the SSD. **Models → Add → Strata** sets it
+up like Strata's own `install.sh`: it reads the release's `install-manifest.txt`, checks the SHA-256 of the terminal
+archive, unpacks it to `~/.local/share/strata/terminal/` and verifies the signed release feed with it
+(`strata update --check`) before using it – then adds the variant that fits your memory as a model:
+
+| RAM (+ a 12 GB+ card) | Variant |
+|---|---|
+| 32 GB | Coder IQ1_M (half the experts – strong at code and tools, weaker at other text; ~58 GB download) |
+| 48–64 GB | IQ2_XS (or Q2_0, the fastest) |
+| ≥ 96 GB | IQ3_S (matches the full model) |
+
+On the first **Load** Strata downloads its engine and the model into `~/models/strata/<variant>` (progress shows while
+loading); afterwards loading can make the PC sluggish for 1–3 minutes. Orbwise starts it as a detached server
+(`strata launch … --no-tui`, its own API key passed via the environment, ready once `/health` reports `loaded`),
+stops it with `strata launch --stop` (also before image mode or another model) and checks once whether it returns
+tool calls – without them Orbwise can only chat with it. KV cache, batch size and speculative decoding are handled by
+Strata itself, so the model page only offers the context window and sampling. AMD support is experimental in Strata.
+
 ### Why was so much read again?
 
 With a warm prompt cache only what is new gets read; a long wait means the server had to read most of the chat
@@ -1037,6 +1059,7 @@ from their original sources, and their licenses apply:
 | Language models via Ollama / Bonsai-demo (Qwen, Llama, Mistral, gpt-oss, Bonsai, …) | chat | per model – see its model card |
 | [ddgs](https://pypi.org/project/ddgs/), [trafilatura](https://github.com/adbar/trafilatura), [caldav](https://github.com/python-caldav/caldav) | web search, page text, calendar | MIT · Apache-2.0 · GPL-3.0-or-later OR Apache-2.0 |
 | [pypdf](https://github.com/py-pdf/pypdf) | reading attached PDFs | BSD-3-Clause |
+| [Strata](https://github.com/Niko1221/Strata) (optional, downloaded on request) | large MoE models (Qwen3.8-Flash-Next) | MIT · models per model card |
 
 If you redistribute Orbwise together with these components (e.g. as a package or image), you must comply with
 their licenses as well. Using the "Hey Jarvis" wake word model commercially is not allowed by its license.

@@ -76,6 +76,16 @@ def cmd_doctor(args) -> None:
         line(not why, f"llama.cpp {m.get('tag', '?')} ({m.get('flavor', '?')})" + (f" – {why}" if why else "")
              + f" · {T('Modelle in', 'models in')} {llamacpp._short(llamacpp.models_dir(cfg))}",
              "orbwise model llamacpp --update")
+    from . import strata
+    if strata.installed():  # Strata-Engine für große MoE-Modelle (Qwen3.8-Flash-Next)
+        recs = [r for r in (llamacpp._read(cfg.memory.dir.parent / "state.json").get("local_models") or {}).values()
+                if r.get("engine") == "strata"]
+        tools = [r.get("tools_ok") for r in recs]
+        note = (T(" · Werkzeuge ✘ (nur Chat)", " · tools ✘ (chat only)") if False in tools
+                else T(" · Werkzeuge ✔", " · tools ✔") if True in tools else "")
+        line(False not in tools, f"Strata {strata.version() or '?'} · {len(recs)} "
+             + T("Modell(e)", "model(s)") + note, T("Modelle → Strata → Engine aktualisieren",
+                                                   "Models → Strata → update engine"))
     for name, p in router.profiles.items():
         mark = T(" (aktiv)", " (active)") if name == router.active else ""
         print(f"  {T('Profil', 'Profile')} {name}{mark}: {p.backend} · {p.model} · {p.base_url}")

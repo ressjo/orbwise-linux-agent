@@ -2586,6 +2586,9 @@
       [L("Beschleunigung", "Speed-up"), p.spec && p.spec !== "off" ? (p.spec === "mtp" ? "MTP" : L("N-Gramm", "N-gram"))
         : (p.spec_options || []).some((o) => o.mode === "mtp" && o.ok) ? L("MTP möglich", "MTP available") : null],
       [L("Bilder", "Images"), p.vision === undefined ? null : p.vision ? L("ja (Bildmodul)", "yes (vision module)") : L("nein", "no")],
+      [L("Heruntergeladen", "Downloaded"), p.strata && p.download_gb ? `${fmt(p.downloaded_gb || 0, 1)} / ~${fmt(p.download_gb, 0)} GB` : null],
+      [L("Werkzeuge", "Tools"), !p.strata ? null : p.tools_ok === true ? L("✔ funktionieren", "✔ working")
+        : p.tools_ok === false ? L("✘ keine Werkzeug-Aufrufe – nur Chat", "✘ no tool calls – chat only") : L("wird beim ersten Laden geprüft", "checked on the first load")],
     ];
     const dl = box.querySelector(".md-facts");
     for (const [k, v, fit] of facts) {
@@ -2607,9 +2610,32 @@
     if (demo) { secs.forEach((s) => s.remove()); load.hidden = true; return; }
     updateDetailMemory();
     renderCtxSection(box.querySelector(".md-ctx"), p);
-    renderKvSettings(box.querySelector(".md-kv"), p);
-    renderBatch(box.querySelector(".md-batch"), p);
-    renderSpec(box.querySelector(".md-spec"), p);
+    if (p.strata) {  // Strata regelt KV-Cache, Batch und Spekulation selbst
+      ["md-kv", "md-batch", "md-spec"].forEach((c) => box.querySelector("." + c).remove());
+      const note = document.createElement("section");
+      note.className = "md-sec md-strata";
+      note.innerHTML = `<div class="md-sec-head"><h4></h4><button type="button" class="mm-link"></button></div><p class="set-hint"></p>`;
+      note.querySelector("h4").textContent = "Strata";
+      const upd = note.querySelector("button");
+      upd.textContent = L("ENGINE AKTUALISIEREN", "UPDATE ENGINE");
+      upd.onclick = async () => {
+        upd.disabled = true;
+        try { await api("POST", "/api/strata/update"); toast(L("Lade neues Strata-Terminal …", "Downloading a new Strata terminal …")); }
+        catch { upd.disabled = false; }
+      };
+      note.querySelector("p").textContent = L(
+        "Strata hält die meistgenutzten Experten im Grafikspeicher, alle im RAM und die Lookup-Tabelle auf der SSD – KV-Cache, Batch-Größe "
+        + "und spekulatives Decoding regelt die Engine selbst. Beim ersten Laden lädt Strata Engine und Modell herunter (Fortschritt oben); "
+        + "danach kann der PC beim Laden 1–3 Minuten träge sein.",
+        "Strata keeps the most-used experts in VRAM, all of them in RAM and the lookup table on the SSD – the engine handles KV cache, batch "
+        + "size and speculative decoding itself. On the first load Strata downloads its engine and the model (progress above); after that "
+        + "the PC can be sluggish for 1–3 minutes while loading.");
+      box.querySelector(".md-ctx").after(note);
+    } else {
+      renderKvSettings(box.querySelector(".md-kv"), p);
+      renderBatch(box.querySelector(".md-batch"), p);
+      renderSpec(box.querySelector(".md-spec"), p);
+    }
     renderSampling(box.querySelector(".md-smp"), p);
     renderDiag(box.querySelector(".md-diag"), p);
   }
@@ -3039,6 +3065,54 @@
     };
     localModels(box.querySelector(".mp-disk"));
     renderPresets(box.querySelector(".mp-presets"));
+    renderStrataCard(box);
+  }
+
+  // Großes MoE-Modell mit Strata (Qwen3.8-Flash-Next): Variante passend zu VRAM + RAM, ehrliche Hinweise
+  async function renderStrataCard(box) {
+    let st;
+    try { st = await getJSON("/api/strata"); } catch { return; }
+    const card = document.createElement("section");
+    card.className = "mp-strata";
+    card.innerHTML = `<div class="ms-head"><h4></h4><span class="ms-ver"></span></div><p class="set-hint ms-text"></p>
+      <div class="mm-hf ms-opts"></div><p class="set-hint ms-warn"></p>`;
+    card.querySelector("h4").textContent = L("Großes MoE-Modell mit Strata: Qwen3.8-Flash-Next", "Large MoE model with Strata: Qwen3.8-Flash-Next");
+    card.querySelector(".ms-ver").textContent = st.installed ? `Strata ${st.version || ""}` : "";
+    card.querySelector(".ms-text").textContent = L(
+      `~125B Parameter, davon 6B je Token aktiv. Strata hält die meistgenutzten Experten im Grafikspeicher, alle im RAM und die große Lookup-Tabelle auf der SSD – `
+      + `so läuft es mit ${fmt(st.gpu.vram_gb || 0, 0)} GB VRAM und ${fmt(st.ram_gb, 0)} GB RAM.`,
+      `~125B parameters, 6B active per token. Strata keeps the most-used experts in VRAM, all of them in RAM and the large lookup table on the SSD – `
+      + `that is how it runs with ${fmt(st.gpu.vram_gb || 0, 0)} GB VRAM and ${fmt(st.ram_gb, 0)} GB RAM.`);
+    const list = card.querySelector(".ms-opts");
+    const shown = st.options.filter((o) => o.fits);
+    for (const o of shown) {
+      const mark = document.createElement("span");
+      mark.className = "fit-ok";
+      mark.textContent = "✔ ";
+      const b = hfItem([mark, document.createTextNode(o.label)],
+                       o.added ? L("ANGELEGT", "ADDED") : o.recommended ? L("EMPFOHLEN", "RECOMMENDED") : "",
+                       `~${fmt(o.download_gb, 0)} GB Download · ${L("braucht", "needs")} ${o.ram_gb} GB RAM+VRAM`, o.about);
+      b.disabled = !st.supported || o.added || st.installing;
+      b.onclick = async () => {
+        if (!confirm(L(`${o.label} mit Strata anlegen?\n\nOrbwise lädt jetzt das Strata-Terminal (~100 MB, Prüfsumme und Signatur werden geprüft). `
+                       + `Beim ersten Laden lädt Strata Engine und Modell herunter (~${fmt(o.download_gb, 0)} GB). Strata ist eine fremde Engine eines `
+                       + `Einzelentwicklers (MIT-Lizenz)${st.note ? "; " + st.note : ""}.`,
+                       `Add ${o.label} with Strata?\n\nOrbwise now downloads the Strata terminal (~100 MB, checksum and signature are verified). `
+                       + `On the first load Strata downloads its engine and the model (~${fmt(o.download_gb, 0)} GB). Strata is a third-party engine by a `
+                       + `single developer (MIT licence)${st.note ? "; " + st.note : ""}.`))) return;
+        try {
+          await api("POST", "/api/strata/install", { model: o.model });
+          toast(L("Richte Strata ein …", "Setting up Strata …"));
+          refreshModelViews();
+        } catch { /* Meldung kommt von api() */ }
+      };
+      list.appendChild(b);
+    }
+    const tooBig = st.options.filter((o) => !o.fits).map((o) => `${o.label.replace("Qwen3.8-Flash-Next ", "")} (${o.ram_gb} GB)`);
+    card.querySelector(".ms-warn").textContent = (!st.supported ? st.note + " " : st.note ? st.note + " " : "")
+      + (tooBig.length ? L(`Größere Varianten brauchen mehr RAM: ${tooBig.join(", ")}.`, `Larger variants need more RAM: ${tooBig.join(", ")}.`) : "")
+      + (!shown.length ? L(" Für Strata reicht der Speicher hier nicht (mindestens 32 GB RAM).", " Not enough memory for Strata here (at least 32 GB RAM).") : "");
+    box.prepend(card);
   }
 
   async function renderPresets(box) {
@@ -3235,6 +3309,14 @@
       toast(L(`✔ llama.cpp ${ev.version || ""} bereit – gilt ab dem nächsten Modellstart.`,
               `✔ llama.cpp ${ev.version || ""} ready – used from the next model start.`));
       refreshModelViews();
+      return;
+    }
+    if (ev.done && ev.kind === "strata") {
+      toast(ev.profile ? L(`✔ Strata ${ev.version || ""} eingerichtet – jetzt das Modell laden; beim ersten Laden lädt Strata Engine und Modell herunter.`,
+                           `✔ Strata ${ev.version || ""} set up – now load the model; on the first load Strata downloads its engine and the model.`)
+                       : L(`✔ Strata ${ev.version || ""} aktualisiert – gilt ab dem nächsten Start.`, `✔ Strata ${ev.version || ""} updated – used from the next start.`));
+      if (ev.profile) MP.sel = ev.profile;
+      if (openSheetName === "models") { MP.tab = "mine"; refreshModelViews(); }
       return;
     }
     if (ev.done && ev.replaced) {
