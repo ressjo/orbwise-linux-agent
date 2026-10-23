@@ -2666,7 +2666,7 @@
       b.onclick = () => { MP.ctxMode = b.dataset.m; renderCtxSection(sec, p); };
     });
     const m = p.active && lastMem && lastMem.available && lastMem.profile === p.name ? lastMem : null;
-    const opts = (m && m.recommend && m.recommend.options)
+    const opts = p.ctx_options || (m && m.recommend && m.recommend.options)  // Strata: eigene Stufen bis 256K
       || [4096, 8192, 12288, 16384, 24576, 32768, 49152, 65536, 98304, 131072, 196608, 262144].map((c) => ({ ctx: c }));
     const missing = p.active && lastMem && !lastMem.available && lastMem.reason ? lastMem.reason : "";
     sec.querySelector(".ctx-now").textContent = (mode === "coding" && !p.ctx_coding
@@ -2709,12 +2709,16 @@
       b.innerHTML = "<span></span><small></small>";
       b.querySelector("span").textContent = ctxLabel(o.ctx);
       const lean = o.ctx < 16384 ? L("Sparmodus", "lean mode") : "";
-      b.querySelector("small").textContent = [o.kv_bytes ? `KV ${gbs(o.kv_bytes)}` + (o.fits === false ? L(" · zu groß", " · too big") : "") : "", lean]
+      b.querySelector("small").textContent = (o.note !== undefined
+        ? [o.recommended ? L("empfohlen", "recommended") : "", o.note]
+        : [o.kv_bytes ? `KV ${gbs(o.kv_bytes)}` + (o.fits === false ? L(" · zu groß", " · too big") : "") : "", lean])
         .filter(Boolean).join(" · ");
       b.disabled = busy;
       b.onclick = () => {
         if (on) return;
-        if (o.fits === false && !confirm(L(`${ctxLabel(o.ctx)} passt voraussichtlich nicht in den Grafikspeicher – Teile landen im RAM und alles wird deutlich langsamer. Trotzdem?`,
+        if (o.fits === false && o.note !== undefined && !confirm(L(`${ctxLabel(o.ctx)} braucht voraussichtlich mehr RAM, als der Rechner hat – Strata kann langsam werden oder abbrechen. Trotzdem?`,
+                                                                    `${ctxLabel(o.ctx)} probably needs more RAM than this PC has – Strata may get slow or stop. Continue?`))) return;
+        if (o.fits === false && o.note === undefined && !confirm(L(`${ctxLabel(o.ctx)} passt voraussichtlich nicht in den Grafikspeicher – Teile landen im RAM und alles wird deutlich langsamer. Trotzdem?`,
                                           `${ctxLabel(o.ctx)} probably doesn't fit in VRAM – parts move to RAM and everything gets much slower. Continue?`))) return;
         apply(o.ctx);
       };
@@ -2726,8 +2730,10 @@
       : "") + (!p.active ? L("Gilt ab dem nächsten Laden. ", "Applies the next time it is loaded. ")
       : p.managed ? L("Zum Ändern startet der Modell-Server neu. ", "Changing it restarts the model server. ")
       : L("Zum Ändern lädt Ollama das Modell neu. ", "Changing it makes Ollama reload the model. "))
-      + L("Größer = längere Chats bis zum Zusammenfassen, braucht aber mehr Grafikspeicher. Unter 16k arbeitet Orbwise im Sparmodus (weniger Werkzeuge vorab, kürzere Ergebnisse).",
-          "Bigger = longer chats before summarising, but needs more VRAM. Below 16k Orbwise runs in lean mode (fewer tools up front, shorter results).");
+      + (p.ctx_options ? L("Strata: das Modell ist auf 256k trainiert. Ab 64k legt Strata den KV-Cache in den RAM, wenn dort neben den Experten Platz ist – sonst nimmt er Experten den Grafikspeicher weg. Langer Kontext heißt auch längeres Einlesen.",
+                           "Strata: the model is trained for 256k. From 64k Strata keeps the KV cache in RAM when there is room next to the experts – otherwise it takes VRAM away from experts. A long context also means longer prompt reading.")
+      : L("Größer = längere Chats bis zum Zusammenfassen, braucht aber mehr Grafikspeicher. Unter 16k arbeitet Orbwise im Sparmodus (weniger Werkzeuge vorab, kürzere Ergebnisse).",
+          "Bigger = longer chats before summarising, but needs more VRAM. Below 16k Orbwise runs in lean mode (fewer tools up front, shorter results)."));
   }
 
   // KV-Cache-Stufe: f16 (voll), q8_0 (~halber Speicher), q4_0 (~ein Viertel) – nur bei eigenem llama-server

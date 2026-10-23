@@ -14,6 +14,10 @@ All notable changes to this project are documented here. The format follows
   only actions that change or start something do; the data-leak guard still checks what goes out.
 
 ### Added
+- **Strata context window:** new Strata models start with Strata's own recommendation for the card (< 14 GB → 32k,
+  < 20 GB → 64k, otherwise 128k); the model page offers Strata's steps up to the trained 256k, each with the KV size and
+  whether the KV cache fits in RAM or takes VRAM from the experts (IQ3: RAM estimate above 128k). Larger values are
+  refused.
 - **Strata on NVIDIA:** the Strata card checks the NVIDIA driver and card (RTX 20+ via compute capability; driver
   ≥ 580.65 → CUDA 13 engine, ≥ 525 → CUDA 12 engine with a note, older → asks to update) – e.g. RTX 4080 + 64 GB RAM
   gets IQ2_XS.

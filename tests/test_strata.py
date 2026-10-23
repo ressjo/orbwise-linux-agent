@@ -93,6 +93,23 @@ def test_nvidia_rtx_4080_with_64_gb(monkeypatch):
     assert strata.nvidia_info(run=fake_smi) == {"driver": "580.95.05", "compute_cap": 8.9}
 
 
+def test_context_follows_strata_rules():
+    assert strata.recommend_context(12) == 32768 and strata.recommend_context(16) == 65536
+    assert strata.recommend_context(19.98) == 131072  # RX 7900 XT meldet knapp unter 20 GB
+    assert round(strata.kv_gb(131072), 1) == 1.8
+    # RX 7900 XT + 32 GB mit dem Coder: RAM ist voll, der KV-Cache bleibt im VRAM
+    home = {o["ctx"]: o for o in strata.context_options("iq1_m", 20, 31.3)}
+    assert home[131072]["recommended"] and not home[131072]["kv_in_ram"] and "VRAM" in home[131072]["note"]
+    # RTX 4080 + 64 GB mit IQ2_XS: 64K empfohlen, ab 64K liegt der KV-Cache im RAM – auch bei 256K
+    work = {o["ctx"]: o for o in strata.context_options("iq2_xs", 16, 62.7)}
+    assert work[65536]["recommended"] and work[131072]["kv_in_ram"] and work[262144]["kv_in_ram"]
+    assert not work[32768]["kv_in_ram"] and all(o["fits"] for o in work.values())
+    # IQ3_S: über 128K nach Stratas Schätzung mehr RAM, als 64 GB hergeben
+    big = {o["ctx"]: o for o in strata.context_options("iq3_s", 24, 64)}
+    assert big[131072]["fits"] and not big[262144]["fits"] and "RAM" in big[262144]["note"]
+    assert {o["ctx"]: o for o in strata.context_options("iq3_s", 24, 128)}[262144]["fits"]
+
+
 def test_install_checks_checksum_and_signature(home, monkeypatch):
     archive = terminal_archive()
     monkeypatch.setattr(strata, "TRANSPORT", feed(archive, sha="0" * 64))
@@ -230,6 +247,11 @@ def test_api_offers_the_coder_and_checks_tools(cfg, home, health, monkeypatch):
             time.sleep(0.05)
         p = profiles[name]
         assert p["engine"] == "Strata" and p["quant"] == "IQ1_M" and not p["kv_settable"] and p["tools_ok"] is None
+        # Kontext: 20-GB-Karte → 128K empfohlen und angelegt; bei 32 GB RAM bleibt der KV-Cache im VRAM
+        assert "--context 131072" in app.state.hub.agent.llm.profiles[name].server.command
+        rec = next(o for o in p["ctx_options"] if o["recommended"])
+        assert rec["ctx"] == 131072 and not rec["kv_in_ram"] and max(o["ctx"] for o in p["ctx_options"]) == 262144
+        assert client.post(f"/api/models/{name}/context", json={"ctx": 393216, "mode": "tools"}).status_code == 400
         assert client.post(f"/api/models/{name}/kv", json={"kv": "q8_0"}).status_code == 400
         assert next(o for o in client.get("/api/strata").json()["options"] if o["model"] == "iq1_m")["added"]
         # Laden: der „Server“ ist der Fake (Port umgebogen), der Start ein Befehl, der sofort mit 0 endet

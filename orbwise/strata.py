@@ -30,19 +30,19 @@ PLATFORM = "linux-x86_64"
 KEY_ENV = "ORBWISE_STRATA_KEY"  # API-Schlüssel über die Umgebung – nicht in der Befehlszeile (ps, Log)
 TRANSPORT: httpx.AsyncBaseTransport | None = None  # Tests
 
-# Größen laut Stratas Katalog (setup.py, Terminal 0.1.48): Download, RAM-Bedarf (RAM + VRAM zusammen)
+# Größen laut Stratas Katalog (setup.py, Terminal 0.1.48): Download, RAM-Bedarf (RAM + VRAM zusammen), Experten (arena)
 MODELS = {
-    "iq1_m": {"family": "coder", "label": "Qwen3.8-Flash-Next Coder IQ1_M", "download_gb": 58.4, "ram_gb": 32,
+    "iq1_m": {"family": "coder", "label": "Qwen3.8-Flash-Next Coder IQ1_M", "download_gb": 58.4, "ram_gb": 32, "arena_gb": 23.4,
               "about": T("Coder: die Hälfte der Experten (Code, Werkzeuge, Bilder) – stark bei Code, schwächer bei "
                          "anderen Texten", "Coder: half the experts (code, tools, images) – strong at code, weaker "
                          "at other text")},
-    "q2_0": {"family": "qwen", "label": "Qwen3.8-Flash-Next Q2_0", "download_gb": 66.4, "ram_gb": 48,
+    "q2_0": {"family": "qwen", "label": "Qwen3.8-Flash-Next Q2_0", "download_gb": 66.4, "ram_gb": 48, "arena_gb": 34.0,
              "about": T("2 Bit, am schnellsten", "2-bit, the fastest")},
-    "iq2_xs": {"family": "qwen", "label": "Qwen3.8-Flash-Next IQ2_XS", "download_gb": 68.0, "ram_gb": 48,
+    "iq2_xs": {"family": "qwen", "label": "Qwen3.8-Flash-Next IQ2_XS", "download_gb": 68.0, "ram_gb": 48, "arena_gb": 35.5,
                "about": T("2 Bit, etwas besser, fast so schnell", "2-bit, a little better, close in speed")},
-    "iq3_xxs": {"family": "qwen", "label": "Qwen3.8-Flash-Next IQ3_XXS", "download_gb": 75.8, "ram_gb": 60,
+    "iq3_xxs": {"family": "qwen", "label": "Qwen3.8-Flash-Next IQ3_XXS", "download_gb": 75.8, "ram_gb": 60, "arena_gb": 42.9,
                 "about": T("3 Bit, besser, langsamer", "3-bit, better, slower")},
-    "iq3_s": {"family": "qwen", "label": "Qwen3.8-Flash-Next IQ3_S", "download_gb": 83.6, "ram_gb": 62,
+    "iq3_s": {"family": "qwen", "label": "Qwen3.8-Flash-Next IQ3_S", "download_gb": 83.6, "ram_gb": 62, "arena_gb": 50.3,
               "about": T("3,5 Bit, beste Qualität (wie das volle Modell), am langsamsten",
                          "3.5-bit, the best quality (matches the full model), the slowest")},
 }
@@ -135,6 +135,59 @@ def options(vram_gb: float, ram_gb: float) -> list[dict]:
     return [{"model": key, **m, "fits": ram >= m["ram_gb"] - 2, "recommended": key == pick} for key, m in MODELS.items()]
 
 
+# Kontextstufen wie in Stratas Einrichtung; trainiert ist das Modell auf 262.144 Token (darüber nur mit RoPE-Skalierung,
+# das bietet Orbwise nicht an)
+CONTEXTS = (8192, 32768, 65536, 131072, 204800, 262144)
+MAX_CONTEXT = 262144
+KV_BYTES_PER_TOKEN = 13 * 1056  # 8-Bit-KV: 12 Attention-Schichten + Draft-Schicht, je 1056 Byte (≈ 13,7 KB pro Token)
+
+
+def kv_gb(ctx: int) -> float:
+    return ctx * KV_BYTES_PER_TOKEN / 1e9
+
+
+def recommend_context(vram_gb: float) -> int:
+    """Stratas eigene Regel: der KV-Cache jeder Karte nimmt Experten Platz weg – unter 14 GB 32K, unter 20 GB 64K, sonst
+    128K. VRAM als ganze GB (eine 20-GB-Karte meldet etwas weniger)."""
+    vram = round(vram_gb or 0)
+    return 32768 if vram < 14 else 65536 if vram < 20 else 131072
+
+
+def kv_in_ram(model: str, ctx: int, ram_gb: float) -> bool:
+    """Ab 64K legt Strata den KV-Cache in den RAM (nur das gerade Gelesene bleibt im VRAM) – wenn er neben den Experten
+    noch Platz hat (+1 GB). Sonst bleibt er im VRAM und verdrängt Experten."""
+    return ctx >= 65536 and round(ram_gb or 0) >= MODELS[model]["ram_gb"] + kv_gb(ctx) + 1
+
+
+def ram_need(model: str, ctx: int) -> float | None:
+    """Stratas Schätzung für langen Kontext mit IQ3: Experten + KV + 24 GB für den Rest; sonst None."""
+    if model not in ("iq3_xxs", "iq3_s"):
+        return None
+    return MODELS[model]["arena_gb"] + kv_gb(ctx) + 24
+
+
+def _gb(x: float) -> str:
+    return T(f"{x:.1f}".replace(".", ","), f"{x:.1f}")
+
+
+def context_options(model: str, vram_gb: float, ram_gb: float) -> list[dict]:
+    """Die Kontextstufen für die Modellseite: Empfehlung, KV-Größe und wo der KV-Cache liegt."""
+    rec = recommend_context(vram_gb)
+    out = []
+    for ctx in CONTEXTS:
+        kv, in_ram = kv_gb(ctx), kv_in_ram(model, ctx, ram_gb)
+        note = (T(f"KV {_gb(kv)} GB im RAM", f"KV {_gb(kv)} GB in RAM") if in_ram
+                else T(f"KV {_gb(kv)} GB im VRAM", f"KV {_gb(kv)} GB in VRAM")
+                + (T(" · kostet Experten-Platz", " · costs expert space") if kv >= 1 else ""))
+        need = ram_need(model, ctx)
+        fits = not (ctx > 131072 and need is not None and need > round(ram_gb or 0))
+        if not fits:
+            note += T(f" · braucht ~{need:.0f} GB RAM", f" · needs ~{need:.0f} GB RAM")
+        out.append({"ctx": ctx, "recommended": ctx == rec, "kv_gb": round(kv, 2), "kv_in_ram": in_ram,
+                    "fits": fits, "note": note})
+    return out
+
+
 def make_profile(cfg, model: str, port: int, context: int = 65536) -> dict:
     """Profil für einen von Orbwise gestarteten Strata-Server (abgelöst, eigener Schlüssel über die Umgebung)."""
     m = MODELS[model]
@@ -161,7 +214,8 @@ def make_profile(cfg, model: str, port: int, context: int = 65536) -> dict:
 
 
 def add_model(cfg, state_path: Path, model: str, profiles: dict, context: int = 65536) -> str:
-    """Strata-Modell als Profil anlegen → Profilname. Die Dateien lädt Strata beim ersten Start selbst."""
+    """Strata-Modell als Profil anlegen → Profilname. Die Dateien lädt Strata beim ersten Start selbst. `context`: der
+    Server übergibt recommend_context für diese Grafikkarte."""
     from . import llamacpp
     from .models import register_profile
     if model not in MODELS:

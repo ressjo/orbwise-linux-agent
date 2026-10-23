@@ -846,6 +846,7 @@ def create_app(cfg: Config) -> FastAPI:
         added = mdl.added_profiles(state_file)  # state.json nur einmal lesen
         added_slugs = {mdl.slug(t) for t in mdl.added_models(state_file)}
         gpu = await gpu_info()
+        ram_total = None  # nur für Strata-Profile (Kontext-Empfehlung) gebraucht
         for p in profiles:
             p["deletable"] = p["name"] in added or p["name"] in added_slugs
             size = sizes.get(p["model"]) or sizes.get(f"{p['model']}:latest") if p["backend"] == "ollama" else None
@@ -863,6 +864,11 @@ def create_app(cfg: Config) -> FastAPI:
                          path=llamacpp_mod._tilde(folder), downloaded_gb=round(size / 1e9, 1),
                          download_gb=strata_mod.MODELS.get(local.get("strata_model"), {}).get("download_gb"),
                          tools_ok=local.get("tools_ok"))
+                if local.get("strata_model") in strata_mod.MODELS:
+                    if ram_total is None:
+                        ram_total = ((await asyncio.to_thread(metrics.collect)).get("ram") or {}).get("total") or 0
+                    p["ctx_options"] = strata_mod.context_options(local["strata_model"], gpu.get("vram_gb") or 0,
+                                                                  ram_total / 1024 ** 3)
             elif local is not None:
                 files = [f for f in local.get("files", []) if Path(f).is_file()]
                 p["keeps_files"] = not local.get("downloaded")
@@ -1148,9 +1154,11 @@ def create_app(cfg: Config) -> FastAPI:
         model = str(body.get("model") or "")
         if model not in strata.MODELS:
             raise HTTPException(400, T("Unbekannte Strata-Variante", "Unknown Strata variant"))
-        ok, note = strata.gpu_supported(await gpu_info())
+        gpu = await gpu_info()
+        ok, note = strata.gpu_supported(gpu)
         if not ok:
             raise HTTPException(400, note)
+        context = strata.recommend_context(gpu.get("vram_gb") or 0)
 
         async def job() -> dict:
             async def step(done: int, total: int) -> None:
@@ -1158,7 +1166,7 @@ def create_app(cfg: Config) -> FastAPI:
                 await hub.broadcast({"type": "model_pull", "tag": "Strata", "completed": done, "total": total})
             await strata.install(step)
             async with add_lock:
-                name = await asyncio.to_thread(strata.add_model, cfg, state_file, model, llm.profiles)
+                name = await asyncio.to_thread(strata.add_model, cfg, state_file, model, llm.profiles, context)
                 llm.add_downloaded_models()
             await hub.broadcast({"type": "models_changed"})
             return {"profile": name, "kind": "strata", "version": strata.version()}
@@ -1552,6 +1560,11 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(400, "Unbekannter Modus")
         if ctx == 0 and mode != "coding":
             raise HTTPException(400, "ctx fehlt")
+        if is_strata(llm.profiles[name].server):
+            from . import strata
+            if ctx > strata.MAX_CONTEXT:
+                raise HTTPException(400, T(f"Strata: höchstens {strata.MAX_CONTEXT} Token (so lang ist das Modell trainiert)",
+                                           f"Strata: at most {strata.MAX_CONTEXT} tokens (the model's trained length)"))
         active = name == llm.active and mode == llm.mode
         if active:
             await hub.broadcast({"type": "model_switching", "name": name, "label": llm.profiles[name].label})

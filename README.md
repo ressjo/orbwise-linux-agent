@@ -447,6 +447,17 @@ Strata itself, so the model page only offers the context window and sampling. Ca
 and refuses GTX cards) or AMD RX 6800 and newer (experimental in Strata). Example: an RTX 4080 (16 GB) with 64 GB RAM
 gets IQ2_XS (Q2_0 and IQ3_S are offered too).
 
+**Context window:** the model is trained for 256k tokens; the model page offers Strata's steps 8k – 256k. The KV cache
+is small (~13.7 KB per token: 64k ≈ 0.9 GB, 128k ≈ 1.8 GB, 256k ≈ 3.6 GB), but where it lives matters: from 64k Strata
+keeps it in RAM when there is room next to the experts, otherwise it takes VRAM away from the expert cache. New
+models start with Strata's own recommendation, marked on the model page:
+
+| Card | Recommended | Example |
+|---|---|---|
+| under 14 GB | 32k | |
+| 14 – 19 GB | 64k | RTX 4080 + 64 GB RAM (IQ2_XS): 128k – 256k also fine, the KV cache goes to RAM |
+| 20 GB and more | 128k | RX 7900 XT + 32 GB RAM (Coder): KV cache stays in VRAM – 64k is the faster choice |
+
 ### Why was so much read again?
 
 With a warm prompt cache only what is new gets read; a long wait means the server had to read most of the chat
