@@ -434,6 +434,11 @@ class LLMRouter:
         # (release(restart=…)), bevor das Sprachmodell wieder gebraucht wird – siehe imagegen.py
         self.gpu_borrowed = None
         state = self._read_state()
+        # Von Hand entladen (Modellseite): Server aus bzw. Ollama-Modell aus dem Speicher, das Profil bleibt gewählt.
+        # Die nächste Anfrage lädt es wieder (ensure_loaded); gilt auch über einen Neustart von Orbwise
+        self.unloaded = bool(state.get("unloaded"))
+        self.load_progress: Progress | None = None  # Fortschritt, wenn eine Anfrage das Modell zurückholt
+        self.load_done = None  # danach (Oberfläche: Modell wieder aktiv)
         self.mode = "tools"  # Tools oder Coding – Coding kann je Modell ein eigenes Kontextfenster haben
         for p in self.profiles.values():  # eigener Server: die Größe steht im Startbefehl (BONSAI_CTX / -c)
             if p.server and (n := _server_ctx(p.server)):
@@ -519,6 +524,10 @@ class LLMRouter:
             return
         data = self._read_state()
         data["active_profile"] = self.active
+        if self.unloaded:
+            data["unloaded"] = True
+        else:
+            data.pop("unloaded", None)
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         self.state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
 
@@ -603,14 +612,61 @@ class LLMRouter:
             await server.stop()
         self.profiles.pop(name, None)
 
+    async def unload(self) -> None:
+        """Aktives Modell aus dem (Grafik-)Speicher nehmen, ohne ein anderes zu laden: eigenen Server beenden bzw.
+        Ollama entladen. Das Profil bleibt gewählt; die nächste Anfrage lädt es wieder."""
+        async with self._lock:
+            if not self.gpu_borrowed:  # sonst hat der Bild-Modus das Sprachmodell schon beendet
+                server = self.server_for(self.active)
+                if server:
+                    await server.stop()
+                if self.profile.backend == "ollama" or self.profile.unload_ollama:
+                    await self.ollama.unload_all()
+            self.unloaded = True
+            self._write_state()
+
+    async def ensure_loaded(self) -> None:
+        """Vor einer Anfrage: ein von Hand entladenes Modell wieder laden."""
+        if not self.unloaded:
+            return
+        async with self._lock:
+            if not self.unloaded:  # eine andere Anfrage hat es gerade geladen
+                return
+            self.switching = self.active
+            try:
+                await self._prepare(self.active, self.load_progress)
+                self.unloaded = False
+                self._write_state()
+            finally:
+                self.switching = None
+        await self.detect_context()
+        if self.load_done:
+            await self.load_done()
+
+    async def select(self, name: str) -> None:
+        """Ein anderes Profil wählen, ohne es zu laden (nur bei entladenem Modell, z. B. vor dem Löschen des aktiven)."""
+        if name not in self.profiles:
+            raise LLMError(f"Unbekanntes Profil '{name}'")
+        if not self.unloaded:
+            raise LLMError("Erst das Modell entladen.")
+        async with self._lock:
+            old_client = self.client
+            self.active = name
+            self._build_client()
+            self._write_state()
+            if old_client is not None and old_client is not self.ollama:
+                await old_client.close()
+
     async def activate(self, name: str, progress: Progress | None = None) -> None:
         if name not in self.profiles:
             raise LLMError(f"Unbekanntes Profil '{name}'. Vorhanden: {', '.join(self.profiles)}")
         if self.gpu_borrowed:  # Bildmodell zuerst entladen – das neue Modell startet gleich ohnehin
             await self.gpu_borrowed(restart=False)
         async with self._lock:
-            if name == self.active and (not self.server_for(name) or await self.server_for(name).healthy()):
+            if name == self.active and not self.unloaded \
+                    and (not self.server_for(name) or await self.server_for(name).healthy()):
                 return
+            was_unloaded = self.unloaded
             previous = self.active
             self.switching = name
             try:
@@ -623,16 +679,18 @@ class LLMRouter:
                     self._apply_context(name, n)
                 await self._prepare(name, progress)
             except LLMError:
-                # Zurück zum vorherigen Profil
+                # Zurück zum vorherigen Profil (war es entladen, bleibt es das)
                 self.switching = None
-                try:
-                    await self._prepare(previous, None)
-                except LLMError:
-                    pass
+                if not was_unloaded:
+                    try:
+                        await self._prepare(previous, None)
+                    except LLMError:
+                        pass
                 raise
             finally:
                 self.switching = None
             old_client = self.client
+            self.unloaded = False
             self.active = name
             self._build_client()
             self._write_state()
@@ -646,6 +704,7 @@ class LLMRouter:
         """opts: max_tokens, tool_choice (für Komprimierung und Vorwärmen)."""
         if self.gpu_borrowed:  # Bild-Modus hat den Grafikspeicher – zurückgeben, Sprachmodell starten
             await self.gpu_borrowed()
+        await self.ensure_loaded()
         try:
             async for ev in self.client.chat_stream(messages, tools, think=think, **opts):
                 yield ev
@@ -657,6 +716,7 @@ class LLMRouter:
     async def chat(self, messages: list[dict]) -> str:
         if self.gpu_borrowed:
             await self.gpu_borrowed()
+        await self.ensure_loaded()
         return await self.client.chat(messages)
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
@@ -664,7 +724,10 @@ class LLMRouter:
 
     async def status(self) -> dict:
         p = self.profile
-        st = await self.client.status()
+        if self.unloaded:  # Server absichtlich aus – nicht „offline“
+            st = {"online": True, "model_available": True, "unloaded": True}
+        else:
+            st = await self.client.status()
         if p.backend == "openai":
             emb = await self.ollama.status()
             st.update({"embed_model": self.cfg.embed_model, "embed_available": emb.get("embed_available", False)})
@@ -789,12 +852,14 @@ class LLMRouter:
                 self.state_path.parent.mkdir(parents=True, exist_ok=True)
                 self.state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
             if name == self.active:
-                await self._prepare(name, progress)
+                if not self.unloaded:  # entladen: gilt beim nächsten Laden
+                    await self._prepare(name, progress)
                 old_client = self.client
                 self._build_client()
                 if old_client is not None and old_client is not self.ollama:
                     await old_client.close()
-                await self.detect_context()
+                if not self.unloaded:
+                    await self.detect_context()
 
     # ---------- Kontext je Modus (Tools / Coding) ----------
     def wanted_context(self, name: str, mode: str | None = None) -> int | None:
@@ -896,6 +961,8 @@ class LLMRouter:
         """Speicher des aktiven Modells samt Kontext (VRAM/RAM) → (Werte, Grund falls keine).
         llama-server: genau aus dem Startlog, sonst geschätzt aus der GGUF-Datei (Pfad laut /props); Ollama: API."""
         from .llm_memory import estimate_from_gguf, parse_llama_log
+        if self.unloaded:
+            return None, "Modell ist entladen"
         if isinstance(self.client, OllamaLLM):
             info = await self.client.memory_info()
             return info, "" if info else "Modell ist gerade nicht in Ollama geladen"
@@ -925,6 +992,7 @@ class LLMRouter:
         ctx, coding = state.get("context") or {}, state.get("context_coding") or {}
         return [{"name": n, "label": p.label, "backend": p.backend, "model": p.model, "base_url": p.base_url,
                  "managed": p.server is not None, "active": n == self.active,
+                 "loaded": n == self.active and not self.unloaded,
                  "num_ctx": self.detected_ctx.get(n) or p.num_ctx or self.cfg.num_ctx,
                  "ctx_tools": ctx.get(n) or self._base_ctx.get(n), "ctx_coding": coding.get(n),
                  **(self._server_options(p))}

@@ -1321,7 +1321,8 @@ class Agent:
         """Den Prompt-Anfang des offenen Chats im Leerlauf einlesen lassen (nach Telegram/Routinen, Chatwechsel,
         Start oder sobald getippt wird) – die nächste Frage liest dann nur noch ihren neuen Teil ein."""
         if self.lock.locked() or getattr(self.llm, "switching", None) or not self.cache_cold() \
-                or getattr(self.llm, "gpu_borrowed", None):  # Bild-Modus hat gerade den Grafikspeicher
+                or getattr(self.llm, "gpu_borrowed", None) \
+                or getattr(self.llm, "unloaded", False):  # Bild-Modus hat den Grafikspeicher bzw. von Hand entladen
             return False
         failed = self._prewarm_failed
         if failed and failed[0] == self._profile_key() and time.monotonic() - failed[1] < PREWARM_RETRY_S:

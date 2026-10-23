@@ -183,9 +183,11 @@ def test_cancel_download_and_delete_models(cfg, ollama, monkeypatch, tmp_path):
         client.post("/api/models/reload")
         assert client.delete("/api/models/qwen3-14b").json()["ok"] and FakeOllama.deleted == []
         assert client.post("/api/models/llama3.1-8b/activate").status_code == 200
-        assert client.delete("/api/models/llama3.1-8b").status_code == 409  # aktiv
-        assert client.post("/api/models/standard/activate").status_code == 200
-        assert client.delete("/api/models/llama3.1-8b").json()["ok"]
+        # aktives Modell: wird entladen, ein anderes gewählt (ohne Laden), dann gelöscht
+        r = client.delete("/api/models/llama3.1-8b").json()
+        assert r["ok"] and r["active"] != "llama3.1-8b"
+        listed = client.get("/api/models").json()
+        assert listed["unloaded"] and listed["active"] == r["active"]
         assert "llama3.1-8b" not in [p["name"] for p in client.get("/api/models").json()["profiles"]]
         assert FakeOllama.deleted == ["llama3.1:8b"]
         assert "llama3.1:8b" not in mdl.added_models(cfg.memory.dir.parent / "state.json")

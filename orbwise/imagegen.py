@@ -263,7 +263,7 @@ class ImageEngine:
             router.gpu_borrowed = None
         if self.stopped_llm:
             self.stopped_llm = False
-            if restart and router is not None:
+            if restart and router is not None and not getattr(router, "unloaded", False):  # von Hand entladen: bleibt aus
                 with contextlib.suppress(Exception):
                     await router._prepare(router.active, None)
 

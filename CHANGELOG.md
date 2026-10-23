@@ -14,6 +14,10 @@ All notable changes to this project are documented here. The format follows
   only actions that change or start something do; the data-leak guard still checks what goes out.
 
 ### Added
+- **Unload the model by hand:** **Unload** on the model page and the model chip frees the video memory (stops the
+  llama.cpp/Strata server, unloads Ollama) while the model stays selected; the next question or API request loads it
+  again (prompt-cache warming does not), and an unloaded model stays unloaded across a restart. The selected model
+  can now be deleted: Orbwise unloads it and selects another one without loading it.
 - **Strata context window:** new Strata models start with Strata's own recommendation for the card (< 14 GB → 32k,
   < 20 GB → 64k, otherwise 128k); the model page offers Strata's steps up to the trained 256k, each with the KV size and
   whether the KV cache fits in RAM or takes VRAM from the experts (IQ3: RAM estimate above 128k). Larger values are

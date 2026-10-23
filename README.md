@@ -294,7 +294,7 @@ everything from the other chats.
 **Adding models after installation:** open **Models** in the sidebar (or **Manage models …** on the model chip at the
 top) → **Add** and pick one of the presets (with the same fit marks and download progress; a running download can be
 cancelled there with **✕ CANCEL**). Models added this way – including Bonsai – can be deleted on the model page via
-**⋯ → Delete**, which also removes their files (the loaded model and models from `config.yaml` stay). Or run
+**⋯ → Delete**, which also removes their files (models from `config.yaml` stay). Or run
 
 ```bash
 orbwise model add              # interactive list of presets for your GPU
@@ -308,6 +308,12 @@ orbwise model add ~/models/my-model-Q4_K_M.gguf                # a GGUF file you
 orbwise model llamacpp [--update]                               # llama.cpp build: show / update
 orbwise model remove qwen3-14b # remove it from the list (optionally also delete the files)
 ```
+
+**Unloading:** **Unload** on the model page (or **Unload model** on the model chip) frees the video memory – the
+llama.cpp/Strata server stops, Ollama drops the model – while the model stays selected; the next question (or the
+API server) loads it again, warming the prompt cache does not. Handy before a game, during a big download or before
+deleting. It also survives a restart: Orbwise then starts without loading the model. Deleting the selected model
+unloads it first and selects another one (loaded with the next question).
 
 **Any model from Hugging Face – no config needed:** in **+ ADD MODEL** type a search term (`qwen3.6 27b`) or paste
 a Hugging Face link into the search field. Pick a repository, then a quantization: each shows its download size, the

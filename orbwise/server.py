@@ -562,6 +562,20 @@ def create_app(cfg: Config) -> FastAPI:
         if startup.steps["model"]["state"] == "running":
             await startup.set("model", "running", text)
 
+    async def model_reloading(text: str) -> None:
+        """Eine Frage holt ein von Hand entladenes Modell zurück: Oberfläche zeigt „lädt …“."""
+        if text and isinstance(llm, LLMRouter):
+            await hub.broadcast({"type": "model_switching", "name": llm.active, "label": llm.profile.label})
+        await model_progress(text)
+
+    async def model_reloaded() -> None:
+        await hub.broadcast({"type": "model_active", "name": llm.active})
+        await hub.broadcast({"type": "models_changed"})
+
+    if isinstance(llm, LLMRouter):
+        llm.load_progress = model_reloading
+        llm.load_done = model_reloaded
+
     async def idle_if_free() -> None:
         """Oberfläche auf „bereit“ setzen – nur, wenn gerade keine Anfrage läuft."""
         if not agent.busy():
@@ -571,6 +585,11 @@ def create_app(cfg: Config) -> FastAPI:
         # Beim Start das aktive Profil vorbereiten (z. B. llama-server starten); Chats warten so lange
         name = llm.active
         label = llm.profile.label or llm.profile.model
+        if llm.unloaded:  # beim Beenden entladen → bleibt so, bis jemand fragt
+            llm.apply_mode(mode_info()["mode"])
+            await startup.set("model", "ok", label + T(" · entladen – lädt bei der ersten Frage",
+                                                       " · unloaded – loads with the first question"))
+            return
         llm.switching = name if llm.server_for(name) else None
         await startup.set("model", "running", T("starte ", "starting ") + label + " …")
         try:
@@ -890,7 +909,7 @@ def create_app(cfg: Config) -> FastAPI:
             p["prefill_tps"] = agent.prefill_speed(p["name"])
             if p["backend"] == "ollama" and mdl.is_hf(p["model"]):  # alter Weg → auf llama.cpp umstellen anbieten
                 p["convert"] = p["model"]
-        return {"active": llm.active, "switching": llm.switching, "profiles": profiles, "gpu": gpu,
+        return {"active": llm.active, "switching": llm.switching, "unloaded": llm.unloaded, "profiles": profiles, "gpu": gpu,
                 "pulls": [{"tag": t, **pull_state.get(t, {})} for t in sorted(pulls)]}
 
     gpu_cache: dict = {}
@@ -1301,10 +1320,22 @@ def create_app(cfg: Config) -> FastAPI:
         if not mdl.removable(state_file, name):
             raise HTTPException(400, "Dieses Modell ist in der config.yaml eingetragen – dort entfernen.")
         profile = llm.profiles[name]
-        if name == llm.active or llm.switching:
-            raise HTTPException(409, "Das aktive Modell kann nicht gelöscht werden – erst ein anderes wählen.")
+        if llm.switching:
+            raise HTTPException(409, T("Gerade wird ein Modell geladen – bitte kurz warten.",
+                                       "A model is loading right now – please wait a moment."))
         if profile.backend == "ollama" and profile.model in pulls:
             raise HTTPException(409, "Das Modell wird gerade geladen – erst den Download abbrechen.")
+        if name == llm.active:  # erst entladen, ein anderes wählen (ohne es zu laden), dann löschen
+            others = [n for n in llm.profiles if n != name]
+            if not others:
+                raise HTTPException(409, T("Das ist das einzige Modell – erst ein anderes hinzufügen.",
+                                           "This is the only model – add another one first."))
+            remembered = [n for n in mode_models().values() if n in others]
+            async with agent.lock:  # eine laufende Antwort läuft zu Ende
+                await llm.unload()
+                await llm.select((remembered or others)[0])
+            agent._cache_owner = None
+            await hub.broadcast({"type": "model_active", "name": llm.active, "unloaded": True})
         await llm.remove_profile(name)
         mdl.unregister_model(state_file, name)
         freed = 0
@@ -1320,7 +1351,23 @@ def create_app(cfg: Config) -> FastAPI:
             except httpx.HTTPError as e:
                 log.warning("Ollama-Modell %s nicht gelöscht: %s", profile.model, e)
         await hub.broadcast({"type": "models_changed"})
-        return {"ok": True, "freed_gb": round(freed / 1e9, 1)}
+        return {"ok": True, "freed_gb": round(freed / 1e9, 1), "active": llm.active}
+
+    @app.post("/api/models/unload")
+    async def model_unload():
+        """Aktives Modell aus dem Grafikspeicher nehmen – die nächste Frage lädt es wieder."""
+        if not isinstance(llm, LLMRouter):
+            raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
+        if llm.switching:
+            raise HTTPException(409, T("Gerade wird ein Modell geladen – bitte kurz warten.",
+                                       "A model is loading right now – please wait a moment."))
+        async with agent.lock:  # eine laufende Antwort läuft zu Ende
+            await llm.unload()
+        agent._cache_owner = None  # Server aus = Prompt-Cache weg
+        await hub.broadcast({"type": "model_unloaded", "name": llm.active})
+        await hub.broadcast({"type": "models_changed"})
+        await idle_if_free()
+        return {"ok": True, "active": llm.active}
 
     @app.post("/api/models/reload")
     async def models_reload():

@@ -498,6 +498,13 @@
         refreshModelViews();
         setTimeout(loadCtxMemory, 1500);
         break;
+      case "model_unloaded":
+        S.substate = "";
+        toast(L("Modell entladen – der Grafikspeicher ist frei. Die nächste Frage lädt es wieder.",
+                "Model unloaded – video memory is free. The next question loads it again."));
+        loadStatus();
+        refreshModelViews();
+        return;
       case "models_changed":
         refreshModelViews();
         loadStatus();
@@ -2489,14 +2496,14 @@
     for (const p of d.profiles) {
       const row = document.createElement("button");
       row.type = "button";
-      row.className = "mp-row" + (p.name === MP.sel ? " sel" : "") + (p.active ? " active" : "");
+      row.className = "mp-row" + (p.name === MP.sel ? " sel" : "") + (p.active ? " active" : "") + (p.loaded === false && p.active ? " unloaded" : "");
       row.innerHTML = `<i class="mp-dot"></i><span class="mp-main"><span class="mp-name"></span><span class="mp-meta"></span></span><span class="mp-tag"></span>`;
       row.querySelector(".mp-name").textContent = p.label;
       row.querySelector(".mp-meta").textContent = [p.engine, p.quant, p.size_gb ? `${fmt(p.size_gb, 1)} GB` : "",
                                                    p.num_ctx ? ctxLabel(modelCtx(p, "tools")) : ""].filter(Boolean).join(" · ");
       const tag = row.querySelector(".mp-tag");
       if (p.name === d.switching) { tag.textContent = L("LÄDT …", "LOADING …"); row.classList.add("loading"); }
-      else if (p.active) tag.textContent = L("GELADEN", "LOADED");
+      else if (p.active) tag.textContent = p.loaded === false ? L("ENTLADEN", "UNLOADED") : L("GELADEN", "LOADED");
       else if (p.fit) { tag.textContent = FIT_MARKS[p.fit]; tag.className = "mp-tag fit-" + p.fit; tag.title = fitText(p.fit); }
       row.onclick = () => {
         MP.sel = p.name;
@@ -2518,8 +2525,16 @@
     }
   }
 
+  // Aktiv und wirklich geladen (von Hand entladen: Änderungen gelten erst beim nächsten Laden)
+  const isLive = (p) => p.active && p.loaded !== false;
+
+  async function unloadModel() {
+    try { await api("POST", "/api/models/unload"); } catch { /* Meldung kommt von api() */ }
+    refreshModelViews();
+  }
+
   async function activateModel(p) {
-    if (p.active || (MP.data && MP.data.switching)) return;
+    if ((p.active && p.loaded !== false) || (MP.data && MP.data.switching)) return;
     if (p.fit === "big" && !confirm(L(`${p.label} ist für deinen Grafikspeicher zu groß und wird sehr langsam. Trotzdem laden?`,
                                       `${p.label} is too big for your video memory and will be very slow. Load anyway?`))) return;
     MP.data.switching = p.name;
@@ -2539,7 +2554,7 @@
     box.innerHTML = `
       <div class="md-head">
         <div class="md-title"><h3></h3><span class="md-badge"></span></div>
-        <div class="md-actions"><button type="button" class="btn primary small md-load"></button>
+        <div class="md-actions"><button type="button" class="btn small md-unload" hidden></button><button type="button" class="btn primary small md-load"></button>
           <button type="button" class="icon-btn md-more" aria-label="${L("Weitere Aktionen", "More actions")}"><svg class="i"><use href="#i-more"/></svg></button></div>
       </div>
       <div class="md-sub"></div>
@@ -2557,20 +2572,30 @@
         <div class="ctx-test"></div><pre class="md-log hidden"></pre></section>`;
     box.querySelector("h3").textContent = p.label;
     const badge = box.querySelector(".md-badge");
-    badge.textContent = p.name === d.switching ? L("lädt …", "loading …") : p.active ? L("geladen", "loaded") : "";
+    const loaded = p.active && p.loaded !== false;
+    badge.textContent = p.name === d.switching ? L("lädt …", "loading …") : loaded ? L("geladen", "loaded")
+      : p.active ? L("entladen", "unloaded") : "";
     badge.hidden = !badge.textContent;
+    badge.classList.toggle("off", p.active && !loaded && p.name !== d.switching);
     const load = box.querySelector(".md-load");
-    load.textContent = p.name === d.switching ? L("Lädt …", "Loading …") : p.active ? L("Geladen", "Loaded") : L("Laden", "Load");
-    load.disabled = p.active || !!d.switching;
+    load.textContent = p.name === d.switching ? L("Lädt …", "Loading …") : loaded ? L("Geladen", "Loaded") : L("Laden", "Load");
+    load.disabled = loaded || !!d.switching;
     load.onclick = () => activateModel(p);
+    const unload = box.querySelector(".md-unload");
+    unload.textContent = L("Entladen", "Unload");
+    unload.title = L("Aus dem Grafikspeicher nehmen – die nächste Frage lädt es wieder", "Free the video memory – the next question loads it again");
+    unload.hidden = !loaded || demo || p.name === d.switching;
+    unload.disabled = !!d.switching;
+    unload.onclick = unloadModel;
     const more = box.querySelector(".md-more");
     const items = [];
     if (p.repo) items.push({ icon: "download", label: L("Auf Hugging Face ansehen", "View on Hugging Face"),
                              run: () => window.open(`https://huggingface.co/${p.repo}`, "_blank", "noopener") });
     if (p.convert) items.push({ icon: "redo", label: L("Mit llama.cpp neu laden", "Reload with llama.cpp"), run: () => convertModel(p) });
-    if (p.deletable) items.push({ icon: "trash", danger: true, disabled: p.active,
+    const only = p.active && d.profiles.length < 2;
+    if (p.deletable) items.push({ icon: "trash", danger: true, disabled: only || !!d.switching,
                                   label: p.keeps_files ? L("Aus der Liste entfernen", "Remove from list") : L("Löschen", "Delete"),
-                                  title: p.active ? L("Geladenes Modell – erst ein anderes laden", "Loaded model – load another one first") : "",
+                                  title: only ? L("Das einzige Modell – erst ein anderes hinzufügen", "The only model – add another one first") : "",
                                   run: () => deleteModel(p) });
     more.hidden = !items.length;
     more.onclick = (e) => { e.stopPropagation(); popMenu(more, items); };
@@ -2679,7 +2704,7 @@
     const busy = !!MP.data.switching;
     const apply = async (ctx) => {
       box.querySelectorAll("button").forEach((x) => { x.disabled = true; });
-      const restart = p.active && (mode === "coding") === (S.mode === "coding");
+      const restart = isLive(p) && (mode === "coding") === (S.mode === "coding");
       if (restart) toast(p.managed ? L("Modell-Server startet mit neuem Kontextfenster neu …", "Restarting the model server with the new context window …")
                                    : L("Modell wird mit neuem Kontextfenster geladen …", "Reloading the model with the new context window …"));
       const r = await fetch(`/api/models/${encodeURIComponent(p.name)}/context`, {
@@ -2727,7 +2752,7 @@
     sec.querySelector(".set-hint").textContent = (mode === "coding"
       ? L("Coding kann ein eigenes Fenster haben (z. B. größer für viel Code) – beim Wechsel zwischen Tools und Coding startet der Modell-Server dann neu. ",
           "Coding can have its own window (e.g. larger for lots of code) – switching between Tools and Coding then restarts the model server. ")
-      : "") + (!p.active ? L("Gilt ab dem nächsten Laden. ", "Applies the next time it is loaded. ")
+      : "") + (!isLive(p) ? L("Gilt ab dem nächsten Laden. ", "Applies the next time it is loaded. ")
       : p.managed ? L("Zum Ändern startet der Modell-Server neu. ", "Changing it restarts the model server. ")
       : L("Zum Ändern lädt Ollama das Modell neu. ", "Changing it makes Ollama reload the model. "))
       + (p.ctx_options ? L("Strata: das Modell ist auf 256k trainiert. Ab 64k legt Strata den KV-Cache in den RAM, wenn dort neben den Experten Platz ist – sonst nimmt er Experten den Grafikspeicher weg. Langer Kontext heißt auch längeres Einlesen.",
@@ -2780,10 +2805,10 @@
     const low = levels.some((x) => /^(?:t|i)?q[23](?!\d)/.test(x.kv));
     sec.querySelector(".kv-hint").textContent = p.kv_settable
       ? L("Ein kleinerer KV-Cache lässt mehr Kontext in den Grafikspeicher – das Kontextfenster oben bietet dann mehr an. "
-          + (p.active ? "Zum Ändern startet der Modell-Server neu." : "Gilt ab dem nächsten Laden.")
+          + (isLive(p) ? "Zum Ändern startet der Modell-Server neu." : "Gilt ab dem nächsten Laden.")
           + (low ? "" : " 2-Bit: kann dieser llama-server nicht (das offizielle llama.cpp bietet höchstens 4 Bit)."),
           "A smaller KV cache fits more context into VRAM – the context window above then offers more. "
-          + (p.active ? "Changing it restarts the model server." : "Applies the next time it is loaded.")
+          + (isLive(p) ? "Changing it restarts the model server." : "Applies the next time it is loaded.")
           + (low ? "" : " 2-bit: not supported by this llama-server (official llama.cpp goes down to 4 bits)."))
       : L("Bei Ollama gilt die Stufe für den ganzen Dienst: sudo systemctl edit ollama → "
           + 'Environment="OLLAMA_FLASH_ATTENTION=1" "OLLAMA_KV_CACHE_TYPE=q8_0", dann sudo systemctl restart ollama.',
@@ -2834,11 +2859,11 @@
       "Wie viele Token der Server auf einmal verarbeitet, wenn er die Eingabe einliest. Größer lastet die Grafikkarte besser aus – "
       + "spürbar bei langen Eingaben (Werkzeug-Ergebnisse, Dateien, PDFs, erster Start eines Chats), kaum bei kurzen Fragen. "
       + "Kostet einen größeren Rechenpuffer im Grafikspeicher; das Kontextfenster bietet dann ggf. weniger an. "
-      + "Vergleichen: „Kontext testen“ unten zeigt die Token/s für ein volles Fenster. " + (p.active ? "Zum Ändern startet der Modell-Server neu." : "Gilt ab dem nächsten Laden."),
+      + "Vergleichen: „Kontext testen“ unten zeigt die Token/s für ein volles Fenster. " + (isLive(p) ? "Zum Ändern startet der Modell-Server neu." : "Gilt ab dem nächsten Laden."),
       "How many tokens the server processes at once when reading the input. Bigger keeps the GPU busier – "
       + "noticeable with long inputs (tool results, files, PDFs, the first message of a chat), hardly with short questions. "
       + "Costs a larger compute buffer in VRAM; the context window may then offer less. "
-      + "Compare: “Test context” below shows tokens/s for a full window. " + (p.active ? "Changing it restarts the model server." : "Applies the next time it is loaded."));
+      + "Compare: “Test context” below shows tokens/s for a full window. " + (isLive(p) ? "Changing it restarts the model server." : "Applies the next time it is loaded."));
   }
 
   // Spekulatives Decoding: das Modell schlägt mehrere Token vor, der Server prüft sie auf einmal – schneller antworten
@@ -2886,10 +2911,10 @@
     sec.querySelector(".set-hint").textContent = L(
       "Das Modell schlägt mehrere Token auf einmal vor, der Server prüft sie in einem Durchgang – die Antwort bleibt gleich, kommt aber schneller. "
       + "MTP nutzt eigene Vorhersage-Schichten des Modells (kostet etwas Grafikspeicher), N-Gramm wiederholt Stellen aus dem Kontext. "
-      + "Bei hoher Temperatur oder freiem Text bringt es weniger; unter 30 % Trefferquote lieber aus. " + (p.active ? "Zum Ändern startet der Modell-Server neu." : "Gilt ab dem nächsten Laden."),
+      + "Bei hoher Temperatur oder freiem Text bringt es weniger; unter 30 % Trefferquote lieber aus. " + (isLive(p) ? "Zum Ändern startet der Modell-Server neu." : "Gilt ab dem nächsten Laden."),
       "The model proposes several tokens at once and the server checks them in one pass – same answer, just faster. "
       + "MTP uses the model's own prediction layers (costs a little VRAM), N-gram repeats passages from the context. "
-      + "It helps less at high temperature or with free text; below a 30 % hit rate better turn it off. " + (p.active ? "Changing it restarts the model server." : "Applies the next time it is loaded."));
+      + "It helps less at high temperature or with free text; below a 30 % hit rate better turn it off. " + (isLive(p) ? "Changing it restarts the model server." : "Applies the next time it is loaded."));
   }
 
   // Sampling je Modell und Modus (mit/ohne Denken) – gilt ab der nächsten Antwort
@@ -3039,10 +3064,14 @@
     const text = p.keeps_files ? L(`${p.label} aus der Liste entfernen? Die Datei in ~/models bleibt.`,
                                    `Remove ${p.label} from the list? The file in ~/models stays.`)
       : L(`${p.label} löschen? Die Modelldateien werden entfernt.`, `Delete ${p.label}? The model files are removed.`) + size;
-    if (!confirm(text)) return;
+    const next = p.active && (MP.data.profiles.find((x) => x.name !== p.name) || {}).label;
+    const active = p.active ? L(`\n\nEs ist gerade ausgewählt: Orbwise entlädt es vorher und wählt ein anderes Modell (z. B. ${next}), das erst bei der nächsten Frage geladen wird.`,
+                                `\n\nIt is selected right now: Orbwise unloads it first and selects another model (e.g. ${next}), loaded with the next question.`) : "";
+    if (!confirm(text + active)) return;
     try {
-      await api("DELETE", `/api/models/${encodeURIComponent(p.name)}`);
-      toast(L(`✔ ${p.label} gelöscht`, `✔ ${p.label} deleted`));
+      const r = await api("DELETE", `/api/models/${encodeURIComponent(p.name)}`);
+      const now = p.active && (MP.data.profiles.find((x) => x.name === r.active) || {}).label;
+      toast(L(`✔ ${p.label} gelöscht`, `✔ ${p.label} deleted`) + (now ? L(` – ausgewählt: ${now} (entladen)`, ` – selected: ${now} (unloaded)`) : ""));
       MP.sel = null;
       refreshModelViews();
     } catch { /* Meldung kommt von api() */ }
@@ -3461,6 +3490,13 @@
       disabled: !!data.switching && !p.active,
       run: () => { if (!p.active) { MP.data = data; activateModel(p); } },
     }));
+    const cur = data.profiles.find((p) => p.active);
+    if (cur && cur.loaded === true && !data.switching)
+      items.push({ sep: true }, { icon: "power", label: L("Modell entladen", "Unload model"),
+                                  sub: L("Grafikspeicher freigeben – die nächste Frage lädt es wieder", "Free the video memory – the next question loads it again"),
+                                  run: unloadModel });
+    else if (cur && cur.loaded === false && !data.switching)
+      items.push({ sep: true }, { icon: "power", label: L("Modell laden", "Load model"), run: () => { MP.data = data; activateModel(cur); } });
     items.push({ sep: true }, { icon: "settings", label: L("Modelle verwalten …", "Manage models …"), run: () => openModelsPage("mine") });
     popMenu(anchor, items);
   };
@@ -3680,7 +3716,7 @@
 
   function setPill(id, cls, text) {
     const el = $(id);
-    el.classList.remove("ok", "warn", "bad");
+    el.classList.remove("ok", "warn", "bad", "off");
     el.classList.add(cls);
     el.querySelector("em").textContent = text;
   }
@@ -3698,8 +3734,8 @@
       // „Lade Modell“ nach dem Start stehen, bis man neu lädt
       if (l.switching && asked > S.modelDoneAt) { S.modelSwitching = S.modelSwitching || l.switching; refresh(); }
       else if (!l.switching && S.modelSwitching && asked > S.modelDoneAt) { S.modelSwitching = null; refresh(); }
-      setPill("pill-llm", l.switching ? "warn" : !l.online ? "bad" : l.model_available ? "ok" : "warn",
-        l.switching ? L("lädt …", "loading …") : !l.online ? `${l.label || l.model} offline` : l.model_available ? name : l.model + L(" fehlt", " missing"));
+      setPill("pill-llm", l.switching ? "warn" : l.unloaded ? "off" : !l.online ? "bad" : l.model_available ? "ok" : "warn",
+        l.switching ? L("lädt …", "loading …") : l.unloaded ? `${l.label || l.model} · ${L("entladen", "unloaded")}` : !l.online ? `${l.label || l.model} offline` : l.model_available ? name : l.model + L(" fehlt", " missing"));
       const v = st.voice;
       const vCls = v.stt && v.tts ? "ok" : v.stt || v.tts ? "warn" : "bad";
       setPill("pill-voice", vCls, [v.stt ? "STT" : null, v.tts ? "TTS" : "TTS(Browser)", v.wake ? "WAKE" : null].filter(Boolean).join(" · "));
