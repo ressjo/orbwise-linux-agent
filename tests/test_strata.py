@@ -74,8 +74,23 @@ def test_manifest_and_choice_of_variant():
     assert not any(o["recommended"] for o in strata.options(20, 16))
     ok, note = strata.gpu_supported({"vendor": "amd", "vram_gb": 20})
     assert ok and "experimentell" in note
-    assert not strata.gpu_supported({"vendor": "nvidia", "vram_gb": 8})[0]
+    assert not strata.gpu_supported({"vendor": "nvidia", "vram_gb": 8}, {})[0]
     assert not strata.gpu_supported({"vendor": "none", "vram_gb": 0})[0]
+
+
+def test_nvidia_rtx_4080_with_64_gb(monkeypatch):
+    rtx = {"vendor": "nvidia", "name": "NVIDIA GeForce RTX 4080", "vram_gb": 16.0}
+    assert strata.gpu_supported(rtx, {"driver": "580.95.05", "compute_cap": 8.9}) == (True, "")
+    ok, note = strata.gpu_supported(rtx, {"driver": "550.120", "compute_cap": 8.9})
+    assert ok and "CUDA-12" in note
+    ok, note = strata.gpu_supported(rtx, {"driver": "470.256", "compute_cap": 8.9})
+    assert not ok and "zu alt" in note
+    assert not strata.gpu_supported({**rtx, "vram_gb": 12}, {"driver": "580.65", "compute_cap": 6.1})[0]  # GTX
+    opts = {o["model"]: o for o in strata.options(16, 62.7)}  # 64 GB zeigt das System als ~62,7 GB
+    assert opts["iq2_xs"]["recommended"] and opts["q2_0"]["fits"] and opts["iq3_s"]["fits"]
+    monkeypatch.setattr(strata.shutil, "which", lambda name: "/usr/bin/nvidia-smi")
+    fake_smi = lambda argv, **kw: type("R", (), {"stdout": "580.95.05, 8.9\n"})()  # noqa: E731
+    assert strata.nvidia_info(run=fake_smi) == {"driver": "580.95.05", "compute_cap": 8.9}
 
 
 def test_install_checks_checksum_and_signature(home, monkeypatch):

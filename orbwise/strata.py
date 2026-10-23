@@ -85,14 +85,45 @@ def parse_manifest(text: str, platform: str = PLATFORM) -> dict | None:
     return None
 
 
-def gpu_supported(gpu: dict) -> tuple[bool, str]:
-    """Strata braucht eine NVIDIA- oder AMD-Karte mit mindestens 12 GB (Linux x86_64)."""
+def nvidia_info(run=subprocess.run) -> dict:
+    """Treiber und Rechenfähigkeit der NVIDIA-Karte (nvidia-smi) – leer, wenn unbekannt."""
+    if not shutil.which("nvidia-smi"):
+        return {}
+    try:
+        out = run(["nvidia-smi", "--query-gpu=driver_version,compute_cap", "--format=csv,noheader"],
+                  capture_output=True, text=True, timeout=10).stdout.strip().splitlines()
+        driver, cap = [x.strip() for x in out[0].split(",")[:2]]
+        return {"driver": driver, "compute_cap": float(cap)}
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        return {}
+
+
+def _version(text: str) -> tuple:
+    return tuple(int(x) for x in str(text).split(".") if x.isdigit())
+
+
+def gpu_supported(gpu: dict, nvidia: dict | None = None) -> tuple[bool, str]:
+    """Strata braucht eine NVIDIA- (RTX 20 bis 50) oder AMD-Karte mit mindestens 12 GB (Linux x86_64). NVIDIA: ab
+    Treiber 580 die CUDA-13-Engine, davor die CUDA-12-Engine – Strata wählt sie selbst."""
     if gpu.get("vendor") not in ("amd", "nvidia"):
         return False, T("Strata braucht eine NVIDIA- oder AMD-Grafikkarte.", "Strata needs an NVIDIA or AMD graphics card.")
     if float(gpu.get("vram_gb") or 0) < 11.5:
         return False, T("Strata braucht mindestens 12 GB Grafikspeicher.", "Strata needs at least 12 GB of video memory.")
     if gpu.get("vendor") == "amd":
         return True, T("AMD-Unterstützung ist bei Strata noch experimentell.", "AMD support is still experimental in Strata.")
+    info = nvidia_info() if nvidia is None else nvidia
+    if info.get("compute_cap") and info["compute_cap"] < 7.5:
+        return False, T("Strata braucht eine NVIDIA RTX 20 oder neuer (GTX-Karten werden nicht unterstützt).",
+                        "Strata needs an NVIDIA RTX 20 series or newer (GTX cards are not supported).")
+    driver = info.get("driver")
+    if driver and _version(driver) < (525,):
+        return False, T(f"Der NVIDIA-Treiber {driver} ist zu alt für Strata – bitte Treiber 580 oder neuer installieren "
+                        "(Ubuntu: sudo ubuntu-drivers install).",
+                        f"NVIDIA driver {driver} is too old for Strata – please install driver 580 or newer "
+                        "(Ubuntu: sudo ubuntu-drivers install).")
+    if driver and _version(driver) < (580, 65):
+        return True, T(f"NVIDIA-Treiber {driver}: Strata nutzt die CUDA-12-Engine (ab Treiber 580 die neuere CUDA-13-Engine).",
+                       f"NVIDIA driver {driver}: Strata uses the CUDA 12 engine (the newer CUDA 13 engine from driver 580).")
     return True, ""
 
 

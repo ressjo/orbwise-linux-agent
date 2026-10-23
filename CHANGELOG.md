@@ -14,6 +14,9 @@ All notable changes to this project are documented here. The format follows
   only actions that change or start something do; the data-leak guard still checks what goes out.
 
 ### Added
+- **Strata on NVIDIA:** the Strata card checks the NVIDIA driver and card (RTX 20+ via compute capability; driver
+  ≥ 580.65 → CUDA 13 engine, ≥ 525 → CUDA 12 engine with a note, older → asks to update) – e.g. RTX 4080 + 64 GB RAM
+  gets IQ2_XS.
 - **Strata engine for Qwen3.8-Flash-Next:** Models → Add offers the large MoE model with the variant that fits VRAM +
   RAM (32 GB RAM → Coder IQ1_M). Orbwise installs the Strata terminal like its `install.sh` (manifest SHA-256, signed
   feed check), runs it as a detached model server (new `server.detached`, `stop_command`, `ready_key`,

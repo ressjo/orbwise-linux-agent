@@ -442,7 +442,10 @@ loading); afterwards loading can make the PC sluggish for 1–3 minutes. Orbwise
 (`strata launch … --no-tui`, its own API key passed via the environment, ready once `/health` reports `loaded`),
 stops it with `strata launch --stop` (also before image mode or another model) and checks once whether it returns
 tool calls – without them Orbwise can only chat with it. KV cache, batch size and speculative decoding are handled by
-Strata itself, so the model page only offers the context window and sampling. AMD support is experimental in Strata.
+Strata itself, so the model page only offers the context window and sampling. Cards: NVIDIA RTX 20–50 series with
+12 GB+ (driver 580+ gets Strata's CUDA 13 engine, older drivers from 525 the CUDA 12 one – Orbwise checks the driver
+and refuses GTX cards) or AMD RX 6800 and newer (experimental in Strata). Example: an RTX 4080 (16 GB) with 64 GB RAM
+gets IQ2_XS (Q2_0 and IQ3_S are offered too).
 
 ### Why was so much read again?
 
