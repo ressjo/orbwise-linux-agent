@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 from test_llamacpp import AMD, WORKS, Fake, _tgz, fake, release, setup  # noqa: F401 – Fixtures
 from test_llm_memory import write_gguf
 
-from orbwise import llamacpp, llamacpp_tune
+from orbwise import llamacpp, llamacpp_tune, state
 from orbwise.config import LLMConfig, ProfileConfig
 from orbwise.llm_router import LLMRouter
 
@@ -155,8 +155,8 @@ def test_api_tune_and_switch_build(cfg, tmp_path, monkeypatch):
     own_build(cfg)
     gguf = tmp_path / "Qwen-27B-Q4_K_M.gguf"
     write_gguf(gguf, META)
-    state = cfg.memory.dir.parent / "state.json"
-    name = llamacpp.add_model(cfg, state, gguf, None, AMD, {}, downloaded=False)
+    state_file = cfg.memory.dir.parent / "state.json"
+    name = llamacpp.add_model(cfg, state_file, gguf, None, AMD, {}, downloaded=False)
     cfg.llm.base_url = "http://127.0.0.1:9"
     cfg.llm.profiles = {"qwen": ProfileConfig(model="qwen3:8b")}
     cfg.llm.active = "qwen"
@@ -165,7 +165,7 @@ def test_api_tune_and_switch_build(cfg, tmp_path, monkeypatch):
         await progress("Messe ROCm · Batch 512 (1/3) …")
         result = {"at": time.time(), "flavor": "rocm", "ubatch": 1024, "applied_ubatch": 1024, "runs": [],
                   "best": None, "other": {"flavor": "vulkan", "gain_pct": 12}, "notes": [], "quant_hint": ""}
-        llamacpp._write(router.state_path, {**llamacpp._read(router.state_path), "tuning": {profile: result}})
+        state.update(router.state_path, lambda data: data.update(tuning={profile: result}))
         return result
     monkeypatch.setattr(llamacpp_tune, "tune", fake_tune)
     from orbwise.server import create_app

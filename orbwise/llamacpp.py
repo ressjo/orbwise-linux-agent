@@ -29,6 +29,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from . import state
 from .lang import T
 
 REPO = "ggml-org/llama.cpp"
@@ -635,39 +636,28 @@ def add_model(cfg, state_path: Path, gguf: Path, mmproj: Path | None, gpu: dict,
     profile = make_profile(cfg, name, gguf, mmproj, gpu, free_port(profiles))
     register_profile(state_path, name, profile)
     files = [str(p) for p in shards(gguf)] + ([str(mmproj)] if mmproj else [])
-    data = _read(state_path)
-    data.setdefault("local_models", {})[name] = {"files": files, "downloaded": downloaded, "repo": repo}
-    _write(state_path, data)
+
+    def remember(data: dict) -> None:
+        data.setdefault("local_models", {})[name] = {"files": files, "downloaded": downloaded, "repo": repo}
+    state.update(state_path, remember)
     return name
 
 
-def _read(state_path: Path) -> dict:
-    try:
-        return json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-
-
-def _write(state_path: Path, data: dict) -> None:
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
-
-
 def local_record(state_path: Path, name: str) -> dict | None:
-    rec = (_read(state_path).get("local_models") or {}).get(name)
+    rec = (state.load(state_path).get("local_models") or {}).get(name)
     return rec if isinstance(rec, dict) else None
 
 
 def forget(cfg, state_path: Path, name: str, delete_files: bool = True) -> int:
     """Eintrag entfernen; selbst geladene Dateien löschen (nur innerhalb von models_dir) → freigegebene Bytes.
     Dateien, die der Nutzer selbst nach ~/models gelegt hat, bleiben."""
-    data = _read(state_path)
-    rec = (data.get("local_models") or {}).pop(name, None)
-    _write(state_path, data)
+    def drop(data: dict) -> tuple[dict | None, dict]:
+        return (data.get("local_models") or {}).pop(name, None), dict(data.get("local_models") or {})
+    rec, remaining = state.update(state_path, drop)
     if not rec or not rec.get("downloaded") or not delete_files:
         return 0
     base = models_dir(cfg).resolve()
-    still_used = {f for r in (data.get("local_models") or {}).values() for f in r.get("files", [])}
+    still_used = {f for r in remaining.values() for f in r.get("files", [])}
     freed = 0
     for f in rec.get("files", []):
         p = Path(f)

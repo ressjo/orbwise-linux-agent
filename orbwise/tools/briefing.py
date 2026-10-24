@@ -8,12 +8,12 @@ state.json und haben Vorrang, bis sie dort zurückgesetzt werden.
 from __future__ import annotations
 
 import asyncio
-import json
 import shutil
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from .. import state
 from ..config import BRIEFING_SECTIONS, BriefingConfig
 from ..memory.files import german_date
 from . import proc
@@ -46,16 +46,9 @@ def _state_path(cfg) -> Path:
     return cfg.memory.dir.parent / "state.json"
 
 
-def _read_state(cfg) -> dict:
-    try:
-        return json.loads(_state_path(cfg).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
 def settings(cfg) -> BriefingConfig:
     """Wirksame Einstellungen: Config, überschrieben durch das, was im Dashboard gespeichert wurde."""
-    override = _read_state(cfg).get("briefing")
+    override = state.load(_state_path(cfg)).get("briefing")
     if not isinstance(override, dict):
         return cfg.briefing
     return BriefingConfig.model_validate({**cfg.briefing.model_dump(), **override})
@@ -63,14 +56,15 @@ def settings(cfg) -> BriefingConfig:
 
 def save_settings(cfg, data: dict[str, Any] | None) -> BriefingConfig:
     """Speichert Dashboard-Einstellungen (None = zurück zur Config)."""
-    state = _read_state(cfg)
-    if data is None:
-        state.pop("briefing", None)
-    else:
-        state["briefing"] = BriefingConfig.model_validate({**cfg.briefing.model_dump(), **data}).model_dump()
-    path = _state_path(cfg)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(state, indent=1), encoding="utf-8")
+    chosen = None if data is None else \
+        BriefingConfig.model_validate({**cfg.briefing.model_dump(), **data}).model_dump()
+
+    def change(saved: dict) -> None:
+        if chosen is None:
+            saved.pop("briefing", None)
+        else:
+            saved["briefing"] = chosen
+    state.update(_state_path(cfg), change)
     return settings(cfg)
 
 

@@ -4,7 +4,6 @@ interaktive Auswahl (Installer und `orbwise model add`). Zusätzlich geladene Mo
 
 from __future__ import annotations
 
-import json
 import re
 import shutil
 import subprocess
@@ -13,6 +12,7 @@ from pathlib import Path
 
 import httpx
 
+from . import state
 from .lang import T
 
 
@@ -291,51 +291,40 @@ def hf_quants(repo: str, vram_gb: float, models_dir: Path | None = None, base: s
 
 # ---------------------------------------------------------------- Zusätzliche Modelle merken (state.json)
 
-def _read_state(path: Path) -> dict:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
 def added_profiles(state_path: Path) -> dict[str, dict]:
     """Vollständige Profile (z. B. llama.cpp-Modelle mit eigenem Server), gespeichert von `orbwise model add`."""
-    data = _read_state(state_path).get("added_profiles", {})
+    data = state.load(state_path).get("added_profiles", {})
     return data if isinstance(data, dict) else {}
 
 
 def register_profile(state_path: Path, name: str, profile: dict, activate: bool = False) -> str:
-    data = _read_state(state_path)
-    data.setdefault("added_profiles", {})[name] = profile
-    if activate:
-        data["active_profile"] = name
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
+    def change(data: dict) -> None:
+        data.setdefault("added_profiles", {})[name] = profile
+        if activate:
+            data["active_profile"] = name
+    state.update(state_path, change)
     return name
 
 
 def set_active(state_path: Path, name: str) -> None:
     """Profil für den nächsten Start merken (wenn Orbwise gerade nicht läuft)."""
-    data = _read_state(state_path)
-    data["active_profile"] = name
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
+    state.update(state_path, lambda data: data.update(active_profile=name))
 
 
 def added_models(state_path: Path) -> list[str]:
-    return [t for t in _read_state(state_path).get("added_models", []) if isinstance(t, str) and normalize_tag(t) == t]
+    return [t for t in state.load(state_path).get("added_models", []) if isinstance(t, str) and normalize_tag(t) == t]
 
 
 def register_model(state_path: Path, tag: str, activate: bool = False) -> str:
-    data = _read_state(state_path)
-    models = data.setdefault("added_models", [])
-    if tag not in models:
-        models.append(tag)
     name = slug(tag)
-    if activate:
-        data["active_profile"] = name
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
+
+    def change(data: dict) -> None:
+        models = data.setdefault("added_models", [])
+        if tag not in models:
+            models.append(tag)
+        if activate:
+            data["active_profile"] = name
+    state.update(state_path, change)
     return name
 
 
@@ -345,23 +334,22 @@ def removable(state_path: Path, name: str) -> bool:
 
 
 def unregister_model(state_path: Path, name_or_tag: str) -> str | None:
-    data = _read_state(state_path)
-    profiles = data.get("added_profiles", {})
-    if name_or_tag in profiles:
-        profiles.pop(name_or_tag)
-        if data.get("active_profile") == name_or_tag:
-            data.pop("active_profile")
-        state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
-        return name_or_tag
-    models = data.get("added_models", [])
-    for tag in models:
-        if tag == name_or_tag or slug(tag) == name_or_tag:
-            models.remove(tag)
-            if data.get("active_profile") == slug(tag):
+    def change(data: dict) -> str | None:
+        profiles = data.get("added_profiles", {})
+        if name_or_tag in profiles:
+            profiles.pop(name_or_tag)
+            if data.get("active_profile") == name_or_tag:
                 data.pop("active_profile")
-            state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
-            return tag
-    return None
+            return name_or_tag
+        models = data.get("added_models", [])
+        for tag in models:
+            if tag == name_or_tag or slug(tag) == name_or_tag:
+                models.remove(tag)
+                if data.get("active_profile") == slug(tag):
+                    data.pop("active_profile")
+                return tag
+        return None
+    return state.update(state_path, change)
 
 
 # ---------------------------------------------------------------- Interaktive Auswahl (Terminal)

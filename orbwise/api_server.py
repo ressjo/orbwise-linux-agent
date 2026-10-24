@@ -20,6 +20,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from . import state
 from .lang import T
 from .llm import LLMError
 
@@ -28,28 +29,18 @@ STATE_KEY = "api_server"
 
 
 # ---------------------------------------------------------------- Einstellungen (state.json)
-def _read(path: Path) -> dict:
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-
-
 def settings(path: Path) -> dict:
-    raw = _read(path).get(STATE_KEY) or {}
+    raw = state.load(path).get(STATE_KEY) or {}
     return {"enabled": bool(raw.get("enabled")), "key": str(raw.get("key") or ""),
             "allow_switch": bool(raw.get("allow_switch"))}
 
 
 def save_settings(path: Path, **changes: Any) -> dict:
-    data = _read(path)
     current = settings(path)
     current.update({k: v for k, v in changes.items() if k in current})
     if not current["key"]:
         current["key"] = new_key()
-    data[STATE_KEY] = current
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=1), encoding="utf-8")
+    state.update(path, lambda data: data.update({STATE_KEY: current}))
     return current
 
 

@@ -4,7 +4,6 @@ Modell-Server (llama-server) selbst starten/stoppen. Embeddings laufen immer üb
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import re
@@ -16,6 +15,7 @@ from pathlib import Path
 
 import httpx
 
+from . import state
 from .config import LLMConfig, ProfileConfig, ServerConfig
 from .lang import T
 from .llm import ContextOverflow, LLMError, OllamaLLM, OpenAICompatLLM, clean_sampling
@@ -55,9 +55,9 @@ def listening_pids(port: int) -> list[int]:
 
 
 def _log_path() -> Path:
-    state = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state"))
-    state.mkdir(parents=True, exist_ok=True)
-    return state / "orbwise-llm.log"
+    folder = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state"))
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / "orbwise-llm.log"
 
 
 class ManagedServer:
@@ -378,10 +378,10 @@ class LLMRouter:
         # Hat der Bild-Modus den Grafikspeicher geliehen (Sprachmodell beendet)? Dann gibt dieser Aufruf ihn zurück
         # (release(restart=…)), bevor das Sprachmodell wieder gebraucht wird – siehe imagegen.py
         self.gpu_borrowed = None
-        state = self._read_state()
+        saved = self._read_state()
         # Von Hand entladen (Modellseite): Server aus bzw. Ollama-Modell aus dem Speicher, das Profil bleibt gewählt.
         # Die nächste Anfrage lädt es wieder (ensure_loaded); gilt auch über einen Neustart von Orbwise
-        self.unloaded = bool(state.get("unloaded"))
+        self.unloaded = bool(saved.get("unloaded"))
         self.load_progress: Progress | None = None  # Fortschritt, wenn eine Anfrage das Modell zurückholt
         self.load_done = None  # danach (Oberfläche: Modell wieder aktiv)
         self.mode = "tools"  # Tools oder Coding – Coding kann je Modell ein eigenes Kontextfenster haben
@@ -389,7 +389,7 @@ class LLMRouter:
             if p.server and (n := _server_ctx(p.server)):
                 p.num_ctx = n
         self._base_ctx = {name: p.num_ctx for name, p in self.profiles.items()}  # ohne Oberflächen-Einstellung
-        for name, n in (state.get("context") or {}).items():  # in der Oberfläche eingestellt
+        for name, n in (saved.get("context") or {}).items():  # in der Oberfläche eingestellt
             if name in self.profiles and isinstance(n, int):
                 self._apply_context(name, n)
         for name, p in self.profiles.items():  # aus der config.yaml: Namen vereinheitlichen, Unsinn melden
@@ -399,19 +399,19 @@ class LLMRouter:
                 except ValueError as e:
                     log.warning("Sampling-Werte im Profil '%s' ungültig: %s", name, e)
                     p.sampling = {}
-        for name, sets in (state.get("sampling") or {}).items():
+        for name, sets in (saved.get("sampling") or {}).items():
             if name in self.profiles and isinstance(sets, dict):
                 try:
                     self.profiles[name].sampling = {m: clean_sampling(sets.get(m)) for m in ("think", "fast")}
                 except ValueError as e:
                     log.warning("Gespeicherte Sampling-Werte für '%s' ungültig: %s", name, e)
-        for name, kv in (state.get("kv_cache") or {}).items():
+        for name, kv in (saved.get("kv_cache") or {}).items():
             if name in self.profiles and kv in KV_TYPES and self.profiles[name].server:
                 self._apply_kv(name, kv)
-        for name, n in (state.get("ubatch") or {}).items():
+        for name, n in (saved.get("ubatch") or {}).items():
             if name in self.profiles and n in UBATCH_SIZES and self.profiles[name].server:
                 self._apply_ubatch(name, n)
-        for name, mode in (state.get("speculative") or {}).items():
+        for name, mode in (saved.get("speculative") or {}).items():
             if name in self.profiles and mode in SPEC_MODES and self.profiles[name].server:
                 try:
                     self._apply_spec(name, mode)
@@ -457,24 +457,27 @@ class LLMRouter:
         return next(iter(self.profiles))
 
     def _read_state(self) -> dict:
-        if self.state_path and self.state_path.exists():
-            try:
-                return json.loads(self.state_path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
-                return {}
-        return {}
+        return state.load(self.state_path)
+
+    def _remember(self, key: str, name: str, value) -> None:
+        """Einstellung je Profil merken (state.json[key][name]); value None = vergessen."""
+        def change(data: dict) -> None:
+            if value is None:
+                (data.get(key) or {}).pop(name, None)
+            else:
+                data.setdefault(key, {})[name] = value
+        if self.state_path:
+            state.update(self.state_path, change)
 
     def _write_state(self) -> None:
-        if not self.state_path:
-            return
-        data = self._read_state()
-        data["active_profile"] = self.active
-        if self.unloaded:
-            data["unloaded"] = True
-        else:
-            data.pop("unloaded", None)
-        self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        self.state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
+        def change(data: dict) -> None:
+            data["active_profile"] = self.active
+            if self.unloaded:
+                data["unloaded"] = True
+            else:
+                data.pop("unloaded", None)
+        if self.state_path:
+            state.update(self.state_path, change)
 
     @property
     def profile(self) -> ProfileConfig:
@@ -775,11 +778,8 @@ class LLMRouter:
                     await running.stop_foreign()  # lief schon vor Orbwise → sonst blieben die alten Optionen
             apply()
             self.detected_ctx.pop(name, None)
-            if self.state_path and key:
-                data = self._read_state()
-                data.setdefault(key, {})[name] = value
-                self.state_path.parent.mkdir(parents=True, exist_ok=True)
-                self.state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
+            if key:
+                self._remember(key, name, value)
             if name == self.active:
                 if not self.unloaded:  # entladen: gilt beim nächsten Laden
                     await self._prepare(name, progress)
@@ -829,9 +829,7 @@ class LLMRouter:
         mode = mode or self.mode
         key = "context_coding" if mode == "coding" else "context"
         if n == 0 and mode == "coding":
-            data = self._read_state()
-            (data.get(key) or {}).pop(name, None)
-            self.state_path and self.state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
+            self._remember(key, name, None)
             n = self.wanted_context(name, "tools") or 0
             if mode != self.mode or not n or n == self.profiles[name].num_ctx:
                 return
@@ -840,11 +838,7 @@ class LLMRouter:
         if not 1024 <= n <= 1048576:
             raise LLMError("Kontextfenster bitte zwischen 1.024 und 1.048.576 Token")
         if mode != self.mode:  # anderer Modus: nur merken – gilt beim Wechsel dorthin
-            data = self._read_state()
-            data.setdefault(key, {})[name] = n
-            if self.state_path:
-                self.state_path.parent.mkdir(parents=True, exist_ok=True)
-                self.state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
+            self._remember(key, name, n)
             return
         await self._reconfigure(name, lambda: self._apply_context(name, n), key, n, progress)
         got = self.detected_ctx.get(name) if name == self.active else None
@@ -861,11 +855,7 @@ class LLMRouter:
         except ValueError as e:
             raise LLMError(str(e)) from e
         self.profiles[name].sampling = sets
-        if self.state_path:
-            data = self._read_state()
-            data.setdefault("sampling", {})[name] = sets
-            self.state_path.parent.mkdir(parents=True, exist_ok=True)
-            self.state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
+        self._remember("sampling", name, sets)
         if name == self.active and isinstance(self.client, OllamaLLM):
             self.client.sampling = sets  # OpenAI-Client liest das Profil selbst
         return sets

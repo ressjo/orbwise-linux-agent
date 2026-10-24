@@ -24,7 +24,7 @@ import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
-from . import llamacpp
+from . import llamacpp, state
 from .lang import T
 from .llm_memory import cache_type
 
@@ -218,13 +218,13 @@ async def tune(cfg, router, name: str, gpu: dict, progress: Progress | None = No
               "other": ({"flavor": other_best["flavor"], "gain_pct": round((other_best["pp"] / top_here["pp"] - 1) * 100)}
                         if other_best and top_here else None)}
     if router.state_path:
-        data = llamacpp._read(router.state_path)
-        data.setdefault("tuning", {})[name] = result
-        llamacpp._write(router.state_path, data)
+        def remember(data: dict) -> None:
+            data.setdefault("tuning", {})[name] = result
+        state.update(router.state_path, remember)
     return result
 
 
 def saved(state_path: Path | None, name: str) -> dict | None:
     if not state_path:
         return None
-    return (llamacpp._read(state_path).get("tuning") or {}).get(name)
+    return (state.load(state_path).get("tuning") or {}).get(name)

@@ -18,6 +18,9 @@ All notable changes to this project are documented here. The format follows
   Ollama models; new Hugging Face downloads always run on llama.cpp.
 
 ### Changed
+- **state.json is written safely:** all model profiles and settings go through one module that writes atomically
+  (temporary file + rename) under a lock – a crash while saving can no longer leave a half-written file, and two
+  changes at the same time (a download finishing while you change a setting) no longer overwrite each other.
 - **Fewer full re-reads in big windows:** from 32k on all tools go along from the start (if they take ≤ 25 % of the
   budget and < 60 s to read) instead of growing mid-chat, which re-read the whole chat; the step-limit summary keeps
   the tool list as well.

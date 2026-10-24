@@ -24,7 +24,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
 
-from . import prompts, toolselect
+from . import prompts, state, toolselect
 from .config import Config
 from .context_plan import SUMMARY_MIN, THINK_LEVELS, ContextPlan, plan_for
 from .llm import ContextOverflow, LLMError, strip_think
@@ -535,12 +535,9 @@ class Agent:
         return seconds <= (ALL_TOOLS_SECONDS * 1.25 if all_now else ALL_TOOLS_SECONDS)
 
     def _load_prefill(self) -> dict[str, float]:
-        try:
-            data = json.loads(self._state_path.read_text(encoding="utf-8"))
-            raw = data.get("prefill_tps") or {}
-            return {str(k): float(v) for k, v in raw.items() if isinstance(v, (int, float)) and v > 0}
-        except (OSError, ValueError, AttributeError):
-            return {}
+        raw = state.load(self._state_path).get("prefill_tps") or {}
+        return {str(k): float(v) for k, v in raw.items() if isinstance(v, (int, float)) and v > 0} \
+            if isinstance(raw, dict) else {}
 
     def _save_prefill(self) -> None:
         """Gelernte Geschwindigkeit merken – nur bei spürbarer Änderung (state.json teilt sich das mit dem Router)."""
@@ -549,10 +546,9 @@ class Agent:
         if not tps or (saved and abs(tps - saved) / saved < 0.1):
             return
         try:
-            data = json.loads(self._state_path.read_text(encoding="utf-8")) if self._state_path.exists() else {}
-            data.setdefault("prefill_tps", {})[key] = tps
-            self._state_path.parent.mkdir(parents=True, exist_ok=True)
-            self._state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
+            def remember(data: dict) -> None:
+                data.setdefault("prefill_tps", {})[key] = tps
+            state.update(self._state_path, remember)
             self._saved_tps[key] = tps
         except (OSError, ValueError) as e:
             log.info("Einlese-Geschwindigkeit nicht gespeichert: %s", e)
@@ -577,13 +573,11 @@ class Agent:
         """Nach einer Änderung am Modell-Server (z. B. Batch-Größe) neu messen statt den alten Wert nachzuziehen."""
         self._prefill_tps.pop(profile, None)
         self._saved_tps.pop(profile, None)
-        try:
-            data = json.loads(self._state_path.read_text(encoding="utf-8"))
-            if profile in (data.get("prefill_tps") or {}):
-                del data["prefill_tps"][profile]
-                self._state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
-        except (OSError, ValueError, AttributeError):
-            pass
+        if profile in (state.load(self._state_path).get("prefill_tps") or {}):
+            try:
+                state.update(self._state_path, lambda data: (data.get("prefill_tps") or {}).pop(profile, None))
+            except OSError as e:
+                log.info("Einlese-Geschwindigkeit nicht vergessen: %s", e)
 
     def _unit(self, name: str, small: bool) -> str:
         """Auswahl-Einheit eines Werkzeugs – leer für die Grundausstattung des kleinen Fensters (immer geladen)."""

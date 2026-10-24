@@ -9,7 +9,6 @@ liegen (kann von Hand gelöscht werden). Läuft nur, solange es etwas zu tun gib
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -17,6 +16,8 @@ import shutil
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
+
+from . import state
 
 log = logging.getLogger(__name__)
 
@@ -41,10 +42,7 @@ def _command(raw: dict) -> str:
 def clean_state(state_path: Path) -> dict | None:
     """Profile entfernter Engines aus state.json nehmen → {"profiles", "strata", "strata_dirs"}, None wenn nichts zu
     tun war."""
-    try:
-        data = json.loads(state_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
+    data = state.load(state_path)
     added = data.get("added_profiles") or {}
     local = data.get("local_models") or {}
     strata = [n for n, raw in added.items() if _STRATA.search(_command(raw)) or (local.get(n) or {}).get("engine") == "strata"]
@@ -64,7 +62,7 @@ def clean_state(state_path: Path) -> dict | None:
     if data.get("active_profile") in names:  # dann gilt llm.active bzw. das erste Profil – geladen wie gewohnt
         data.pop("active_profile")
         data.pop("unloaded", None)
-    state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
+    state.save(state_path, data)
     return {"profiles": names, "strata": strata, "strata_dirs": dirs}
 
 
