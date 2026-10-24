@@ -112,9 +112,6 @@ class MemoryConfig(BaseModel):
     lessons_max: int = 300
 
 
-DEFAULT_VOICES = {"de": "de_DE-thorsten-high", "en": "en_GB-alan-medium"}
-
-
 class VoiceConfig(BaseModel):
     enabled: bool = True
     # Sprache der Spracherkennung – leer = wie die globale Einstellung "language"
@@ -122,9 +119,6 @@ class VoiceConfig(BaseModel):
     stt_model: str = "small"
     stt_device: str = "cpu"
     stt_compute_type: str = "int8"
-    # Piper-Stimme – leer = Standardstimme der gewählten Sprache
-    tts_voice: Path | None = None
-    tts_length_scale: float = 0.95
     wakeword_model: str = "hey_jarvis"
     wakeword_threshold: float = 0.5
     silence_ms: int = 900
@@ -495,13 +489,10 @@ class Config(BaseModel):
     def _language_defaults(self) -> "Config":
         if not self.voice.language:
             self.voice.language = self.language
-        if self.voice.tts_voice is None:
-            self.voice.tts_voice = DATA_DIR / "voices" / f"{DEFAULT_VOICES[self.language]}.onnx"
         return self
 
     def expand_paths(self) -> "Config":
         self.memory.dir = self.memory.dir.expanduser()
-        self.voice.tts_voice = self.voice.tts_voice.expanduser()
         self.tools.search_paths = [p.expanduser() for p in self.tools.search_paths]
         self.tools.nas_paths = [p.expanduser() for p in self.tools.nas_paths]
         return self

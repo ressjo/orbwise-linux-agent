@@ -528,8 +528,34 @@ SPOKEN = {
 }
 
 
+# Sprache der vorgelesenen festen Sätze – folgt der Sprache der gewählten Stimme (set_spoken_language), sonst der
+# Oberfläche; Sätze gibt es auf Deutsch und Englisch
+_spoken_language: str | None = None
+
+
+def set_spoken_language(code: str | None) -> None:
+    global _spoken_language
+    _spoken_language = code if code in SPOKEN else None
+
+
 def spoken(cfg, key: str, **values) -> str:
-    return SPOKEN[lang_of(cfg)][key].format(**values)
+    return SPOKEN[_spoken_language or lang_of(cfg)][key].format(**values)
+
+
+REPLY_LANGUAGE = {
+    "de": "- Sprache: Antworte ab jetzt immer auf {name} – auch wenn der Nutzer auf Deutsch schreibt oder frühere "
+          "Antworten deutsch sind. Das hat Vorrang vor der Sprachregel oben: deine Antworten werden mit einer Stimme "
+          "auf {name} vorgelesen.",
+    "en": "- Language: from now on always answer in {name} – even if the user writes in English or earlier answers "
+          "were English. This overrides the language rule above: your answers are read out by a {name} voice.",
+}
+
+
+def reply_language_note(cfg, code: str) -> str:
+    """Zeile für den Systemprompt, wenn die gewählte Stimme eine andere Sprache spricht als die Oberfläche."""
+    from .voice.pocket import language_name
+    lang = lang_of(cfg)
+    return REPLY_LANGUAGE[lang].format(name=language_name(code, lang == "en"))
 
 
 # Wechselnde Angaben (Datum/Uhrzeit, zur Frage gefundene Erinnerungen, Planmodus) stehen nicht im System-Prompt,

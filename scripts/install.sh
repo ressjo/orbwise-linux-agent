@@ -20,7 +20,6 @@ AUTOSTART=1
 ASK=1
 REPO="${ORBWISE_REPO:-https://github.com/ressjo/orbwise-linux-agent.git}"
 BRANCH="${ORBWISE_BRANCH:-main}"
-PIPER="https://huggingface.co/rhasspy/piper-voices/resolve/main"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -201,14 +200,9 @@ rm -f "$CHOICE_FILE"
 ollama pull bge-m3   # Embeddings fürs Gedächtnis
 
 # ---------------------------------------------------------------- Voice
-if [[ "$LANG_CHOICE" == "en" ]]; then VOICE="en_GB-alan-medium"; VOICE_PATH="en/en_GB/alan/medium"
-else VOICE="de_DE-thorsten-high"; VOICE_PATH="de/de_DE/thorsten/high"; fi
-say "Downloading Piper voice ($VOICE)"
-mkdir -p "$DATA/voices"
-for ext in onnx onnx.json; do
-  [[ -f "$DATA/voices/$VOICE.$ext" ]] || \
-    curl -fL --progress-bar -o "$DATA/voices/$VOICE.$ext" "$PIPER/$VOICE_PATH/$VOICE.$ext"
-done
+say "$(t "Installiere die Sprachausgabe Pocket TTS" "Installing the Pocket TTS speech output")"
+uv run orbwise voice install || echo "$(t "⚠ Pocket TTS nicht eingerichtet – später: orbwise voice install (bis dahin spricht der Browser)" \
+  "⚠ Pocket TTS not set up – later: orbwise voice install (until then the browser speaks)")"
 
 say "Downloading the wake word model “Hey Jarvis” and Whisper"
 uv run python -c "import openwakeword.utils as u; u.download_models(['hey_jarvis'])"

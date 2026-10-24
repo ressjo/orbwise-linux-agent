@@ -114,15 +114,15 @@ def cmd_doctor(args) -> None:
                         "one is better for the prompt cache: start llama-server with -np 1"))
     print(T("Sprache:", "Voice:"))
     from .voice.listen import WakeWordFactory, WhisperSTT
-    from .voice.tts import PiperTTS
+    from .voice.pocket import BY_NAME, language_name
+    from .voice.tts import TTS
     stt = WhisperSTT(cfg.voice)
     line(stt.available(), T("faster-whisper (Spracherkennung)", "faster-whisper (speech recognition)"), "uv sync --extra voice")
-    tts = PiperTTS(cfg.voice, cfg.memory.dir.parent)
-    line(tts.available(), f"{T('Piper-Stimme', 'Piper voice')} {cfg.voice.tts_voice.name}", tts.error or "")
-    if tts.pocket.installed():
-        info = tts.pocket.describe()
-        line(info["supported"], f"Pocket TTS {info['version']}".rstrip(),
-             "" if info["supported"] else T("CPU ohne AVX2", "CPU without AVX2"))
+    tts = TTS(cfg.voice, cfg.memory.dir.parent, cfg.memory.dir.parent / "state.json")
+    version = tts.pocket.describe()["version"]
+    line(tts.available(), f"Pocket TTS {version} · {BY_NAME[tts.voice].label} · "
+         f"{language_name(tts.reply_language, cfg.language == 'en')}",
+         tts.error and f"{tts.error} – orbwise voice install " + T("(sonst spricht der Browser)", "(else the browser speaks)"))
     wake = WakeWordFactory(cfg.voice)
     line(wake.available(), f"Wake-Word '{cfg.voice.wakeword_model}'", wake.error or "")
     print(T("Desktop (Dateien/Programme öffnen):", "Desktop (opening files/apps):"))
@@ -600,6 +600,33 @@ def _finish_add(args, state: Path, name: str, shown: str, base: str, headers: di
                 f"✔ '{name}' saved" + (" and will be used on the next start." if activate else ".")))
 
 
+def cmd_voice(args) -> None:
+    """Sprachausgabe (Pocket TTS) installieren und das Modell schon laden – oder wieder entfernen."""
+    from .voice import pocket
+    from .voice.tts import TTS
+    cfg = load_config()
+    if not config_path().exists() and env("LANG") in ("de", "en"):  # Installer: noch keine Config
+        cfg.voice.language = env("LANG")
+    data = cfg.memory.dir.parent
+    if args.action == "remove":
+        mb = pocket.remove(data) / 1e6
+        print(T(f"✔ Pocket TTS entfernt ({mb:.0f} MB frei).", f"✔ Pocket TTS removed ({mb:.0f} MB freed)."))
+        return
+    if not pocket.install(data):
+        sys.exit(1)
+    tts = TTS(cfg.voice, data, data / "state.json")
+    print(T("Lade Sprachmodell und Stimme (beim ersten Mal einige hundert MB) …",
+            "Downloading the speech model and voice (a few hundred MB the first time) …"))
+    try:
+        tts.synth(pocket.SAMPLES.get(tts.reply_language, pocket.SAMPLES["en"]))
+        print(T("✔ Pocket TTS ist bereit.", "✔ Pocket TTS is ready."))
+    except Exception as e:  # noqa: BLE001
+        print(T(f"✘ Pocket TTS startet nicht: {e}", f"✘ Pocket TTS does not start: {e}"))
+        sys.exit(1)
+    finally:
+        tts.pocket.stop()
+
+
 def cmd_update(args) -> None:
     from .update import main_update
     main_update(load_config().port)
@@ -689,6 +716,9 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("context-test", help=T("Kontextfenster mit dem aktiven Modell prüfen (Größe, Cache, Füllung)",
                                               "check the context window with the active model (size, cache, fill)"))
     p.add_argument("--quick", action="store_true", help=T("ohne das Fenster ganz zu füllen", "without filling the window"))
+    p = sub.add_parser("voice", help=T("Sprachausgabe Pocket TTS installieren (install) oder entfernen (remove)",
+                                       "install (install) or remove (remove) the Pocket TTS speech output"))
+    p.add_argument("action", choices=["install", "remove"])
     sub.add_parser("update", help=T("Auf den neuesten Stand bringen (git pull, Abhängigkeiten, Neustart)",
                                     "update (git pull, dependencies, restart)"))
     sub.add_parser("version", help=T("Installierte Version anzeigen", "show the installed version"))
@@ -707,7 +737,7 @@ def main(argv: list[str] | None = None) -> None:
         args = parser.parse_args(["serve", *(argv or sys.argv[1:])])
     {"serve": cmd_serve, "doctor": cmd_doctor, "update": cmd_update, "model": cmd_model, "version": cmd_version,
      "reindex": cmd_reindex, "summarize": cmd_summarize, "init-config": cmd_init_config,
-     "context-test": cmd_context_test}[args.cmd](args)
+     "context-test": cmd_context_test, "voice": cmd_voice}[args.cmd](args)
 
 
 if __name__ == "__main__":

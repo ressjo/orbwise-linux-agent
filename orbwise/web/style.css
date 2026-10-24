@@ -678,15 +678,11 @@ details.card[open] > summary .caret { transform: rotate(180deg); }
 #fx-amount { flex: 1; }
 .fx-value { font-family: var(--mono); font-size: 12px; color: var(--muted); width: 44px; text-align: right; }
 .fx-hint { color: var(--muted); font-size: 12.5px; margin: 8px 2px 0; }
-.voice-menu.catalog .fx-row, .voice-menu.catalog .fx-hint, .voice-menu.catalog > .mm-title { display: none; }
-.voice-menu.drop { outline: 2px dashed rgba(76,194,255,.6); outline-offset: 6px; border-radius: 10px; }
-.vm-tools { display: flex; align-items: center; gap: 10px; padding: 2px 0 6px; }
-.vm-search { flex: 1; min-width: 0; }
-.vm-tools a { color: var(--accent); font-size: 12.5px; white-space: nowrap; text-decoration: none; }
-.vm-group { margin-top: 6px; }
-.vm-pocket-head { display: flex; justify-content: space-between; align-items: baseline; margin-top: 12px; }
+.vm-pocket-head { display: flex; justify-content: space-between; align-items: baseline; }
 .vm-pocket-head a { color: var(--accent); font-size: 12px; letter-spacing: 0; text-decoration: none; }
-.vm-upload .mi-note { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.voice-menu .mi-note { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.voice-lang { width: 118px; flex: none; padding: 0 6px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  background: var(--bg-2); color: var(--text); font-size: 12.5px; cursor: pointer; }
 .voice-play:hover:not(:disabled) { color: var(--accent); }
 
 /* ---------- Dialoge ---------- */

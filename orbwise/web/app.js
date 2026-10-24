@@ -34,7 +34,7 @@
     ws: null, connected: false, retry: 0,
     serverState: "idle", substate: "",
     tts: store.get("tts", true), wake: store.get("wake", false), think: thinkLevel(store.get("think", "off")), autoMode: store.get("autoMode", store.get("auto", true) === false ? "off" : "read"), plan: store.get("plan", false),
-    voiceName: store.get("voice", ""), fxOn: store.get("fx", true), fxAmount: store.get("fxAmount", 0.6),
+    fxOn: store.get("fx", true), fxAmount: store.get("fxAmount", 0.6),
     recording: false, transcribing: false, streamMic: false,
     playing: false, confirm: null, confirmListenSent: false,
     historyLoaded: false, status: null, errorUntil: 0, modelDoneAt: 0, startupModel: null,
@@ -110,6 +110,8 @@
   }
   if (window.speechSynthesis) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
 
+  const SPEECH_LOCALES = { de: "de-DE", en: "en-GB", fr: "fr-FR", es: "es-ES", it: "it-IT", pt: "pt-PT", nl: "nl-NL" };
+
   function enqueueSpeech(ev) {
     if (!S.tts) return;
     A.queue.push(ev);
@@ -129,15 +131,16 @@
         if (gen !== A.gen) return;
         const src = A.ctx.createBufferSource();
         src.buffer = buf;
-        src.playbackRate.value = ev.rate || fxRate();  // Pocket TTS: unverändert abspielen (kein Tempo-Ausgleich)
+        src.playbackRate.value = fxRate();
         src.connect(A.fx ? A.fx.input : A.outAnalyser);
         src.onended = done;
         A.current = src;
         src.start();
       } else if (window.speechSynthesis) {
         const u = new SpeechSynthesisUtterance(ev.text);
-        u.lang = EN ? "en-GB" : "de-DE";
-        if (germanVoice) u.voice = germanVoice;
+        const lang = ev.lang || (EN ? "en" : "de");  // Sprache der gewählten Stimme
+        u.lang = SPEECH_LOCALES[lang] || lang;
+        if (germanVoice && lang === "de") u.voice = germanVoice;
         u.rate = 1.05;
         u.pitch = S.fxOn ? 1 - 0.3 * S.fxAmount : 1;
         u.onend = done;
@@ -255,7 +258,6 @@
       send({ type: "think", enabled: S.think !== "off", level: S.think });
       send({ type: "auto_mode", mode: S.autoMode });
       send({ type: "plan_mode", enabled: S.plan });
-      sendVoiceSettings();
       if (S.wake && A.micReady) send({ type: "wake", enabled: true });
       refresh();
       loadStatus();
@@ -454,6 +456,10 @@
         break;
       case "speak":
         enqueueSpeech(ev);
+        break;
+      case "voice_changed":  // Stimme/Sprache geändert (auch aus einem anderen Fenster)
+        if (voiceMenu.offsetParent) openVoiceMenu();
+        loadStatus();
         break;
       case "audio_stop":
         stopSpeech(false);
@@ -1934,10 +1940,6 @@
     return S.fxOn ? +(1 - 0.08 * S.fxAmount).toFixed(3) : 1;
   }
 
-  function sendVoiceSettings() {
-    send({ type: "voice_settings", voice: S.voiceName || undefined, rate: fxRate() });
-  }
-
   function renderFx() {
     $("fx-toggle").textContent = S.fxOn ? L("An", "On") : L("Aus", "Off");
     $("fx-toggle").classList.toggle("on", S.fxOn);
@@ -1950,120 +1952,47 @@
     S.fxOn = !S.fxOn;
     store.set("fx", S.fxOn);
     renderFx();
-    sendVoiceSettings();
   };
   $("fx-amount").oninput = (e) => {
     S.fxAmount = e.target.value / 100;
     store.set("fxAmount", S.fxAmount);
     renderFx();
   };
-  $("fx-amount").onchange = () => sendVoiceSettings();
   renderFx();
 
-  // Stimmen-Menü an der VOICE-Pille: auswählen, anhören, löschen, hinzufügen (wie das Modell-Menü)
+  // Stimmen-Menü (Einstellungen → Stimme): Pocket TTS installieren, Stimme und ihre Sprache wählen, anhören
   const voiceMenu = $("voice-menu");
-  async function openVoiceMenu(catalog = false) {
+  let pocketPoll = null;
+  async function openVoiceMenu() {
     const list = $("voice-list");
     let data;
     try { data = await getJSON("/api/voices"); } catch { toast(L("Stimmen nicht ladbar", "Could not load voices")); return; }
     const st = S.status && S.status.voice;
-    list.innerHTML = `<div class="mm-title">${catalog ? L("STIMME HINZUFÜGEN", "ADD VOICE") : L("STIMME WÄHLEN", "CHOOSE VOICE")}</div>
+    list.innerHTML = `<div class="mm-title vm-pocket-head"><span>${L("STIMME WÄHLEN", "CHOOSE VOICE")}</span>
+      <a href="https://kyutai.org/pocket-tts" target="_blank" rel="noopener">${L("Probehören ↗", "Listen ↗")}</a></div>
       <div class="mm-hint"></div>`;
+    list.querySelector("a").onclick = (e) => e.stopPropagation();
     list.querySelector(".mm-hint").textContent = st ? [
       st.stt ? L("Spracherkennung ✔", "Speech recognition ✔") : L("Spracherkennung aus", "Speech recognition off"),
       st.wake ? L("Wake-Word ✔", "Wake word ✔") : L("Wake-Word aus", "Wake word off")].join(" · ") : "";
-    if (!data.available) {
-      list.insertAdjacentHTML("beforeend", `<div class="mm-hint">${L("Piper-Sprachausgabe ist deaktiviert – es spricht der Browser.",
-        "Piper speech output is disabled – the browser speaks instead.")}</div>`);
-    } else if (!catalog) {
-      if (!S.voiceName) S.voiceName = data.current;
-      for (const v of data.voices.filter((x) => x.installed && x.engine !== "pocket")) list.appendChild(voiceRow(v, data.current));
-      pocketSection(list, data);
-      const add = document.createElement("button");
-      add.className = "model-item add";
-      add.textContent = L("+ STIMME HINZUFÜGEN …", "+ ADD VOICE …");
-      add.onclick = (e) => { e.stopPropagation(); openVoiceMenu(true); };
-      list.appendChild(add);
-      // eigene Stimme (z. B. von huggingface.co): .onnx + .onnx.json wählen oder aufs Menü ziehen
-      const up = document.createElement("button");
-      up.className = "model-item add vm-upload";
-      up.innerHTML = `<div>${L("⬆ EIGENE STIMME HOCHLADEN …", "⬆ UPLOAD OWN VOICE …")}</div><div class="mi-note"></div>`;
-      up.querySelector(".mi-note").textContent = L("Piper-Stimme, z. B. von huggingface.co – beide Dateien (.onnx + .onnx.json), auch per Drag & Drop",
-        "Piper voice, e.g. from huggingface.co – both files (.onnx + .onnx.json), drag & drop works too");
-      up.onclick = (e) => {
-        e.stopPropagation();
-        const input = document.createElement("input");
-        input.type = "file";
-        input.multiple = true;
-        input.accept = ".onnx,.json";
-        input.onchange = () => uploadVoice([...input.files]);
-        input.click();
-      };
-      list.appendChild(up);
-    } else {
-      // ganzer Piper-Katalog: Auswahl (empfohlen) zuerst, dann alle weiteren nach Region, mit Suchfeld
-      const missing = data.voices.filter((x) => !x.installed && x.engine !== "pocket");
-      const tools = document.createElement("div");
-      tools.className = "vm-tools";
-      tools.innerHTML = `<input type="search" class="vm-search" placeholder="${L("Stimme suchen …", "Search voices …")}">
-        <a href="https://rhasspy.github.io/piper-samples/" target="_blank" rel="noopener">${L("Probehören ↗", "Listen to samples ↗")}</a>`;
-      list.appendChild(tools);
-      const box = document.createElement("div");
-      list.appendChild(box);
-      const render = (q) => {
-        box.innerHTML = "";
-        const hits = missing.filter((v) => !q || `${v.label} ${v.name} ${v.description}`.toLowerCase().includes(q));
-        if (!hits.length) {
-          box.innerHTML = `<div class="mm-hint">${missing.length ? L("Keine Treffer.", "No matches.")
-            : L("Alle Stimmen sind installiert.", "All voices are installed.")}</div>`;
-        }
-        let group = null;
-        for (const v of hits) {
-          const g = v.recommended ? L("EMPFOHLEN", "RECOMMENDED") : (v.locale || "").toUpperCase();
-          if (g !== group) {
-            group = g;
-            box.insertAdjacentHTML("beforeend", `<div class="mm-title vm-group"></div>`);
-            box.lastElementChild.textContent = g;
-          }
-          box.appendChild(catalogItem(v));
-        }
-      };
-      const search = tools.querySelector(".vm-search");
-      search.onclick = (e) => e.stopPropagation();
-      search.oninput = () => render(search.value.trim().toLowerCase());
-      render("");
-      const back = document.createElement("button");
-      back.className = "model-item add";
-      back.textContent = L("← ZURÜCK", "← BACK");
-      back.onclick = (e) => { e.stopPropagation(); openVoiceMenu(); };
-      list.appendChild(back);
-    }
-    voiceMenu.classList.toggle("catalog", catalog);
-    voiceMenu.classList.remove("hidden");
-  }
-
-  // Pocket TTS (Kyutai): natürlichere Stimmen auf der CPU – installieren, Stimmen wählen/anhören, entfernen
-  let pocketPoll = null;
-  function pocketSection(list, data) {
-    const pk = data.pocket || {};
-    const head = document.createElement("div");
-    head.className = "mm-title vm-group vm-pocket-head";
-    head.innerHTML = `<span>POCKET TTS · ${L("NATÜRLICH", "NATURAL")}</span>
-      <a href="https://kyutai.org/pocket-tts" target="_blank" rel="noopener">${L("Probehören ↗", "Listen ↗")}</a>`;
-    head.querySelector("a").onclick = (e) => e.stopPropagation();
-    list.appendChild(head);
     const note = (text) => {
       list.insertAdjacentHTML("beforeend", `<div class="mm-hint"></div>`);
       list.lastElementChild.textContent = text;
     };
+    voiceMenu.classList.remove("hidden");
+    if (!data.available) {
+      note(L("Sprachausgabe ist deaktiviert (voice.enabled) – es spricht der Browser.", "Speech output is disabled (voice.enabled) – the browser speaks instead."));
+      return;
+    }
+    const pk = data.pocket || {};
     if (!pk.installed) {
-      if (!pk.supported) { note(L("Braucht eine CPU mit AVX2 (x86-64) oder ARM64.", "Needs a CPU with AVX2 (x86-64) or ARM64.")); return; }
+      if (!pk.supported) { note(L("Pocket TTS braucht eine CPU mit AVX2 (x86-64) oder ARM64 – es spricht der Browser.", "Pocket TTS needs a CPU with AVX2 (x86-64) or ARM64 – the browser speaks instead.")); return; }
       const b = document.createElement("button");
       b.className = "model-item add";
       b.innerHTML = `<div>${L("＋ POCKET TTS INSTALLIEREN", "＋ INSTALL POCKET TTS")}</div><div class="mi-note"></div>`;
       b.querySelector(".mi-note").textContent = L(
-        "Klingt deutlich menschlicher als Piper, läuft auf der CPU. Programm wenige MB, beim ersten Start lädt es Modell und Stimmen (einige hundert MB).",
-        "Sounds much more human than Piper, runs on the CPU. The program is a few MB; on first start it downloads the model and voices (a few hundred MB).");
+        "Natürliche Sprachausgabe auf der CPU. Programm wenige MB, beim ersten Start lädt es Modell und Stimme (einige hundert MB). Bis dahin spricht der Browser.",
+        "Natural speech output on the CPU. The program is a few MB; on first start it downloads the model and voice (a few hundred MB). Until then the browser speaks.");
       b.onclick = async (e) => {
         e.stopPropagation();
         b.disabled = true;
@@ -2071,6 +2000,7 @@
         try {
           await api("POST", "/api/pocket/install");
           toast(L("✔ Pocket TTS installiert – das Modell wird jetzt geladen", "✔ Pocket TTS installed – loading the model now"));
+          loadStatus();
           openVoiceMenu();
         } catch { b.disabled = false; b.querySelector(".mi-note").textContent = L("Nochmal versuchen?", "Try again?"); }
       };
@@ -2080,158 +2010,77 @@
     if (pk.state === "starting") {
       note(L("Startet … beim ersten Mal werden Modell und Stimme heruntergeladen.", "Starting … the first time, the model and voice are downloaded."));
     } else if (pk.state === "error" && pk.error) {
-      note(L("Fehler: ", "Error: ") + pk.error + L(" – es spricht solange Piper.", " – Piper speaks meanwhile."));
+      note(L("Fehler: ", "Error: ") + pk.error + L(" – solange spricht der Browser.", " – the browser speaks meanwhile."));
     }
-    for (const v of data.voices.filter((x) => x.engine === "pocket")) list.appendChild(voiceRow(v, data.current));
+    note(L("Die Sprache einer Stimme gilt auch für die Antworten: wählst du z. B. Englisch, antwortet Orbwise auf Englisch.",
+      "A voice's language also applies to the answers: choose e.g. German and Orbwise answers in German."));
+    for (const v of data.voices) list.appendChild(voiceRow(v, data.languages));
     const rm = document.createElement("button");
     rm.className = "model-item add";
     rm.textContent = L("POCKET TTS ENTFERNEN", "REMOVE POCKET TTS");
     rm.onclick = async (e) => {
       e.stopPropagation();
-      if (!confirm(L("Pocket TTS mit Modell und Stimmen löschen?", "Delete Pocket TTS with its model and voices?"))) return;
+      if (!confirm(L("Pocket TTS mit Modell und Stimmen löschen? Danach spricht der Browser.", "Delete Pocket TTS with its model and voices? The browser speaks afterwards."))) return;
       try {
         const r = await api("DELETE", "/api/pocket");
-        if (S.voiceName && S.voiceName.startsWith("pocket:")) { S.voiceName = r.current; store.set("voice", r.current); }
         toast(L(`✔ Pocket TTS entfernt (${r.freed_mb} MB frei)`, `✔ Pocket TTS removed (${r.freed_mb} MB freed)`));
+        loadStatus();
         openVoiceMenu();
       } catch { /* Meldung kommt von api() */ }
     };
     list.appendChild(rm);
-    // solange der Server startet, die Anzeige nachziehen (nur solange das Menü offen ist)
+    // solange der Server startet, die Anzeige nachziehen (nur solange das Menü sichtbar ist)
     clearTimeout(pocketPoll);
     if (pk.state === "starting") {
-      pocketPoll = setTimeout(() => {
-        if (!voiceMenu.classList.contains("hidden") && !voiceMenu.classList.contains("catalog") && voiceMenu.offsetParent) openVoiceMenu();
-      }, 3000);
+      pocketPoll = setTimeout(() => { if (voiceMenu.offsetParent) openVoiceMenu(); }, 3000);
     }
   }
 
-  function catalogItem(v) {
-    const b = voiceItem(v, v.download_mb ? `~${v.download_mb} MB` : "");
-    b.onclick = async (e) => {
-      e.stopPropagation();
-      b.disabled = true;
-      b.querySelector(".mi-tag").textContent = L("LÄDT …", "LOADING …");
-      try {
-        await api("POST", `/api/voices/${encodeURIComponent(v.name)}/install`);
-        toast(L(`✔ ${v.label} installiert`, `✔ ${v.label} installed`));
-        loadStatus();
-        openVoiceMenu();
-      } catch { b.disabled = false; b.querySelector(".mi-tag").textContent = v.download_mb ? `~${v.download_mb} MB` : ""; }
-    };
-    return b;
+  async function chooseVoice(v, language) {
+    try {
+      const r = await api("POST", "/api/voices/select", { voice: v.name, language });
+      toast(L(`Stimme: ${v.label} · ${langLabel(r.language)}`, `Voice: ${v.label} · ${langLabel(r.language)}`));
+    } catch { /* Meldung kommt von api() */ }
   }
 
-  function voiceItem(v, tag) {
+  let voiceLanguages = [];
+  function langLabel(code) {
+    const hit = voiceLanguages.find((l) => l.code === code);
+    return hit ? hit.label : code;
+  }
+
+  function voiceRow(v, languages) {
+    voiceLanguages = languages;
+    const active = v.current;
     const b = document.createElement("button");
-    b.className = "model-item";
+    b.className = "model-item" + (active ? " active" : "");
     b.innerHTML = `<div class="mi-head"><span class="mi-name"></span><span class="mi-tag"></span></div><div class="mi-sub"></div>`;
     b.querySelector(".mi-name").textContent = v.label;
-    b.querySelector(".mi-tag").textContent = tag;
-    b.querySelector(".mi-sub").textContent = v.description + (v.size_mb ? ` · ${v.size_mb} MB` : "");
-    return b;
-  }
-
-  function voiceRow(v, current) {
-    const active = v.name === current;
-    const b = voiceItem(v, active ? L("AKTIV", "ACTIVE") : v.male === null ? "" : v.male ? L("MÄNNLICH", "MALE") : L("WEIBLICH", "FEMALE"));
-    if (active) b.classList.add("active");
-    b.onclick = (e) => {
-      e.stopPropagation();
-      if (active) return;
-      S.voiceName = v.name;
-      store.set("voice", v.name);
-      sendVoiceSettings();
-      toast(L(`Stimme: ${v.label}`, `Voice: ${v.label}`));
-      setTimeout(() => openVoiceMenu(), 150);
-    };
-    const row = document.createElement("div");
-    row.className = "model-row";
+    b.querySelector(".mi-tag").textContent = active ? L("AKTIV", "ACTIVE") : v.male ? L("MÄNNLICH", "MALE") : L("WEIBLICH", "FEMALE");
+    b.querySelector(".mi-sub").textContent = v.description;
+    b.onclick = (e) => { e.stopPropagation(); if (!active) chooseVoice(v, v.language); };
+    const lang = document.createElement("select");
+    lang.className = "voice-lang";
+    lang.title = L("Sprache dieser Stimme – auch die Sprache der Antworten", "Language of this voice – also the language of the answers");
+    for (const l of languages) lang.add(new Option(l.label, l.code, false, l.code === v.language));
+    lang.onclick = (e) => e.stopPropagation();
+    lang.onchange = () => chooseVoice(v, lang.value);
     const play = document.createElement("button");
     play.className = "model-del voice-play";
     play.textContent = "▶";
     play.title = L("Anhören", "Preview");
     play.onclick = (e) => { e.stopPropagation(); previewVoice(v.name); };
-    if (v.engine === "pocket") {  // Pocket-Stimmen gehören zum Programm – einzeln nichts zu löschen
-      row.append(b, play);
-      return row;
-    }
-    const del = document.createElement("button");
-    del.className = "model-del";
-    del.textContent = "🗑";
-    del.disabled = active;
-    del.title = active ? L("Aktive Stimme – erst eine andere wählen", "Active voice – choose another one first") : L("Stimme löschen", "Delete voice");
-    del.onclick = async (e) => {
-      e.stopPropagation();
-      if (!confirm(L(`Stimme ${v.label} löschen?`, `Delete voice ${v.label}?`))) return;
-      try {
-        await api("DELETE", `/api/voices/${encodeURIComponent(v.name)}`);
-        toast(L(`✔ ${v.label} gelöscht`, `✔ ${v.label} deleted`));
-        openVoiceMenu();
-      } catch { /* Meldung kommt von api() */ }
-    };
-    row.append(b, play, del);
+    const row = document.createElement("div");
+    row.className = "model-row";
+    row.append(b, lang, play);
     return row;
   }
 
-  // Upload: erst die Konfiguration, dann das Modell (roher Datenstrom, Fortschritt im Menü)
-  function putFile(url, file, onProgress) {
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open("PUT", url);
-      xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) return resolve(JSON.parse(xhr.responseText || "{}"));
-        let msg = `${L("Fehler", "Error")} ${xhr.status}`;
-        try { msg = JSON.parse(xhr.responseText).detail || msg; } catch { /* egal */ }
-        reject(new Error(msg));
-      };
-      xhr.onerror = () => reject(new Error(L("Verbindung unterbrochen", "Connection lost")));
-      xhr.send(file);
-    });
-  }
-
-  async function uploadVoice(files) {
-    const model = files.find((f) => f.name.toLowerCase().endsWith(".onnx"));
-    const config = files.find((f) => f.name.toLowerCase().endsWith(".json"));
-    if (!model || !config) {
-      toast(L("Bitte beide Dateien wählen: .onnx und .onnx.json", "Please choose both files: .onnx and .onnx.json"));
-      return;
-    }
-    const name = model.name.replace(/\.onnx$/i, "").replace(/[^A-Za-z0-9_.-]/g, "_").replace(/\.\.+/g, ".").replace(/^[^A-Za-z0-9]+/, "").slice(0, 80);
-    const up = voiceMenu.querySelector(".vm-upload");
-    const note = up && up.querySelector(".mi-note");
-    const show = (text) => { if (note) note.textContent = text; };
-    if (up) up.disabled = true;
-    try {
-      const base = `/api/voices/upload/${encodeURIComponent(name)}`;
-      show(L("Lade Konfiguration hoch …", "Uploading configuration …"));
-      await putFile(`${base}/config`, config, () => {});
-      await putFile(`${base}/model`, model, (p) => show(L(`Lade ${name} hoch … ${Math.floor(p * 100)} %`, `Uploading ${name} … ${Math.floor(p * 100)} %`)));
-      toast(L(`✔ Stimme ${name} hinzugefügt`, `✔ Voice ${name} added`));
-      openVoiceMenu();
-    } catch (err) {
-      toast(err.message);
-      if (up) up.disabled = false;
-      show(L("Hochladen fehlgeschlagen – nochmal versuchen?", "Upload failed – try again?"));
-    }
-  }
-
-  voiceMenu.addEventListener("dragover", (e) => { e.preventDefault(); voiceMenu.classList.add("drop"); });
-  voiceMenu.addEventListener("dragleave", () => voiceMenu.classList.remove("drop"));
-  voiceMenu.addEventListener("drop", (e) => {
-    e.preventDefault();
-    voiceMenu.classList.remove("drop");
-    uploadVoice([...e.dataTransfer.files]);
-  });
-
-  function closeVoiceMenu() { /* Stimmen stehen jetzt dauerhaft in den Einstellungen */ }
   $("pill-voice").onclick = () => openSheet("settings", "voice");
 
   async function previewVoice(name) {
     await initAudio();
-    sendVoiceSettings();
-    const slow = name.startsWith("pocket:") && setTimeout(() => toast(L("Pocket TTS startet noch …", "Pocket TTS is still starting …")), 1500);
+    const slow = setTimeout(() => toast(L("Pocket TTS startet noch …", "Pocket TTS is still starting …")), 1500);
     const r = await fetch(`/api/voices/${encodeURIComponent(name)}/preview`);
     clearTimeout(slow);
     if (!r.ok) {
@@ -2244,7 +2093,7 @@
     stopSpeech(true);
     const src = A.ctx.createBufferSource();
     src.buffer = buf;
-    src.playbackRate.value = +r.headers.get("X-Playback-Rate") || fxRate();
+    src.playbackRate.value = fxRate();
     src.connect(A.fx ? A.fx.input : A.outAnalyser);
     A.current = src;
     S.playing = true;

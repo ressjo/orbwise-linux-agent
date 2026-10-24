@@ -25,6 +25,7 @@ VAD_FRAME = 480             # 30 ms – Blockgröße für webrtcvad
 class WhisperSTT:
     def __init__(self, cfg: VoiceConfig):
         self.cfg = cfg
+        self.language: str | None = cfg.language or None  # None = Whisper erkennt die Sprache selbst
         self._model = None
         self.error: str | None = None
 
@@ -51,7 +52,7 @@ class WhisperSTT:
     def transcribe(self, pcm: np.ndarray) -> str:
         audio = pcm.astype(np.float32) / 32768.0
         segments, _ = self._load().transcribe(
-            audio, language=self.cfg.language, beam_size=3, vad_filter=True,
+            audio, language=self.language, beam_size=3, vad_filter=True,
             initial_prompt="Jarvis, Linux, Arch, pacman, NAS.",
         )
         return " ".join(s.text.strip() for s in segments).strip()

@@ -10,9 +10,9 @@ from orbwise.web_i18n import HTML_EN, translate_index
 
 def test_language_defaults():
     de = Config()
-    assert de.language == "de" and de.voice.language == "de" and de.voice.tts_voice.name == "de_DE-thorsten-high.onnx"
+    assert de.language == "de" and de.voice.language == "de"
     en = Config(language="EN")
-    assert en.language == "en" and en.voice.language == "en" and en.voice.tts_voice.name == "en_GB-alan-medium.onnx"
+    assert en.language == "en" and en.voice.language == "en"
     assert Config(language="fr").language == "de"
     assert Config(language="en", voice={"language": "de"}).voice.language == "de"  # explizit gesetzt bleibt
 

@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Removed
+- **Piper speech output:** replaced by Pocket TTS – the Piper voice catalogue, voice uploads, `voice.tts_voice` /
+  `voice.tts_length_scale` and the `piper-tts` dependency are gone. Downloaded Piper voices in
+  `~/.local/share/orbwise/voices/` are deleted on the first start. Without Pocket TTS the browser speaks.
 - **Strata engine:** the experimental Strata integration for Qwen3.8-Flash-Next is gone again – the dense
   Qwen3.8-27B on llama.cpp answered better, and loading froze AMD desktops. On the first start Orbwise removes Strata
   profiles from `state.json`, stops a running Strata server and deletes the model (`~/models/strata`) and the engine it
@@ -38,10 +41,12 @@ All notable changes to this project are documented here. The format follows
   only actions that change or start something do; the data-leak guard still checks what goes out.
 
 ### Added
-- **Pocket TTS voices:** *Settings → Voice → Install Pocket TTS* downloads Kyutai's Pocket TTS (a ready-made program,
-  no PyTorch) and runs it as a local CPU server – far more natural than Piper. Its 27 voices appear in the voice menu
-  (German: *Juergen* first, recorded in German); preview with ▶. If Pocket fails, Piper speaks; *Remove Pocket TTS*
-  deletes program, model and voices.
+- **Pocket TTS voices:** Orbwise now speaks with Kyutai's Pocket TTS (a ready-made program, no PyTorch, local CPU
+  server) – far more natural than Piper. The installer sets it up (`orbwise voice install`), otherwise *Settings →
+  Voice → Install Pocket TTS*. Its 27 voices are listed with German *Juergen* first; preview with ▶.
+- **Language per voice:** each voice speaks a chosen language (German, English, French, Spanish, Italian, Portuguese,
+  Dutch), and Orbwise answers in the language of the active voice – Whisper then detects the spoken language itself
+  and the fixed spoken phrases follow (German/English). Stored in `state.json`.
 - **Find the fastest llama.cpp setting:** the model page measures with `llama-bench` which build (ROCm ↔ Vulkan,
   CUDA ↔ Vulkan) and batch size (512/1024/2048) read prompts fastest – at the start of a chat and at 16k depth – and
   shows a table with prompt and output speed. The fastest batch size is applied; a faster other build can be adopted

@@ -33,9 +33,9 @@ from .tools import briefing, proc
 from .tools.calendar_tools import calendar_status
 from .tools.registry import ToolContext, get_tool
 from .tools.trilium import trilium_status
-from .voice import catalog, pocket
+from .voice import pocket
 from .voice.listen import AudioSession, WakeWordFactory, WhisperSTT
-from .voice.tts import PiperTTS, Speaker
+from .voice.tts import TTS, Speaker
 from .web_i18n import translate_index
 
 log = logging.getLogger(__name__)
@@ -95,7 +95,7 @@ class Client:
 
 
 class Hub:
-    def __init__(self, cfg: Config, agent: Agent, speaker_tts: PiperTTS | None,
+    def __init__(self, cfg: Config, agent: Agent, speaker_tts: TTS | None,
                  stt: WhisperSTT | None, wake: WakeWordFactory | None):
         self.cfg = cfg
         self.agent = agent
@@ -417,8 +417,18 @@ def create_app(cfg: Config) -> FastAPI:
         stt = WhisperSTT(cfg.voice)
         stt = stt if stt.available() else None
         wake = WakeWordFactory(cfg.voice)
-        tts = PiperTTS(cfg.voice, cfg.memory.dir.parent)
+        tts = TTS(cfg.voice, cfg.memory.dir.parent, cfg.memory.dir.parent / "state.json")
     hub = Hub(cfg, agent, tts, stt, wake)
+
+    def apply_reply_language() -> None:
+        """Die Sprache der gewählten Stimme gilt auch für die Antworten; spricht man eine andere Sprache als die der
+        Oberfläche, erkennt Whisper die Sprache selbst."""
+        reply = tts.reply_language if tts else cfg.language
+        agent.reply_language = reply if reply != cfg.language else None
+        prompts.set_spoken_language(agent.reply_language)
+        if stt:
+            stt.language = None if agent.reply_language else (cfg.voice.language or cfg.language)
+    apply_reply_language()
     from .imagegen import ImageEngine, ImageError
     images = ImageEngine(cfg, llm if isinstance(llm, LLMRouter) else None,
                          gpu_info=lambda: (metrics.collect() or {}).get("gpu"))
@@ -477,6 +487,19 @@ def create_app(cfg: Config) -> FastAPI:
         return T(f"{len(memory.journal.days())} Tage · {len(memory.facts.list())} Fakten",
                  f"{len(memory.journal.days())} days · {len(memory.facts.list())} facts")
 
+    async def warm_tts() -> None:
+        if tts is None or not await asyncio.to_thread(tts.available):
+            await startup.set("tts", "warn", T("Browser-Stimme", "browser voice") + (f" – {tts.error}" if tts and tts.error else ""))
+            return
+        label = pocket.BY_NAME[tts.voice].label
+        await startup.set("tts", "running", T("lade Stimme ", "loading voice ") + label + " …")
+        try:
+            await asyncio.to_thread(tts.warmup)
+            speaks = pocket.language_name(tts.reply_language, cfg.language == "en")
+            await startup.set("tts", "ok", f"Pocket TTS · {label} · {speaks}")
+        except Exception as e:  # noqa: BLE001
+            await startup.set("tts", "warn", T("Browser-Stimme – ", "browser voice – ") + str(e))
+
     async def warm_voice() -> None:
         """Stimme, Spracherkennung und Wake-Word im Hintergrund laden – mit Anzeige, was gerade lädt."""
         if not cfg.voice.enabled:
@@ -484,16 +507,7 @@ def create_app(cfg: Config) -> FastAPI:
             for key in ("stt", "tts", "wake"):
                 await startup.set(key, "off", off)
             return
-        if tts is None or not await asyncio.to_thread(tts.available):
-            await startup.set("tts", "warn", T("Browser-Stimme", "browser voice") + (f" – {tts.error}" if tts and tts.error else ""))
-        else:
-            await startup.set("tts", "running", T("lade Stimme ", "loading voice ") + tts.current + " …")
-            try:
-                await asyncio.to_thread(tts._load, tts.current)
-                await startup.set("tts", "ok", ("Pocket TTS · " if pocket.is_pocket(tts.current) else "Piper · ")
-                                  + pocket.bare(tts.current))
-            except Exception as e:  # noqa: BLE001
-                await startup.set("tts", "warn", T("Browser-Stimme – ", "browser voice – ") + str(e))
+        await warm_tts()
         if wake is None:
             await startup.set("wake", "off")
         else:
@@ -529,6 +543,21 @@ def create_app(cfg: Config) -> FastAPI:
             await asyncio.sleep(0.25)
         await startup.set("telegram", "warn", T("noch keine Verbindung", "not connected yet"))
 
+    async def remove_piper_voices() -> None:
+        """Piper ist aus Orbwise entfernt: die heruntergeladenen Piper-Stimmen löschen (einmalig) und – wer bisher Piper
+        hörte – gleich Pocket TTS einrichten, damit nicht plötzlich der Browser spricht."""
+        freed = await asyncio.to_thread(retire.remove_piper_voices, cfg.memory.dir.parent / "voices")
+        if not freed:
+            return
+        log.info("Piper-Stimmen entfernt (%.0f MB frei)", freed / 1e6)
+        if tts and not tts.pocket.installed() and pocket.cpu_supported():
+            await startup.set("tts", "running", T("richte Pocket TTS ein …", "setting up Pocket TTS …"))
+            if await asyncio.to_thread(pocket.install, tts.pocket.data_dir, log.info):
+                await warm_tts()
+            else:
+                await startup.set("tts", "warn", T("Browser-Stimme – Pocket TTS unter Einstellungen → Stimme",
+                                                   "browser voice – Pocket TTS under Settings → Voice"))
+
     async def remove_retired(found: dict) -> None:
         """Strata ist aus Orbwise entfernt: laufenden Server stoppen, Modell und Engine löschen (einmalig)."""
         freed = await asyncio.to_thread(retire.remove_strata_files, found["strata_dirs"])
@@ -547,6 +576,7 @@ def create_app(cfg: Config) -> FastAPI:
         else:
             await startup.set("model", "ok", T("Demo-Modus", "demo mode"))
         background.append(asyncio.create_task(warm_voice()))
+        background.append(asyncio.create_task(remove_piper_voices()))
         background.append(asyncio.create_task(watch_telegram()))
         background.append(asyncio.create_task(summary_loop()))
         background.append(asyncio.create_task(metrics_loop()))
@@ -1395,17 +1425,10 @@ def create_app(cfg: Config) -> FastAPI:
     @app.get("/api/voices")
     async def voices():
         if not tts:
-            return {"available": False, "voices": []}
-        tts.available()
-        extra = await catalog.fetch_catalog(tts.voices_dir)
-        voices = catalog.voice_list(tts.voices_dir, tts.current, cfg.language, extra)
-        for v in voices:
-            f = tts.path(v["name"])
-            v["size_mb"] = round(f.stat().st_size / 1e6) if v["installed"] and f.exists() else None
-            v["engine"] = "piper"
-        voices += pocket.voice_list(cfg.language, tts.current, tts.pocket.installed())
-        return {"available": True, "current": tts.current, "rate": tts.rate, "voices": voices,
-                "pocket": tts.pocket.describe()}
+            return {"available": False, "voices": [], "languages": []}
+        return {"available": True, "current": tts.voice, "language": tts.reply_language,
+                "voices": pocket.voice_list(cfg.language, tts.voice, tts.languages),
+                "languages": pocket.language_list(cfg.language == "en"), "pocket": tts.pocket.describe()}
 
     @app.post("/api/pocket/install")
     async def install_pocket():
@@ -1416,97 +1439,50 @@ def create_app(cfg: Config) -> FastAPI:
         lines: list[str] = []
         if not await asyncio.to_thread(pocket.install, tts.pocket.data_dir, lines.append):
             raise HTTPException(502, (lines[-1] if lines else "Installation fehlgeschlagen").lstrip("✘ "))
-        tts.pocket.warm(pocket.PREFIX + pocket.NATIVE.get(cfg.language, "alba"))
+        tts.pocket.warm(tts.voice)
+        await startup.set("tts", "ok", f"Pocket TTS · {pocket.BY_NAME[tts.voice].label}")
         return {"ok": True, "pocket": tts.pocket.describe()}
 
     @app.delete("/api/pocket")
     async def remove_pocket():
         if not tts:
             raise HTTPException(400, "Sprachausgabe ist deaktiviert")
-        if pocket.is_pocket(tts.current):
-            tts.current = tts.piper_voice() or tts.current
         await asyncio.to_thread(tts.pocket.stop)
         freed = await asyncio.to_thread(pocket.remove, tts.pocket.data_dir)
-        return {"ok": True, "freed_mb": round(freed / 1e6), "current": tts.current}
+        await startup.set("tts", "warn", T("Browser-Stimme", "browser voice"))
+        return {"ok": True, "freed_mb": round(freed / 1e6)}
 
-    @app.delete("/api/voices/{name}")
-    async def delete_voice(name: str):
-        if not tts or name not in tts.installed():  # nur echte installierte Namen – kein Pfad von außen
-            raise HTTPException(404, "Stimme nicht installiert")
-        if name == tts.current:
-            raise HTTPException(409, "Die aktive Stimme kann nicht gelöscht werden – erst eine andere wählen.")
-        tts.remove(name)
-        return {"ok": True}
-
-    @app.post("/api/voices/{name}/install")
-    async def install_voice(name: str):
+    @app.post("/api/voices/select")
+    async def select_voice(request: Request):
+        """Stimme wählen, optional mit ihrer Sprache – die gilt dann auch für die Antworten."""
+        data = await request.json()
         if not tts:
             raise HTTPException(400, "Sprachausgabe ist deaktiviert")
-        extra = {} if name in catalog.BY_NAME else await catalog.fetch_catalog(tts.voices_dir)
-        if not catalog.installable(name, extra):  # nur Auswahl + offizieller Piper-Katalog
-            raise HTTPException(404, "Unbekannte Stimme")
-        try:
-            await catalog.install_voice(name, tts.voices_dir, extra=extra)
-        except Exception as e:  # noqa: BLE001
-            raise HTTPException(502, f"Download fehlgeschlagen: {e}") from e
-        return {"ok": True}
-
-    @app.put("/api/voices/upload/{name}/{kind}")
-    async def upload_voice(name: str, kind: str, request: Request):
-        """Eigene Piper-Stimme hochladen: erst kind=config (die .onnx.json), dann kind=model (die .onnx).
-        Roher Datenstrom statt Formular – dafür braucht es keine zusätzliche Bibliothek."""
-        if not tts:
-            raise HTTPException(400, "Sprachausgabe ist deaktiviert")
-        if kind not in ("config", "model") or catalog.clean_voice_name(name) != name:
-            raise HTTPException(400, "Ungültiger Stimmenname")
-        model, config = tts.path(name), tts.voices_dir / f"{name}.onnx.json"
-        if model.exists():
-            raise HTTPException(409, f"Die Stimme „{name}“ gibt es schon – erst löschen.")
-        if kind == "model" and not config.exists():
-            raise HTTPException(400, "Zuerst die Konfiguration (.onnx.json) hochladen.")
-        limit = catalog.UPLOAD_MAX_CONFIG if kind == "config" else catalog.UPLOAD_MAX_MODEL
-        target = config if kind == "config" else model
-        tts.voices_dir.mkdir(parents=True, exist_ok=True)
-        part = target.with_name(target.name + ".part")
-        size, head = 0, b""
-        try:
-            with part.open("wb") as f:
-                async for chunk in request.stream():
-                    size += len(chunk)
-                    if size > limit:
-                        raise HTTPException(413, "Datei zu groß")
-                    if len(head) < 16:
-                        head += chunk[:16]
-                    f.write(chunk)
-            if kind == "config":
-                if not catalog.is_piper_config(part.read_bytes()):
-                    raise HTTPException(400, "Das ist keine Piper-Konfiguration (.onnx.json mit „audio.sample_rate“).")
-            elif size < catalog.UPLOAD_MIN_MODEL or not head.startswith(b"\x08"):
-                raise HTTPException(400, "Das ist kein Piper-Stimmenmodell (.onnx).")
-            part.replace(target)
-        except BaseException:
-            part.unlink(missing_ok=True)
-            if kind == "model":
-                config.unlink(missing_ok=True)  # keine halbe Stimme zurücklassen
-            raise
-        if kind == "model":
-            tts.forget(name)
-        return {"ok": True, "name": name, "size_mb": round(size / 1e6)}
+        voice, language = str(data.get("voice") or ""), (str(data["language"]) if data.get("language") else None)
+        if not await asyncio.to_thread(tts.select, voice, language):
+            raise HTTPException(400, "Unbekannte Stimme oder Sprache")
+        apply_reply_language()
+        await hub.broadcast({"type": "voice_changed", "voice": tts.voice, "language": tts.reply_language})
+        return {"ok": True, "current": tts.voice, "language": tts.reply_language}
 
     @app.get("/api/voices/{name}/preview")
     async def preview_voice(name: str, text: str = ""):
-        if not tts or not tts.usable(name) or not (pocket.is_pocket(name) or tts.available()):
-            raise HTTPException(404, "Stimme nicht installiert")
-        sample = text.strip()[:200] or T("Guten Abend. Alle Systeme sind einsatzbereit. Womit kann ich dienen?",
-                                         "Good evening. All systems are ready. How may I help?")
-        try:  # bei der Probe kein Ausweichen auf Piper – man will ja genau diese Stimme hören
-            if pocket.is_pocket(name):
-                wav, rate = await asyncio.to_thread(tts.pocket.synth, sample, name), 1.0
-            else:
-                wav, rate = await asyncio.to_thread(tts.synth, sample, name), None
+        if not tts or name not in pocket.BY_NAME or not tts.available():
+            raise HTTPException(404, "Stimme nicht verfügbar")
+        lang = tts.language_of(name)
+        if lang != tts.reply_language:  # der Server hat nur das Modell einer Sprache geladen
+            en = cfg.language == "en"
+            raise HTTPException(409, T(
+                f"{pocket.BY_NAME[name].label} spricht {pocket.language_name(lang, en)}, geladen ist gerade "
+                f"{pocket.language_name(tts.reply_language, en)} – zum Anhören die Stimme wählen.",
+                f"{pocket.BY_NAME[name].label} speaks {pocket.language_name(lang, en)}, but "
+                f"{pocket.language_name(tts.reply_language, en)} is loaded – select the voice to hear it."))
+        sample = text.strip()[:200] or pocket.SAMPLES.get(lang, pocket.SAMPLES["en"])
+        try:
+            wav = await asyncio.to_thread(tts.synth, sample, name)
         except Exception as e:  # noqa: BLE001
             raise HTTPException(502, f"Probe fehlgeschlagen: {e}") from e
-        return Response(wav, media_type="audio/wav", headers={"X-Playback-Rate": str(rate)} if rate else None)
+        return Response(wav, media_type="audio/wav")
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket):
@@ -1586,11 +1562,6 @@ def create_app(cfg: Config) -> FastAPI:
                 elif t in ("plan_accept", "plan_revise", "plan_discard"):
                     await hub.plan_decision(str(data.get("id", "")), t.split("_", 1)[1],
                                             str(data.get("text", ""))[:4000])
-                elif t == "voice_settings" and tts:
-                    if data.get("voice"):
-                        tts.select(str(data["voice"]))
-                    if data.get("rate"):
-                        tts.set_rate(float(data["rate"]))
                 elif t == "wake":
                     await client.audio.set_wake(bool(data.get("enabled")))
                 elif t == "ptt_start":

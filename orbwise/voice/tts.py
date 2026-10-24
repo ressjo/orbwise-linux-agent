@@ -1,17 +1,15 @@
-"""Sprachausgabe mit Piper (lokal) + satzweises Streaming."""
+"""Sprachausgabe mit Pocket TTS (lokal) + satzweises Streaming."""
 
 from __future__ import annotations
 
 import asyncio
 import base64
-import io
-import json
 import logging
 import re
-import wave
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
+from .. import state
 from ..config import DATA_DIR, VoiceConfig
 from . import pocket
 
@@ -89,78 +87,58 @@ class SentenceSplitter:
         return [rest.strip()] if rest.strip() else []
 
 
-class PiperTTS:
-    """Sprachausgabe: Piper mit mehreren installierbaren Stimmen, dazu optional Pocket TTS (Stimmen „pocket:<name>“,
-    siehe pocket.py). `rate` < 1 bedeutet: die Oberfläche spielt das Audio langsamer (= tiefer) ab – Piper spricht
-    dafür entsprechend schneller, damit das Tempo gleich bleibt. Pocket kennt kein Tempo – sein Audio läuft
-    unverändert (Rate 1)."""
+class TTS:
+    """Sprachausgabe mit Pocket TTS. Gewählte Stimme und die Sprache je Stimme stehen in state.json („tts“); die
+    Sprache der aktiven Stimme ist auch die Sprache der Antworten (siehe reply_language). Ohne Pocket TTS spricht der
+    Browser (Web Speech API)."""
 
-    def __init__(self, cfg: VoiceConfig, data_dir: Path = DATA_DIR):
+    def __init__(self, cfg: VoiceConfig, data_dir: Path = DATA_DIR, state_path: Path | None = None):
         self.cfg = cfg
-        self.voices_dir = cfg.tts_voice.parent
-        self.current = cfg.tts_voice.stem.removesuffix(".onnx")
-        self.rate = 1.0
-        self._voices: dict[str, tuple[object, int | None]] = {}
+        self.base_language = cfg.language or "de"
+        self.state_path = state_path or data_dir / "state.json"
+        saved = state.load(self.state_path).get("tts") or {}
+        voice = saved.get("voice")
+        self.voice = voice if voice in pocket.BY_NAME else pocket.NATIVE.get(self.base_language, "alba")
+        self.languages: dict[str, str] = {k: v for k, v in (saved.get("languages") or {}).items()
+                                          if k in pocket.BY_NAME and v in pocket.LANGUAGES}
+        self.pocket = pocket.PocketTTS(data_dir, self.language_of(self.voice))
         self._error: str | None = None
-        self.pocket = pocket.PocketTTS(data_dir, cfg.language or "de")
 
-    def path(self, name: str | None = None) -> Path:
-        return self.voices_dir / f"{name or self.current}.onnx"
+    @property
+    def current(self) -> str:
+        return self.voice
 
-    def installed(self) -> list[str]:
-        return sorted(p.stem for p in self.voices_dir.glob("*.onnx")) if self.voices_dir.exists() else []
+    def language_of(self, voice: str) -> str:
+        return self.languages.get(voice) or self.base_language
 
-    def usable(self, name: str) -> bool:
-        if pocket.is_pocket(name):
-            return pocket.bare(name) in pocket.BY_NAME and self.pocket.installed()
-        return bool(name) and name in self.installed()
+    @property
+    def reply_language(self) -> str:
+        """Sprache, in der Orbwise antwortet und vorliest – die der aktiven Stimme."""
+        return self.language_of(self.voice)
 
-    def select(self, name: str) -> bool:
-        if not self.usable(name):
+    def select(self, voice: str, language: str | None = None) -> bool:
+        """Stimme (und ihre Sprache) wählen, merken und den Server schon starten – der erste Satz soll nicht warten."""
+        if voice not in pocket.BY_NAME or (language and language not in pocket.LANGUAGES):
             return False
-        if pocket.is_pocket(name) and name != self.current:
-            self.pocket.warm(name)  # Server schon jetzt starten – der erste Satz soll nicht warten
-        self.current = name
+        self.voice = voice
+        if language:
+            if language == self.base_language:
+                self.languages.pop(voice, None)
+            else:
+                self.languages[voice] = language
+        state.update(self.state_path, lambda data: data.__setitem__(
+            "tts", {"voice": self.voice, "languages": dict(self.languages)}))
+        self.pocket.set_language(self.reply_language)
+        if self.pocket.installed():
+            self.pocket.warm(voice)
         return True
 
-    def piper_voice(self) -> str | None:
-        """Piper-Stimme für den Notfall (Pocket gewählt, aber nicht nutzbar): die aus der Konfiguration, sonst irgendeine."""
-        default = self.cfg.tts_voice.stem.removesuffix(".onnx")
-        if self.path(default).exists():
-            return default
-        others = self.installed()
-        return others[0] if others else None
-
-    def forget(self, name: str) -> None:
-        """Geladene Stimme aus dem Zwischenspeicher werfen (z. B. nach einem neuen Upload gleichen Namens)."""
-        self._voices.pop(name, None)
-
-    def remove(self, name: str) -> None:
-        """Installierte Stimme löschen (Modell + Konfiguration) und aus dem Zwischenspeicher werfen."""
-        self._voices.pop(name, None)
-        for f in (self.path(name), self.voices_dir / f"{name}.onnx.json"):
-            f.unlink(missing_ok=True)
-
-    def set_rate(self, rate: float) -> None:
-        self.rate = min(1.0, max(0.8, float(rate)))
-
     def available(self) -> bool:
-        if pocket.is_pocket(self.current):
-            if self.usable(self.current):
-                self._error = None
-                return True
-            self.current = self.piper_voice() or self.cfg.tts_voice.stem.removesuffix(".onnx")
-        if not self.path().exists():
-            others = self.installed()
-            if others:
-                self.current = others[0]
-            else:
-                self._error = f"Stimme fehlt: {self.path()}"
-                return False
-        try:
-            import piper  # noqa: F401
-        except ImportError:
-            self._error = "piper-tts ist nicht installiert"
+        if not self.pocket.installed():
+            self._error = "Pocket TTS ist nicht installiert"
+            return False
+        if not pocket.cpu_supported():
+            self._error = "Pocket TTS braucht eine CPU mit AVX2"
             return False
         self._error = None
         return True
@@ -169,59 +147,18 @@ class PiperTTS:
     def error(self) -> str | None:
         return self._error
 
-    def _load(self, name: str):
-        if pocket.is_pocket(name):
-            self.pocket.ensure_running(pocket.bare(name))
-            return None
-        if name not in self._voices:
-            from piper import PiperVoice
-            voice = PiperVoice.load(str(self.path(name)))
-            self._voices[name] = (voice, self._speaker_id(name))
-        return self._voices[name]
+    def warmup(self) -> None:
+        self.pocket.ensure_running(self.voice)
 
-    def _speaker_id(self, name: str) -> int | None:
-        from .catalog import BY_NAME
-        wanted = BY_NAME[name].speaker if name in BY_NAME else ""
-        meta = self.path(name).with_suffix(".onnx.json")
-        if not wanted or not meta.exists():
-            return None
-        ids = json.loads(meta.read_text(encoding="utf-8")).get("speaker_id_map") or {}
-        return ids.get(wanted)
-
-    def speak(self, text: str, name: str | None = None) -> tuple[bytes, float | None]:
-        """(WAV, Abspielrate) – die Rate ist 1, wenn Pocket gesprochen hat, sonst None (= die der Oberfläche).
-        Fällt Pocket aus, spricht Piper."""
-        name = name or self.current
-        if pocket.is_pocket(name):
-            try:
-                return self.pocket.synth(text, name), 1.0
-            except Exception as e:  # noqa: BLE001
-                fallback = self.piper_voice()
-                if not fallback:
-                    raise
-                log.warning("Pocket TTS fehlgeschlagen (%s) – spreche mit Piper", e)
-                name = fallback
-        return self.synth(text, name), None
-
-    def synth(self, text: str, name: str | None = None) -> bytes:
-        voice, speaker_id = self._load(name or self.current)
-        length_scale = self.cfg.tts_length_scale * self.rate
-        buf = io.BytesIO()
-        with wave.open(buf, "wb") as wav:
-            try:
-                from piper import SynthesisConfig
-                voice.synthesize_wav(text, wav, syn_config=SynthesisConfig(
-                    length_scale=length_scale, speaker_id=speaker_id))
-            except ImportError:  # ältere piper-tts-Versionen
-                voice.synthesize(text, wav, length_scale=length_scale, speaker_id=speaker_id)
-        return buf.getvalue()
+    def synth(self, text: str, voice: str | None = None) -> bytes:
+        return self.pocket.synth(text, voice or self.voice)
 
 
 class Speaker:
     """Wandelt gestreamte Antworten satzweise in Audio um und verteilt es an die Clients.
-    Ohne Piper werden nur die Sätze geschickt – der Browser spricht sie dann selbst (Web Speech API)."""
+    Ohne Pocket TTS werden nur die Sätze geschickt – der Browser spricht sie dann selbst (Web Speech API)."""
 
-    def __init__(self, tts: PiperTTS | None, send: Callable[[dict], Awaitable[None]],
+    def __init__(self, tts: TTS | None, send: Callable[[dict], Awaitable[None]],
                  wanted: Callable[[], bool]):
         self.tts = tts
         self.send = send
@@ -274,12 +211,12 @@ class Speaker:
             if gen != self.generation:
                 continue
             event = {"type": "speak", "id": msg_id, "seq": seq, "text": text}
+            if self.tts:
+                event["lang"] = self.tts.reply_language  # für die Browser-Stimme, falls Pocket fehlt
             if self.tts and self.tts.available():
                 try:
-                    wav, rate = await asyncio.to_thread(self.tts.speak, text)
+                    wav = await asyncio.to_thread(self.tts.synth, text)
                     event["audio"] = base64.b64encode(wav).decode()
-                    if rate:
-                        event["rate"] = rate
                 except Exception as e:  # noqa: BLE001
                     log.warning("TTS fehlgeschlagen: %s", e)
             if gen == self.generation:

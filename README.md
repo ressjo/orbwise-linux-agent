@@ -22,7 +22,7 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
  ├─ neural-network orb (canvas)         ◄──WS──►  Agent ── tool loop ──► tools (confirm dangerous ones)
  ├─ chat · activity · history · memory             │
  ├─ microphone → 16 kHz PCM             ──WS──►   wake word (openWakeWord) → VAD → Whisper
- └─ playback + level → orb              ◄──────   Piper TTS (sentence by sentence)
+ └─ playback + level → orb              ◄──────   Pocket TTS (sentence by sentence)
                                                    │
                          Ollama / llama-server (LLM + bge-m3)   ~/.local/share/orbwise/memory/
 ```
@@ -68,7 +68,7 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **Learning from experience** | Short lessons from errors, your corrections and 👎 ("docker on the NAS needs sudo") – thought about while idle, only matching ones go along with a question under a small fixed limit, so the context window does not grow; viewable, editable and deletable under Memory → Experience |
 | **Memory** | Remembers everything permanently (see below), `remember` / `recall` / `forget`, **chat history** with search, favourites, rename and delete; the search index repairs itself if it gets damaged |
 | **Dashboard** | Animated neural-network orb: thinking pulse, **tool symbols** next to the orb (CLI, cloud for the web, mail, Paperless) with a beam of dots flowing to them, golden neurons when memory is used, a **context ring** showing how full the model's context is; calm, modern layout: collapsible sidebar with chats, a big orb with greeting and suggestions on an empty chat that shrinks to a live strip once you talk, a live line in each answer showing what the model is doing (reading the prompt, thinking, writing a call) and a small time/token summary afterwards, an activity panel with live telemetry (tokens/s, context, GPU, VRAM, RAM, power), Planner and Memory sheets, a settings page; works on the phone too |
-| **Models & voices** | **Models page** (sidebar, like LM Studio): all models with engine, quantization, size and VRAM fit; load with one click (quick switch on the model chip at the top); per model context window (Tools/Coding), KV cache, sampling, context test and llama-server log; add models from Hugging Face, `~/models` or presets with download progress and cancel; delete models · **Settings → Voice:** choose, download (whole Piper catalogue), upload your own (`.onnx` + `.json`) and delete voices, more natural **Pocket TTS** voices on the CPU, "Jarvis" voice effect · **Think** button for reasoning models |
+| **Models & voices** | **Models page** (sidebar, like LM Studio): all models with engine, quantization, size and VRAM fit; load with one click (quick switch on the model chip at the top); per model context window (Tools/Coding), KV cache, sampling, context test and llama-server log; add models from Hugging Face, `~/models` or presets with download progress and cancel; delete models · **Settings → Voice:** natural **Pocket TTS** voices on the CPU, each with the language it speaks (which is also the language of the answers), "Jarvis" voice effect · **Think** button for reasoning models |
 | **Safety** | Confirmation for everything that changes the system, blocklist for destructive commands, root only via a one-time password prompt, keys and passwords are never read or sent, local-only server – see [Security](#security) |
 
 ## Requirements
@@ -105,7 +105,7 @@ The installer
 1. installs the system packages (Ollama with the right GPU backend, `uv`, `fd`, `ripgrep`, `plocate`, `xdg-utils`, …),
 2. sets up the Python environment (`uv sync --extra voice`),
 3. pulls the chosen model (recommendation: ≥ 22 GB → `qwen3:30b`, ≥ 12 GB → `qwen3:14b`, ≥ 6 GB → `qwen3:8b`, otherwise `qwen3:4b`) together with `bge-m3` (embeddings) – if a download fails you can pick another model,
-4. downloads a Piper voice (English: *Alan*, German: *Thorsten*), the wake word model and Whisper,
+4. installs the speech output Pocket TTS with its model and voice (`orbwise voice install`), the wake word model and Whisper,
 5. creates `~/.config/orbwise/config.yaml`, an **Orbwise** entry in the application menu and an autostart entry.
 
 Then:
@@ -487,30 +487,25 @@ stays cached). The activity shows "enough thinking – acting now".
 
 ## Voice & Jarvis effect
 
-Open **Settings → Voice** to select, preview (▶), delete (🗑) or add Piper voices. **+ ADD VOICE** lists
-a recommended selection – English (Alan, Northern English male, Ryan, Joe, Jenny, Amy) or German (Thorsten, Pavoque,
-Karlsson, Kerstin, Ramona) – followed by **every official Piper voice** of your language from the
-[piper-voices catalogue](https://huggingface.co/rhasspy/piper-voices), grouped by region, with download size and a
-search field ([listen to samples](https://rhasspy.github.io/piper-samples/)). The catalogue is cached for a day and
-the selection still works offline.
+Orbwise speaks with [Kyutai's Pocket TTS](https://github.com/kyutai-labs/pocket-tts) – natural-sounding, on the CPU.
+The installer sets it up (`orbwise voice install`); otherwise **Settings → Voice → ＋ INSTALL POCKET TTS** does. It is a
+ready-made program (a few MB, no Python or PyTorch; checksum verified) in `~/.local/share/orbwise/pocket-tts/`; on
+its first start it fetches the model for the language (~100M parameters) and the voice from Hugging Face – a few
+hundred MB, cached in `~/.cache/huggingface`. It runs as a small local server (int8, 4 CPU threads, faster than real
+time on a desktop CPU). Until it is installed, or if it fails, the browser speaks.
 
-**Own voices** (e.g. a Piper voice from Hugging Face or a self-trained one): in **Settings → Voice** choose
-**⬆ UPLOAD OWN VOICE …** and select both files – the `.onnx` model and its `.onnx.json` config (any file name; it is
-renamed to match) – or drag them onto the menu. Alternatively copy `<name>.onnx` and `<name>.onnx.json` into
-`~/.local/share/orbwise/voices/`; the voice appears in the menu as "own voice" without a restart.
+**Settings → Voice** lists its **27 voices**: the one recorded in your language comes first (German: *Juergen*,
+English: *Alba*) and has no accent; the others keep the timbre of their English, French … recording. Preview with ▶,
+or [listen online](https://kyutai.org/pocket-tts). Next to each voice you choose **the language it speaks**
+(German, English, French, Spanish, Italian, Portuguese, Dutch) – and that is also **the language Orbwise answers
+in**: pick *Alba · English* and the answers are written and read out in English (the dashboard stays in its language).
+Whisper then detects the spoken language itself, so you can talk to Orbwise in that language too, and the fixed
+spoken phrases ("Shall I run …?") follow in German or English. Each voice keeps its language; the choice is stored
+in `state.json`. Switching to another language loads that language's model (a few seconds, the first time a download).
 
-**Pocket TTS – more natural voices on the CPU:** in **Settings → Voice**, **＋ INSTALL POCKET TTS** downloads
-[Kyutai's Pocket TTS](https://github.com/kyutai-labs/pocket-tts) as a ready-made program (a few MB, no Python or
-PyTorch; checksum verified) to `~/.local/share/orbwise/pocket-tts/`. On its first start it fetches the model for your
-language (~100M parameters) and the voice from Hugging Face – a few hundred MB, cached in `~/.cache/huggingface`.
-It then runs as a small local server (int8, 4 CPU threads, faster than real time on a desktop CPU) and the menu shows
-its **27 voices** under *Pocket TTS · natural*: the one recorded in your language comes first (German: *Juergen*,
-English: *Alba*) and has no accent; the others keep their timbre from an English, French … recording and may carry a
-slight accent. Preview with ▶, [listen online](https://kyutai.org/pocket-tts). If Pocket TTS fails, Piper speaks
-instead. The voice effect only adds its sound (reverb, shimmer) to Pocket voices – no pitch shift, as Pocket has no
-speed control. **REMOVE POCKET TTS** deletes the program, model and voices again. Needs an x86-64 CPU with AVX2 or
-ARM64. Cloning your own voice from a recording is not offered yet (Kyutai only hands out those weights after
-accepting terms on Hugging Face).
+**REMOVE POCKET TTS** deletes the program, model and voices again (`orbwise voice remove` on the command line).
+Needs an x86-64 CPU with AVX2 or ARM64. Cloning your own voice from a recording is not offered yet (Kyutai only hands
+out those weights after accepting terms on Hugging Face).
 
 The **Jarvis effect** (on/off + strength, in the same menu) adds a slightly deeper, sonorous tone, a light room reverb, a subtle
 chorus and a "digital" shimmer.
@@ -980,6 +975,7 @@ orbwise model llamacpp --update # newest llama.cpp build for models from Hugging
 orbwise model add qwen-image   # set up the image mode (Qwen-Image-2.1)
 orbwise model remove <name>    # remove a downloaded model from the list
 orbwise context-test [--quick] # check the context window with the active model (Orbwise must be running)
+orbwise voice install          # install the speech output Pocket TTS and fetch its model (remove: orbwise voice remove)
 orbwise update                 # update (git pull, dependencies, restart)
 orbwise version                # show the installed version
 orbwise reindex                # rebuild the search index from the Markdown files
@@ -995,7 +991,7 @@ orbwise init-config            # create the example configuration
 | The orb stays "OFFLINE" | Is `orbwise serve` running? Log: `~/.local/state/orbwise.log` |
 | "Ollama not reachable" | `sudo systemctl enable --now ollama` |
 | Context: "shortened", slow answers, the window seems smaller | `orbwise context-test` (or Settings → Context window → *Test context*): checks whether the server really runs with the configured window, KV cache in VRAM, token estimate, prompt cache (same prompt and follow-up), a prompt up to the compaction point (the model must still repeat a code word from its start) and overflow detection. `--quick` skips the two slow fill checks |
-| No Piper speech | `orbwise doctor` → voice missing? The browser speaks as a fallback |
+| No natural voice (the browser speaks) | `orbwise doctor` → Pocket TTS missing? `orbwise voice install`; its log: `~/.local/share/orbwise/pocket-tts/server.log` |
 | Microphone doesn't work | Open `http://localhost:8765` (not the IP), check the browser's microphone permission |
 | Wake word triggers too often/rarely | Adjust `voice.wakeword_threshold` (0.3–0.7) |
 | No password field appears | The dashboard must be open; `orbwise doctor` checks the askpass helper |
@@ -1049,9 +1045,7 @@ from their original sources, and their licenses apply:
 
 | Component | Used for | License |
 |---|---|---|
-| [piper-tts](https://github.com/OHF-Voice/piper1-gpl) | speech output (optional `voice` extra) | GPL-3.0-or-later |
-| Piper voices (e.g. `de_DE-thorsten-high`, `en_GB-alan-medium`) | voice | per voice – see its `MODEL_CARD` |
-| [Pocket TTS](https://github.com/kyutai-labs/pocket-tts) (optional, downloaded on request) + its model and voices | natural speech output | program MIT · model see [its model card](https://huggingface.co/kyutai/pocket-tts) · voices per voice, see [kyutai/tts-voices](https://huggingface.co/kyutai/tts-voices) |
+| [Pocket TTS](https://github.com/kyutai-labs/pocket-tts) + its model and voices (downloaded by the installer or on request) | speech output | program MIT · model see [its model card](https://huggingface.co/kyutai/pocket-tts) · voices per voice, see [kyutai/tts-voices](https://huggingface.co/kyutai/tts-voices) |
 | [openWakeWord](https://github.com/dscripka/openWakeWord) | wake word | code Apache-2.0 · pre-trained "hey_jarvis" model **CC BY-NC-SA 4.0 (non-commercial)** |
 | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) + Whisper models | speech recognition | MIT |
 | Language models via Ollama / llama.cpp (Qwen, Llama, Mistral, gpt-oss, …) | chat | per model – see its model card |

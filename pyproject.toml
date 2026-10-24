@@ -38,7 +38,6 @@ dependencies = [
 [project.optional-dependencies]
 voice = [
     "faster-whisper>=1.0",
-    "piper-tts>=1.2",
     "openwakeword>=0.6",
     "onnxruntime>=1.17",
     "webrtcvad-wheels>=2.0.11",

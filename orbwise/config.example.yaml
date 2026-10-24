@@ -73,9 +73,7 @@ voice:
   stt_model: small         # tiny | base | small | medium | large-v3 (bigger = more accurate, slower)
   stt_device: cpu          # cuda on NVIDIA (faster-whisper); AMD GPUs: stay on cpu
   stt_compute_type: int8   # int8 on CPU, float16 on CUDA
-  # tts_voice: ~/.local/share/orbwise/voices/de_DE-thorsten-high.onnx   # default depends on "language"
-                           # (easier: pick, download or upload voices in the VOICE menu of the dashboard)
-  # tts_length_scale: 0.95 # speaking rate: < 1 faster, > 1 slower
+  # speech output: Pocket TTS – install it and pick the voice (and the language it speaks) under Settings → Voice
   wakeword_model: hey_jarvis
   wakeword_threshold: 0.5
   silence_ms: 900          # this much silence ends a recording

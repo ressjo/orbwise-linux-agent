@@ -1,10 +1,11 @@
-"""Aufräumen nach entfernten Modell-Engines.
+"""Aufräumen nach entfernten Modell-Engines und Stimmen.
 
 Strata (eigene MoE-Engine für Qwen3.8-Flash-Next) und Bonsai (PrismML-Fork von llama.cpp mit eigenem Setup) gibt es
 in Orbwise nicht mehr. Wer sie angelegt hatte, bekommt beim ersten Start danach: Profile raus aus state.json (samt
 ihren Einstellungen); bei Strata außerdem im Hintergrund einen noch laufenden Strata-Server stoppen, das Modell
 (~/models/strata/<variante>) und die von Orbwise installierte Engine (~/.local/share/strata) löschen. ~/bonsai bleibt
-liegen (kann von Hand gelöscht werden). Läuft nur, solange es etwas zu tun gibt.
+liegen (kann von Hand gelöscht werden). Piper (frühere Sprachausgabe) ist durch Pocket TTS ersetzt: die
+heruntergeladenen Piper-Stimmen in <data>/voices werden gelöscht. Läuft nur, solange es etwas zu tun gibt.
 """
 
 from __future__ import annotations
@@ -101,4 +102,22 @@ def remove_strata_files(dirs: list[str], run: Runner = subprocess.run, home: Pat
     link = (home or Path.home()) / ".local" / "bin" / "strata"
     if link.is_symlink() and os.readlink(link).startswith(str(data)):  # nur den Verweis auf diese Engine
         link.unlink()
+    return freed
+
+
+PIPER_FILES = ("*.onnx", "*.onnx.json", "*.onnx.part", "*.onnx.json.part", "voices_catalog.json")
+
+
+def remove_piper_voices(voices_dir: Path) -> int:
+    """Piper-Stimmen (Modell + Konfiguration, Katalog-Cache) löschen, leeren Ordner entfernen → freigegebene Bytes."""
+    if not voices_dir.is_dir():
+        return 0
+    freed = 0
+    for pattern in PIPER_FILES:
+        for f in voices_dir.glob(pattern):
+            if f.is_file():
+                freed += f.stat().st_size
+                f.unlink()
+    if not any(voices_dir.iterdir()):
+        voices_dir.rmdir()
     return freed

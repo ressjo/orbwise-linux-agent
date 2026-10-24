@@ -1,11 +1,10 @@
-"""Pocket TTS (Kyutai) als zweite Sprachausgabe neben Piper – deutlich natürlicher, läuft auf der CPU.
+"""Pocket TTS (Kyutai) – Orbwises Sprachausgabe: natürlich klingend, läuft auf der CPU.
 
 Orbwise nutzt das fertige Programm aus den GitHub-Releases (Rust, ohne Python/PyTorch) und startet es als lokalen
 Server (`pocket-tts serve`). Das Sprachmodell (~100 Mio. Parameter) und die Stimmen lädt das Programm beim ersten Start
 selbst von Hugging Face (Cache wie bei `huggingface-cli`). Stimmen sind vorberechnete Sprecher-Profile aus Kyutais
-Katalog – sie sprechen jede Sprache des geladenen Modells, mit der Klangfarbe des Originals.
-
-Stimmennamen in Orbwise: „pocket:<name>“ (z. B. pocket:juergen), damit sie neben den Piper-Stimmen stehen können.
+Katalog – sie sprechen jede Sprache des geladenen Modells, mit der Klangfarbe des Originals. Pro Sprache gibt es ein
+eigenes Modell; wechselt die Sprache, startet der Server mit dem anderen neu.
 """
 
 from __future__ import annotations
@@ -33,10 +32,9 @@ import httpx
 log = logging.getLogger(__name__)
 
 REPO = "kyutai-labs/pocket-tts"
-PREFIX = "pocket:"
 START_TIMEOUT_S = 900  # erster Start lädt das Modell herunter
 SYNTH_TIMEOUT_S = 120
-# Orbwise-Sprache → Pocket-Modell (die „_24l“-Varianten sind größer, langsamer und noch Vorschau)
+# Sprache → Pocket-Modell (die „_24l“-Varianten sind größer, langsamer und noch Vorschau)
 LANGUAGES = {"de": "german", "en": "english", "fr": "french", "es": "spanish", "it": "italian",
              "pt": "portuguese", "nl": "dutch"}
 # Kyutais eigene Standardstimme je Sprache – aus einer Aufnahme in dieser Sprache, klingt daher ohne Akzent
@@ -72,38 +70,50 @@ VOICES = [
 ]
 BY_NAME = {v.name: v for v in VOICES}
 
-ORIGIN_NAMES = {"de": ("Deutsch", "German"), "en": ("Englisch", "English"), "fr": ("Französisch", "French"),
-                "es": ("Spanisch", "Spanish"), "it": ("Italienisch", "Italian"), "pt": ("Portugiesisch", "Portuguese"),
-                "nl": ("Niederländisch", "Dutch")}
-
-
-def is_pocket(name: str | None) -> bool:
-    return bool(name) and name.startswith(PREFIX)
-
-
-def bare(name: str) -> str:
-    return name.removeprefix(PREFIX)
+# Probesatz zum Anhören einer Stimme
+SAMPLES = {
+    "de": "Guten Abend. Alle Systeme sind einsatzbereit. Womit kann ich dienen?",
+    "en": "Good evening. All systems are ready. How may I help?",
+    "fr": "Bonsoir. Tous les systèmes sont prêts. Comment puis-je vous aider ?",
+    "es": "Buenas noches. Todos los sistemas están listos. ¿En qué puedo ayudarle?",
+    "it": "Buonasera. Tutti i sistemi sono pronti. Come posso aiutarla?",
+    "pt": "Boa noite. Todos os sistemas estão prontos. Como posso ajudar?",
+    "nl": "Goedenavond. Alle systemen zijn gereed. Waarmee kan ik u helpen?",
+}
+# Name der Sprache (deutsch, englisch) – für Menü und Systemprompt
+LANGUAGE_NAMES = {"de": ("Deutsch", "German"), "en": ("Englisch", "English"), "fr": ("Französisch", "French"),
+                  "es": ("Spanisch", "Spanish"), "it": ("Italienisch", "Italian"),
+                  "pt": ("Portugiesisch", "Portuguese"), "nl": ("Niederländisch", "Dutch")}
 
 
 def model_language(language: str) -> str:
     return LANGUAGES.get(language, "english")
 
 
-def voice_list(language: str, current: str, installed: bool) -> list[dict]:
-    """Stimmen für das Menü: die Stimme aus der eigenen Sprache zuerst (klingt ohne Akzent), dann alle anderen."""
-    en = language == "en"
-    native = NATIVE.get(language, "alba")
+def language_name(code: str, en: bool) -> str:
+    return LANGUAGE_NAMES.get(code, (code, code))[1 if en else 0]
+
+
+def voice_list(ui_language: str, current: str, languages: dict[str, str]) -> list[dict]:
+    """Stimmen für das Menü, mit der Sprache, die jede spricht (languages: Stimme → Sprache, sonst die der Oberfläche).
+    Die Stimme aus einer Aufnahme in der Sprache der Oberfläche zuerst (klingt ohne Akzent), dann alle anderen."""
+    en = ui_language == "en"
+    native = NATIVE.get(ui_language, "alba")
     out = []
-    for v in sorted(VOICES, key=lambda v: (v.name != native, v.origin != language, v.label)):
-        origin = ORIGIN_NAMES[v.origin][1 if en else 0]
-        if v.name == native:
-            desc = "Recorded in your language – no accent" if en else "Aus einer deutschen Aufnahme – ohne Akzent"
+    for v in sorted(VOICES, key=lambda v: (v.name != native, v.origin != ui_language, v.label)):
+        speaks = languages.get(v.name) or ui_language
+        if v.origin == speaks:
+            desc = "Recorded in this language – no accent" if en else "Aus einer Aufnahme in dieser Sprache – ohne Akzent"
         else:
-            desc = f"Voice from a {origin} recording" if en else f"Klangfarbe aus einer Aufnahme auf {origin}"
-        out.append({**asdict(v), "name": PREFIX + v.name, "label": v.label, "description": desc,
-                    "engine": "pocket", "recommended": v.name == native, "installed": installed,
-                    "current": PREFIX + v.name == current, "locale": v.origin, "speaker": "", "download_mb": None})
+            origin = language_name(v.origin, en)
+            desc = f"Timbre from a {origin} recording" if en else f"Klangfarbe aus einer Aufnahme auf {origin}"
+        out.append({**asdict(v), "label": v.label, "description": desc, "language": speaks,
+                    "recommended": v.name == native, "current": v.name == current})
     return out
+
+
+def language_list(en: bool) -> list[dict]:
+    return [{"code": code, "label": language_name(code, en)} for code in LANGUAGES]
 
 
 # ---------------------------------------------------------------- Installation
@@ -267,6 +277,12 @@ class PocketTTS:
     def installed(self) -> bool:
         return is_installed(self.data_dir)
 
+    def set_language(self, language: str) -> None:
+        """Andere Sprache → anderes Modell: laufenden Server beenden, der nächste Satz startet ihn neu."""
+        if model_language(language) != model_language(self.language):
+            self.stop()
+        self.language = language
+
     @property
     def base_url(self) -> str:
         return f"http://127.0.0.1:{self.port}"
@@ -331,12 +347,11 @@ class PocketTTS:
         threading.Thread(target=run, daemon=True, name="pocket-warm").start()
 
     def synth(self, text: str, voice: str) -> bytes:
-        name = bare(voice)
-        if name not in BY_NAME:
+        if voice not in BY_NAME:
             raise ValueError(f"Unbekannte Pocket-Stimme: {voice}")
-        self.ensure_running(name)
+        self.ensure_running(voice)
         with httpx.Client(timeout=SYNTH_TIMEOUT_S, transport=self.transport) as client:
-            r = client.post(self.base_url + "/tts", data={"text": text, "voice_url": name})
+            r = client.post(self.base_url + "/tts", data={"text": text, "voice_url": voice})
         if r.status_code != 200:
             raise RuntimeError(f"Pocket TTS: HTTP {r.status_code} {r.text[:200]}")
         return rewrap_wav(r.content)

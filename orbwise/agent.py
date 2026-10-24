@@ -138,6 +138,8 @@ class Agent(CompactMixin, ToolSelectionMixin, SafetyMixin, SpeedMixin):
         self._turn_open = False  # läuft gerade eine Anfrage (deren Notiz noch eingefroren werden darf)?
         self._think: bool | None = None
         self._think_level: str | None = None  # low | medium | high, wenn gedacht wird
+        # Sprache der gewählten Stimme, wenn sie nicht die der Oberfläche ist – dann antwortet Orbwise in ihr
+        self.reply_language: str | None = None
         self._plan = False  # Planmodus: nur lesen, am Ende einen Plan vorlegen
         # gelernte Einlese-Geschwindigkeit je Modell (Token/s) – in state.json gemerkt, damit sie nach einem Neustart
         # gleich bekannt ist (entscheidet mit, ob alle Werkzeuge mitgehen)
@@ -214,7 +216,8 @@ class Agent(CompactMixin, ToolSelectionMixin, SafetyMixin, SpeedMixin):
             nas=", ".join(map(str, c.tools.nas_paths)))
         names = self._all_tool_names() if tools is None else tools
         names = {n for n in names if n in self.tools and self.tools[n].is_enabled(c)}  # Config kann sich ändern
-        return (base + prompts.hints(c, names) + c.persona_extra).strip()
+        language = "\n" + prompts.reply_language_note(c, self.reply_language) if self.reply_language else ""
+        return (base + prompts.hints(c, names) + c.persona_extra + language).strip()
 
     def _all_tool_names(self) -> set[str]:
         """Werkzeuge, wenn alle ins Fenster passen (ohne load_tools – es gibt nichts nachzuladen)."""
