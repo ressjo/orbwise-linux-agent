@@ -1,4 +1,21 @@
-# Orbwise – a local AI voice assistant for Linux
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.png">
+    <img src="docs/logo-light.png" alt="Orbwise – local AI assistant for Linux" width="440">
+  </picture>
+</p>
+
+<p align="center">
+  <b>A local AI voice assistant for Linux</b> – voice, memory and real control over your PC, nothing leaves your machine.
+</p>
+
+<p align="center">
+  <img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-2b6f73">
+  <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-2b6f73">
+  <img alt="Platform: Linux" src="https://img.shields.io/badge/platform-Linux-2b6f73">
+  <img alt="Languages: German, English" src="https://img.shields.io/badge/language-de%20%7C%20en-2b6f73">
+</p>
+
 
 A voice assistant that runs **entirely on your own Linux PC**: a calm web interface (light or dark), voice input
 via wake word ("Hey Jarvis") or push-to-talk, spoken answers, a local LLM (Ollama or llama.cpp), **persistent
