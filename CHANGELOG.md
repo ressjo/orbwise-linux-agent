@@ -21,6 +21,10 @@ All notable changes to this project are documented here. The format follows
   Ollama models; new Hugging Face downloads always run on llama.cpp.
 
 ### Changed
+- **Activity panel:** steps are grouped under the question (or routine / Telegram run) that caused them, with readable
+  names and an icon ("Web search · linux 6.18 release notes" instead of `web_search query=…`), a spinner while running
+  and a check mark with the duration or a cross when done. Clicking a step shows the raw call and its output. Reading
+  the chat into the prompt cache is now a single quiet note above the list instead of a row per question.
 - **Redesign:** a warm, calm look in **light, dark or system** (Settings → General → Appearance) with a petrol
   accent; headings and answers in a serif reading font (Newsreader), controls in Inter – both bundled under the SIL
   Open Font License. The composer has the text on top and the switches below; the user's message sits in a soft bubble,

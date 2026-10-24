@@ -602,36 +602,47 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
 .tele-spark { display: block; width: 100%; height: 20px; margin-top: 3px; }
 #tele-ctx .tele-num { font-size: var(--fs-base); }
 .drawer-body { flex: 1; min-height: 0; overflow-y: auto; padding: 14px; }
-.activity { display: flex; flex-direction: column; gap: 8px; }
-.act { border: 1px solid var(--border); background: var(--surface); padding: 9px 11px; border-radius: var(--r-md); animation: msg-in .3s ease-out; position: relative; }
-.act::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; border-radius: 0 3px 3px 0; background: var(--faint); }
-.act.running::before { background: var(--warn); }
-.act.ok::before { background: var(--success); }
-.act.denied::before, .act.blocked::before, .act.error::before { background: var(--danger); }
-.act.planned::before { background: var(--warn); }
-.act-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: var(--fs-md); }
-.act-name { font-variant-numeric: tabular-nums; color: var(--text); font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.act-head > span:last-child { display: inline-flex; align-items: center; gap: 6px; flex: none; }
-.act-status { font-size: var(--fs-xs); color: var(--muted); }
-.act.running .act-status, .act.planned .act-status { color: var(--warn); }
-.act.ok .act-status { color: var(--success); }
+.activity { display: flex; flex-direction: column; gap: 18px; }
+.act-note { font-size: var(--fs-xs); color: var(--faint); margin: -2px 2px 12px; font-variant-numeric: tabular-nums; }
+.act-note.on { color: var(--reason); }
+.act-group { animation: msg-in .3s ease-out; }
+.act-group:not(:has(.act)) { display: none; }
+.act-group-head { display: flex; align-items: baseline; gap: 10px; padding: 0 2px 6px; border-bottom: 1px solid var(--border); }
+.agh-title { flex: 1; min-width: 0; font-size: var(--fs-md); font-weight: 550; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.act-group.run .agh-title, .act-group.bg .agh-title { color: var(--text-2); font-weight: 500; }
+.agh-time { flex: none; font-size: var(--fs-xs); color: var(--faint); font-variant-numeric: tabular-nums; }
+.act-steps { display: flex; flex-direction: column; }
+.act { border-bottom: 1px solid var(--border); }
+.act:last-child { border-bottom: none; }
+.act-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 7px 6px; margin: 1px 0; background: none; border: none;
+  border-radius: var(--r-sm); color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.act-row:hover { background: var(--surface-3); }
+.act-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.act-ico { flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: var(--r-xs); color: var(--muted); background: var(--surface); }
+.act-ico svg { width: 13px; height: 13px; }
+.act-main { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 6px; font-size: var(--fs-sm); overflow: hidden; white-space: nowrap; }
+.act-name { flex: none; color: var(--text); font-weight: 500; max-width: 60%; overflow: hidden; text-overflow: ellipsis; }
+.act-info { min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+.act-state { flex: none; display: inline-flex; align-items: center; gap: 5px; font-size: var(--fs-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
+.act-mark { display: inline-flex; }
+.act-mark svg { width: 13px; height: 13px; }
+.act.running .act-mark { width: 11px; height: 11px; border: 1.5px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+.act.model.running .act-mark { border-top-color: var(--reason); }
+.act.waiting .act-mark { animation: none; border-color: var(--warn); }
+.act.waiting .act-status { color: var(--warn); }
+.act.ok .act-mark { color: var(--success); }
+.act.denied .act-mark, .act.blocked .act-mark, .act.error .act-mark { color: var(--danger); }
 .act.denied .act-status, .act.blocked .act-status, .act.error .act-status { color: var(--danger); }
-.act-args { font-family: var(--mono); font-size: var(--fs-sm); color: var(--text-2); margin-top: 4px; word-break: break-all; }
+.act.planned .act-mark, .act.planned .act-status { color: var(--warn); }
+.act.model .act-ico { color: var(--reason); }
+.act-details { display: none; padding: 0 6px 9px 38px; }
+.act.open .act-details, .act.tool.running .act-details:has(.act-out:not(:empty)) { display: block; }
+.act-args { font-family: var(--mono); font-size: var(--fs-xs); color: var(--text-2); word-break: break-all; }
 .act-out { font-family: var(--mono); font-size: var(--fs-xs); color: var(--text-2); white-space: pre-wrap; word-break: break-word; max-height: 200px;
-  overflow-y: auto; margin: 7px 0 0; background: var(--code-bg); padding: 7px 9px; border-radius: var(--r-sm); display: none; }
-.act.open .act-out, .act.running .act-out:not(:empty) { display: block; }
-.act-head .toggle-out { background: none; border: none; color: var(--muted); font-size: var(--fs-xs); padding: 0 2px; }
-.act-time { color: var(--faint); font-size: var(--fs-xs); }
-.act.model { padding: 7px 11px; }
-.act.model .act-name { font-family: inherit; color: var(--text-2); }
-.act.model .act-args { font-family: inherit; font-size: var(--fs-sm); color: var(--muted); }
-.act.model.running .act-args { color: var(--text-2); }
-.act.model .act-status { font-variant-numeric: tabular-nums; }
-.act.model.running::before { background: var(--reason); }
-.act.model.running .act-status { color: var(--reason); }
-.act.model.ok::before { background: var(--faint); }
-.act.model.ok .act-status { color: var(--muted); }
-.act-bar { height: 2px; margin-top: 6px; border-radius: var(--r-xs); background: var(--border); overflow: hidden; display: none; }
+  overflow-y: auto; margin: 6px 0 0; background: var(--code-bg); padding: 7px 9px; border-radius: var(--r-sm); }
+.act-out:empty { display: none; }
+.act.model .act-details { display: none; }
+.act-bar { height: 2px; margin: 0 6px 6px 38px; border-radius: var(--r-xs); background: var(--border); overflow: hidden; display: none; }
 .act.model.running[data-phase="prompt"] .act-bar { display: block; }
 .act-bar i { display: block; height: 100%; width: 0; background: var(--reason); }
 

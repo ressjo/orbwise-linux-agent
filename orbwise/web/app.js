@@ -367,6 +367,7 @@
         if (ev.state === "idle") stopSaying();
         break;
       case "user":
+        if (!ev.routine) actGroup = startActGroup(ev.text || L("Frage", "Question"));
         S.turns = (S.turns || 0) + 1;
         addUser(ev.text, ev.source, ev.images, S.turns, true, ev.files);
         if (ev.source === "voice") S.voiceUsed = true;
@@ -1057,8 +1058,123 @@
   }
 
   // ---------------------------------------------------------------- Aktivität
+  // Je Frage (bzw. Routine/Telegram-Lauf) eine Gruppe, darin die Schritte in Reihenfolge – lesbare Namen mit Icon,
+  // Status und Dauer rechts, Argumente und Ausgabe zum Aufklappen
   const activity = $("activity");
   const acts = {};
+  let actGroup = null;            // Gruppe der aktuellen Frage im Dashboard
+  const runGroups = {};           // Routine/Telegram → {el, last}
+  const MAX_GROUPS = 20;
+
+  const TOOL_LABELS = {
+    web_search: ["Websuche", "Web search"], fetch_url: ["Webseite lesen", "Read web page"],
+    open_website: ["Webseite öffnen", "Open website"], run_shell: ["Befehl", "Command"], ssh_run: ["Befehl per SSH", "SSH command"],
+    read_file: ["Datei lesen", "Read file"], write_file: ["Datei schreiben", "Write file"], edit_file: ["Datei ändern", "Edit file"],
+    list_directory: ["Ordner anzeigen", "List folder"], find_files: ["Dateien suchen", "Find files"],
+    search_file_contents: ["In Dateien suchen", "Search in files"], search_nas: ["NAS durchsuchen", "Search NAS"],
+    save_output: ["Ausgabe speichern", "Save output"], system_update: ["Systemupdate", "System update"],
+    system_info: ["Systeminfo", "System info"], remember: ["Merken", "Remember"], recall: ["Erinnern", "Recall"],
+    forget: ["Vergessen", "Forget"], set_reminder: ["Erinnerung stellen", "Set reminder"],
+    list_reminders: ["Erinnerungen", "Reminders"], look_at_screen: ["Bildschirm ansehen", "Look at screen"],
+    look_at_image: ["Bild ansehen", "Look at image"], generate_image: ["Bild erzeugen", "Generate image"],
+    todo_write: ["Aufgabenliste", "Task list"], load_tools: ["Werkzeuge laden", "Load tools"],
+    daily_briefing: ["Briefing", "Briefing"], weather: ["Wetter", "Weather"], open_app: ["Programm öffnen", "Open app"],
+    list_installed_apps: ["Programme auflisten", "List apps"],
+  };
+  const TOOL_PREFIX = [[/^mail_/, ["Mail", "Mail"]], [/^paperless_/, ["Paperless", "Paperless"]], [/^ha_/, ["Smart Home", "Smart home"]],
+    [/^calendar_/, ["Kalender", "Calendar"]], [/^obsidian_/, ["Obsidian", "Obsidian"]], [/^trilium_/, ["Trilium", "Trilium"]],
+    [/^portainer_/, ["Portainer", "Portainer"]], [/^routine_/, ["Routine", "Routine"]], [/^package_|_package/, ["Pakete", "Packages"]]];
+  function toolLabel(name) {
+    const hit = TOOL_LABELS[name];
+    if (hit) return hit[EN ? 1 : 0];
+    for (const [rx, l] of TOOL_PREFIX) {
+      if (rx.test(name)) return `${l[EN ? 1 : 0]} · ${name.replace(rx, "").replace(/_/g, " ")}`.replace(/ · $/, "");
+    }
+    const t = name.replace(/_/g, " ");
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  }
+  const ACT_ICONS = { shell: "code", ssh: "code", packages: "code", sysadmin: "code", system: "code", power: "power",
+    portainer: "code", web: "search", files: "file", apps: "bolt", memory_tools: "brain", calendar_tools: "calendar",
+    reminder_tools: "bell", mail: "chat", telegram_tools: "chat", vision: "image", images: "image", paperless: "file" };
+  // das aussagekräftigste Argument als Kurzinfo hinter dem Namen
+  function keyArg(args) {
+    for (const k of ["command", "query", "path", "url", "text", "name", "topic", "title", "q"]) {
+      const v = args && args[k];
+      if (typeof v === "string" && v.trim()) {
+        const one = v.replace(/\s+/g, " ").trim();
+        return one.length > 90 ? one.slice(0, 89) + "…" : one;
+      }
+    }
+    return "";
+  }
+
+  // erscheint erst mit dem ersten Schritt (CSS :has) – Fragen ohne Werkzeuge lassen keinen leeren Kopf zurück
+  function startActGroup(title, kind = "user") {
+    const g = document.createElement("section");
+    g.className = "act-group " + kind;
+    g.innerHTML = `<div class="act-group-head"><span class="agh-title"></span><span class="agh-time"></span></div><div class="act-steps"></div>`;
+    const t = g.querySelector(".agh-title");
+    t.textContent = title;
+    t.title = title;
+    g.querySelector(".agh-time").textContent = new Date().toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit" });
+    activity.prepend(g);
+    const groups = activity.querySelectorAll(".act-group");
+    for (let i = MAX_GROUPS; i < groups.length; i++) groups[i].remove();
+    return g;
+  }
+
+  // Wohin gehört ein Schritt? Routinen/Telegram in ihre eigene Gruppe (ein Lauf = solange Schritte kommen)
+  function stepsFor(routine) {
+    if (routine) {
+      const r = runGroups[routine];
+      const fresh = r && r.el.isConnected && Date.now() - r.last < 120000;
+      const el = fresh ? r.el : startActGroup(routine === "Telegram" ? "Telegram" : L(`Routine · ${routine}`, `Routine · ${routine}`), "run");
+      runGroups[routine] = { el, last: Date.now() };
+      return el.querySelector(".act-steps");
+    }
+    if (!actGroup || !actGroup.isConnected) actGroup = startActGroup(L("Hintergrund", "Background"), "bg");
+    return actGroup.querySelector(".act-steps");
+  }
+
+  function actStep(kind, icon, name, info, routine) {
+    const empty = activity.querySelector(".empty");
+    if (empty) empty.remove();
+    const el = document.createElement("div");
+    el.className = `act ${kind} running`;
+    el.innerHTML = `<button type="button" class="act-row"><span class="act-ico">${ico(icon)}</span>
+      <span class="act-main"><span class="act-name"></span><span class="act-info"></span></span>
+      <span class="act-state"><span class="act-status"></span><span class="act-mark"></span></span></button>
+      <div class="act-bar"><i></i></div><div class="act-details"><div class="act-args"></div><pre class="act-out"></pre></div>`;
+    el.querySelector(".act-name").textContent = name;
+    el.querySelector(".act-info").textContent = info;
+    el.querySelector(".act-row").onclick = () => el.classList.toggle("open");
+    el._start = performance.now();
+    stepsFor(routine).appendChild(el);
+    if (!phaseTimer) phaseTimer = setInterval(tickPhases, 1000);
+    return el;
+  }
+
+  function finishStep(el, status, seconds) {
+    el.classList.remove("running");
+    el.classList.add(status);
+    const sec = seconds ?? (performance.now() - el._start) / 1000;
+    el.querySelector(".act-status").textContent = status !== "ok" ? STATUS_TEXT[status] || status
+      : sec < 0.1 ? `< ${secs(0.1)}` : secs(sec);
+    el.querySelector(".act-mark").innerHTML = status === "ok" ? ico("check") : ico("x");
+  }
+
+  // Vorlesen des Chats (Prompt-Cache vorwärmen): keine eigene Zeile, nur eine Fußnote über dem Verlauf
+  function prewarmNote(ev) {
+    let note = $("act-note");
+    if (!note) {
+      note = document.createElement("div");
+      note.id = "act-note";
+      note.className = "act-note";
+      activity.before(note);
+    }
+    note.textContent = ev.phase === "done" ? phaseSummary(ev) : phaseText(ev);
+    note.classList.toggle("on", ev.phase !== "done");
+  }
 
   function fmtArgs(name, args) {
     if (name === "run_shell") return args.command || "";
@@ -1180,11 +1296,11 @@
   }
 
   function tickPhases() {
-    const open = [...activity.querySelectorAll(".act.model.running"), ...chat.querySelectorAll(".live.on")];
+    const open = [...activity.querySelectorAll(".act.running:not(.waiting)"), ...chat.querySelectorAll(".live.on")];
     open.forEach((el) => {
       const s = Math.floor((performance.now() - el._start) / 1000);
       const t = el.querySelector(".act-status, .ls");
-      if (t && (s >= 1 || t.classList.contains("act-status"))) t.textContent = secs(s);
+      if (t && s >= 1) t.textContent = secs(s);
     });
     if (!open.length) { clearInterval(phaseTimer); phaseTimer = null; }
   }
@@ -1311,33 +1427,22 @@
     const compress = ev.phase === "compress" || ev.compress;
     const msgEl = ev.msg && compress && chat.querySelector(`.msg[data-msg="${ev.msg}"]`);
     if (msgEl) return afterPhase(msgEl, ev);
+    if (ev.phase === "prewarm" || ev.prewarm) { prewarmNote(ev); return; }
     let el = acts["m-" + ev.id];
     if (!el) {
       if (ev.phase === "done") return;
-      const empty = activity.querySelector(".empty");
-      if (empty) empty.remove();
-      el = document.createElement("div");
-      el.className = "act model running";
-      el.innerHTML = `<div class="act-head"><span class="act-name">${L("Modell", "Model")}</span>
-        <span><span class="act-time">${new Date().toLocaleTimeString(LOCALE)}</span>
-        <span class="act-status">0 s</span></span></div>
-        <div class="act-args"></div><div class="act-bar"><i></i></div>`;
-      el._start = performance.now();
-      activity.prepend(el);
+      el = actStep("model", "brain", L("Modell", "Model"), "", ev.routine);
       acts["m-" + ev.id] = el;
-      while (activity.children.length > 60) activity.lastChild.remove();
-      if (!phaseTimer) phaseTimer = setInterval(tickPhases, 1000);
     }
     const bar = el.querySelector(".act-bar i");
     if (ev.phase === "done") {
-      el.className = "act model " + (ev.error ? "error" : "ok");
-      el.querySelector(".act-args").textContent = phaseSummary(ev);
-      el.querySelector(".act-status").textContent = secs(ev.seconds ?? (performance.now() - el._start) / 1000);
+      el.querySelector(".act-info").textContent = phaseSummary(ev);
+      finishStep(el, ev.error ? "error" : "ok", ev.seconds);
       delete acts["m-" + ev.id];
       return;
     }
     const text = phaseText(ev);
-    el.querySelector(".act-args").textContent = text;
+    el.querySelector(".act-info").textContent = text;
     el.dataset.phase = ev.phase;
     setBar(bar, ev);
     if (ev.phase === "compress" && Say.ctx !== "compress") { sayNext("compress"); refresh(); }
@@ -1366,23 +1471,16 @@
     if (!ev.routine) { sayNext(SAYINGS[ev.group] ? ev.group : "think"); refresh(); }
     if (ev.group === "memory_tools") orb.memoryGlow(ev.id, true, satLabel(ev.name));
     else orb.addSatellite(ev.id, satLabel(ev.name), ICON_GROUPS[ev.group] || null);
-    const empty = activity.querySelector(".empty");
-    if (empty) empty.remove();
-    const el = document.createElement("div");
     const waiting = ev.risk === "confirm";
-    const status = ev.risk === "blocked" ? "blocked" : waiting ? "waiting" : "running";
-    el.className = "act running";
-    el.innerHTML = `<div class="act-head"><span class="act-name">${escapeHtml(ev.name)}</span>
-      <span><span class="act-time">${new Date().toLocaleTimeString(LOCALE)}</span>
-      <span class="act-status">${STATUS_TEXT[status]}</span>
-      <button class="toggle-out" title="${L("Ausgabe ein-/ausblenden", "Show/hide output")}">▾</button></span></div>
-      <div class="act-args"></div><pre class="act-out"></pre>`;
-    el.querySelector(".act-args").textContent = fmtArgs(ev.name, ev.args);
-    if (ev.routine) el.querySelector(".act-name").textContent = `${ev.routine} · ${ev.name}`;
-    el.querySelector(".toggle-out").onclick = () => el.classList.toggle("open");
-    activity.prepend(el);
+    const el = actStep("tool", ACT_ICONS[ev.group] || "bolt", toolLabel(ev.name), keyArg(ev.args), ev.routine);
+    el.querySelector(".act-name").title = ev.name;
+    el.querySelector(".act-args").textContent = `${ev.name}  ${fmtArgs(ev.name, ev.args)}`;
+    if (waiting) {
+      el.classList.add("waiting");
+      el.querySelector(".act-status").textContent = STATUS_TEXT.waiting;
+    }
+    if (ev.risk === "blocked") el.querySelector(".act-status").textContent = STATUS_TEXT.blocked;
     acts[ev.id] = el;
-    while (activity.children.length > 60) activity.lastChild.remove();
 
     const a = !ev.routine && S.currentMsg && assistants[S.currentMsg];
     if (a) {  // über der Nachricht nur der aktuelle Aufruf – die früheren stehen in der Aktivität
@@ -1419,10 +1517,11 @@
     orb.memoryGlow(ev.id, false);
     const el = acts[ev.id];
     if (el) {
-      el.className = "act " + ev.status;
-      el.querySelector(".act-status").textContent = STATUS_TEXT[ev.status] || ev.status;
+      el.classList.remove("waiting");
+      finishStep(el, ev.status);
       const out = el.querySelector(".act-out");
       if (!out.textContent.trim() || ev.status !== "ok") out.textContent = ev.text;
+      delete acts[ev.id];
     }
     const chip = $("chip-" + ev.id);
     if (chip) chip.className = "tool-chip " + ev.status;
@@ -1469,7 +1568,7 @@
     $("confirm-voice").classList.remove("listening");
     placeConfirm();
     const act = acts[ev.id];
-    if (act) act.querySelector(".act-status").textContent = STATUS_TEXT.waiting;
+    if (act) { act.classList.add("waiting"); act.querySelector(".act-status").textContent = STATUS_TEXT.waiting; }
     setTimeout(() => {
       (form.querySelector("input, textarea") || $("confirm-yes")).focus({ preventScroll: true });
       scrollChat();
@@ -1519,7 +1618,7 @@
     }
     send(args ? { type: "confirm", id: S.confirm.id, approved, args } : { type: "confirm", id: S.confirm.id, approved });
     const act = acts[S.confirm.id];
-    if (act && approved) act.querySelector(".act-status").textContent = STATUS_TEXT.running;
+    if (act && approved) { act.classList.remove("waiting"); act._start = performance.now(); act.querySelector(".act-status").textContent = ""; }
     closeConfirm();
   }
   $("confirm-yes").onclick = () => answerConfirm(true);
