@@ -72,6 +72,8 @@ All notable changes to this project are documented here. The format follows
   commands run in a Podman/Docker container (no credentials inside, limits, network on/off per chat, stops when
   idle). Shell and file changes in the copy run without asking; **View changes** with diffs, **Apply to project**
   with conflict check, **End sandbox**. Default image `orbwise-sandbox:1` is built on first use (`sandbox.*`).
+- **No more browser pop-ups:** all questions (delete, confirm, feedback text, project folder) appear as Orbwise's
+  own dialog; the project folder dialog lets you click through the folders.
 - **Project chip shows repo and branch:** `owner/repo` and the current branch (in the sandbox the `orbwise/…` branch
   of the working copy), updated after every answer.
 - **GitHub:** sign in via `gh` or a token; clone your repos from the project chip, push the branch (sandbox menu or

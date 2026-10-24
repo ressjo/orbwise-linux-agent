@@ -321,6 +321,10 @@ def test_sandbox_endpoints(cfg, repo, fake_engine, monkeypatch):
         assert client.post("/api/sandbox", json={"network": False}).json()["network"] is False
         client.post("/api/sandbox", json={"enabled": False})
         assert not Path(st["path"]).exists()
+        listing = client.get("/api/fs/dirs", params={"path": str(repo.parent)}).json()
+        assert "proj" in listing["dirs"] and listing["parent"] and not any(d.startswith(".") for d in listing["dirs"])
+        half = client.get("/api/fs/dirs", params={"path": str(repo.parent / "pro")}).json()
+        assert half["path"] == str(repo.parent)  # halb getippt → nächster vorhandener Ordner
         gh = client.get("/api/github/status").json()
         assert "connected" in gh and "token" not in json.dumps(gh).lower().replace("token_", "")
     asyncio.set_event_loop(asyncio.new_event_loop())

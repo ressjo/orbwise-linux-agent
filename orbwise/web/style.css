@@ -291,6 +291,30 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
 .project-chip .i { width: 15px; height: 15px; flex: none; color: var(--coding); }
 .project-chip:hover { border-color: var(--coding); color: var(--text); }
 .head-split { display: inline-flex; }
+/* Eigene Dialoge statt Browser-Fenster */
+.ui-dialog-scrim { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 16px;
+  background: var(--scrim); backdrop-filter: blur(2px); animation: fade .15s; }
+.ui-dialog { width: min(480px, 100%); max-height: calc(100vh - 32px); display: flex; flex-direction: column; gap: 14px; padding: 20px 20px 16px;
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--r-lg); box-shadow: var(--shadow-lg);
+  animation: msg-in .2s ease-out; }
+.ui-dialog:has(.ui-folder) { width: min(560px, 100%); }
+.ui-dialog-text { margin: 0; white-space: pre-line; color: var(--text); line-height: 1.5; }
+.ui-dialog-input { width: 100%; box-sizing: border-box; height: 38px; padding: 0 12px; border: 1px solid var(--border-strong);
+  border-radius: var(--r-md); background: var(--field); color: var(--text); font: inherit; }
+textarea.ui-dialog-input { height: auto; padding: 9px 12px; resize: vertical; }
+.ui-dialog-input:focus { outline: none; border-color: var(--accent); }
+.ui-folder { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.ui-folder .ui-dialog-input { font-family: var(--mono); font-size: var(--fs-md); }
+.ui-dialog-list { list-style: none; margin: 0; padding: 4px; max-height: 300px; overflow: auto; border: 1px solid var(--border); border-radius: var(--r-md); }
+.ui-dialog-list button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; background: none;
+  color: var(--text-2); font: inherit; text-align: left; cursor: pointer; border-radius: var(--r-sm); }
+.ui-dialog-list button:hover, .ui-dialog-list button:focus-visible { background: var(--surface-3); outline: none; }
+.ui-dialog-list button svg { width: 15px; height: 15px; color: var(--coding); flex: none; }
+.ui-dialog-list button.up { color: var(--muted); }
+.ui-dialog-list .empty { color: var(--muted); padding: 6px 8px; }
+.ui-dialog .modal-actions { justify-content: flex-end; margin: 0; }
+.btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; font-weight: 600; }
+.btn.danger:hover { filter: brightness(.92); }
 .branch-badge { display: inline-flex; align-items: center; gap: 4px; margin-left: 2px; padding: 1px 8px 1px 6px; max-width: 180px;
   border-radius: var(--r-full); background: var(--surface-3); color: var(--text-2); font-family: var(--mono); font-size: var(--fs-xs); }
 .branch-badge span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -1235,6 +1235,23 @@ def create_app(cfg: Config) -> FastAPI:
     async def sandbox_progress(text: str) -> None:
         await hub.broadcast({"type": "sandbox_progress", "text": text})
 
+    @app.get("/api/fs/dirs")
+    async def fs_dirs(path: str = ""):
+        """Ordner-Auswahl der Oberfläche (Projektordner): nur Ordnernamen eines Verzeichnisses, keine Dateien."""
+        raw = os.path.expanduser(path.strip() or "~")
+        p = Path(raw)
+        if not p.is_absolute():
+            p = Path.home() / p
+        if not p.is_dir():  # halb getippt: den nächsten vorhandenen Ordner zeigen
+            p = p.parent if p.parent.is_dir() else Path.home()
+        try:
+            names = sorted((e.name for e in p.iterdir() if e.is_dir()), key=lambda n: (n.startswith("."), n.lower()))
+            error = ""
+        except OSError as e:
+            names, error = [], str(e)
+        names = [n for n in names if not n.startswith(".")][:300]
+        return {"path": str(p), "parent": str(p.parent) if p.parent != p else "", "dirs": names, "error": error}
+
     @app.get("/api/project")
     async def project_info():
         """Projekt des offenen Coding-Chats für den Chip oben: Pfad, GitHub-Repo und Branch (bei aktiver Sandbox die der

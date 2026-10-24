@@ -980,7 +980,7 @@
       e.preventDefault();
       const text = ta.value.trim();
       if (!text) return;
-      if (later > 0 && !confirm(L(`Ab dieser Nachricht neu beginnen? Die ${later + 1} Antworten danach werden ersetzt.`,
+      if (later > 0 && !await ask(L(`Ab dieser Nachricht neu beginnen? Die ${later + 1} Antworten danach werden ersetzt.`,
                                   `Restart from this message? The ${later + 1} answers after it are replaced.`))) return;
       if (await rewind(turn, text)) close();
     };
@@ -1012,13 +1012,13 @@
     bar.innerHTML = `<button type="button" data-good="1" title="${L("Hilfreich", "Helpful")}">${ico("thumb-up")}</button>`
       + `<button type="button" data-good="0" title="${L("Nicht gut – Jarvis lernt daraus", "Not good – Jarvis learns from it")}">${ico("thumb-down")}</button>`
       + `<span class="fb-note"></span>`;
-    bar.querySelectorAll("button").forEach((b) => (b.onclick = () => {
+    bar.querySelectorAll("button").forEach((b) => (b.onclick = async () => {
       if (bar.classList.contains("done")) return;
       const good = b.dataset.good === "1";
       let text = "";
       if (!good) {
-        const answer = window.prompt(L("Was war falsch oder wie wäre es richtig? (optional – hilft beim Lernen)",
-                                       "What was wrong or what would be right? (optional – helps learning)"), "");
+        const answer = await askText(L("Was war falsch oder wie wäre es richtig? (optional – hilft beim Lernen)",
+                                       "What was wrong or what would be right? (optional – helps learning)"), "", { multiline: true });
         if (answer === null) return;
         text = answer.trim();
       }
@@ -1708,7 +1708,7 @@
     box.querySelector(".mc-undo").onclick = async () => {
       const redo = box.classList.contains("undone");
       if (isBusy()) { toast(L("Jarvis arbeitet gerade – erst abwarten oder STOP.", "Jarvis is busy – wait or press STOP.")); return; }
-      if (!redo && !confirm(L(`Die Änderungen dieser Antwort an ${n === 1 ? "1 Datei" : n + " Dateien"} zurücksetzen? Spätere Änderungen an denselben Dateien gehen dabei verloren.`,
+      if (!redo && !await ask(L(`Die Änderungen dieser Antwort an ${n === 1 ? "1 Datei" : n + " Dateien"} zurücksetzen? Spätere Änderungen an denselben Dateien gehen dabei verloren.`,
                               `Undo this answer's changes to ${n === 1 ? "1 file" : n + " files"}? Later changes to the same files are lost.`))) return;
       try {
         const r = await api("POST", "/api/chats/active/revert", { turn: Number(turn), redo });
@@ -2409,7 +2409,7 @@
     rm.textContent = L("Pocket TTS entfernen", "Remove Pocket TTS");
     rm.onclick = async (e) => {
       e.stopPropagation();
-      if (!confirm(L("Pocket TTS mit Modell und Stimmen löschen? Danach spricht der Browser.", "Delete Pocket TTS with its model and voices? The browser speaks afterwards."))) return;
+      if (!await ask(L("Pocket TTS mit Modell und Stimmen löschen? Danach spricht der Browser.", "Delete Pocket TTS with its model and voices? The browser speaks afterwards."))) return;
       try {
         const r = await api("DELETE", "/api/pocket");
         toast(L(`✔ Pocket TTS entfernt (${r.freed_mb} MB frei)`, `✔ Pocket TTS removed (${r.freed_mb} MB freed)`));
@@ -2551,9 +2551,9 @@
     pushSpark("ctx", Math.min(100, pct));
   }
   // Klick auf die Kontext-Kachel: jetzt zusammenfassen (wie „/compact“ in der Eingabe)
-  $("tele-ctx").onclick = () => {
+  $("tele-ctx").onclick = async () => {
     if (!S.connected) return;
-    if (window.confirm(L("Chat jetzt zusammenfassen? Der volle Verlauf bleibt sichtbar; das Modell arbeitet danach mit der Zusammenfassung weiter.",
+    if (await ask(L("Chat jetzt zusammenfassen? Der volle Verlauf bleibt sichtbar; das Modell arbeitet danach mit der Zusammenfassung weiter.",
                          "Summarise the chat now? The full history stays visible; the model then continues with the summary."))) {
       send({ type: "compact" });
     }
@@ -2891,7 +2891,7 @@
 
   async function activateModel(p) {
     if ((p.active && p.loaded !== false) || (MP.data && MP.data.switching)) return;
-    if (p.fit === "big" && !confirm(L(`${p.label} ist für deinen Grafikspeicher zu groß und wird sehr langsam. Trotzdem laden?`,
+    if (p.fit === "big" && !await ask(L(`${p.label} ist für deinen Grafikspeicher zu groß und wird sehr langsam. Trotzdem laden?`,
                                       `${p.label} is too big for your video memory and will be very slow. Load anyway?`))) return;
     MP.data.switching = p.name;
     if (openSheetName === "models") { renderModelList(); renderModelDetail(); }
@@ -3080,9 +3080,9 @@
       b.querySelector("small").textContent = [o.kv_bytes ? `KV ${gbs(o.kv_bytes)}` + (o.fits === false ? L(" · zu groß", " · too big") : "") : "", lean]
         .filter(Boolean).join(" · ");
       b.disabled = busy;
-      b.onclick = () => {
+      b.onclick = async () => {
         if (on) return;
-        if (o.fits === false && !confirm(L(`${ctxLabel(o.ctx)} passt voraussichtlich nicht in den Grafikspeicher – Teile landen im RAM und alles wird deutlich langsamer. Trotzdem?`,
+        if (o.fits === false && !await ask(L(`${ctxLabel(o.ctx)} passt voraussichtlich nicht in den Grafikspeicher – Teile landen im RAM und alles wird deutlich langsamer. Trotzdem?`,
                                           `${ctxLabel(o.ctx)} probably doesn't fit in VRAM – parts move to RAM and everything gets much slower. Continue?`))) return;
         apply(o.ctx);
       };
@@ -3225,7 +3225,7 @@
     btn.textContent = running ? L("Misst gerade …", "Measuring …") : p.tuning ? L("Erneut messen", "Measure again") : L("Schnellste Einstellung messen", "Find the fastest setting");
     btn.disabled = running || !!MP.data.switching;
     btn.onclick = async () => {
-      if (!confirm(L("Misst mit llama-bench, welcher Build (ROCm/Vulkan bzw. CUDA/Vulkan) und welche Batch-Größe hier am schnellsten einlesen – ohne Einfluss auf die Antworten. "
+      if (!await ask(L("Misst mit llama-bench, welcher Build (ROCm/Vulkan bzw. CUDA/Vulkan) und welche Batch-Größe hier am schnellsten einlesen – ohne Einfluss auf die Antworten. "
                      + "Dauert etwa 3–6 Minuten; das Modell wird dafür entladen und danach wieder geladen, Chats warten so lange. Beim ersten Mal wird der zweite Build geladen (einige hundert MB). Starten?",
                      "Uses llama-bench to measure which build (ROCm/Vulkan or CUDA/Vulkan) and which batch size read prompts fastest here – without changing the answers. "
                      + "Takes about 3–6 minutes; the model is unloaded for it and loaded again afterwards, chats wait meanwhile. The first time the second build is downloaded (a few hundred MB). Start?"))) return;
@@ -3262,7 +3262,7 @@
       sw.className = "btn small primary";
       sw.textContent = L(`${name} übernehmen (+${t.other.gain_pct} % beim Einlesen)`, `Use ${name} (+${t.other.gain_pct} % prompt speed)`);
       sw.onclick = async () => {
-        if (!confirm(L(`Auf den ${name}-Build umstellen? Gilt für alle llama.cpp-Modelle; ein geladenes Modell startet neu. Zurück geht es mit „Erneut messen“.`,
+        if (!await ask(L(`Auf den ${name}-Build umstellen? Gilt für alle llama.cpp-Modelle; ein geladenes Modell startet neu. Zurück geht es mit „Erneut messen“.`,
                        `Switch to the ${name} build? Applies to all llama.cpp models; a loaded model restarts. Measure again to switch back.`))) return;
         sw.disabled = true;
         try {
@@ -3463,7 +3463,7 @@
     const next = p.active && (MP.data.profiles.find((x) => x.name !== p.name) || {}).label;
     const active = p.active ? L(`\n\nEs ist gerade ausgewählt: Orbwise entlädt es vorher und wählt ein anderes Modell (z. B. ${next}), das erst bei der nächsten Frage geladen wird.`,
                                 `\n\nIt is selected right now: Orbwise unloads it first and selects another model (e.g. ${next}), loaded with the next question.`) : "";
-    if (!confirm(text + active)) return;
+    if (!await ask(text + active)) return;
     try {
       const r = await api("DELETE", `/api/models/${encodeURIComponent(p.name)}`);
       const now = p.active && (MP.data.profiles.find((x) => x.name === r.active) || {}).label;
@@ -3524,7 +3524,7 @@
   }
 
   async function startPull(tag, label, fit) {
-    if (fit === "big" && !confirm(L(`${label} ist für deinen Grafikspeicher zu groß und wird sehr langsam. Trotzdem laden?`,
+    if (fit === "big" && !await ask(L(`${label} ist für deinen Grafikspeicher zu groß und wird sehr langsam. Trotzdem laden?`,
                                     `${label} is too big for your video memory and will be very slow. Download anyway?`))) return;
     try {
       await api("POST", "/api/models/pull", { tag });
@@ -3635,7 +3635,7 @@
   }
 
   async function addLocal(path, label, fit) {
-    if (fit === "big" && !confirm(L(`${label} ist für deinen Grafikspeicher zu groß und wird sehr langsam. Trotzdem hinzufügen?`,
+    if (fit === "big" && !await ask(L(`${label} ist für deinen Grafikspeicher zu groß und wird sehr langsam. Trotzdem hinzufügen?`,
                                     `${label} is too big for your video memory and will be very slow. Add anyway?`))) return;
     try {
       const r = await api("POST", "/api/models/local", { path });
@@ -3767,8 +3767,8 @@
         show.textContent = open ? L("Anzeigen", "Show") : L("Verbergen", "Hide");
       });
       fields[1].querySelector(".api-btns").append(show, small(L("Kopieren", "Copy"), () => copyText(st.key)),
-        small(L("NEU", "NEW"), () => {
-          if (confirm(L("Neuen Schlüssel erzeugen? Programme mit dem alten Schlüssel kommen dann nicht mehr durch.",
+        small(L("NEU", "NEW"), async () => {
+          if (await ask(L("Neuen Schlüssel erzeugen? Programme mit dem alten Schlüssel kommen dann nicht mehr durch.",
                         "Create a new key? Programs using the old key will no longer get through."))) save({ new_key: true });
         }));
     }
@@ -3839,6 +3839,102 @@
   };
 
   let toastTimer;
+  // ---------------------------------------------------------------- Eigene Dialoge (statt Browser-Fenster)
+  // ask(text) → true/false, askText(text, wert) → Text oder null, askFolder(pfad) → Ordner oder null
+  function dialog({ text, input = null, multiline = false, ok, danger = false, body = null }) {
+    return new Promise((resolve) => {
+      const scrim = document.createElement("div");
+      scrim.className = "ui-dialog-scrim";
+      const box = document.createElement("div");
+      box.className = "ui-dialog";
+      box.setAttribute("role", "dialog");
+      box.setAttribute("aria-modal", "true");
+      const msg = document.createElement("p");
+      msg.className = "ui-dialog-text";
+      msg.textContent = text;
+      box.appendChild(msg);
+      let field = null;
+      if (input !== null) {
+        field = document.createElement(multiline ? "textarea" : "input");
+        field.className = "ui-dialog-input";
+        if (!multiline) field.type = "text";
+        field.value = input;
+        field.rows = 3;
+        field.spellcheck = multiline;
+        box.appendChild(field);
+      }
+      if (body) box.appendChild(body.el);
+      const actions = document.createElement("div");
+      actions.className = "modal-actions";
+      actions.innerHTML = `<button type="button" class="btn ghost ui-cancel"></button><button type="button" class="btn ${danger ? "danger" : "primary"} ui-ok"></button>`;
+      actions.querySelector(".ui-cancel").textContent = L("Abbrechen", "Cancel");
+      actions.querySelector(".ui-ok").textContent = ok || "OK";
+      box.appendChild(actions);
+      scrim.appendChild(box);
+      document.body.appendChild(scrim);
+      const done = (value) => {
+        document.removeEventListener("keydown", keys, true);
+        scrim.remove();
+        resolve(value);
+      };
+      const value = () => (body ? body.value() : field ? field.value : true);
+      const keys = (e) => {
+        if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done(input !== null || body ? null : false); }
+        else if (e.key === "Enter" && !(multiline && !(e.ctrlKey || e.metaKey)) && e.target.tagName !== "BUTTON") {
+          e.preventDefault(); e.stopPropagation(); done(value());
+        } else if (e.code === "Space" && !(e.target.closest && e.target.closest(".ui-dialog"))) e.stopPropagation();
+      };
+      document.addEventListener("keydown", keys, true);
+      actions.querySelector(".ui-cancel").onclick = () => done(input !== null || body ? null : false);
+      actions.querySelector(".ui-ok").onclick = () => done(value());
+      scrim.onclick = (e) => { if (e.target === scrim) done(input !== null || body ? null : false); };
+      if (body) body.done = done;
+      setTimeout(() => {
+        if (field) { field.focus(); field.setSelectionRange(field.value.length, field.value.length); }
+        else (body && body.focus ? body.focus() : actions.querySelector(".ui-ok").focus());
+      }, 30);
+    });
+  }
+  function ask(text, opts = {}) {
+    const danger = opts.danger ?? /löschen|entfernen|verwerfen|beenden|überschreiben|delete|remove|discard|overwrite/i.test(text.split("\n")[0]);
+    return dialog({ text, ok: opts.ok, danger });
+  }
+  function askText(text, value = "", opts = {}) {
+    return dialog({ text, input: value, multiline: !!opts.multiline, ok: opts.ok });
+  }
+  // Projektordner: Pfad eintippen oder durch die Ordner klicken (der Server listet nur Ordnernamen)
+  function askFolder(start) {
+    const el = document.createElement("div");
+    el.className = "ui-folder";
+    el.innerHTML = `<input class="ui-dialog-input" type="text" spellcheck="false"><ul class="ui-dialog-list"></ul>`;
+    const field = el.querySelector("input"), list = el.querySelector("ul");
+    let timer = null;
+    const show = async (path) => {
+      let r;
+      try { r = await getJSON("/api/fs/dirs?path=" + encodeURIComponent(path)); } catch { return; }
+      if (r.path && document.activeElement !== field) field.value = r.path;
+      list.innerHTML = "";
+      const item = (name, target, cls = "") => {
+        const li = document.createElement("li");
+        li.innerHTML = `<button type="button" class="${cls}">${ico("folder")}<span></span></button>`;
+        li.querySelector("span").textContent = name;
+        li.querySelector("button").onclick = () => { field.value = target; show(target); };
+        list.appendChild(li);
+      };
+      if (r.parent) item("..", r.parent, "up");
+      for (const d of r.dirs) item(d, (r.path.endsWith("/") ? r.path : r.path + "/") + d, d.startsWith(".") ? "hidden-dir" : "");
+      if (!r.dirs.length && !r.parent) list.innerHTML = `<li class="empty">${L("Kein Ordner", "No folder")}</li>`;
+      if (r.error) list.insertAdjacentHTML("afterbegin", `<li class="empty"></li>`), (list.firstChild.textContent = r.error);
+    };
+    field.oninput = () => { clearTimeout(timer); timer = setTimeout(() => show(field.value), 250); };
+    field.value = start || "~/";
+    show(field.value);
+    const body = { el, value: () => field.value.trim(), focus: () => field.focus() };
+    return dialog({ text: L("Projektordner für diesen Chat – Pfad eingeben oder Ordner anklicken (leer = keiner):",
+                            "Project folder for this chat – type a path or click through the folders (empty = none):"),
+                    body, ok: L("Diesen Ordner nehmen", "Use this folder") });
+  }
+
   function toast(text) {
     const el = $("toast");
     el.textContent = text;
@@ -3931,7 +4027,7 @@
       li.querySelectorAll("button").forEach((b) => b.onclick = async () => {
         if (b.dataset.a === "edit") return openRoutineForm(r);
         if (b.dataset.a === "del") {
-          if (!confirm(L(`Routine „${r.name}“ löschen? Ihr Chat bleibt im Verlauf.`, `Delete routine “${r.name}”? Its chat stays in the history.`))) return;
+          if (!await ask(L(`Routine „${r.name}“ löschen? Ihr Chat bleibt im Verlauf.`, `Delete routine “${r.name}”? Its chat stays in the history.`))) return;
           await api("DELETE", `/api/routines/${r.id}`).catch(() => {});
         } else {
           await api("POST", `/api/routines/${r.id}/run`).catch(() => {});
@@ -4246,11 +4342,11 @@
     a.click();
     a.remove();
   }
-  function deleteChat(c) {
+  async function deleteChat(c) {
     const extra = c.legacy ? L("\n\nHinweis: Dieser Chat stammt von vor der Chat-Historie – ältere Tagebuch-Einträge "
       + "daraus lassen sich nicht zuordnen und bleiben im Gedächtnis.",
       "\n\nNote: this chat predates the chat history – older journal entries from it cannot be attributed and stay in memory.") : "";
-    if (confirm(L(`„${c.title}“ löschen?\n\nDer Chat wird auch aus Jarvis' Gedächtnis entfernt (Tagebuch, Suche, `
+    if (await ask(L(`„${c.title}“ löschen?\n\nDer Chat wird auch aus Jarvis' Gedächtnis entfernt (Tagebuch, Suche, `
         + `Tageszusammenfassung). Gelernte Fakten bleiben.`, `Delete “${c.title}”?\n\nThe chat is also removed from `
         + `Jarvis' memory (journal, search, daily summary). Learned facts are kept.`) + extra)) {
       api("DELETE", `/api/chats/${c.id}`).then(() => { toast(L("Chat gelöscht.", "Chat deleted.")); loadChats(); }).catch(() => {});
@@ -4418,8 +4514,8 @@
     });
     if (IV.status && IV.status.telegram) add(L("Handy", "Phone"), L("Per Telegram aufs Handy", "Send to the phone via Telegram"), () =>
       api("POST", `/api/image/telegram/${encodeURIComponent(img.file)}`).then(() => toast(L("Aufs Handy geschickt.", "Sent to the phone."))).catch(() => {}));
-    add(ico("trash"), L("Löschen", "Delete"), () => {
-      if (!confirm(L("Bild löschen?", "Delete image?"))) return;
+    add(ico("trash"), L("Löschen", "Delete"), async () => {
+      if (!await ask(L("Bild löschen?", "Delete image?"), { danger: true })) return;
       api("DELETE", `/api/image/file/${encodeURIComponent(img.file)}`).then(() => card.remove()).catch(() => {});
     });
     return card;
@@ -4575,10 +4671,9 @@
     if (!e.target.closest("#project-wrap")) projectMenu.classList.add("hidden");
     if (!e.target.closest("#sandbox-wrap")) sandboxMenu.classList.add("hidden");
   });
-  projectMenu.querySelector('[data-project="folder"]').onclick = () => {
+  projectMenu.querySelector('[data-project="folder"]').onclick = async () => {
     projectMenu.classList.add("hidden");
-    const path = window.prompt(L("Projektordner für diesen Chat (leer = keiner):", "Project folder for this chat (empty = none):"),
-                               S.project || "~/");
+    const path = await askFolder(S.project || "");
     if (path === null || !S.chatId) return;
     api("POST", `/api/chats/${S.chatId}/project`, { path: path.trim() })
       .then((r) => toast(r.project ? L(`Projektordner: ${r.project}`, `Project folder: ${r.project}`) : L("Kein Projektordner.", "No project folder.")))
@@ -4675,8 +4770,9 @@
     projectMenu.classList.add("hidden");
     if (!S.project) { toast(L("Erst einen Projektordner wählen.", "Choose a project folder first.")); return; }
     if (!S.sandbox) {
-      if (!confirm(L("Sandbox einschalten? Jarvis arbeitet dann in einer Kopie des Projekts in einem Container und darf dort frei bauen, testen und installieren. Dein Projektordner bleibt unberührt, bis du die Änderungen übernimmst.",
-                     "Turn on the sandbox? Jarvis then works on a copy of the project in a container and may build, test and install freely there. Your project folder stays untouched until you apply the changes."))) return;
+      if (!await ask(L("Sandbox einschalten? Jarvis arbeitet dann in einer Kopie des Projekts in einem Container und darf dort frei bauen, testen und installieren. Dein Projektordner bleibt unberührt, bis du die Änderungen übernimmst.",
+                     "Turn on the sandbox? Jarvis then works on a copy of the project in a container and may build, test and install freely there. Your project folder stays untouched until you apply the changes."),
+                     { ok: L("Einschalten", "Turn on") })) return;
       $("sandbox-label").textContent = L("Sandbox …", "Sandbox …");
       try {
         await api("POST", "/api/sandbox", { enabled: true });
@@ -4713,7 +4809,7 @@
     if (push) push.onclick = () => { sandboxMenu.classList.add("hidden"); pushGithub(); };
     sandboxMenu.querySelector('[data-sb="off"]').onclick = async () => {
       sandboxMenu.classList.add("hidden");
-      if (!confirm(L("Sandbox beenden? Container und Arbeitskopie werden gelöscht – nicht übernommene Änderungen gehen verloren.",
+      if (!await ask(L("Sandbox beenden? Container und Arbeitskopie werden gelöscht – nicht übernommene Änderungen gehen verloren.",
                      "End the sandbox? Container and working copy are deleted – changes not applied are lost."))) return;
       api("POST", "/api/sandbox", { enabled: false }).then(() => toast(L("Sandbox beendet.", "Sandbox ended."))).catch(() => {});
     };
@@ -4750,7 +4846,7 @@
     if (isBusy()) { toast(L("Jarvis arbeitet gerade – erst abwarten oder STOP.", "Jarvis is busy – wait or press STOP.")); return; }
     try {
       let r = await api("POST", "/api/sandbox/apply", {});
-      if (r.conflicts.length && confirm(L(`Diese Dateien hast du im Projekt inzwischen selbst geändert:\n${r.conflicts.join("\n")}\n\nTrotzdem mit der Version aus der Sandbox überschreiben?`,
+      if (r.conflicts.length && await ask(L(`Diese Dateien hast du im Projekt inzwischen selbst geändert:\n${r.conflicts.join("\n")}\n\nTrotzdem mit der Version aus der Sandbox überschreiben?`,
                                           `You changed these files in the project yourself in the meantime:\n${r.conflicts.join("\n")}\n\nOverwrite them with the sandbox version anyway?`))) {
         const forced = await api("POST", "/api/sandbox/apply", { force: true });
         r = { applied: [...r.applied, ...forced.applied], conflicts: forced.conflicts };
@@ -4763,7 +4859,7 @@
     } catch { /* Meldung kommt von api() */ }
   }
   async function pushGithub() {
-    if (!confirm(L("Den aktuellen Branch zu GitHub pushen?", "Push the current branch to GitHub?"))) return;
+    if (!await ask(L("Den aktuellen Branch zu GitHub pushen?", "Push the current branch to GitHub?"))) return;
     try {
       const r = await api("POST", "/api/github/push");
       toastLink(L(`Branch ${r.branch} ist auf GitHub.`, `Branch ${r.branch} is on GitHub.`), r.compare, L("Pull Request erstellen", "Create pull request"));
