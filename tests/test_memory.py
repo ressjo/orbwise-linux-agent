@@ -80,12 +80,12 @@ def test_trimmed_history_always_keeps_current_question():
     conv = Conversation()
     conv.add({"role": "user", "content": "alte Frage"})
     conv.add({"role": "assistant", "content": "alte Antwort"})
-    conv.add({"role": "user", "content": "Suche im Web nach Bonsai"})
+    conv.add({"role": "user", "content": "Suche im Web nach Llama"})
     for i in range(4):
         conv.add({"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "fetch_url", "arguments": {}}}]})
         conv.add({"role": "tool", "content": f"Seite {i} " + "x" * 6000, "tool_name": "fetch_url"})
     out = conv.trimmed_history(3000)
-    assert out[0] == {"role": "user", "content": "Suche im Web nach Bonsai"}
+    assert out[0] == {"role": "user", "content": "Suche im Web nach Llama"}
     assert [m["role"] for m in out].count("tool") == 4          # nichts verwaist, nur gekürzt
     assert sum(len(m.get("content") or "") for m in out) < 3000 * 3 + 2000
     assert "gekürzt" in out[1 + 1]["content"]                   # ältestes Ergebnis zuerst gekürzt
@@ -97,7 +97,7 @@ def test_budget_respects_model_context(cfg, memory):
     from orbwise.config import ProfileConfig
 
     class Small:
-        profile = ProfileConfig(backend="openai", base_url="http://x/v1", model="bonsai", num_ctx=8192)
+        profile = ProfileConfig(backend="openai", base_url="http://x/v1", model="llama", num_ctx=8192)
 
     assert Agent(cfg, Small(), memory).context_budget() == 8192 - 1024  # kleines Fenster: knappere Antwortreserve
     cfg.memory.context_budget_tokens = 5000

@@ -70,7 +70,7 @@ class FakeOllama:
 
 class FakeRouter:
     def __init__(self):
-        self.active = "bonsai"
+        self.active = "llama"
         self.llm_server = FakeServer()
         self.ollama = FakeOllama()
         self.gpu_borrowed = None

@@ -34,14 +34,14 @@ def test_unload_managed_server_and_reload_on_next_question(cfg, memory, tmp_path
     router.load_progress, router.load_done = progress, done
 
     async def scenario():
-        await router.activate("bonsai")
-        server = router.servers["bonsai"]
+        await router.activate("llama")
+        server = router.servers["llama"]
         assert server.running() and router.describe()[1]["loaded"]
         await router.unload()
-        assert not server.running() and router.unloaded and router.active == "bonsai"
+        assert not server.running() and router.unloaded and router.active == "llama"
         assert json.loads(state.read_text())["unloaded"] is True
         st = await router.status()
-        assert st["unloaded"] and st["online"] and st["profile"] == "bonsai"
+        assert st["unloaded"] and st["online"] and st["profile"] == "llama"
         assert not router.describe()[1]["loaded"] and router.describe()[1]["active"]
         # nach einem Neustart bleibt es entladen
         assert LLMRouter(llm_cfg, state_path=state).unloaded
@@ -75,11 +75,11 @@ def test_select_only_when_unloaded(tmp_path):
     router = LLMRouter(make_llm_cfg(9), state_path=tmp_path / "state.json",
                        transport=httpx.MockTransport(ollama_mock([])))
     with pytest.raises(LLMError, match="entladen"):
-        run(router.select("bonsai"))
+        run(router.select("llama"))
     run(router.unload())
-    run(router.select("bonsai"))
-    assert router.active == "bonsai" and router.unloaded
-    assert LLMRouter(make_llm_cfg(9), state_path=tmp_path / "state.json").active == "bonsai"
+    run(router.select("llama"))
+    assert router.active == "llama" and router.unloaded
+    assert LLMRouter(make_llm_cfg(9), state_path=tmp_path / "state.json").active == "llama"
 
 
 def test_image_mode_does_not_restart_unloaded_model(tmp_path):

@@ -32,7 +32,7 @@ def strata_state(tmp_path, active="qwen3-8-flash-next-coder-iq1-m"):
 def test_clean_state_removes_strata_profiles(tmp_path):
     state, name, models = strata_state(tmp_path)
     found = retire.clean_state(state)
-    assert found == {"profiles": [name], "strata_dirs": [str(models)]}
+    assert found == {"profiles": [name], "strata": [name], "strata_dirs": [str(models)]}
     data = json.loads(state.read_text())
     assert list(data["added_profiles"]) == ["eigenes"] and list(data["local_models"]) == ["eigenes"]
     assert data["context"] == {"eigenes": 32768} and data["tuning"] == {} and "strata_reserve" not in data
@@ -93,3 +93,18 @@ def test_server_start_removes_strata(cfg, tmp_path, monkeypatch):
             time.sleep(0.05)
         assert not models.exists()
     assert name not in json.loads(state.read_text())["added_profiles"]
+
+
+def test_bonsai_profiles_are_dropped_but_files_stay(tmp_path):
+    bonsai_dir = tmp_path / "bonsai"
+    (bonsai_dir / "models").mkdir(parents=True)
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"active_profile": "bonsai", "added_profiles": {
+        "bonsai": {"backend": "openai", "server": {"command": f"{bonsai_dir}/scripts/start_llama_server.sh -np 1"}},
+        "bonsai-eigen": {"backend": "openai", "server": {"command": "llama-server -m b.gguf"}}},
+        "kv_cache": {"bonsai": "q4_0"}}))
+    found = retire.clean_state(state)
+    assert found == {"profiles": ["bonsai"], "strata": [], "strata_dirs": []}
+    data = json.loads(state.read_text())
+    assert list(data["added_profiles"]) == ["bonsai-eigen"] and data["kv_cache"] == {} and "active_profile" not in data
+    assert (bonsai_dir / "models").is_dir()  # ~/bonsai löscht Orbwise nicht

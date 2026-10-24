@@ -503,7 +503,6 @@ SPOKEN = {
         "call_trilium": "das Überschreiben der Trilium-Notiz {v}", "call_write": "das Schreiben der Datei {v}",
         "call_edit": "die Änderung an der Datei {v}",
         "call_other": "die Aktion {v}", "call_mail": "das Senden einer Mail an {v}",
-        "setup_terminal": "Dieses Modell wird im Terminal eingerichtet: {cmd}",
     },
     "en": {
         "confirm": "Shall I run {what}?",
@@ -525,7 +524,6 @@ SPOKEN = {
         "call_trilium": "overwriting the Trilium note {v}", "call_write": "writing the file {v}",
         "call_edit": "changing the file {v}",
         "call_other": "the action {v}", "call_mail": "sending an e-mail to {v}",
-        "setup_terminal": "This model is set up in the terminal: {cmd}",
     },
 }
 

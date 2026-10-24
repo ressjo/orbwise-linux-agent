@@ -399,7 +399,7 @@ class FreshStaticFiles(StaticFiles):
 def create_app(cfg: Config) -> FastAPI:
     set_lang(cfg.language)  # Meldungen außerhalb der Prompts (z. B. Modell-Server-Fehler)
     fake = env("FAKE_LLM") == "1"
-    # Profile entfernter Engines (Strata) aus state.json nehmen, bevor der Router sie liest – Dateien beim Start
+    # Profile entfernter Engines (Strata, Bonsai) aus state.json nehmen, bevor der Router sie liest – Dateien beim Start
     retired = None if fake else retire.clean_state(cfg.memory.dir.parent / "state.json")
     llm = FakeLLM(language=cfg.language) if fake else LLMRouter(cfg.llm, state_path=cfg.memory.dir.parent / "state.json")
     memory = Memory(cfg.memory, llm)
@@ -534,7 +534,7 @@ def create_app(cfg: Config) -> FastAPI:
     async def remove_retired(found: dict) -> None:
         """Strata ist aus Orbwise entfernt: laufenden Server stoppen, Modell und Engine löschen (einmalig)."""
         freed = await asyncio.to_thread(retire.remove_strata_files, found["strata_dirs"])
-        log.info("Strata entfernt (Profile: %s, %.1f GB frei)", ", ".join(found["profiles"]), freed / 1e9)
+        log.info("Strata entfernt (Profile: %s, %.1f GB frei)", ", ".join(found["strata"]), freed / 1e9)
         await hub.broadcast({"type": "models_changed"})
 
     @contextlib.asynccontextmanager
@@ -544,7 +544,7 @@ def create_app(cfg: Config) -> FastAPI:
         heal_index_soon()
         if isinstance(llm, LLMRouter):
             background.append(asyncio.create_task(start_model()))
-            if retired and retired["profiles"]:
+            if retired and retired["strata"]:
                 background.append(asyncio.create_task(remove_retired(retired)))
         else:
             await startup.set("model", "ok", T("Demo-Modus", "demo mode"))
@@ -859,7 +859,6 @@ def create_app(cfg: Config) -> FastAPI:
             return {"active": "demo", "switching": None,
                     "profiles": [{"name": "demo", "label": "Demo (Fake-LLM)", "backend": "fake", "model": "fake",
                                   "base_url": "", "managed": False, "active": True}]}
-        from . import bonsai as bonsai_mod
         from . import llamacpp as llamacpp_mod
         from . import llamacpp_tune
         from . import models as mdl
@@ -881,10 +880,7 @@ def create_app(cfg: Config) -> FastAPI:
             size = sizes.get(p["model"]) or sizes.get(f"{p['model']}:latest") if p["backend"] == "ollama" else None
             p["engine"] = "Ollama" if p["backend"] == "ollama" else "llama.cpp" if p["managed"] else "OpenAI-API"
             files: list[str] = []
-            if p["name"] in bonsai_mod.VARIANTS:
-                files = [str(f) for f in bonsai_mod.model_files(variant=p["name"])]
-                p["engine"] = "Bonsai (llama.cpp)"
-            elif (local := llamacpp_mod.local_record(state_file, p["name"])) is not None:
+            if (local := llamacpp_mod.local_record(state_file, p["name"])) is not None:
                 files = [f for f in local.get("files", []) if Path(f).is_file()]
                 p["keeps_files"] = not local.get("downloaded")
                 p["repo"] = local.get("repo") or ""
@@ -907,8 +903,6 @@ def create_app(cfg: Config) -> FastAPI:
             if server and llamacpp_tune.uses_own_build(cfg, server.command):  # „Schnellste Einstellung messen“
                 p["tunable"] = True
                 p["tuning"] = llamacpp_tune.saved(state_file, p["name"])
-            if p["backend"] == "ollama" and mdl.is_hf(p["model"]):  # alter Weg → auf llama.cpp umstellen anbieten
-                p["convert"] = p["model"]
         return {"active": llm.active, "switching": llm.switching, "unloaded": llm.unloaded, "profiles": profiles, "gpu": gpu,
                 "pulls": [{"tag": t, **pull_state.get(t, {})} for t in sorted(pulls)]}
 
@@ -1042,33 +1036,8 @@ def create_app(cfg: Config) -> FastAPI:
             pulls.pop(tag, None)
             pull_state.pop(tag, None)
 
-    async def replace_profile(old: str, new: str) -> str:
-        """Altes Ollama-Profil (hf.co/…) durch das neue llama.cpp-Profil ersetzen: war es aktiv, das neue aktivieren;
-        dann das alte entfernen und seine Ollama-Kopie löschen → Hinweis für die Meldung (leer = alles gut)."""
-        from . import models as mdl
-        if old not in llm.profiles or not mdl.removable(state_file, old):
-            return ""
-        note = ""
-        if llm.active == old:
-            try:
-                await activate_model(new)
-            except HTTPException as e:
-                return f"Neues Modell angelegt, startet aber nicht: {e.detail}"
-        model = llm.profiles[old].model
-        await llm.remove_profile(old)
-        mdl.unregister_model(state_file, old)
-        if not any(p.backend == "ollama" and p.model == model for p in llm.profiles.values()):
-            try:
-                async with httpx.AsyncClient(base_url=cfg.llm.base_url, timeout=30) as client:
-                    await client.request("DELETE", "/api/delete", json={"model": model})
-            except httpx.HTTPError as e:
-                note = f"Ollama-Kopie nicht gelöscht: {e}"
-        await hub.broadcast({"type": "models_changed"})
-        return note
-
-    async def pull_gguf(tag: str, replace: str = "") -> dict:
-        """hf.co/<repo>:<quant> → Dateien nach ~/models laden, llama.cpp bereitstellen, Profil anlegen. replace: altes
-        Ollama-Profil desselben Modells, das danach wegfällt."""
+    async def pull_gguf(tag: str) -> dict:
+        """hf.co/<repo>:<quant> → Dateien nach ~/models laden, llama.cpp bereitstellen, Profil anlegen."""
         from . import llamacpp
         from . import models as mdl
         repo, _, quant = tag[6:].partition(":")
@@ -1092,9 +1061,6 @@ def create_app(cfg: Config) -> FastAPI:
             name = await asyncio.to_thread(llamacpp.add_model, cfg, state_file, first, mmproj, gpu, llm.profiles,
                                            True, repo)
             llm.add_downloaded_models()
-        if replace:
-            note = await replace_profile(replace, name)
-            return {"profile": name, "replaced": replace, **({"note": note} if note else {})}
         return {"profile": name}
 
     async def add_local(tag: str, path: Path) -> dict:
@@ -1200,11 +1166,8 @@ def create_app(cfg: Config) -> FastAPI:
         tag = mdl.normalize_tag(str(body.get("tag", "")))
         if not tag:
             raise HTTPException(400, "Ungültiger Modellname oder Hugging-Face-Link (geteilte GGUF-Dateien gehen nicht)")
-        if tag in mdl.BY_TAG and mdl.BY_TAG[tag].kind != "ollama":
-            raise HTTPException(400, prompts.spoken(cfg, "setup_terminal", cmd=f"orbwise model add {tag}"))
         if mdl.is_hf(tag):  # Hugging Face: Orbwise lädt die GGUF-Datei selbst und startet sie mit llama.cpp
-            replace = str(body.get("replace") or "")  # altes hf.co-Ollama-Profil umstellen
-            return {"ok": True, "tag": start_job(tag, lambda: pull_gguf(tag, replace))}
+            return {"ok": True, "tag": start_job(tag, lambda: pull_gguf(tag))}
         if tag not in pulls:
             pulls[tag] = asyncio.create_task(pull_model(tag))
         return {"ok": True, "tag": tag}
@@ -1222,7 +1185,6 @@ def create_app(cfg: Config) -> FastAPI:
     @app.delete("/api/models/{name}")
     async def model_delete(name: str):
         """Per Oberfläche/CLI hinzugefügtes Modell entfernen und seine Dateien löschen (gibt Speicher frei)."""
-        from . import bonsai as bonsai_mod
         from . import llamacpp as llamacpp_mod
         from . import models as mdl
         if not isinstance(llm, LLMRouter):
@@ -1251,9 +1213,7 @@ def create_app(cfg: Config) -> FastAPI:
         await llm.remove_profile(name)
         mdl.unregister_model(state_file, name)
         freed = 0
-        if name in bonsai_mod.VARIANTS:
-            freed = await asyncio.to_thread(bonsai_mod.remove_model_files, None, name)
-        elif llamacpp_mod.local_record(state_file, name) is not None:  # nur selbst geladene Dateien löschen
+        if llamacpp_mod.local_record(state_file, name) is not None:  # nur selbst geladene Dateien löschen
             freed = await asyncio.to_thread(llamacpp_mod.forget, cfg, state_file, name)
         elif profile.backend == "ollama" and not any(
                 p.backend == "ollama" and p.model == profile.model for p in llm.profiles.values()):

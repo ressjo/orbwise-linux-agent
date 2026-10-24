@@ -7,7 +7,7 @@ import json
 import pytest
 from test_llm_memory import write_gguf
 
-from orbwise import bonsai
+from orbwise import llamacpp
 from orbwise.config import LLMConfig, ProfileConfig, ServerConfig
 from orbwise.llm import LLMError
 from orbwise.llm_router import LLMRouter, spec_stats
@@ -43,7 +43,7 @@ def test_mtp_needs_model_and_build(tmp_path, monkeypatch):
     plain.parent.mkdir()
     write_gguf(with_mtp, {"glm4moe.nextn_predict_layers": 1, "glm4moe.block_count": 47})
     write_gguf(plain, {"llama.block_count": 32})
-    monkeypatch.setattr(bonsai, "_server_help", lambda *a, **k: NEW_HELP)
+    monkeypatch.setattr(llamacpp, "server_help", lambda *a, **k: NEW_HELP)
     r = router(tmp_path, f"llama-server -m {with_mtp} -c 8192 -np 1", f"llama-server -m {plain} -c 8192")
     opts = options(r)
     assert opts["mtp"]["mtp"]["ok"] and opts["mtp"]["mtp"]["layers"] == 1 and opts["mtp"]["ngram"]["ok"]
@@ -65,7 +65,7 @@ def test_mtp_needs_model_and_build(tmp_path, monkeypatch):
     assert again.profiles["mtp"].server.command == f"llama-server -m {with_mtp} -c 8192 -np 1"
 
     # älterer Build: geht nicht, mit Hinweis aufs Aktualisieren
-    monkeypatch.setattr(bonsai, "_server_help", lambda *a, **k: OLD_HELP)
+    monkeypatch.setattr(llamacpp, "server_help", lambda *a, **k: OLD_HELP)
     old = options(again)["mtp"]
     assert not old["mtp"]["ok"] and "aktualisieren" in old["mtp"]["why"] and not old["ngram"]["ok"]
 
@@ -75,7 +75,7 @@ def test_mtp_sidecar_file(tmp_path, monkeypatch):
     write_gguf(model, {"qwen35.block_count": 64})
     write_gguf(tmp_path / "mtp-Qwen3.6-27B-Q8_0.gguf", {"qwen35.nextn_predict_layers": 1})
     write_gguf(tmp_path / "mtp-Qwen3.6-27B-UD-Q4_K_XL.gguf", {"qwen35.nextn_predict_layers": 1})
-    monkeypatch.setattr(bonsai, "_server_help", lambda *a, **k: NEW_HELP)
+    monkeypatch.setattr(llamacpp, "server_help", lambda *a, **k: NEW_HELP)
     r = router(tmp_path, f"llama-server -m {model} -c 4096", f"llama-server -m {model} -c 4096")
     mtp = options(r)["mtp"]["mtp"]
     assert mtp["ok"] and mtp["layers"] == 0 and mtp["sidecar"].endswith("mtp-Qwen3.6-27B-UD-Q4_K_XL.gguf")
@@ -102,7 +102,7 @@ def test_hit_rate_from_the_log():
 
 # ---------------------------------------------------------------- Batch-Größe fürs Einlesen
 def test_batch_size_is_applied_and_remembered(tmp_path, monkeypatch):
-    monkeypatch.setattr(bonsai, "_server_help", lambda *a, **k: NEW_HELP)
+    monkeypatch.setattr(llamacpp, "server_help", lambda *a, **k: NEW_HELP)
     cmd = "llama-server -m x.gguf -c 8192 -np 1"
     r = router(tmp_path, cmd, cmd + " -b 4096 --ubatch-size 256")
     assert {p["name"]: (p["ubatch"], p["ubatch_settable"]) for p in r.describe()} == \
@@ -128,7 +128,7 @@ def test_batch_api_resets_the_measured_speed(cfg, monkeypatch):
     from orbwise.server import create_app
     monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
     monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
-    monkeypatch.setattr(bonsai, "_server_help", lambda *a, **k: NEW_HELP)
+    monkeypatch.setattr(llamacpp, "server_help", lambda *a, **k: NEW_HELP)
     cfg.llm.base_url = "http://127.0.0.1:9"
     cfg.llm.profiles = {"qwen": ProfileConfig(model="qwen3:8b"),
                         "other": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8091/v1", model="x",

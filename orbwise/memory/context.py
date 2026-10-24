@@ -252,7 +252,7 @@ class Conversation:
         Im Normalfall greift sie nie – die Komprimierung kommt vorher (sie hält den Prompt-Anfang stabil).
 
         Die aktuelle Runde (letzte Nutzerfrage + alle Tool-Aufrufe danach) bleibt immer erhalten – ohne
-        Nutzerfrage lehnen manche Chat-Vorlagen (Qwen/Bonsai) die Anfrage ab. Ist sie allein zu groß,
+        Nutzerfrage lehnen manche Chat-Vorlagen (Qwen) die Anfrage ab. Ist sie allein zu groß,
         werden ihre Tool-Ergebnisse gekürzt (die ältesten zuerst)."""
         hist = self.epoch_messages()
         last_user = max((i for i, m in enumerate(hist) if m["role"] == "user"), default=0)

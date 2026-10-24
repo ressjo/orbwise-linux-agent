@@ -1,5 +1,5 @@
 """Modell-Profile: aktives Chat-Modell (Ollama oder OpenAI-kompatibler Server) umschalten, optional den
-Modell-Server (z. B. llama-server für Bonsai) selbst starten/stoppen. Embeddings laufen immer über Ollama."""
+Modell-Server (llama-server) selbst starten/stoppen. Embeddings laufen immer über Ollama."""
 
 from __future__ import annotations
 
@@ -105,8 +105,8 @@ class ManagedServer:
             env = {**os.environ, **{k: os.path.expanduser(str(v)) for k, v in self.cfg.env.items()}}
             if "LD_LIBRARY_PATH" in self.cfg.env and os.environ.get("LD_LIBRARY_PATH"):  # ergänzen statt ersetzen
                 env["LD_LIBRARY_PATH"] += ":" + os.environ["LD_LIBRARY_PATH"]
-            try:  # Bonsai (Hybrid-Modell): Prompt-Cache über Checkpoints – sonst liest er nach Änderungen viel neu ein
-                from .bonsai import cache_flags
+            try:  # Prompt-Cache: Checkpoints (Hybrid-Modelle), Cache im RAM – sonst liest er nach Änderungen viel neu ein
+                from .llamacpp import cache_flags
                 extra = await asyncio.to_thread(cache_flags, command, {k: env[k] for k in self.cfg.env})
             except Exception:  # noqa: BLE001 – nur eine Beschleunigung, der Start darf nicht daran scheitern
                 extra = ""
@@ -198,8 +198,7 @@ def library_hint(command: str) -> str:
     m = re.search(r"error while loading shared libraries: ([^:\s]+)", text)
     if not m:
         return ""
-    fix = "orbwise model add bonsai" if "bonsai" in command else T(
-        "das CUDA-/ROCm-Laufzeitpaket der Distribution installieren", "install your distribution's CUDA/ROCm runtime")
+    fix = T("das CUDA-/ROCm-Laufzeitpaket der Distribution installieren", "install your distribution's CUDA/ROCm runtime")
     return T(f"\n→ Es fehlt die Bibliothek {m.group(1)}. Reparatur: {fix}",
              f"\n→ The library {m.group(1)} is missing. Fix: {fix}")
 
@@ -216,32 +215,22 @@ KV_TYPES = ("f16", "q8_0", "q4_0")
 
 
 def _server_ctx(server: ServerConfig) -> int | None:
-    """Kontextgröße laut Startbefehl (BONSAI_CTX oder -c/--ctx-size)."""
-    env = str((server.env or {}).get("BONSAI_CTX", "")).strip()
-    if env.isdigit():
-        return int(env)
+    """Kontextgröße laut Startbefehl (-c/--ctx-size)."""
     m = re.findall(r"(?:^|\s)(?:-c|--ctx-size)\s+(\d+)", server.command)
     return int(m[-1]) if m else None
 
 
 def _help_text(command: str, env: dict) -> str:
-    """--help des llama-server, den dieser Startbefehl nutzt (direkt oder über den Bonsai-Starter) – leer, wenn
-    unbekannt. Einmal je Programm (bonsai._server_help merkt es sich)."""
+    """--help des llama-server, den dieser Startbefehl nutzt – leer, wenn unbekannt (llamacpp.server_help merkt es
+    sich je Programm)."""
+    m = re.match(r"\s*(?:\S+=\S*\s+)*(\S*llama-server)(\s|$)", command)
+    if not m:
+        return ""
     try:
-        from .bonsai import _server_help
-        m = re.match(r"\s*(?:\S+=\S*\s+)*(\S*llama-server)(\s|$)", command)
-        if m:
-            binary = Path(os.path.expanduser(m.group(1)))
-            text = _server_help(binary.parent, {k: os.path.expanduser(str(v)) for k, v in env.items()},
-                                subprocess.run, [binary])
-        elif "start_llama_server.sh" in command:
-            script = re.search(r"(\S*start_llama_server\.sh)", command).group(1)
-            text = _server_help(Path(os.path.expanduser(script)).parent.parent, env, subprocess.run)
-        else:
-            text = ""
+        from .llamacpp import server_help
+        return server_help(Path(os.path.expanduser(m.group(1))), {k: os.path.expanduser(str(v)) for k, v in env.items()})
     except Exception:  # noqa: BLE001 – unbekannt
-        text = ""
-    return text
+        return ""
 
 
 def kv_types(command: str, env: dict) -> list[str]:
@@ -396,7 +385,7 @@ class LLMRouter:
         self.load_progress: Progress | None = None  # Fortschritt, wenn eine Anfrage das Modell zurückholt
         self.load_done = None  # danach (Oberfläche: Modell wieder aktiv)
         self.mode = "tools"  # Tools oder Coding – Coding kann je Modell ein eigenes Kontextfenster haben
-        for p in self.profiles.values():  # eigener Server: die Größe steht im Startbefehl (BONSAI_CTX / -c)
+        for p in self.profiles.values():  # eigener Server: die Größe steht im Startbefehl (-c)
             if p.server and (n := _server_ctx(p.server)):
                 p.num_ctx = n
         self._base_ctx = {name: p.num_ctx for name, p in self.profiles.items()}  # ohne Oberflächen-Einstellung
@@ -693,39 +682,31 @@ class LLMRouter:
 
     # ---------- Kontextgröße (Modellseite) ----------
     def _apply_context(self, name: str, n: int) -> None:
-        """Kontextfenster eines Profils setzen: Ollama über num_ctx, ein eigener llama-server über BONSAI_CTX bzw.
-        -c im Startbefehl (wirkt beim nächsten Start)."""
+        """Kontextfenster eines Profils setzen: Ollama über num_ctx, ein eigener llama-server über -c im Startbefehl
+        (wirkt beim nächsten Start)."""
         p = self.profiles[name]
         p.num_ctx = n
         if p.server:
-            env = dict(p.server.env or {})
             command = p.server.command
-            if "BONSAI_CTX" in env:
-                env["BONSAI_CTX"] = str(n)
-            elif re.search(r"(^|\s)(-c|--ctx-size)\s+\d+", command):
+            if re.search(r"(^|\s)(-c|--ctx-size)\s+\d+", command):
                 command = re.sub(r"(^|\s)(-c|--ctx-size)\s+\d+", rf"\1\2 {n}", command)
             else:
                 command = f"{command} -c {n}"
-            p.server = p.server.model_copy(update={"env": env, "command": command})
+            p.server = p.server.model_copy(update={"command": command})
             self.servers.pop(name, None)  # neuer Startbefehl
 
     def _apply_kv(self, name: str, kv: str) -> None:
-        """KV-Cache-Stufe eines eigenen llama-server setzen (wirkt beim nächsten Start): -ctk/-ctv im Startbefehl,
-        beim Bonsai-Starter q4_0 über BONSAI_KV4. Ein quantisierter V-Cache braucht Flash-Attention."""
+        """KV-Cache-Stufe eines eigenen llama-server setzen (wirkt beim nächsten Start): -ctk/-ctv im Startbefehl.
+        Ein quantisierter V-Cache braucht Flash-Attention."""
         p = self.profiles[name]
         if not p.server:
             raise LLMError("Die KV-Cache-Stufe lässt sich nur bei einem eigenen Modell-Server einstellen")
-        env = dict(p.server.env or {})
         command = re.sub(r"\s+(?:-ctk|-ctv|--cache-type-k|--cache-type-v)\s+\S+", "", p.server.command)
-        env.pop("BONSAI_KV4", None)
         if kv != "f16":
-            if "start_llama_server.sh" in command and kv == "q4_0":
-                env["BONSAI_KV4"] = "1"  # der Starter setzt dann selbst alles Nötige
-            else:
-                command += f" -ctk {kv} -ctv {kv}"
-                if not re.search(r"(^|\s)(-fa|--flash-attn)(\s|=|$)", command):
-                    command += " " + _flash_attn_flag(command, env)
-        p.server = p.server.model_copy(update={"env": env, "command": command})
+            command += f" -ctk {kv} -ctv {kv}"
+            if not re.search(r"(^|\s)(-fa|--flash-attn)(\s|=|$)", command):
+                command += " " + _flash_attn_flag(command, p.server.env or {})
+        p.server = p.server.model_copy(update={"command": command})
         self.servers.pop(name, None)  # neuer Startbefehl
 
     def _apply_ubatch(self, name: str, n: int) -> None:

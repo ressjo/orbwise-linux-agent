@@ -66,7 +66,7 @@ def test_steps_report_the_reason(cfg, memory, tmp_path):
     async def emit(ev):
         events.append(ev)
     agent = Agent(cfg, ForgetfulServer(tps=800), memory)
-    agent._prefill_tps["bonsai"] = 800.0
+    agent._prefill_tps["llama"] = 800.0
     run(agent.run("Hallo", emit, _noop))
     run(agent.run("Und noch was", emit, _noop))
     done = [e for e in events if e.get("type") == "llm_phase" and e.get("phase") == "done" and "reread" in e]
@@ -78,10 +78,10 @@ def test_steps_report_the_reason(cfg, memory, tmp_path):
 def test_big_window_keeps_all_tools_on_a_normal_card(cfg, memory, tmp_path):
     all_integrations(cfg, tmp_path)
     agent = Agent(cfg, Server(window=65536), memory)
-    agent._prefill_tps["bonsai"] = agent.all_schema_tokens / 25  # 25 s für alle Werkzeuge: über 10 s, unter 60 s
+    agent._prefill_tps["llama"] = agent.all_schema_tokens / 25  # 25 s für alle Werkzeuge: über 10 s, unter 60 s
     agent.choose_tools(set())
     assert agent.memory.conversation.epoch["tools"] is None and "paperless_search" in _tools(agent)
     small = Agent(cfg, Server(window=16384), memory)  # kleines Fenster: weiter die Auswahl
-    small._prefill_tps["bonsai"] = small.all_schema_tokens / 25
+    small._prefill_tps["llama"] = small.all_schema_tokens / 25
     small.choose_tools(set())
     assert "load_tools" in _tools(small)

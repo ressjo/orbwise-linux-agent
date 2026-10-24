@@ -1,6 +1,6 @@
 """Wo liegt der Kontext (KV-Cache) des Sprachmodells – im Grafikspeicher oder im RAM – und wie groß darf er sein?
 
-- llama-server (z. B. Bonsai): genaue Werte aus seinem Startlog („ROCm0 KV buffer size = 512.00 MiB“,
+- llama-server: genaue Werte aus seinem Startlog („ROCm0 KV buffer size = 512.00 MiB“,
   „CPU_Mapped model buffer size = …“).
 - Ollama: /api/ps (wie viel vom Modell im VRAM liegt) und /api/show (Architektur) – der KV-Cache wird daraus
   geschätzt (f16, wie Ollama ihn standardmäßig anlegt).
@@ -85,7 +85,7 @@ def kv_per_token_from_info(model_info: dict, bytes_per: float = 2.0) -> int | No
     if not key_len and heads and find(".embedding_length"):
         key_len = find(".embedding_length") // heads
     value_len = value_len or key_len
-    # Hybrid-Modelle (Bonsai 2/Qwen 3.5, Qwen3-Next …): nur ein Teil der Schichten hat Attention und damit einen
+    # Hybrid-Modelle (Qwen 3.5, Qwen3-Next …): nur ein Teil der Schichten hat Attention und damit einen
     # KV-Cache – je Schicht angegeben (0 = rekurrente Schicht) oder als „jede n-te Schicht“
     per_layer = next((v for k, v in model_info.items() if k.endswith(".attention.head_count_kv")
                       and isinstance(v, list)), None)
@@ -201,19 +201,15 @@ def type_bytes(kind: str) -> float:
 
 
 def cache_type(command: str, env: dict) -> str:
-    """KV-Cache-Stufe aus dem Startbefehl (V-Cache, sonst K-Cache) bzw. BONSAI_KV4 – Standard f16."""
+    """KV-Cache-Stufe aus dem Startbefehl (V-Cache, sonst K-Cache) – Standard f16."""
     v = re.findall(r"(?:-ctv|--cache-type-v)\s+(\S+)", command)
     k = re.findall(r"(?:-ctk|--cache-type-k)\s+(\S+)", command)
-    if v or k:
-        return (v or k)[-1].lower()
-    return "q4_0" if str(env.get("BONSAI_KV4", "")).strip() in ("1", "true", "yes") else "f16"
+    return (v or k)[-1].lower() if v or k else "f16"
 
 
 def cache_bytes(command: str, env: dict) -> float:
-    """Bytes pro KV-Element aus dem Startbefehl (-ctk/-ctv bzw. --cache-type-k/v) – Bonsai: BONSAI_KV4=1 → q4_0."""
+    """Bytes pro KV-Element aus dem Startbefehl (-ctk/-ctv bzw. --cache-type-k/v)."""
     found = re.findall(r"(?:-ctk|-ctv|--cache-type-[kv])\s+(\S+)", command)
-    if not found and str(env.get("BONSAI_KV4", "")).strip() in ("1", "true", "yes"):
-        found = ["q4_0"]
     sizes = [type_bytes(t) for t in found] or [2.0]
     return sum(sizes) / len(sizes)
 

@@ -11,7 +11,6 @@ import sys
 import webbrowser
 from pathlib import Path
 
-from . import bonsai
 from .config import config_path, env, load_config
 from .lang import T, set_lang
 
@@ -89,12 +88,6 @@ def cmd_doctor(args) -> None:
                 script = os.path.expanduser(p.server.command.split()[0])
                 line(os.path.exists(script) or bool(shutil.which(script)), f"    {T('Startbefehl', 'Start command')} {script}",
                      T("Pfad in llm.profiles.<name>.server.command prüfen", "check the path in llm.profiles.<name>.server.command"))
-                binary = Path(script).parent.parent / bonsai.CUDA_SERVER  # Bonsai-demo-Checkout mit CUDA-Build?
-                if binary.exists():
-                    missing = bonsai.missing_libs(binary, p.server.env.get("LD_LIBRARY_PATH", ""))
-                    line(not missing, f"    {T('Bibliotheken für', 'Libraries for')} {bonsai.CUDA_SERVER}"
-                         + (f" – {T('fehlt', 'missing')}: {', '.join(missing)}" if missing else ""),
-                         "orbwise model add bonsai")
             line(ps["online"], T("    Server erreichbar", "    Server reachable") if ps["online"]
                  else T("    Server läuft gerade nicht", "    Server is not running"),
                  T("startet automatisch beim Aktivieren", "starts automatically when activated") if p.server
@@ -219,7 +212,7 @@ def cmd_doctor(args) -> None:
         print(T("  – nicht eingerichtet", "  – not set up") + " (orbwise model add qwen-image)")
     else:
         binary = imagegen_setup.server_binary(image_root)
-        missing_bin = bonsai.missing_libs(binary, str(binary.parent)) if binary.exists() else ["sd-server"]
+        missing_bin = llamacpp.missing_libs(binary, str(binary.parent)) if binary.exists() else ["sd-server"]
         line(not missing_bin, f"sd-server ({binary})", T("fehlt: ", "missing: ") + ", ".join(missing_bin)
              + " – " + T("Vulkan-Treiber installieren (z. B. vulkan-radeon / mesa-vulkan-drivers)",
                          "install the Vulkan driver (e.g. vulkan-radeon / mesa-vulkan-drivers)"))
@@ -465,8 +458,6 @@ def cmd_model_manage(args, cfg, state: Path) -> None:
     (für den Installer)."""
     import subprocess
 
-    import httpx
-
     from . import models as mdl
 
     base = f"http://127.0.0.1:{cfg.port}"
@@ -497,16 +488,6 @@ def cmd_model_manage(args, cfg, state: Path) -> None:
                     f"'{args.tag}' is not a model added with 'orbwise model add'."))
             sys.exit(1)
         print(T(f"✔ '{tag}' aus der Modellliste entfernt.", f"✔ Removed '{tag}' from the model list."))
-        from . import bonsai
-        if tag in bonsai.VARIANTS:
-            files = bonsai.model_files(variant=tag)
-            size = sum(f.stat().st_size for f in files) / 1e9
-            if files and sys.stdin.isatty() and input(
-                    T(f"Auch die Modelldateien löschen (~{size:.1f} GB)? [j/N] ",
-                      f"Also delete the model files (~{size:.1f} GB)? [y/N] ")).strip().lower() in ("j", "ja", "y", "yes"):
-                bonsai.remove_model_files(variant=tag)
-                print(T("✔ Modelldateien gelöscht.", "✔ Model files deleted."))
-            return
         if shutil.which("ollama") and sys.stdin.isatty() and \
                 input(T("Auch die Modelldatei löschen (ollama rm)? [j/N] ", "Also delete the model files (ollama rm)? [y/N] ")
                       ).strip().lower() in ("j", "ja", "y", "yes"):
@@ -530,19 +511,6 @@ def cmd_model_manage(args, cfg, state: Path) -> None:
         from . import imagegen_setup
         if not imagegen_setup.install(gpu, cfg):
             sys.exit(1)
-        return
-    if tag in ("bonsai", "bonsai-kompakt"):
-        from . import bonsai
-        name = bonsai.install(state, gpu=gpu, activate=True, variant=tag)
-        if not name:
-            sys.exit(1)
-        print(T("✔ Bonsai eingerichtet und als Modell aktiviert – Orbwise startet den Server bei Bedarf selbst.",
-                "✔ Bonsai is set up and activated – Orbwise starts its server itself when needed."))
-        try:
-            httpx.post(f"{base}/api/models/reload", headers=headers, timeout=10)
-            httpx.post(f"{base}/api/models/{name}/activate", headers=headers, timeout=600)
-        except httpx.HTTPError:
-            pass
         return
     if mdl.is_hf(tag):  # Hugging Face → Datei nach ~/models, läuft mit llama.cpp
         name = _add_llamacpp(cfg, state, gpu, tag=tag)

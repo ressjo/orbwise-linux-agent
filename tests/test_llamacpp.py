@@ -242,7 +242,7 @@ def test_profile_context_port_and_quoting(setup, tmp_path):
     blocker = socket.socket()
     blocker.bind(("127.0.0.1", llamacpp.FIRST_PORT + 1))  # belegter Port wird übersprungen
     try:
-        taken = {"bonsai": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8090/v1")}
+        taken = {"llama": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8090/v1")}
         state = tmp_path / "state.json"
         name = llamacpp.add_model(setup, state, model, None, AMD, taken, downloaded=False)
     finally:
@@ -333,48 +333,6 @@ def test_web_flow(setup, fake, monkeypatch):
 
 
 # ---------------------------------------------------------------- Altes hf.co-Ollama-Modell umstellen
-def test_convert_old_ollama_hf_profile(setup, fake, monkeypatch):
-    from test_models import FakeOllama
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeOllama)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    monkeypatch.setattr(FakeOllama, "deleted", [])
-    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
-    monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
-    monkeypatch.setattr(mdl, "detect_gpu", lambda: dict(AMD))
-    setup.llm.base_url = f"http://127.0.0.1:{srv.server_port}"
-    state = setup.memory.dir.parent / "state.json"
-    old_tag = f"hf.co/{REPO}:Q4_K_M"
-    old = mdl.register_model(state, old_tag)
-    mdl.register_model(state, f"hf.co/{REPO}:Q8_0")
-    from orbwise.server import create_app
-    try:
-        with TestClient(create_app(setup), base_url="http://localhost:8765") as client:
-            profiles = {p["name"]: p for p in client.get("/api/models").json()["profiles"]}
-            assert profiles[old]["convert"] == old_tag and "convert" not in profiles["standard"]
-            with client.websocket_connect("ws://localhost:8765/ws", headers={"Origin": "http://localhost:8765"}) as ws:
-                ws.receive_json()
-                client.post("/api/models/pull", json={"tag": old_tag, "replace": old})
-                ev = _until_done(ws, old_tag)
-            assert ev.get("done") and ev["replaced"] == old and "note" not in ev, ev
-            names = {p["name"] for p in client.get("/api/models").json()["profiles"]}
-            assert old not in names and ev["profile"] in names and old_tag not in mdl.added_models(state)
-            assert FakeOllama.deleted == [old_tag]  # Ollama-Kopie weg
-
-            # aktives altes Modell: das neue muss starten – startet es nicht, bleibt das alte und es gibt einen Hinweis
-            other = mdl.slug(f"hf.co/{REPO}:Q8_0")
-            assert client.post(f"/api/models/{other}/activate").status_code == 200
-            with client.websocket_connect("ws://localhost:8765/ws", headers={"Origin": "http://localhost:8765"}) as ws:
-                ws.receive_json()
-                client.post("/api/models/pull", json={"tag": f"hf.co/{REPO}:Q8_0", "replace": other})
-                ev = _until_done(ws, f"hf.co/{REPO}:Q8_0")
-            assert ev.get("done") and "startet aber nicht" in ev["note"], ev
-            active = client.get("/api/models").json()["active"]
-            assert active == other and other in {p["name"] for p in client.get("/api/models").json()["profiles"]}
-    finally:
-        srv.shutdown()
-
-
-# ---------------------------------------------------------------- Robustheit bei abstürzendem Ollama
 def test_embeddings_fall_back_to_cpu_when_the_gpu_runner_crashes(cfg):
     import httpx
 
@@ -426,3 +384,61 @@ def test_server_log_shows_last_start_without_key(setup, monkeypatch, tmp_path):
     with TestClient(create_app(setup), base_url="http://localhost:8765") as client:
         data = client.get("/api/models/log").json()
     assert data["lines"] == ["===== Starte: llama-server -m x.gguf --api-key •••", "load_tensors: ok"]
+
+
+# ---------------------------------------------------------------- Prompt-Cache-Optionen für den eigenen llama-server
+def test_cache_flags_only_what_the_server_knows(tmp_path, monkeypatch):
+    import subprocess
+    monkeypatch.setattr(llamacpp, "_HELP", {})
+    binary = tmp_path / "bin" / "llama-server"
+    binary.parent.mkdir()
+    binary.write_text("")
+    full_help = "-c, --ctx-size N\n--ctx-checkpoints N\n--cache-ram N\n--cache-idle-slots\n"
+    calls = []
+
+    def run(cmd, **kw):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout=full_help, stderr="")
+    cmd = f"{binary} -m ~/models/q.gguf -np 1"
+    assert llamacpp.cache_flags(cmd, run=run, mem_mib=31 * 1024) == "--ctx-checkpoints 32 --cache-ram 4096 --cache-idle-slots"
+    assert calls == [[str(binary), "--help"]]
+    assert "--cache-ram 1228" in llamacpp.cache_flags(cmd, run=run, mem_mib=8 * 1024)  # 15 % von 8 GB
+    assert len(calls) == 1  # Hilfetext nur einmal je Programm
+    own = llamacpp.cache_flags(cmd + " --ctx-checkpoints 8", run=run, mem_mib=31 * 1024)
+    assert "--ctx-checkpoints" not in own and "--cache-ram 4096" in own  # vom Nutzer gesetzt – bleibt
+    assert llamacpp.cache_flags("python3 serve.py", run=run) == ""  # kein llama-server
+    old = tmp_path / "alt" / "llama-server"
+    old.parent.mkdir()
+    assert llamacpp.cache_flags(f"{old} -m x.gguf", mem_mib=16384,
+                                run=lambda c, **kw: subprocess.CompletedProcess(c, 0, stdout="-c, --ctx-size N\n")) == ""
+
+    def broken(c, **kw):
+        raise OSError("libvulkan fehlt")
+    assert llamacpp.cache_flags(f"{tmp_path}/kaputt/llama-server -m x", run=broken) == ""
+
+
+def test_managed_server_starts_with_cache_flags(tmp_path, monkeypatch):
+    import sys
+
+    from orbwise.llm_router import ManagedServer
+
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    seen = []
+
+    def flags(command, env=None, **kw):
+        seen.append(command)
+        return "--ctx-checkpoints 32"
+    monkeypatch.setattr(llamacpp, "cache_flags", flags)
+    fake_server = Path(__file__).parent / "fake_llama_server.py"
+    server = ManagedServer(ServerConfig(command=f"{sys.executable} {fake_server} {port}", startup_timeout=20),
+                           f"http://127.0.0.1:{port}/v1")
+    try:
+        assert asyncio.run(server.ensure_running())
+        log = (tmp_path / "orbwise-llm.log").read_text()
+        assert f"{fake_server} {port} --ctx-checkpoints 32" in log and seen
+    finally:
+        asyncio.run(server.stop())

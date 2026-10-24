@@ -818,7 +818,7 @@
         a.el.insertBefore(d, a.el.querySelector(".body"));
       } else if (!text && S.think !== "off" && !this.warned) {
         this.warned = true;
-        toast(L("Denkmodus an, aber das Modell hat keinen Gedankengang geliefert – bei Bonsai '--reasoning-budget 0' aus dem Startbefehl entfernen.",
+        toast(L("Denkmodus an, aber das Modell hat keinen Gedankengang geliefert – ggf. '--reasoning-budget 0' aus dem Startbefehl entfernen.",
               "Thinking mode is on, but the model returned no reasoning – for llama-server remove '--reasoning-budget 0' from the start command."));
       }
     },
@@ -2591,7 +2591,6 @@
     const items = [];
     if (p.repo) items.push({ icon: "download", label: L("Auf Hugging Face ansehen", "View on Hugging Face"),
                              run: () => window.open(`https://huggingface.co/${p.repo}`, "_blank", "noopener") });
-    if (p.convert) items.push({ icon: "redo", label: L("Mit llama.cpp neu laden", "Reload with llama.cpp"), run: () => convertModel(p) });
     const only = p.active && d.profiles.length < 2;
     if (p.deletable) items.push({ icon: "trash", danger: true, disabled: only || !!d.switching,
                                   label: p.keeps_files ? L("Aus der Liste entfernen", "Remove from list") : L("Löschen", "Delete"),
@@ -3078,18 +3077,6 @@
   }
 
   // Altes Hugging-Face-Modell über Ollama (stürzt bei neuen Modelltypen oft ab) → mit llama.cpp neu laden
-  async function convertModel(p) {
-    if (!confirm(L(`${p.label} mit llama.cpp neu laden? Die Datei wird erneut heruntergeladen (~${p.size_gb || "?"} GB); `
-                   + "danach ersetzt das neue Modell das alte.",
-                   `Reload ${p.label} with llama.cpp? The file is downloaded again (~${p.size_gb || "?"} GB); `
-                   + "the new model then replaces the old one."))) return;
-    try {
-      await api("POST", "/api/models/pull", { tag: p.convert, replace: p.name });
-      toast(L(`Lade ${p.label} für llama.cpp …`, `Downloading ${p.label} for llama.cpp …`));
-      refreshModelViews();
-    } catch { /* Meldung kommt von api() */ }
-  }
-
   async function deleteModel(p) {
     const size = p.size_gb ? L(` Gibt ~${p.size_gb} GB frei.`, ` Frees ~${p.size_gb} GB.`) : "";
     const text = p.keeps_files ? L(`${p.label} aus der Liste entfernen? Die Datei in ~/models bleibt.`,
@@ -3151,16 +3138,9 @@
       mark.textContent = FIT_MARKS[p.fit] + " ";
       const b = hfItem([mark, document.createTextNode(p.label)],
                        pulling ? L("LÄDT …", "LOADING …") : p.installed ? L("INSTALLIERT", "INSTALLED") : p.recommended ? L("EMPFOHLEN", "RECOMMENDED") : "",
-                       (p.kind === "ollama" ? p.tag : L("eigener Server · Terminal", "own server · terminal")) + ` · ~${p.download_gb} GB`, p.note);
+                       `${p.tag} · ~${p.download_gb} GB`, p.note);
       b.disabled = pulling;
-      b.onclick = () => {
-        if (p.kind !== "ollama") {
-          toast(L(`${p.label}: Einrichtung im Terminal mit „orbwise model add ${p.tag}“ (lädt ~7 GB und den passenden llama.cpp-Server).`,
-                  `${p.label}: set it up in a terminal with “orbwise model add ${p.tag}” (downloads ~7 GB and the matching llama.cpp server).`));
-          return;
-        }
-        startPull(p.tag, p.label, p.fit);
-      };
+      b.onclick = () => startPull(p.tag, p.label, p.fit);
       list.appendChild(b);
     }
   }
@@ -3336,12 +3316,6 @@
                                : L("✔ Gemessen – die bisherige Batch-Größe war schon die schnellste.", "✔ Measured – the current batch size was already the fastest."))
             + (ev.gain_pct >= 10 ? L(` ${other} liest ${ev.gain_pct} % schneller ein – Umstellen auf der Modellseite.`,
                                      ` ${other} reads prompts ${ev.gain_pct} % faster – switch on the model page.`) : ""));
-      refreshModelViews();
-      return;
-    }
-    if (ev.done && ev.replaced) {
-      toast(ev.note ? `⚠ ${ev.note}` : L(`✔ ${ev.tag} läuft jetzt mit llama.cpp – das alte Ollama-Modell ist entfernt.`,
-                                          `✔ ${ev.tag} now runs with llama.cpp – the old Ollama model was removed.`));
       refreshModelViews();
       return;
     }

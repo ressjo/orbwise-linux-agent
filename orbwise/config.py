@@ -18,7 +18,7 @@ def env(name: str, default: str = "") -> str:
 
 
 class ServerConfig(BaseModel):
-    """Optionaler Modell-Server, den Orbwise selbst startet und stoppt (z. B. llama-server für Bonsai)."""
+    """Optionaler Modell-Server, den Orbwise selbst startet und stoppt (z. B. llama-server)."""
     command: str
     env: dict[str, str] = Field(default_factory=dict)
     cwd: str = ""

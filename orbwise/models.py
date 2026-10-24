@@ -24,7 +24,6 @@ class Preset:
     vram_gb: float      # komfortabel komplett im Grafikspeicher
     note_de: str
     note_en: str
-    kind: str = "ollama"  # "ollama" oder "bonsai" (eigener llama-server aus dem PrismML-Fork)
 
     def note(self) -> str:
         return T(self.note_de, self.note_en)
@@ -49,13 +48,6 @@ PRESETS: list[Preset] = [
     Preset("mistral-small3.2:24b", "Mistral Small 3.2 24B", 15, 18, "gut in Deutsch/Englisch, 16 GB knapp",
            "good in German/English, 16 GB is tight"),
     Preset("llama3.1:8b", "Llama 3.1 8B", 4.9, 7, "bewährt, Tool-Calling solide", "proven, solid tool calling"),
-    Preset("bonsai", "Bonsai 2 27B (llama.cpp)", 7.2, 8,
-           "27B-Klasse in ~7 GB: sehr klug, denkt gründlich – eigener Server, Einrichtung automatisch",
-           "27B class in ~7 GB: very smart, reasons thoroughly – own server, set up automatically", kind="bonsai"),
-    Preset("bonsai-kompakt", "Bonsai 2 27B kompakt (1,75 Bit)", 5.9, 7,
-           "dieselben 27B, 1,3 GB kleiner – auf 8-GB-Karten mit 16k Kontext; liest Prompts etwas langsamer ein",
-           "the same 27B, 1.3 GB smaller – 16k context on 8 GB cards; reads prompts a little slower",
-           kind="bonsai"),
 ]
 BY_TAG = {p.tag: p for p in PRESETS}
 TAG_RE = re.compile(r"^[a-z0-9][a-z0-9._/-]*(:[a-z0-9._-]+)?$")
@@ -178,9 +170,6 @@ def installed_models(base_url: str = "http://localhost:11434") -> set[str]:
 
 
 def is_installed(tag: str, installed: set[str]) -> bool:
-    if tag in ("bonsai", "bonsai-kompakt"):
-        from .bonsai import is_set_up
-        return is_set_up(variant=tag)
     if is_hf(tag):  # Ollama schreibt hf.co-Namen je nach Version anders groß
         return tag.lower() in {t.lower() for t in installed} or \
             (":" not in tag and f"{tag}:latest".lower() in {t.lower() for t in installed})
@@ -310,7 +299,7 @@ def _read_state(path: Path) -> dict:
 
 
 def added_profiles(state_path: Path) -> dict[str, dict]:
-    """Vollständige Profile (z. B. Bonsai mit eigenem Server), gespeichert von `orbwise model add`."""
+    """Vollständige Profile (z. B. llama.cpp-Modelle mit eigenem Server), gespeichert von `orbwise model add`."""
     data = _read_state(state_path).get("added_profiles", {})
     return data if isinstance(data, dict) else {}
 

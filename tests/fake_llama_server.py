@@ -32,7 +32,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/props":
             return self._json(200, {"default_generation_settings": {"n_ctx": CTX}})
         if self.path == "/v1/models":
-            return self._json(200, {"data": [{"id": "bonsai"}]})
+            return self._json(200, {"data": [{"id": "llama"}]})
         self._json(404, {})
 
     def do_POST(self):
@@ -51,7 +51,7 @@ class Handler(BaseHTTPRequestHandler):
             send({"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "x", "function": {"name": "list_updates", "arguments": ""}}]}}]})
             send({"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": "{}"}}]}}]})
         else:
-            text = "Bonsai meldet: " + strip_context_note(last.get("content") or "")[:40]
+            text = "Llama meldet: " + strip_context_note(last.get("content") or "")[:40]
             for word in text.split(" "):
                 send({"choices": [{"delta": {"content": word + " "}}]})
         send({"choices": [], "timings": {"predicted_n": 12, "predicted_per_second": 19.24,

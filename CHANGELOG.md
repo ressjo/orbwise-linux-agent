@@ -10,6 +10,12 @@ All notable changes to this project are documented here. The format follows
   Qwen3.8-27B on llama.cpp answered better, and loading froze AMD desktops. On the first start Orbwise removes Strata
   profiles from `state.json`, stops a running Strata server and deletes the model (`~/models/strata`) and the engine it
   installed (`~/.local/share/strata`).
+- **Bonsai setup:** `orbwise model add bonsai`/`bonsai-kompakt`, the PrismML fork with its own launcher and the
+  `BONSAI_*` settings are gone; GGUF models from Hugging Face run on Orbwise's own llama.cpp. Bonsai profiles are
+  removed on the first start; `~/bonsai` stays and can be deleted by hand. The prompt-cache options
+  (`--ctx-checkpoints`, `--cache-ram`, `--cache-idle-slots`) still apply to every llama-server Orbwise starts.
+- **Ollama → llama.cpp conversion** ("Reload with llama.cpp" for old `hf.co/…` Ollama models): such models simply stay
+  Ollama models; new Hugging Face downloads always run on llama.cpp.
 
 ### Changed
 - **Fewer full re-reads in big windows:** from 32k on all tools go along from the start (if they take ≤ 25 % of the
@@ -87,7 +93,7 @@ All notable changes to this project are documented here. The format follows
   automatically when it is needed again, when the image view is left or after 10 idle minutes. Also available as
   `generate_image` in the tools mode and `/bild …` via Telegram.
 - **All tools only when they are quick to read:** with a large window Orbwise used to send every tool description
-  (~16k tokens with all integrations) – on a slow card (Bonsai on 8 GB, ~140 tokens/s) that is over 2 minutes of
+  (~16k tokens with all integrations) – on a slow card (a 27B on 8 GB, ~140 tokens/s) that is over 2 minutes of
   reading after every start, model switch and summary. Now all tools only go along if reading them takes ≤ 10 s;
   otherwise the selection (core tools + matching groups, the rest via `load_tools`) applies – the start prompt drops
   from ~18k to ~5k tokens there. The measured reading speed is remembered per model (`state.json`), and the
@@ -104,7 +110,7 @@ All notable changes to this project are documented here. The format follows
 - **Context self-test** (`orbwise context-test [--quick]`, Settings → Context window → *Test context*): checks with
   the active model whether the server runs with the configured window (and no `context_budget_tokens` caps it), the
   KV cache sits in VRAM, how far the token estimate is off, whether the prompt cache works for the same prompt and a
-  follow-up (Bonsai: checkpoints), whether a prompt up to the compaction point fits and the model still sees its
+  follow-up (hybrid models: checkpoints), whether a prompt up to the compaction point fits and the model still sees its
   start (code word), and whether an oversized prompt is rejected instead of silently cut. Uses its own messages –
   the open chat stays untouched.
 
@@ -113,8 +119,8 @@ All notable changes to this project are documented here. The format follows
   generated (warm-up, self-test); the prompt counts then came from `usage`, which includes cached tokens, so a
   cache hit looked like a full re-read. The prompt counts now always come from the timings, and the self-test
   also judges the cache by time.
-- **Faster Bonsai:** Bonsai 2 is a hybrid model that can only reuse an earlier prompt through checkpoints; Orbwise now
-  starts its launcher with `--ctx-checkpoints 32`, a RAM prompt cache (`--cache-ram`, 15 % of RAM, ≤ 4 GB) and
+- **Prompt cache for hybrid models:** they can only reuse an earlier prompt through checkpoints; Orbwise now
+  starts its llama-server with `--ctx-checkpoints 32`, a RAM prompt cache (`--cache-ram`, 15 % of RAM, ≤ 4 GB) and
   `--cache-idle-slots` – only what the installed llama-server knows. Much less re-reading after hidden results, a
   summary, Telegram or a chat switch.
 - **Leaner Paperless packages:** with many correspondents/types/tags only the matching ones are listed (Paperless'
@@ -123,10 +129,7 @@ All notable changes to this project are documented here. The format follows
 - **No detour via curl:** `run_shell` refuses commands aimed at a configured Paperless, Trilium, Home Assistant or
   calendar address and names the right tools instead.
 - **Correct KV size for hybrid models:** only attention layers count (`full_attention_interval` or per-layer
-  `head_count_kv` from the GGUF) – Bonsai 2 at 64k is ~1.2 GB, not 4.5 GB, and no longer flagged as too big.
-- **Bonsai 2 27B compact** in the model selection (`orbwise model add bonsai-kompakt`): the 1.75-bit
-  `Ternary-Bonsai-2-27B-PTQ1_0.gguf` (5.9 instead of 7.2 GB) with 16k context on 8 GB cards; only its own file is
-  downloaded, and it lives next to the normal variant.
+  `head_count_kv` from the GGUF) – a hybrid 27B at 64k is ~1.2 GB, not 4.5 GB, and no longer flagged as too big.
 - **Paperless: no more duplicate names** – if a similar correspondent, document type or tag exists ("Möbelhaus
   Mustermann GmbH" vs. "Möbelhaus Mustermann", another spelling, singular/plural), that one is used instead of
   creating a new one; the confirmation already shows "Möbelhaus Mustermann (existing, instead of …)". Tags are not
@@ -134,7 +137,7 @@ All notable changes to this project are documented here. The format follows
   is chosen automatically.
 - **Context in two stages – below 16k and from 16k** (`orbwise/context_plan.py`), as close to Claude Code as a local
   model allows:
-  - **Lean mode below 16k** (e.g. Bonsai with 8k): only 9 core tools up front, everything else by keyword or
+  - **Lean mode below 16k** (e.g. 8k on an 8 GB card): only 9 core tools up front, everything else by keyword or
     `load_tools` (which now lists exactly what is missing); big groups (Paperless, mail, calendar, system, notes,
     packages) bring their changing part only when the request sounds like it; "yes, do it" loads what the model just
     proposed. The selection only changes when something new is needed and is then repacked within ~35 % of the
@@ -155,7 +158,7 @@ All notable changes to this project are documented here. The format follows
 - **Context in memory and context window in the UI:** a telemetry tile shows the KV cache size and how much of it
   is in VRAM or RAM (exact from the llama-server log, estimated for Ollama) with a recommendation to raise or lower
   the window; Settings → Models → Context window changes it per model (server restart or Ollama reload, remembered
-  in state.json, Bonsai via BONSAI_CTX, other llama-servers via `-c`).
+  in state.json, llama-servers via `-c`).
 - **Dates worked out instead of guessed:** `date_info` answers weekday, "next Tuesday", "in 3 weeks", calendar week,
   days between two dates and German public holidays (`holiday_region`, e.g. `BW`); reminders, calendar, `recall` and
   routines understand phrases like "next Tuesday 9:00" or "last Friday" directly, and a reminder's confirmation
@@ -175,7 +178,7 @@ All notable changes to this project are documented here. The format follows
   (`memory.retrieval_min_similarity`), and `remember` replaces an outdated version of a fact instead of keeping
   both.
 - **Thinking levels** in the *Think* menu: off, brief (~500 tokens of reasoning), normal (~2,000) and thorough.
-  gpt-oss gets real `low`/`medium`/`high`; other models (Qwen 3, Bonsai …) get a reasoning budget – a short hint, and
+  gpt-oss gets real `low`/`medium`/`high`; other models (Qwen 3 …) get a reasoning budget – a short hint, and
   if the model still thinks too long the step continues without thinking, with its thoughts so far.
 - **Context handling like Claude Code** – fast on slow graphics cards, without forgetting:
   - Between two compactions the prompt only grows at the end: date/time, memories and the approved plan are frozen

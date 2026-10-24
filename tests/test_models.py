@@ -191,27 +191,3 @@ def test_cancel_download_and_delete_models(cfg, ollama, monkeypatch, tmp_path):
         assert "llama3.1-8b" not in [p["name"] for p in client.get("/api/models").json()["profiles"]]
         assert FakeOllama.deleted == ["llama3.1:8b"]
         assert "llama3.1:8b" not in mdl.added_models(cfg.memory.dir.parent / "state.json")
-
-
-def test_delete_bonsai_removes_model_files_only(cfg, ollama, monkeypatch, tmp_path):
-    from orbwise import bonsai
-    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
-    monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
-    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
-    d = tmp_path / "bonsai"
-    (d / "models" / "gguf").mkdir(parents=True)
-    (d / "models" / "gguf" / "Bonsai-27B.gguf").write_bytes(b"x" * 1000)
-    (d / "scripts").mkdir()
-    (d / "scripts" / "start_llama_server.sh").write_text("#!/bin/sh\n")
-    monkeypatch.setenv("ORBWISE_BONSAI_DIR", str(d))
-    cfg.llm.base_url = ollama
-    state = cfg.memory.dir.parent / "state.json"
-    gpu = {"vendor": "amd", "name": "RX 6600", "vram_gb": 8}
-    mdl.register_profile(state, bonsai.PROFILE_NAME, bonsai.make_profile(gpu, d))
-    from orbwise.server import create_app
-    with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
-        assert next(p for p in client.get("/api/models").json()["profiles"] if p["name"] == "bonsai")["deletable"]
-        assert client.delete("/api/models/bonsai").json()["ok"]
-        assert "bonsai" not in [p["name"] for p in client.get("/api/models").json()["profiles"]]
-    assert not bonsai.model_files(d) and (d / "scripts" / "start_llama_server.sh").exists()
-    assert bonsai.PROFILE_NAME not in mdl.added_profiles(state)

@@ -208,6 +208,73 @@ def check_build(directory: Path, flavor: str, run: Runner = subprocess.run) -> s
     return ""
 
 
+# ---------------------------------------------------------------- llama-server: Hilfetext, Prompt-Cache-Optionen
+CACHE_CHECKPOINTS = 32
+_HELP: dict[str, str] = {}
+
+
+def server_help(binary: Path, env: dict | None = None, run: Runner = subprocess.run) -> str:
+    """--help eines llama-server (einmal je Programm gemerkt) – leer, wenn er nicht startet."""
+    key = str(binary)
+    if key not in _HELP:
+        try:
+            result = run([str(binary), "--help"], capture_output=True, text=True, timeout=30,
+                         env={**os.environ, **(env or {})})
+            _HELP[key] = (result.stdout or "") + (result.stderr or "")
+        except (OSError, subprocess.SubprocessError):
+            _HELP[key] = ""
+    return _HELP[key]
+
+
+def _mem_mib() -> int:
+    try:
+        with open("/proc/meminfo", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) // 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return 0
+
+
+def cache_flags(command: str, env: dict | None = None, run: Runner = subprocess.run, mem_mib: int | None = None) -> str:
+    """Zusätzliche Argumente für einen direkt gestarteten llama-server: mehr Checkpoints (Hybrid-Modelle können einen
+    früheren Prompt nur darüber weiterverwenden), ein Prompt-Cache im RAM (höchstens 4 GB bzw. 15 % des
+    Arbeitsspeichers) und das Sichern ruhender Slots. Nur Optionen, die der vorhandene llama-server kennt, und nur,
+    wenn der Befehl sie nicht schon selbst setzt – sonst leer."""
+    direct = re.match(r"\s*(?:\S+=\S*\s+)*(\S*llama-server)(\s|$)", command)
+    if not direct:
+        return ""
+    binary = Path(os.path.expanduser(direct.group(1)))
+    if not binary.is_absolute():
+        binary = Path(shutil.which(str(binary)) or binary)
+    help_text = server_help(binary, env, run)
+    if not help_text:
+        return ""
+    ram = mem_mib if mem_mib is not None else _mem_mib()
+    wanted = [("--ctx-checkpoints", str(CACHE_CHECKPOINTS)),
+              ("--cache-ram", str(min(4096, int(ram * 0.15)) if ram else 4096)),
+              ("--cache-idle-slots", "")]
+    parts = []
+    for flag, value in wanted:
+        if re.search(rf"(^|\s){re.escape(flag)}(\s|=|$)", command) or flag not in help_text:
+            continue
+        parts.append(f"{flag} {value}".strip())
+    return " ".join(parts)
+
+
+def missing_libs(binary: Path, lib_path: str = "", run: Runner = subprocess.run) -> list[str]:
+    """Bibliotheken, die der Loader für `binary` nicht findet (leer = alles da oder ldd fehlt)."""
+    env = dict(os.environ)
+    if lib_path:
+        env["LD_LIBRARY_PATH"] = lib_path + (":" + env["LD_LIBRARY_PATH"] if env.get("LD_LIBRARY_PATH") else "")
+    try:
+        result = run(["ldd", str(binary)], capture_output=True, text=True, env=env)
+    except OSError:
+        return []
+    return sorted(set(re.findall(r"^\s*(\S+)\s+=>\s+not found", result.stdout or "", re.M)))
+
+
 def _client() -> httpx.Client:
     return httpx.Client(follow_redirects=True, timeout=httpx.Timeout(60, read=300), headers={"User-Agent": "orbwise"})
 

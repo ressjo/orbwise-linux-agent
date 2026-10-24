@@ -59,7 +59,7 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **Tools & Coding mode** | Switch top left: **Tools** (assistant – all tools, web, Paperless, mail, smart home, voice) or **Coding** – only files, shell, web search and memory (≈ 2k instead of ≈ 10k tokens of tool descriptions, so far more context for code), a developer prompt, no voice, wider chat. Files are changed with **edit_file** (replace a snippet instead of rewriting the file) and multi-step work gets a **task list** shown as a checklist in the answer. Each mode has its own chat history; a coding chat can have a **project folder** (shell starts there, relative paths refer to it). Pick a model while in a mode and Orbwise remembers it for that mode (e.g. a coder model) – switching then reloads it |
 | **Plan mode** | **Plan** button: Jarvis thinks it through, only looks things up (read-only) and presents a step-by-step plan – **RUN**, **CHANGE** (say what should be different) or **DISCARD**; also by voice ("yes") and via Telegram (`/plan …`) |
 | **Auto mode** | Drop-down button next to *Think*: **Off** – every shell command asks · **Read only** (default) – recognised read-only commands (`ls`, `df`, `docker ps`, `git status`, `nmcli device status`, `apt list --installed`, `journalctl` …) run without asking · **Read + edit files** – also create, write, copy and move files in your own home (`write_file`, `mkdir`, `touch`, `cp`, `mv`, `tee`, `>`), never with root, never deleting, never hidden files (shell start files, autostart, `~/.ssh`, `~/.config` …), launchers (`.desktop`, `~/bin`) or credentials · **Auto** – everything without root runs without asking (`python …`, `cd … && make`, `git commit`, `pip install --user`, `systemctl --user restart` …, plus `write_file`); still asking: deleting (`rm`, `find -delete`, `git clean` …), sudo, shutting down, sending over the network (`git push`, `ssh`, uploads), start-up files/autostart/`~/.ssh`/Orbwise's own config and credentials. Note: a script or `python -c` can do anything you may do – Auto only catches what is visible in the command. Plan mode and untrusted content (mail, screen) still ask. The rules live in code, so they cost no prompt context |
-| **Images and PDFs in the chat** | Attach images or PDFs to a message (paperclip button, paste with Ctrl+V or drag them onto the input field) – models that can see images (Bonsai 2 with its vision module, Ollama vision models) get them directly, others hand them to the local vision model via `look_at_image`; PDFs are read locally and their text goes along with the question |
+| **Images and PDFs in the chat** | Attach images or PDFs to a message (paperclip button, paste with Ctrl+V or drag them onto the input field) – models that can see images (llama.cpp models with a vision module, Ollama vision models) get them directly, others hand them to the local vision model via `look_at_image`; PDFs are read locally and their text goes along with the question |
 | **Screen & images** | "What's that error message?", "What does this window say?", "Help me with this dialog" – Orbwise takes a screenshot and asks a **local vision model** (e.g. Qwen2.5-VL); also for image files and photos sent from the phone. Nothing leaves your PC |
 | **Telegram** | Chat with Orbwise from your phone (text or voice messages, own chat in the sidebar), reminders also arrive on the phone, confirmations via ✅/❌ buttons, **files in both directions** (PDFs/photos → PC or Paperless, local files and Paperless documents → phone), `/stop` cancels what is running |
 | **Obsidian** | Search, read and ask questions about notes in your vault, create/append/update notes, open them in Obsidian |
@@ -180,14 +180,14 @@ Everything is stored as readable files in `~/.local/share/orbwise/memory/`:
 **How the context stays small – and fast:** Orbwise handles the context like Claude Code. Between two compactions
 the prompt **only grows at the end**: instructions, tools, earlier messages and the note in front of each of your
 questions (date and time, memories, the approved plan) stay byte for byte the same once they were sent. llama.cpp
-(Bonsai) and Ollama therefore reuse what they already processed and only read the new part – a slow graphics card does
+(llama-server) and Ollama therefore reuse what they already processed and only read the new part – a slow graphics card does
 not have to re-read the conversation for every question or tool step. The CONTEXT tile's tooltip shows how many tokens
 came from the cache.
 
 **Two stages – below 16k and from 16k:** how much room each part gets depends on the model's context window
 (`orbwise/context_plan.py`; the CONTEXT tile's tooltip shows the stage).
 
-| | below 16k (e.g. Bonsai with 8k): **lean mode** | from 16k |
+| | below 16k (e.g. 8k on an 8 GB card): **lean mode** | from 16k |
 |---|---|---|
 | Tools up front | 9 core tools (~1.5k tokens): shell, read/find/list files, web search, recall/remember, date_info, load_tools – everything else by keyword or `load_tools` | core groups (~4k tokens) plus matching groups; from ~48k all tools |
 | Big groups (Paperless, mail, calendar, system, notes, packages) | reading part first; the changing part (sort, apply, send, add events …) only when the request sounds like it | whole group |
@@ -293,13 +293,12 @@ everything from the other chats.
 
 **Adding models after installation:** open **Models** in the sidebar (or **Manage models …** on the model chip at the
 top) → **Add** and pick one of the presets (with the same fit marks and download progress; a running download can be
-cancelled there with **✕ CANCEL**). Models added this way – including Bonsai – can be deleted on the model page via
+cancelled there with **✕ CANCEL**). Models added this way can be deleted on the model page via
 **⋯ → Delete**, which also removes their files (models from `config.yaml` stay). Or run
 
 ```bash
 orbwise model add              # interactive list of presets for your GPU
 orbwise model add qwen3:14b    # or any model from ollama.com/library
-orbwise model add bonsai       # Bonsai 2 27B incl. its llama.cpp server (see below)
 orbwise model search qwen3.6 27b                  # search GGUF models on Hugging Face
 orbwise model search unsloth/Qwen3.6-27B-GGUF     # its quantizations with size and fit (✔ ~ ✘)
 orbwise model add https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/blob/main/Qwen3.6-27B-UD-Q4_K_XL.gguf
@@ -354,47 +353,32 @@ switch), **Load** on the models page, or run
 - `unload_ollama: true` evicts Ollama models from VRAM first, `embed_on_cpu: true` runs the memory embeddings on
   the CPU – useful with 8 GB of VRAM.
 
-**Bonsai 2 27B** (27B-class model in ~7 GB, runs on its own llama.cpp server from the PrismML fork) is set up
-automatically: pick it in the installer or run `orbwise model add bonsai`. Orbwise clones
-[Bonsai-demo](https://github.com/PrismML-Eng/Bonsai-demo) to `~/bonsai` (or `$ORBWISE_BONSAI_DIR`), runs its
-`setup.sh` (llama.cpp binaries for CUDA/ROCm + model download) and creates an activated profile with settings for
-your GPU – context size by VRAM, compressed KV cache and CPU embeddings on 8 GB cards, the ROCm override for
-RX 6600/6700/7600 – and a random `api_key`. On NVIDIA cards without a system CUDA toolkit the prebuilt
-llama-server lacks `libcudart`/`libcublas`; Orbwise then downloads NVIDIA's runtime packages from PyPI into
-`~/bonsai/cuda-libs` (no root, matched to your driver) and sets `LD_LIBRARY_PATH` in the profile. Running it again
-updates the checkout and repairs an existing setup (the `api_key` is kept); `orbwise doctor` shows missing libraries. **Bonsai 2 27B compact** (`orbwise model add bonsai-kompakt`) is the same model in the 1.75-bit `PTQ1_0` packing (`Ternary-Bonsai-2-27B-PTQ1_0.gguf`, 5.9 instead of 7.2 GB, in `~/bonsai/models/bonsai2-ptq1`): on 8 GB cards it gets 16k context instead of 8k – enough for Paperless & co. without lean mode – but reads prompts a little slower. Both variants can be installed side by side; deleting one keeps the other. In the web UI Bonsai is listed
-under **+ ADD MODEL** with a pointer to the terminal command, because the setup is interactive.
-
-The same profile written by hand, e.g. **Bonsai 2 27B on an RX 6650 XT (8 GB, ROCm)**:
+A hand-written profile for your own **llama-server** (models added in the web UI get one automatically):
 
 ```yaml
 llm:
-  active: bonsai
+  active: llama
   profiles:
     qwen:
       label: Qwen 3 8B
       model: qwen3:8b
-    bonsai:
-      label: Bonsai 27B
+    llama:
+      label: Qwen 27B (llama.cpp)
       backend: openai
       base_url: http://127.0.0.1:8080/v1
-      model: bonsai
+      model: qwen-27b
       api_key: "a-long-random-password"
-      embed_on_cpu: true
       unload_ollama: true
       server:
-        command: ~/bonsai/scripts/start_llama_server.sh -np 1 --api-key a-long-random-password
+        command: llama-server -m ~/models/qwen-27b-Q4_K_M.gguf -ngl 99 -c 32768 -np 1 --jinja --port 8080 --api-key a-long-random-password
         env:
           HSA_OVERRIDE_GFX_VERSION: "10.3.0"   # RX 6600/6650/6700 (gfx103x) → report as supported gfx1030
-          BONSAI_CTX: "16384"                 # context window (fall back to 8192 if VRAM runs out)
-          BONSAI_KV4: "1"                     # compressed KV cache
-          BONSAI_MMPROJ_CPU: "1"              # keep the vision module in RAM (Orbwise doesn't need it)
         startup_timeout: 240
 ```
 
 The `api_key` keeps websites in your browser from talking to the llama-server.
 
-**Small context windows** (below 16k, e.g. Bonsai with 8k – *lean mode*): Orbwise then sends only 9 core tools plus
+**Small context windows** (below 16k, e.g. 8k on an 8 GB card – *lean mode*): Orbwise then sends only 9 core tools plus
 the groups that match the request – weather only when you ask about the weather, power when you want to shut down,
 Home Assistant when you talk about lights or heating. Of big groups only the reading part comes first: "find my
 invoice" loads Paperless search/ask/read/open (~800 tokens instead of ~1,700), "sort the Paperless inbox" also the
@@ -413,14 +397,14 @@ How long the model reads before it answers depends mostly on how much of the pro
 activity panel shows it for every step ("1,240 tokens read in 4 s (+11,980 cached)") – after the first question in
 a chat only the new part should be read.
 
-**Bonsai 2 is a hybrid model** (attention plus recurrent layers): llama-server can only reuse an earlier prompt by
-restoring a saved checkpoint. Orbwise therefore starts the Bonsai launcher with `--ctx-checkpoints 32`, a prompt cache
+**Hybrid models** (attention plus recurrent layers, e.g. Qwen 3.5) can only reuse an earlier prompt by restoring a
+saved checkpoint. Orbwise therefore starts its llama-server with `--ctx-checkpoints 32`, a prompt cache
 in RAM (`--cache-ram`, 15 % of your RAM, at most 4 GB) and `--cache-idle-slots` – only the options your llama-server
 knows (checked with `--help`) and only those you did not set yourself. After hiding old results, a summary, a
 Telegram message or a chat switch, far less has to be read again. The start line in `~/.local/state/orbwise-llm.log`
 shows the full command; restored checkpoints appear in the same log.
 
-- **llama-server:** start it with **one slot** (`-np 1` – the Bonsai profile does that); with several slots requests
+- **llama-server:** start it with **one slot** (`-np 1` – Orbwise's profiles do that); with several slots requests
   can land in different caches, `orbwise doctor` points this out. Optionally `--cache-reuse 256` lets the server reuse
   matching blocks even after a change further up (e.g. when a tool group is added).
 - **Ollama:** `llm.keep_alive` (default `30m`) – after that Ollama unloads the model and the next question reads the
@@ -495,7 +479,7 @@ expanded under the answer and is never read aloud. It costs time (often 10–60 
 llama-server, **don't** pass `--reasoning-budget 0`, which disables reasoning server-side.
 
 The button's menu has levels: **Brief** (reasoning up to ~500 tokens), **Normal** (~2,000) and **Thorough**
-(unlimited). Models with real levels (gpt-oss) get `low`/`medium`/`high` directly. For all others (Qwen 3, Bonsai …)
+(unlimited). Models with real levels (gpt-oss) get `low`/`medium`/`high` directly. For all others (Qwen 3 …)
 the level is a budget: the request asks the model to keep it short, and if the reasoning gets longer anyway Orbwise
 stops it and lets the model continue the step without further thinking, with its thoughts so far (the prompt start
 stays cached). The activity shows "enough thinking – acting now".
@@ -580,7 +564,7 @@ land in `~/Bilder/Orbwise` (or `~/Pictures/Orbwise`); prompt and settings are st
   Q6 on 12 GB, Q8 from 20 GB), text encoder Qwen3-VL-8B (GGUF + mmproj for editing) and its VAE. The exact files are
   read from Hugging Face during setup and recorded in `~/orbwise-image/manifest.json`; your own build can replace
   `~/orbwise-image/bin/sd-server`.
-- **Graphics memory:** below 16 GB the language model (Bonsai's llama-server) is stopped before the first image –
+- **Graphics memory:** below 16 GB the language model (its llama-server) is stopped before the first image –
   both don't fit. As soon as Orbwise needs the language model again (a chat question, a model switch), when you
   leave the image view or after `image.idle_minutes` (10) without a new image, the image model is unloaded and the
   language model starts again (`image.unload_llm: auto | always | never`). On 8 GB the text encoder runs on the CPU
@@ -882,7 +866,7 @@ from the `amdgpu` driver.
 
 **Context in memory** shows how big the model's KV cache is and where it lives – green in VRAM, orange in RAM (slow) –
 plus a recommendation: "up to ~32k possible" when VRAM is free, or "better 12k" when parts already spill into RAM.
-For a llama-server started by Orbwise (Bonsai) the numbers come straight from its log; for Ollama they are estimated
+For a llama-server started by Orbwise the numbers come straight from its log; for Ollama they are estimated
 from the model architecture. **Models → Context window** changes the size per model (4k … 128k, each
 with its KV-cache size and a warning if it won't fit); Orbwise restarts the model server or makes Ollama reload the
 model and remembers the choice.
@@ -1055,7 +1039,7 @@ from their original sources, and their licenses apply:
 | Piper voices (e.g. `de_DE-thorsten-high`, `en_GB-alan-medium`) | voice | per voice – see its `MODEL_CARD` |
 | [openWakeWord](https://github.com/dscripka/openWakeWord) | wake word | code Apache-2.0 · pre-trained "hey_jarvis" model **CC BY-NC-SA 4.0 (non-commercial)** |
 | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) + Whisper models | speech recognition | MIT |
-| Language models via Ollama / Bonsai-demo (Qwen, Llama, Mistral, gpt-oss, Bonsai, …) | chat | per model – see its model card |
+| Language models via Ollama / llama.cpp (Qwen, Llama, Mistral, gpt-oss, …) | chat | per model – see its model card |
 | [ddgs](https://pypi.org/project/ddgs/), [trafilatura](https://github.com/adbar/trafilatura), [caldav](https://github.com/python-caldav/caldav) | web search, page text, calendar | MIT · Apache-2.0 · GPL-3.0-or-later OR Apache-2.0 |
 | [pypdf](https://github.com/py-pdf/pypdf) | reading attached PDFs | BSD-3-Clause |
 

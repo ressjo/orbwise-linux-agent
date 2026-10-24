@@ -182,8 +182,7 @@ fi
 say "$(t 'Sprachmodell wählen und laden (dauert beim ersten Mal)' 'Choosing and pulling the language model (takes a while the first time)')"
 for _ in {1..30}; do ollama list >/dev/null 2>&1 && break; sleep 1; done
 CHOICE_FILE="$(mktemp)"
-OLLAMA_MODEL=""   # Ollama-Chatmodell (leer, wenn nur Bonsai gewählt wurde)
-BONSAI=0
+OLLAMA_MODEL=""   # Ollama-Chatmodell
 choose_model() {  # Menü geht ins Terminal, die Wahl in $CHOICE_FILE
   if (( ASK )); then uv run orbwise model choose --vram "$GB" --out "$CHOICE_FILE"
   else uv run orbwise model choose --vram "$GB" --out "$CHOICE_FILE" </dev/null; fi
@@ -191,17 +190,7 @@ choose_model() {  # Menü geht ins Terminal, die Wahl in $CHOICE_FILE
 while true; do
   if [[ -z "$MODEL" ]]; then choose_model; MODEL="$(cat "$CHOICE_FILE")"; fi
   echo "→ $MODEL"
-  if [[ "$MODEL" == "bonsai" ]]; then
-    # Bonsai 2 27B: eigener llama-server (PrismML-Fork) – Repo, Binaries und Modell nach ~/bonsai, Profil aktiv
-    if uv run orbwise model add bonsai --yes; then
-      BONSAI=1
-      if (( ASK )) && ask_yes "Zusätzlich ein Ollama-Modell als schnelle Alternative installieren?" \
-                              "Also install an Ollama model as a fast alternative?" n; then
-        MODEL=""; continue
-      fi
-      break
-    fi
-  elif ollama pull "$MODEL"; then
+  if ollama pull "$MODEL"; then
     OLLAMA_MODEL="$MODEL"
     break
   fi
@@ -209,7 +198,7 @@ while true; do
   if (( ASK )); then MODEL=""; else exit 1; fi
 done
 rm -f "$CHOICE_FILE"
-ollama pull bge-m3   # Embeddings fürs Gedächtnis (auch bei Bonsai)
+ollama pull bge-m3   # Embeddings fürs Gedächtnis
 
 # ---------------------------------------------------------------- Voice
 if [[ "$LANG_CHOICE" == "en" ]]; then VOICE="en_GB-alan-medium"; VOICE_PATH="en/en_GB/alan/medium"
@@ -296,9 +285,6 @@ Update:   orbwise update
 Web UI:   http://localhost:8765
 Models:   orbwise model add        (download and switch to another model – also in the web UI: LLM menu)
 EOF
-if (( BONSAI )); then
-  echo "Bonsai:   set up in ~/bonsai – Orbwise starts its llama-server automatically (log: ~/.local/state/orbwise-llm.log)"
-fi
 if [[ -n "$BRAVE_KEY" ]]; then echo "Search:   Brave Search API"
 else echo "Search:   scraping result pages – for the official API without bot blocking set tools.brave_api_key"; fi
 cat <<EOF

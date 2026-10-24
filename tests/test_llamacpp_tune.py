@@ -80,7 +80,7 @@ def tunable_router(cfg, tmp_path):
 def test_tune_measures_both_builds_and_applies_the_batch(cfg, tmp_path):
     router = tunable_router(cfg, tmp_path)
     assert llamacpp_tune.uses_own_build(cfg, router.profiles["qwen-27b"].server.command)
-    assert not llamacpp_tune.uses_own_build(cfg, "/opt/bonsai/start_llama_server.sh")
+    assert not llamacpp_tune.uses_own_build(cfg, "/opt/other/start_server.sh")
     calls, said = [], []
 
     async def unload():

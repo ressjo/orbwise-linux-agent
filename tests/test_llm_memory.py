@@ -67,61 +67,58 @@ def test_ollama_memory_estimate():
 def test_context_setting_is_applied_and_remembered(tmp_path):
     cfg = LLMConfig(profiles={
         "qwen": ProfileConfig(model="qwen3:8b"),
-        "bonsai": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8080/v1", model="bonsai",
-                                server=ServerConfig(command="~/bonsai/start.sh -np 1", env={"BONSAI_CTX": "8192"})),
+        "eigen": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8080/v1", model="eigen",
+                               server=ServerConfig(command="~/llama/llama-server -m y.gguf -np 1")),
         "other": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8081/v1", model="x",
                                server=ServerConfig(command="llama-server -m x.gguf -c 4096 -np 1")),
     }, active="qwen")
     state = tmp_path / "state.json"
     router = LLMRouter(cfg, state_path=state)
-    run(router.set_context("bonsai", 16384))  # nicht aktiv: nur merken und Startbefehl anpassen
+    run(router.set_context("eigen", 16384))  # nicht aktiv: nur merken und Startbefehl anpassen
     run(router.set_context("other", 12288))
-    assert router.profiles["bonsai"].server.env["BONSAI_CTX"] == "16384"
+    assert router.profiles["eigen"].server.command == "~/llama/llama-server -m y.gguf -np 1 -c 16384"  # -c ergänzt
     assert router.profiles["other"].server.command == "llama-server -m x.gguf -c 12288 -np 1"
     run(router.set_context("qwen", 24576))  # aktiv (Ollama): neuer Client mit num_ctx
     assert router.client.cfg.num_ctx == 24576 and router.context_size == 24576
-    assert json.loads(state.read_text())["context"] == {"bonsai": 16384, "other": 12288, "qwen": 24576}
+    assert json.loads(state.read_text())["context"] == {"eigen": 16384, "other": 12288, "qwen": 24576}
     again = LLMRouter(cfg.model_copy(deep=True), state_path=state)  # nach Neustart wieder angewendet
-    assert again.profiles["bonsai"].server.env["BONSAI_CTX"] == "16384" and again.context_size == 24576
+    assert again.profiles["eigen"].server.command.endswith("-c 16384") and again.context_size == 24576
     assert {p["name"]: p["num_ctx"] for p in again.describe()}["other"] == 12288
 
 
 def test_kv_cache_level_is_applied_and_remembered(tmp_path, monkeypatch):
-    from orbwise import bonsai
+    from orbwise import llamacpp
     from orbwise.llm_memory import cache_type
-    monkeypatch.setattr(bonsai, "_server_help", lambda *a, **k: "-fa,   --flash-attn [on|off|auto]  set Flash Attention")
+    monkeypatch.setattr(llamacpp, "server_help", lambda *a, **k: "-fa,   --flash-attn [on|off|auto]  set Flash Attention")
     cfg = LLMConfig(profiles={
         "qwen": ProfileConfig(model="qwen3:8b"),
-        "bonsai": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8080/v1", model="bonsai",
-                                server=ServerConfig(command="~/bonsai/scripts/start_llama_server.sh -np 1",
-                                                    env={"BONSAI_CTX": "8192"})),
+        "eigen": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8080/v1", model="eigen",
+                               server=ServerConfig(command="~/llama/llama-server -m y.gguf -np 1")),
         "other": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8090/v1", model="x",
                                server=ServerConfig(command="llama-server -m x.gguf -c 4096 -ctk q4_0 -ctv q4_0 -np 1")),
     }, active="qwen")
     state = tmp_path / "state.json"
     router = LLMRouter(cfg, state_path=state)
     kv = {p["name"]: (p["kv"], p["kv_settable"]) for p in router.describe()}
-    assert kv == {"qwen": (None, False), "bonsai": ("f16", True), "other": ("q4_0", True)}
+    assert kv == {"qwen": (None, False), "eigen": ("f16", True), "other": ("q4_0", True)}
     run(router.set_kv("other", "q8_0"))
     assert router.profiles["other"].server.command == "llama-server -m x.gguf -c 4096 -np 1 -ctk q8_0 -ctv q8_0 -fa on"
     run(router.set_kv("other", "f16"))
     assert router.profiles["other"].server.command == "llama-server -m x.gguf -c 4096 -np 1 -fa on"
-    run(router.set_kv("bonsai", "q4_0"))  # Bonsai-Starter: über seine eigene Einstellung
-    assert router.profiles["bonsai"].server.env["BONSAI_KV4"] == "1" and "-ctk" not in router.profiles["bonsai"].server.command
-    run(router.set_kv("bonsai", "q8_0"))
-    b = router.profiles["bonsai"].server
-    assert "BONSAI_KV4" not in b.env and b.command.endswith("-ctk q8_0 -ctv q8_0 -fa on") and cache_type(b.command, b.env) == "q8_0"
+    run(router.set_kv("eigen", "q8_0"))
+    b = router.profiles["eigen"].server
+    assert b.command.endswith("-ctk q8_0 -ctv q8_0 -fa on") and cache_type(b.command, b.env) == "q8_0"
     with pytest.raises(LLMError):
         run(router.set_kv("qwen", "q8_0"))  # Ollama: gilt für den ganzen Dienst
     with pytest.raises(LLMError):
         run(router.set_kv("other", "q2"))
-    assert json.loads(state.read_text())["kv_cache"] == {"other": "f16", "bonsai": "q8_0"}
+    assert json.loads(state.read_text())["kv_cache"] == {"other": "f16", "eigen": "q8_0"}
     again = LLMRouter(cfg.model_copy(deep=True), state_path=state)  # nach Neustart wieder angewendet
-    assert {p["name"]: p["kv"] for p in again.describe()}["bonsai"] == "q8_0"
-    monkeypatch.setattr(bonsai, "_server_help", lambda *a, **k: "-fa,   --flash-attn   enable Flash Attention")
+    assert {p["name"]: p["kv"] for p in again.describe()}["eigen"] == "q8_0"
+    monkeypatch.setattr(llamacpp, "server_help", lambda *a, **k: "-fa,   --flash-attn   enable Flash Attention")
     run(again.set_kv("other", "q4_0"))  # älterer Build: -fa ohne Wert
     assert again.profiles["other"].server.command == "llama-server -m x.gguf -c 4096 -np 1 -ctk q4_0 -ctv q4_0 -fa"
-    assert cache_type("x", {"BONSAI_KV4": "1"}) == "q4_0" and cache_type("x --cache-type-v q8_0", {}) == "q8_0"
+    assert cache_type("x", {}) == "f16" and cache_type("x --cache-type-v q8_0", {}) == "q8_0"
 
 
 def test_kv_api(cfg, monkeypatch, tmp_path):
@@ -188,12 +185,12 @@ def test_coding_has_its_own_window(tmp_path):
 
 
 def test_kv_levels_come_from_the_server(tmp_path, monkeypatch):
-    from orbwise import bonsai
+    from orbwise import llamacpp
     from orbwise.llm_router import kv_types
     fork = ("-ctk,  --cache-type-k TYPE        KV cache data type for K\n"
             "                                    allowed values: f32, f16, bf16, q8_0, q4_0, q4_1, q2_0, tq3_0\n"
             "                                    (default: f16)\n-fa, --flash-attn [on|off|auto]\n")
-    monkeypatch.setattr(bonsai, "_server_help", lambda *a, **k: fork)
+    monkeypatch.setattr(llamacpp, "server_help", lambda *a, **k: fork)
     assert kv_types("llama-server -m x", {}) == ["f16", "q8_0", "q4_0", "q2_0", "tq3_0"]
     cfg = LLMConfig(profiles={"q": ProfileConfig(model="qwen3:8b"),
                               "x": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8090/v1", model="x",
@@ -206,9 +203,9 @@ def test_kv_levels_come_from_the_server(tmp_path, monkeypatch):
     with pytest.raises(LLMError):
         run(router.set_kv("x", "q5_0"))  # kann der Server, bietet Orbwise aber nicht an
     official = fork.replace(", q2_0, tq3_0", "")
-    monkeypatch.setattr(bonsai, "_server_help", lambda *a, **k: official)
+    monkeypatch.setattr(llamacpp, "server_help", lambda *a, **k: official)
     assert kv_types("llama-server -m x", {}) == ["f16", "q8_0", "q4_0"]
-    monkeypatch.setattr(bonsai, "_server_help", lambda *a, **k: "")
+    monkeypatch.setattr(llamacpp, "server_help", lambda *a, **k: "")
     assert kv_types("llama-server -m x", {}) == ["f16", "q8_0", "q4_0"]  # Hilfe unbekannt: die drei
 
 
@@ -238,13 +235,13 @@ def write_gguf(path, meta: dict, vocab: int = 50):
 
 def test_estimate_from_gguf_with_compressed_cache(tmp_path):
     from orbwise.llm_memory import cache_bytes, estimate_from_gguf, gguf_metadata
-    model = tmp_path / "bonsai.gguf"
+    model = tmp_path / "qwen.gguf"
     write_gguf(model, {"qwen3.block_count": 48, "qwen3.attention.head_count": 40, "qwen3.attention.head_count_kv": 8,
                        "qwen3.attention.key_length": 128, "qwen3.attention.value_length": 128,
                        "qwen3.context_length": 32768})
     assert gguf_metadata(str(model))["qwen3.block_count"] == 48
-    assert cache_bytes("x -ctk q8_0 -ctv q8_0", {}) == 34 / 32 and cache_bytes("x", {"BONSAI_KV4": "1"}) == 18 / 32
-    est = estimate_from_gguf(str(model), 16384, "start.sh -np 1", {"BONSAI_KV4": "1"})
+    assert cache_bytes("x -ctk q8_0 -ctv q8_0", {}) == 34 / 32 and cache_bytes("x -ctk q4_0 -ctv q4_0", {}) == 18 / 32
+    est = estimate_from_gguf(str(model), 16384, "llama-server -np 1 -ctk q4_0 -ctv q4_0", {})
     assert est["kv_per_token"] == int(48 * 8 * 256 * 18 / 32) and est["kv_ram"] == 0 and est["ctx_train"] == 32768
     assert estimate_from_gguf(str(model), 16384, "llama-server -nkvo")["kv_vram"] == 0  # Cache bewusst im RAM
     assert estimate_from_gguf(str(tmp_path / "fehlt.gguf"), 16384) is None
@@ -255,9 +252,9 @@ def test_llama_server_memory_falls_back_and_explains(tmp_path, monkeypatch):
     model = tmp_path / "m.gguf"
     write_gguf(model, {"llama.block_count": 32, "llama.attention.head_count": 32,
                        "llama.attention.head_count_kv": 8, "llama.embedding_length": 4096})
-    cfg = LLMConfig(profiles={"bonsai": ProfileConfig(
-        backend="openai", base_url="http://127.0.0.1:8080/v1", model="bonsai", num_ctx=8192,
-        server=ServerConfig(command="start.sh", env={"BONSAI_CTX": "8192"}))}, active="bonsai")
+    cfg = LLMConfig(profiles={"eigen": ProfileConfig(
+        backend="openai", base_url="http://127.0.0.1:8080/v1", model="eigen", num_ctx=8192,
+        server=ServerConfig(command="llama-server -m m.gguf -c 8192"))}, active="eigen")
     router = LLMRouter(cfg)
     # älterer Start mit Angaben, letzter Start ohne: nicht die alten Zahlen nehmen
     (tmp_path / "orbwise-llm.log").write_text("===== Starte: alt\n" + LOG + "\n===== Starte: neu\nserver listening\n")
@@ -294,13 +291,13 @@ def test_new_context_restarts_a_server_that_ran_before_orbwise(tmp_path, monkeyp
     command = f"{sys.executable} {fake} {port} -c 8192"
     foreign = subprocess.Popen(command.split())  # „aus einer früheren Sitzung“
     try:
-        cfg = LLMConfig(profiles={"bonsai": ProfileConfig(
-            backend="openai", base_url=f"http://127.0.0.1:{port}/v1", model="bonsai",
-            server=ServerConfig(command=command, startup_timeout=20))}, active="bonsai")
+        cfg = LLMConfig(profiles={"eigen": ProfileConfig(
+            backend="openai", base_url=f"http://127.0.0.1:{port}/v1", model="eigen",
+            server=ServerConfig(command=command, startup_timeout=20))}, active="eigen")
         router = LLMRouter(cfg, state_path=tmp_path / "state.json")
         run(router.start())
         assert router.context_size == 8192 and foreign.pid in listening_pids(port)
-        run(router.set_context("bonsai", 16384))
+        run(router.set_context("eigen", 16384))
         assert router.context_size == 16384  # neu gestartet mit der neuen Größe
         assert foreign.wait(timeout=5) is not None  # der alte Server ist beendet
     finally:
@@ -309,17 +306,17 @@ def test_new_context_restarts_a_server_that_ran_before_orbwise(tmp_path, monkeyp
 
 
 def test_hybrid_models_only_count_attention_layers(tmp_path):
-    """Bonsai 2 (Qwen 3.5): nur jede 4. Schicht hat einen KV-Cache – vorher zeigte die Anzeige bei 64k 4,5 GB statt
+    """Hybrid-Modelle (Qwen 3.5): nur jede 4. Schicht hat einen KV-Cache – vorher zeigte die Anzeige bei 64k 4,5 GB statt
     ~1,2 GB und warnte „zu groß“."""
     import struct
 
     from orbwise.llm_memory import estimate_from_gguf, gguf_metadata, kv_per_token_from_info
     base = {"qwen35.block_count": 64, "qwen35.attention.head_count": 24, "qwen35.attention.head_count_kv": 4,
             "qwen35.attention.key_length": 256, "qwen35.attention.value_length": 256}
-    model = tmp_path / "bonsai2.gguf"
+    model = tmp_path / "hybrid.gguf"
     write_gguf(model, {**base, "qwen35.full_attention_interval": 4})
-    est = estimate_from_gguf(str(model), 65536, "start_llama_server.sh", {"BONSAI_KV4": "1"})
-    assert est["kv_per_token"] == int(16 * 4 * 512 * 18 / 32)  # 18 KiB pro Token wie in der Bonsai-Doku
+    est = estimate_from_gguf(str(model), 65536, "llama-server -ctk q4_0 -ctv q4_0", {})
+    assert est["kv_per_token"] == int(16 * 4 * 512 * 18 / 32)  # 18 KiB pro Token: nur jede 4. Schicht hat Attention
     assert 1.0e9 < est["kv_vram"] < 1.3e9
 
     # je Schicht angegeben (0 = rekurrente Schicht)

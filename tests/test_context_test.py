@@ -22,8 +22,8 @@ class Server:
                  kv_ram=0, remembers=True, flash=None):
         self.context_size = window
         self.window = reported or window
-        self.profile = ProfileConfig(backend="openai", base_url="http://x/v1", model="bonsai", num_ctx=window)
-        self.active = "bonsai"
+        self.profile = ProfileConfig(backend="openai", base_url="http://x/v1", model="llama", num_ctx=window)
+        self.active = "llama"
         self.client = self
         self.cache, self.truncate, self.overflow_error = cache, truncate, overflow_error
         self.kv_ram, self.remembers, self.flash = kv_ram, remembers, flash

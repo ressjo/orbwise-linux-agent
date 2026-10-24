@@ -62,7 +62,7 @@ def test_token_estimate_learns_from_server(cfg, memory, llm):
     assert agent.token_ratio() >= 0.5 and agent.context_budget() > base
     agent.learn_tokens(100, 5000)  # zu kleine Stichprobe → ignoriert
     assert agent.token_ratio() >= 0.5
-    for _ in range(6):  # Gemeldet (Bonsai): Server las 21k, die Anzeige blieb bei ~7k (Faktor war auf 1,3 begrenzt)
+    for _ in range(6):  # Gemeldet (Llama): Server las 21k, die Anzeige blieb bei ~7k (Faktor war auf 1,3 begrenzt)
         agent.learn_tokens(7000, 21000)
     assert agent.token_ratio() > 2.8
 
@@ -86,7 +86,7 @@ def test_context_event_reports_cache_and_condensed(cfg, memory, llm):
             yield ev
 
     llm.chat_stream = with_cache
-    memory.conversation.running_summary = "- Nutzer richtet Bonsai ein"
+    memory.conversation.running_summary = "- Nutzer richtet Llama ein"
     run(agent.run("Wie geht's?", emit, confirm))
     ctx = [e for e in events if e["type"] == "context"][-1]
     assert ctx["real"] == 900 and ctx["cached"] == 850 and ctx["summarized"] is True

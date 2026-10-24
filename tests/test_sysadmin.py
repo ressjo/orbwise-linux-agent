@@ -117,7 +117,7 @@ def test_small_context_sends_only_relevant_tool_groups(cfg, memory):
     from orbwise.config import ProfileConfig
 
     class Small:
-        profile = ProfileConfig(backend="openai", base_url="http://x/v1", model="bonsai", num_ctx=8192)
+        profile = ProfileConfig(backend="openai", base_url="http://x/v1", model="llama", num_ctx=8192)
         context_size = 8192
         sent = []
 

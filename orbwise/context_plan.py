@@ -1,6 +1,6 @@
 """Kontext-Stufen: Wie viel Platz bekommt was im Prompt – abhängig von der Größe des Kontextfensters.
 
-Unter 16k Token (z. B. Bonsai mit 8k auf einer 8-GB-Karte) wird gespart: wenige Werkzeuge vorab (der Rest kommt per
+Unter 16k Token (z. B. 8k auf einer 8-GB-Karte) wird gespart: wenige Werkzeuge vorab (der Rest kommt per
 Stichwort oder load_tools), kürzere Werkzeug-Ergebnisse, weniger Erinnerungen und Fakten, kurze Zusammenfassungen.
 Ab 16k bleibt für alles mehr Raum. In beiden Stufen werden alte Werkzeug-Ergebnisse ausgeblendet, bevor
 zusammengefasst wird (wie Claude Code) – das kostet keinen Modellaufruf.

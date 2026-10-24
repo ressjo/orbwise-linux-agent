@@ -383,7 +383,7 @@ class Agent:
 
     def context_budget(self) -> int:
         """Prompt-Budget: Kontextfenster des aktiven Modells (optional begrenzt durch context_budget_tokens)
-        (abzüglich Platz für die Antwort) – z. B. Bonsai mit 8192 Token."""
+        (abzüglich Platz für die Antwort) – z. B. 8192 Token auf einer kleinen Karte."""
         budget = self.model_window() - self.answer_reserve()
         if self.cfg.memory.context_budget_tokens:
             budget = min(budget, self.cfg.memory.context_budget_tokens)
@@ -517,7 +517,7 @@ class Agent:
 
     def _all_tools_quick(self, tool_tokens: int) -> bool:
         """Dürfen alle Werkzeuge mitgehen? Nur, wenn ihr Einlesen kurz ist: Der Prompt-Anfang muss nach jedem Start,
-        Modellwechsel und jeder Komprimierung neu eingelesen werden – bei ~140 Token/s (Bonsai auf 8 GB) kosten 16k
+        Modellwechsel und jeder Komprimierung neu eingelesen werden – bei ~140 Token/s (27B auf 8 GB) kosten 16k
         Token Werkzeugbeschreibungen über 2 Minuten, auf einer schnellen Karte 5 s. Unbekannte Geschwindigkeit:
         alle (wird beim ersten Einlesen gelernt und gemerkt). Etwas Abstand zwischen An und Aus, damit die Auswahl
         nicht hin und her springt (jeder Wechsel kostet ein Neueinlesen)."""

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import random
-import re
 import time
 import uuid
 from typing import Awaitable, Callable
@@ -58,17 +57,6 @@ def _num(n) -> str:
 def _dec(x: float, digits: int = 2) -> str:
     text = f"{x:.{digits}f}"
     return T(text.replace(".", ","), text)
-
-
-def _start_line() -> str:
-    """Startbefehl des zuletzt von Orbwise gestarteten llama-servers (aus seinem Log)."""
-    from .llm_router import _log_path
-    try:
-        text = _log_path().read_text(errors="replace")[-200_000:]
-    except OSError:
-        return ""
-    found = re.findall(r"===== Starte: (.*)", text)
-    return found[-1] if found else ""
 
 
 class ContextTest:
@@ -153,9 +141,9 @@ class ContextTest:
         elif configured and server != configured:
             self.checks["window"] = _check("fail", "window", title, T(
                 f"Der Server läuft mit {_num(server)} Token, eingestellt sind {_num(configured)}. Kontextfenster in "
-                "den Einstellungen noch einmal setzen (startet den Server neu) bzw. -c/BONSAI_CTX im Startbefehl prüfen.",
+                "den Einstellungen noch einmal setzen (startet den Server neu) bzw. -c im Startbefehl prüfen.",
                 f"The server runs with {_num(server)} tokens but {_num(configured)} are configured. Set the context "
-                "window again in the settings (restarts the server) or check -c/BONSAI_CTX in the start command."))
+                "window again in the settings (restarts the server) or check -c in the start command."))
         elif server != window:
             self.checks["window"] = _check("fail", "window", title, T(
                 f"Der Server hat {_num(server)} Token, Orbwise rechnet aber mit {_num(window)}.",
@@ -268,12 +256,6 @@ class ContextTest:
         if not self.llama:
             return T(" Ollama: Wechselt num_ctx oder wird das Modell entladen, ist der Cache weg.",
                      " Ollama: changing num_ctx or unloading the model clears the cache.")
-        line = _start_line() if getattr(self.profile, "server", None) else ""
-        if line and "--ctx-checkpoints" not in line and "bonsai" in line.lower():
-            return T(" Bonsai 2 ist ein Hybrid-Modell und braucht dafür --ctx-checkpoints – der llama-server-Build "
-                     "kennt die Option nicht (neuer bauen: orbwise model add bonsai).",
-                     " Bonsai 2 is a hybrid model and needs --ctx-checkpoints – this llama-server build does not "
-                     "know the option (rebuild: orbwise model add bonsai).")
         return T(" Startbefehl prüfen (cache_prompt, --cache-reuse, bei Hybrid-Modellen --ctx-checkpoints).",
                  " Check the start command (cache_prompt, --cache-reuse, --ctx-checkpoints for hybrid models).")
 

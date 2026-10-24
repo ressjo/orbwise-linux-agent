@@ -1,9 +1,10 @@
 """Aufräumen nach entfernten Modell-Engines.
 
-Strata (eigene MoE-Engine für Qwen3.8-Flash-Next) gibt es in Orbwise nicht mehr. Wer es angelegt hatte, bekommt beim
-ersten Start danach: Profile raus aus state.json (samt ihren Einstellungen), und im Hintergrund einen noch laufenden
-Strata-Server stoppen, das Modell (~/models/strata/<variante>) und die von Orbwise installierte Engine
-(~/.local/share/strata) löschen. Läuft nur, solange es etwas zu tun gibt.
+Strata (eigene MoE-Engine für Qwen3.8-Flash-Next) und Bonsai (PrismML-Fork von llama.cpp mit eigenem Setup) gibt es
+in Orbwise nicht mehr. Wer sie angelegt hatte, bekommt beim ersten Start danach: Profile raus aus state.json (samt
+ihren Einstellungen); bei Strata außerdem im Hintergrund einen noch laufenden Strata-Server stoppen, das Modell
+(~/models/strata/<variante>) und die von Orbwise installierte Engine (~/.local/share/strata) löschen. ~/bonsai bleibt
+liegen (kann von Hand gelöscht werden). Läuft nur, solange es etwas zu tun gibt.
 """
 
 from __future__ import annotations
@@ -33,25 +34,26 @@ def strata_data_dir() -> Path:
     return Path(base)
 
 
-def _retired(name: str, raw: dict, local: dict) -> bool:
-    command = str(((raw or {}).get("server") or {}).get("command") or "")
-    return bool(_STRATA.search(command)) or (local.get(name) or {}).get("engine") == "strata"
+def _command(raw: dict) -> str:
+    return str(((raw or {}).get("server") or {}).get("command") or "")
 
 
 def clean_state(state_path: Path) -> dict | None:
-    """Profile entfernter Engines aus state.json nehmen → {"profiles": [...], "strata_dirs": [...]}, None wenn nichts
-    zu tun war."""
+    """Profile entfernter Engines aus state.json nehmen → {"profiles", "strata", "strata_dirs"}, None wenn nichts zu
+    tun war."""
     try:
         data = json.loads(state_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     added = data.get("added_profiles") or {}
     local = data.get("local_models") or {}
-    names = [n for n, raw in added.items() if _retired(n, raw, local)]
-    names += [n for n, rec in local.items() if rec.get("engine") == "strata" and n not in names]
+    strata = [n for n, raw in added.items() if _STRATA.search(_command(raw)) or (local.get(n) or {}).get("engine") == "strata"]
+    strata += [n for n, rec in local.items() if rec.get("engine") == "strata" and n not in strata]
+    bonsai = [n for n, raw in added.items() if n in ("bonsai", "bonsai-kompakt") and "start_llama_server.sh" in _command(raw)]
+    names = strata + bonsai
     if not names and "strata_reserve" not in data:
         return None
-    dirs = [str(local[n]["dir"]) for n in names if (local.get(n) or {}).get("dir")]
+    dirs = [str(local[n]["dir"]) for n in strata if (local.get(n) or {}).get("dir")]
     for n in names:
         added.pop(n, None)
         local.pop(n, None)
@@ -63,7 +65,7 @@ def clean_state(state_path: Path) -> dict | None:
         data.pop("active_profile")
         data.pop("unloaded", None)
     state_path.write_text(json.dumps(data, indent=1), encoding="utf-8")
-    return {"profiles": names, "strata_dirs": dirs}
+    return {"profiles": names, "strata": strata, "strata_dirs": dirs}
 
 
 def _size(path: Path) -> int:

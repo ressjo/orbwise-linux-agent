@@ -29,33 +29,30 @@ llm:
   # Optional: several model profiles. Switch by clicking the LLM pill or with `orbwise model <name>`.
   # Models added in the web UI (Hugging Face, ~/models) need no entry here.
   # Without profiles there is a single profile "standard" built from the values above.
-  # active: bonsai
+  # active: llama
   # profiles:
   #   qwen:
   #     backend: ollama
   #     model: qwen3:8b
-  #   bonsai:                          # e.g. Bonsai 2 27B via llama-server on an 8 GB AMD card
-  #     label: Bonsai 27B
+  #   llama:                           # e.g. your own llama-server (models added in the web UI get one automatically)
+  #     label: Qwen 27B (llama.cpp)
   #     backend: openai                # any OpenAI-compatible server (llama-server, vLLM, LM Studio …)
   #     base_url: http://127.0.0.1:8080/v1
-  #     model: bonsai
+  #     model: qwen-27b
   #     api_key: "<random-password>"   # make up a long random password – the same value as --api-key below
-  #     num_ctx: 16384                 # optional – Orbwise reads the real size from the server
+  #     num_ctx: 32768                 # optional – Orbwise reads the real size from the server
   #     embed_on_cpu: true             # run memory embeddings on the CPU (VRAM is scarce)
   #     unload_ollama: true            # unload Ollama models from VRAM first
   #     # temperature: 0.6 · think: false – also per profile; empty = the values of the llm block
-  #     # sampling:                    # per mode; easier: Settings → Models → Sampling (e.g. the Qwen preset)
+  #     # sampling:                    # per mode; easier: Models → Sampling (e.g. the Qwen preset)
   #     #   think: {temperature: 1.0, top_p: 0.95, top_k: 20, min_p: 0.0, presence_penalty: 0.0}
   #     #   fast:  {temperature: 0.7, top_p: 0.8, top_k: 20, min_p: 0.0, presence_penalty: 1.5}
   #     server:                        # Orbwise starts/stops the server itself
-  #       command: ~/bonsai/scripts/start_llama_server.sh -np 1 --api-key <random-password>
+  #       command: llama-server -m ~/models/qwen-27b-Q4_K_M.gguf -ngl 99 -c 32768 -np 1 --jinja --port 8080 --api-key <random-password>
   #       env:
   #         HSA_OVERRIDE_GFX_VERSION: "10.3.0"   # RX 6600/6650/6700 (gfx103x) → report as gfx1030
-  #         BONSAI_CTX: "16384"          # context window; fall back to 8192 if the server runs out of VRAM
-  #         BONSAI_KV4: "1"
-  #         BONSAI_MMPROJ_CPU: "1"
   #       startup_timeout: 240
-  #       # cwd: ~/bonsai            # working directory for the command
+  #       # cwd: ~                   # working directory for the command
   #       # health_url: ""           # default: <base_url without /v1>/health
 
 memory:

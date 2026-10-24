@@ -33,16 +33,16 @@ def test_legacy_config_becomes_standard_profile():
 
 
 def test_profiles_config():
-    cfg = Config.model_validate({"llm": {"active": "bonsai", "profiles": {
+    cfg = Config.model_validate({"llm": {"active": "llama", "profiles": {
         "qwen": {"model": "qwen3:8b"},
-        "bonsai": {"backend": "openai", "base_url": "http://127.0.0.1:8080/v1/", "model": "bonsai",
+        "llama": {"backend": "openai", "base_url": "http://127.0.0.1:8080/v1/", "model": "llama",
                    "num_ctx": 8192, "embed_on_cpu": True,
-                   "server": {"command": "~/bonsai/scripts/start_llama_server.sh -np 1",
+                   "server": {"command": "~/llama/scripts/start_llama_server.sh -np 1",
                               "env": {"HSA_OVERRIDE_GFX_VERSION": "10.3.0"}}}}}})
     ps = cfg.llm.resolved_profiles()
     assert ps["qwen"].base_url == "http://localhost:11434"
-    assert ps["bonsai"].base_url == "http://127.0.0.1:8080/v1" and ps["bonsai"].num_ctx == 8192
-    assert ps["bonsai"].server.env["HSA_OVERRIDE_GFX_VERSION"] == "10.3.0"
+    assert ps["llama"].base_url == "http://127.0.0.1:8080/v1" and ps["llama"].num_ctx == 8192
+    assert ps["llama"].server.env["HSA_OVERRIDE_GFX_VERSION"] == "10.3.0"
     with pytest.raises(ValueError):
         Config.model_validate({"llm": {"profiles": {"x": {"backend": "magic"}}}})
 
@@ -82,7 +82,7 @@ def sse(*chunks):
 
 
 def client_with(handler, **profile) -> OpenAICompatLLM:
-    p = ProfileConfig(backend="openai", base_url="http://llm/v1", model="bonsai", temperature=0.6, think=False,
+    p = ProfileConfig(backend="openai", base_url="http://llm/v1", model="llama", temperature=0.6, think=False,
                       **profile)
     return OpenAICompatLLM(p, transport=httpx.MockTransport(handler))
 
@@ -165,10 +165,10 @@ def test_errors():
 # ---------------------------------------------------------------- Router
 
 def make_llm_cfg(port: int, server: dict | None = None) -> LLMConfig:
-    bonsai = {"backend": "openai", "base_url": f"http://127.0.0.1:{port}/v1", "model": "bonsai", "embed_on_cpu": True}
+    llama = {"backend": "openai", "base_url": f"http://127.0.0.1:{port}/v1", "model": "llama", "embed_on_cpu": True}
     if server:
-        bonsai["server"] = server
-    return LLMConfig.model_validate({"active": "qwen", "profiles": {"qwen": {"model": "qwen3:8b"}, "bonsai": bonsai}})
+        llama["server"] = server
+    return LLMConfig.model_validate({"active": "qwen", "profiles": {"qwen": {"model": "qwen3:8b"}, "llama": llama}})
 
 
 def ollama_mock(calls):
@@ -192,12 +192,12 @@ def test_router_embed_on_cpu_and_state(tmp_path):
     run(router.embed(["a"]))
     assert "options" not in calls[-1][1]
     # Umschalten ohne verwalteten Server (Server „läuft extern“ – hier nicht nötig)
-    router.active = "bonsai"
+    router.active = "llama"
     router._build_client()
     run(router.embed(["a"]))
     assert calls[-1][1]["options"] == {"num_gpu": 0}
     router._write_state()
-    assert LLMRouter(cfg, state_path=tmp_path / "state.json").active == "bonsai"
+    assert LLMRouter(cfg, state_path=tmp_path / "state.json").active == "llama"
 
 
 def test_unknown_profile(tmp_path):
@@ -251,7 +251,7 @@ def test_switch_starts_server_unloads_ollama_and_agent_works(cfg, llm, memory, t
     monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
     port = free_port()
     llm_cfg = make_llm_cfg(port, server_cfg(port))
-    llm_cfg.profiles["bonsai"].unload_ollama = True
+    llm_cfg.profiles["llama"].unload_ollama = True
     calls = []
     router = LLMRouter(llm_cfg, state_path=tmp_path / "state.json")
     # Ollama-Aufrufe abfangen, echte HTTP-Aufrufe zum Fake-llama-server zulassen
@@ -259,8 +259,8 @@ def test_switch_starts_server_unloads_ollama_and_agent_works(cfg, llm, memory, t
     cfg.llm = llm_cfg
 
     async def scenario():
-        await router.activate("bonsai")
-        assert router.active == "bonsai" and router.servers["bonsai"].running()
+        await router.activate("llama")
+        assert router.active == "llama" and router.servers["llama"].running()
         assert router.context_size == 12288  # vom Server (/props) übernommen
         assert ("/api/generate", {"model": "qwen3:8b", "keep_alive": 0}) in calls
         events = []
@@ -272,20 +272,20 @@ def test_switch_starts_server_unloads_ollama_and_agent_works(cfg, llm, memory, t
             return True
 
         agent = Agent(cfg, router, memory)
-        answer = await agent.run("Hallo Bonsai", emit, confirm)
+        answer = await agent.run("Hallo Llama", emit, confirm)
         stats = [e for e in events if e["type"] == "llm_stats"]
         # Tool-Aufruf über den Fake-Server: list_updates → Ergebnis → Antwort
         answer2 = await agent.run("Mach ein Systemupdate-Check", emit, confirm)
         tool_calls = [e["name"] for e in events if e["type"] == "tool_call"]
         await router.activate("qwen")
-        stopped = not router.servers["bonsai"].running()
+        stopped = not router.servers["llama"].running()
         await router.close()
         return answer, stats, answer2, tool_calls, stopped
 
     answer, stats, answer2, tool_calls, stopped = run(scenario())
-    assert answer.startswith("Bonsai meldet: Hallo Bonsai")
+    assert answer.startswith("Llama meldet: Hallo Llama")
     assert stats and stats[0]["tps"] == 19.2
-    assert tool_calls == ["list_updates"] and answer2.startswith("Bonsai meldet")
+    assert tool_calls == ["list_updates"] and answer2.startswith("Llama meldet")
     assert stopped
     assert json.loads((tmp_path / "state.json").read_text())["active_profile"] == "qwen"
 
@@ -295,12 +295,12 @@ def test_commented_example_profile_is_valid():
 
     import yaml
     text = (HERE.parent / "orbwise" / "config.example.yaml").read_text()
-    block = text[text.index("  # active: bonsai"):text.index("memory:")]
+    block = text[text.index("  # active: llama"):text.index("memory:")]
     enabled = text.replace(block, re.sub(r"^  # ?", "  ", block, flags=re.M))
     cfg = Config.model_validate(yaml.safe_load(enabled))
     ps = cfg.llm.resolved_profiles()
-    assert cfg.llm.active == "bonsai" and ps["bonsai"].backend == "openai" and ps["bonsai"].server
-    assert "--api-key" in ps["bonsai"].server.command and ps["bonsai"].api_key
+    assert cfg.llm.active == "llama" and ps["llama"].backend == "openai" and ps["llama"].server
+    assert "--api-key" in ps["llama"].server.command and ps["llama"].api_key
 
 
 def test_stream_reasoning_not_part_of_answer(caplog):
