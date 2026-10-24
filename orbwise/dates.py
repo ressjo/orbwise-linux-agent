@@ -167,8 +167,6 @@ def _shift(today: date, n: int, unit: str) -> date:
 
 
 # ---------------------------------------------------------------- Feiertage (Deutschland)
-STATES = {"BW", "BY", "BE", "BB", "HB", "HH", "HE", "MV", "NI", "NW", "RP", "SL", "SN", "ST", "SH", "TH"}
-
 
 def easter(year: int) -> date:
     """Ostersonntag (Gauß/Anonymous Gregorian algorithm)."""

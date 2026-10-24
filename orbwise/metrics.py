@@ -12,7 +12,6 @@ from pathlib import Path
 
 from .tools.system import _meminfo
 
-GB = 1024 ** 3
 DRM_ROOT = Path("/sys/class/drm")
 PROC_STAT = Path("/proc/stat")
 

@@ -18,6 +18,11 @@ All notable changes to this project are documented here. The format follows
   Ollama models; new Hugging Face downloads always run on llama.cpp.
 
 ### Changed
+- **Tidier model page:** a *Performance* section (prompt speed, find the fastest setting) follows the context window;
+  KV cache, manual batch size and speculative decoding moved under a collapsed *Advanced* section (only for
+  llama.cpp models where they apply), and the explanations show one sentence with **More** for the rest.
+- **Code structure:** the model endpoints moved from `server.py` into `api_models.py`, with one helper for "restart the
+  loaded model with a new option" instead of four copies; unused constants removed.
 - **state.json is written safely:** all model profiles and settings go through one module that writes atomically
   (temporary file + rename) under a lock – a crash while saving can no longer leave a half-written file, and two
   changes at the same time (a download finishing while you change a setting) no longer overwrite each other.

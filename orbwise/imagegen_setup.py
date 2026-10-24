@@ -24,7 +24,6 @@ import httpx
 
 from .lang import T
 
-NAME = "qwen-image"
 SD_REPO = "leejet/stable-diffusion.cpp"
 DIFFUSION_REPO = "leejet/Qwen-Image-2.1-GGUF"
 TEXT_REPO = "Qwen/Qwen3-VL-8B-Instruct-GGUF"

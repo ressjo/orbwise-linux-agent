@@ -33,7 +33,6 @@ log = logging.getLogger(__name__)
 
 # Seitenverhältnisse (Breite/Höhe); die Pixelzahl kommt aus der Auflösung (Megapixel)
 RATIOS = {"1:1": 1.0, "4:3": 4 / 3, "3:4": 3 / 4, "16:9": 16 / 9, "9:16": 9 / 16, "3:2": 3 / 2, "2:3": 2 / 3}
-SIZES = RATIOS  # Namen für die Oberfläche
 RESOLUTIONS = (0.5, 1.0, 1.5, 2.0)  # Megapixel: schnell · Standard · fein · groß (Qwen-Image ist auf ~1,7 MP trainiert)
 MAX_SIDE = 2048
 MAX_REFS = 3
@@ -141,7 +140,6 @@ class ImageEngine:
         self.stopped_llm = False  # haben wir das Sprachmodell für den Bildserver beendet?
         self.job: str | None = None
         self._idle: asyncio.TimerHandle | None = None
-        self.started_at = 0.0
 
     # ---------- Zustand ----------
     @property
@@ -235,7 +233,6 @@ class ImageEngine:
         await self._borrow_gpu(progress)
         if progress:
             await progress({"phase": "loading"})
-        self.started_at = time.monotonic()
 
         async def say(text: str) -> None:
             if progress:

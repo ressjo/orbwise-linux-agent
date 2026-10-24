@@ -2527,6 +2527,21 @@
 
   // Aktiv und wirklich geladen (von Hand entladen: Änderungen gelten erst beim nächsten Laden)
   const isLive = (p) => p.active && p.loaded !== false;
+  const restartNote = (p) => (isLive(p) ? (p.managed ? L("Zum Ändern startet der Modell-Server neu.", "Changing it restarts the model server.")
+                                                     : L("Zum Ändern lädt Ollama das Modell neu.", "Changing it makes Ollama reload the model."))
+                                        : L("Gilt ab dem nächsten Laden.", "Applies the next time it is loaded."));
+
+  // Erklärtext: das Wichtigste sichtbar, der Rest hinter „Mehr“
+  function hint(el, short, more) {
+    el.textContent = short;
+    if (!more) return;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "btn-link hint-more";
+    b.textContent = L("Mehr", "More");
+    b.onclick = () => b.replaceWith(document.createTextNode(more));
+    el.append(" ", b);
+  }
 
   async function unloadModel() {
     try { await api("POST", "/api/models/unload"); } catch { /* Meldung kommt von api() */ }
@@ -2563,10 +2578,13 @@
       <section class="md-sec md-ctx"><div class="md-sec-head"><h4></h4>
         <div class="seg md-mode"><button type="button" data-m="tools">Tools</button><button type="button" data-m="coding">Coding</button></div></div>
         <div class="ctx-now"></div><div class="ctx-opts"></div><p class="set-hint"></p></section>
-      <section class="md-sec md-kv"><div class="md-sec-head"><h4></h4></div><div class="ctx-opts kv-opts"></div><p class="set-hint kv-hint"></p></section>
-      <section class="md-sec md-batch"><div class="md-sec-head"><h4></h4></div><div class="ctx-opts batch-opts"></div><div class="batch-stats"></div><p class="set-hint"></p></section>
-      <section class="md-sec md-spec"><div class="md-sec-head"><h4></h4></div><div class="ctx-opts spec-opts"></div><div class="spec-stats"></div><p class="set-hint"></p></section>
+      <section class="md-sec md-perf"><div class="md-sec-head"><h4></h4></div><div class="batch-stats"></div><div class="tune-slot"></div><p class="set-hint"></p></section>
       <section class="md-sec md-smp"><div class="md-sec-head"><h4></h4></div><div class="smp"></div></section>
+      <details class="md-adv"><summary></summary>
+        <section class="md-sec md-kv"><div class="md-sec-head"><h4></h4></div><div class="ctx-opts kv-opts"></div><p class="set-hint kv-hint"></p></section>
+        <section class="md-sec md-batch"><div class="md-sec-head"><h4></h4></div><div class="ctx-opts batch-opts"></div><p class="set-hint"></p></section>
+        <section class="md-sec md-spec"><div class="md-sec-head"><h4></h4></div><div class="ctx-opts spec-opts"></div><div class="spec-stats"></div><p class="set-hint"></p></section>
+      </details>
       <section class="md-sec md-diag"><div class="md-sec-head"><h4></h4></div>
         <div class="md-btns"><button type="button" class="btn small ctx-test-btn"></button><button type="button" class="btn small md-log-btn"></button></div>
         <div class="ctx-test"></div><pre class="md-log hidden"></pre></section>`;
@@ -2627,14 +2645,25 @@
       dl.appendChild(wrap);
     }
     if (!dl.childElementCount) dl.remove();
-    const secs = box.querySelectorAll(".md-sec");
-    if (demo) { secs.forEach((s) => s.remove()); load.hidden = true; return; }
+    if (demo) { box.querySelectorAll(".md-sec, .md-adv").forEach((s) => s.remove()); load.hidden = true; return; }
     updateDetailMemory();
     renderCtxSection(box.querySelector(".md-ctx"), p);
-    renderKvSettings(box.querySelector(".md-kv"), p);
-    renderBatch(box.querySelector(".md-batch"), p);
-    renderSpec(box.querySelector(".md-spec"), p);
+    if (p.managed) renderPerf(box.querySelector(".md-perf"), p);
+    else box.querySelector(".md-perf").remove();  // Ollama/fremder Server: Tempo regelt der Dienst selbst
     renderSampling(box.querySelector(".md-smp"), p);
+    // Erweitert (eingeklappt): KV-Cache, Batch-Größe von Hand, spekulatives Decoding
+    const adv = box.querySelector(".md-adv");
+    adv.querySelector("summary").textContent = L("Erweitert", "Advanced");
+    adv.open = !!MP.advOpen;
+    adv.ontoggle = () => { MP.advOpen = adv.open; };
+    renderKvSettings(box.querySelector(".md-kv"), p);
+    if (p.managed) {
+      renderBatch(box.querySelector(".md-batch"), p);
+      renderSpec(box.querySelector(".md-spec"), p);
+    } else {
+      box.querySelector(".md-batch").remove();
+      box.querySelector(".md-spec").remove();
+    }
     renderDiag(box.querySelector(".md-diag"), p);
   }
 
@@ -2718,14 +2747,13 @@
       };
       box.appendChild(b);
     }
-    sec.querySelector(".set-hint").textContent = (mode === "coding"
-      ? L("Coding kann ein eigenes Fenster haben (z. B. größer für viel Code) – beim Wechsel zwischen Tools und Coding startet der Modell-Server dann neu. ",
-          "Coding can have its own window (e.g. larger for lots of code) – switching between Tools and Coding then restarts the model server. ")
-      : "") + (!isLive(p) ? L("Gilt ab dem nächsten Laden. ", "Applies the next time it is loaded. ")
-      : p.managed ? L("Zum Ändern startet der Modell-Server neu. ", "Changing it restarts the model server. ")
-      : L("Zum Ändern lädt Ollama das Modell neu. ", "Changing it makes Ollama reload the model. "))
-      + L("Größer = längere Chats bis zum Zusammenfassen, braucht aber mehr Grafikspeicher. Unter 16k arbeitet Orbwise im Sparmodus (weniger Werkzeuge vorab, kürzere Ergebnisse).",
-          "Bigger = longer chats before summarising, but needs more VRAM. Below 16k Orbwise runs in lean mode (fewer tools up front, shorter results).");
+    hint(sec.querySelector(".set-hint"),
+      L("Größer = längere Chats bis zum Zusammenfassen, braucht aber mehr Grafikspeicher. ", "Bigger = longer chats before summarising, but needs more VRAM. ")
+        + restartNote(p),
+      L("Unter 16k arbeitet Orbwise im Sparmodus (weniger Werkzeuge vorab, kürzere Ergebnisse). Coding kann ein eigenes Fenster haben "
+        + "(z. B. größer für viel Code) – beim Wechsel zwischen Tools und Coding startet der Modell-Server dann neu.",
+        "Below 16k Orbwise runs in lean mode (fewer tools up front, shorter results). Coding can have its own window "
+        + "(e.g. larger for lots of code) – switching between Tools and Coding then restarts the model server."));
   }
 
   // KV-Cache-Stufe: f16 (voll), q8_0 (~halber Speicher), q4_0 (~ein Viertel) – nur bei eigenem llama-server
@@ -2770,17 +2798,16 @@
       opts.appendChild(b);
     }
     const low = levels.some((x) => /^(?:t|i)?q[23](?!\d)/.test(x.kv));
-    sec.querySelector(".kv-hint").textContent = p.kv_settable
-      ? L("Ein kleinerer KV-Cache lässt mehr Kontext in den Grafikspeicher – das Kontextfenster oben bietet dann mehr an. "
-          + (isLive(p) ? "Zum Ändern startet der Modell-Server neu." : "Gilt ab dem nächsten Laden.")
-          + (low ? "" : " 2-Bit: kann dieser llama-server nicht (das offizielle llama.cpp bietet höchstens 4 Bit)."),
-          "A smaller KV cache fits more context into VRAM – the context window above then offers more. "
-          + (isLive(p) ? "Changing it restarts the model server." : "Applies the next time it is loaded.")
-          + (low ? "" : " 2-bit: not supported by this llama-server (official llama.cpp goes down to 4 bits)."))
-      : L("Bei Ollama gilt die Stufe für den ganzen Dienst: sudo systemctl edit ollama → "
-          + 'Environment="OLLAMA_FLASH_ATTENTION=1" "OLLAMA_KV_CACHE_TYPE=q8_0", dann sudo systemctl restart ollama.',
-          "With Ollama the level applies to the whole service: sudo systemctl edit ollama → "
-          + 'Environment="OLLAMA_FLASH_ATTENTION=1" "OLLAMA_KV_CACHE_TYPE=q8_0", then sudo systemctl restart ollama.');
+    if (p.kv_settable) {
+      hint(sec.querySelector(".kv-hint"),
+        L("Kleinerer KV-Cache = mehr Kontext im Grafikspeicher. ", "Smaller KV cache = more context in VRAM. ") + restartNote(p),
+        low ? "" : L("2-Bit kann dieser llama-server nicht (das offizielle llama.cpp bietet höchstens 4 Bit).",
+                     "2-bit is not supported by this llama-server (official llama.cpp goes down to 4 bits)."));
+    } else {
+      hint(sec.querySelector(".kv-hint"), L("Bei Ollama gilt die Stufe für den ganzen Dienst.", "With Ollama the level applies to the whole service."),
+        L('sudo systemctl edit ollama → Environment="OLLAMA_FLASH_ATTENTION=1" "OLLAMA_KV_CACHE_TYPE=q8_0", dann sudo systemctl restart ollama.',
+          'sudo systemctl edit ollama → Environment="OLLAMA_FLASH_ATTENTION=1" "OLLAMA_KV_CACHE_TYPE=q8_0", then sudo systemctl restart ollama.'));
+    }
   }
 
   // Batch-Größe (-ub): größer = lange Eingaben (Werkzeuge, Dateien, PDFs) werden schneller eingelesen, kostet VRAM
@@ -2816,31 +2843,42 @@
       };
       opts.appendChild(b);
     }
+    hint(sec.querySelector(".set-hint"),
+      L("Größer = lange Eingaben werden schneller eingelesen, kostet etwas Grafikspeicher. ", "Bigger = long inputs are read faster, costs a little VRAM. ") + restartNote(p),
+      L("Wie viele Token der Server auf einmal verarbeitet. Spürbar bei langen Eingaben (Werkzeug-Ergebnisse, Dateien, PDFs, erster Start eines Chats), "
+        + "kaum bei kurzen Fragen. Der größere Rechenpuffer im Grafikspeicher kann das Kontextfenster verkleinern. Einfacher: oben „Schnellste Einstellung messen“.",
+        "How many tokens the server processes at once. Noticeable with long inputs (tool results, files, PDFs, the first message of a chat), "
+        + "hardly with short questions. The larger compute buffer can shrink the context window. Easier: “Find the fastest setting” above."));
+  }
+
+  // Leistung: Einlese-Tempo, Messen der schnellsten Einstellung (Build × Batch-Größe)
+  function renderPerf(sec, p) {
+    sec.querySelector("h4").textContent = L("Leistung", "Performance");
     const m = p.active && lastMem && lastMem.available && lastMem.profile === p.name ? lastMem : null;
     sec.querySelector(".batch-stats").textContent = [
       p.prefill_tps ? L(`Einlesen zuletzt ~${num(Math.round(p.prefill_tps))} Token/s`, `Prompt processing last ~${num(Math.round(p.prefill_tps))} tokens/s`)
         : p.active ? L("Noch nicht gemessen – das passiert bei der nächsten längeren Antwort.", "Not measured yet – happens with the next longer answer.") : "",
+      p.ubatch ? `Batch ${p.ubatch}` : "",
       m && m.compute_bytes ? L(`Rechenpuffer ${gbs(m.compute_bytes)}`, `compute buffer ${gbs(m.compute_bytes)}`) : "",
     ].filter(Boolean).join(" · ");
-    sec.querySelector(".set-hint").textContent = L(
-      "Wie viele Token der Server auf einmal verarbeitet, wenn er die Eingabe einliest. Größer lastet die Grafikkarte besser aus – "
-      + "spürbar bei langen Eingaben (Werkzeug-Ergebnisse, Dateien, PDFs, erster Start eines Chats), kaum bei kurzen Fragen. "
-      + "Kostet einen größeren Rechenpuffer im Grafikspeicher; das Kontextfenster bietet dann ggf. weniger an. "
-      + "Vergleichen: „Kontext testen“ unten zeigt die Token/s für ein volles Fenster. " + (isLive(p) ? "Zum Ändern startet der Modell-Server neu." : "Gilt ab dem nächsten Laden."),
-      "How many tokens the server processes at once when reading the input. Bigger keeps the GPU busier – "
-      + "noticeable with long inputs (tool results, files, PDFs, the first message of a chat), hardly with short questions. "
-      + "Costs a larger compute buffer in VRAM; the context window may then offer less. "
-      + "Compare: “Test context” below shows tokens/s for a full window. " + (isLive(p) ? "Changing it restarts the model server." : "Applies the next time it is loaded."));
-    if (p.tunable) renderTuning(sec, p);
+    if (p.tunable) renderTuning(sec.querySelector(".tune-slot"), p);
+    hint(sec.querySelector(".set-hint"),
+      p.tunable ? L("Misst, welcher Build und welche Batch-Größe hier am schnellsten einlesen, und übernimmt das – die Antworten bleiben gleich.",
+                    "Measures which build and batch size read prompts fastest here and applies it – the answers stay the same.")
+                : L("Tempo des Modell-Servers beim Einlesen.", "Prompt speed of the model server."),
+      p.tunable ? L("Verglichen werden der installierte Build und der andere (ROCm ↔ Vulkan bzw. CUDA ↔ Vulkan) mit Batch 512/1024/2048, "
+                    + "am Chat-Anfang und bei langem Chat. Dauert 3–6 Minuten, das Modell ist so lange entladen. Am meisten spart weiterhin der Prompt-Cache.",
+                    "It compares the installed build with the other one (ROCm ↔ Vulkan or CUDA ↔ Vulkan) at batch 512/1024/2048, "
+                    + "at the start of a chat and with a long chat. Takes 3–6 minutes; the model is unloaded meanwhile. The prompt cache still saves the most.") : "");
   }
 
   // „Schnellste Einstellung messen“: llama-bench über Build (ROCm/Vulkan bzw. CUDA/Vulkan) × Batch-Größe
   const FLAVOR_LABEL = { rocm: "ROCm", vulkan: "Vulkan", cuda: "CUDA", cpu: "CPU" };
-  function renderTuning(sec, p) {
+  function renderTuning(slot, p) {
     const box = document.createElement("div");
     box.className = "tune-box";
     box.innerHTML = `<div class="md-btns"><button type="button" class="btn small tune-btn"></button></div><div class="tune-res"></div>`;
-    sec.querySelector(".set-hint").before(box);
+    slot.appendChild(box);
     const btn = box.querySelector(".tune-btn");
     const running = (MP.data.pulls || []).some((x) => x.tag === "Tuning");
     btn.textContent = running ? L("Misst gerade …", "Measuring …") : p.tuning ? L("Erneut messen", "Measure again") : L("Schnellste Einstellung messen", "Find the fastest setting");
@@ -2938,13 +2976,12 @@
         stats.classList.toggle("low", !!st && st.rate < 0.3);
       }).catch(() => {});
     }
-    sec.querySelector(".set-hint").textContent = L(
-      "Das Modell schlägt mehrere Token auf einmal vor, der Server prüft sie in einem Durchgang – die Antwort bleibt gleich, kommt aber schneller. "
-      + "MTP nutzt eigene Vorhersage-Schichten des Modells (kostet etwas Grafikspeicher), N-Gramm wiederholt Stellen aus dem Kontext. "
-      + "Bei hoher Temperatur oder freiem Text bringt es weniger; unter 30 % Trefferquote lieber aus. " + (isLive(p) ? "Zum Ändern startet der Modell-Server neu." : "Gilt ab dem nächsten Laden."),
-      "The model proposes several tokens at once and the server checks them in one pass – same answer, just faster. "
-      + "MTP uses the model's own prediction layers (costs a little VRAM), N-gram repeats passages from the context. "
-      + "It helps less at high temperature or with free text; below a 30 % hit rate better turn it off. " + (isLive(p) ? "Changing it restarts the model server." : "Applies the next time it is loaded."));
+    hint(sec.querySelector(".set-hint"),
+      L("Schlägt mehrere Token auf einmal vor – gleiche Antwort, nur schneller. ", "Proposes several tokens at once – same answer, just faster. ") + restartNote(p),
+      L("MTP nutzt eigene Vorhersage-Schichten des Modells (kostet etwas Grafikspeicher), N-Gramm wiederholt Stellen aus dem Kontext. "
+        + "Bei hoher Temperatur oder freiem Text bringt es weniger; unter 30 % Trefferquote lieber aus.",
+        "MTP uses the model's own prediction layers (costs a little VRAM), N-gram repeats passages from the context. "
+        + "It helps less at high temperature or with free text; below a 30 % hit rate better turn it off."));
   }
 
   // Sampling je Modell und Modus (mit/ohne Denken) – gilt ab der nächsten Antwort

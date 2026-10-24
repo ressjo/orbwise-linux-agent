@@ -22,7 +22,6 @@ MAX_BYTES = 20_000_000
 MAX_PDF_BYTES = 50_000_000
 MAX_PDF_CHARS = 2_000_000  # mehr Text hebt Orbwise nicht auf (passt ohnehin in kein Kontextfenster)
 MAX_PER_MESSAGE = 4
-TOKENS_PER_IMAGE = 800  # grobe Schätzung für die Kontext-Anzeige (je nach Modell und Auflösung 256–1.600)
 MIME = {".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".pdf": "application/pdf"}
 
 

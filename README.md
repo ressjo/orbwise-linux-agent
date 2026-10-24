@@ -414,7 +414,7 @@ shows the full command; restored checkpoints appear in the same log.
 
 ### Faster prompt reading (llama.cpp)
 
-**Find the fastest setting** on the model page (section *Prompt processing*) measures with `llama-bench` – part of
+**Find the fastest setting** on the model page (section *Performance*) measures with `llama-bench` – part of
 every llama.cpp build – which build and batch size read prompts fastest on your card: the installed build (e.g. ROCm)
 against the other one (Vulkan; on NVIDIA CUDA ↔ Vulkan, downloaded once for the comparison), each with `-ub`
 512 / 1024 / 2048, a 2k prompt at the start of a chat and at 16k depth, plus the output speed. None of this changes
@@ -439,7 +439,7 @@ read, so a new topic no longer forces the whole chat to be read again; the step-
 
 ### Faster prompt processing: batch size
 
-**Models → Prompt processing (batch size)** sets llama-server's micro-batch (`-ub`, default 512) per model to 1024 or
+**Models → Advanced → Prompt processing (batch size)** sets llama-server's micro-batch (`-ub`, default 512) per model to 1024 or
 2048 (`-b` grows with it). Bigger batches keep the GPU busier while reading long inputs – tool results, files, PDFs,
 the first message of a chat – at the cost of a larger compute buffer in VRAM (shown next to the setting, together
 with the measured prompt speed; the measurement restarts after a change). Short questions hardly change. Compare
@@ -447,7 +447,7 @@ with **Test context**, which reads a full window and reports tokens/s. llama.cpp
 
 ### Faster answers: speculative decoding (MTP / n-gram)
 
-**Models → Faster answers** lets llama.cpp models propose several tokens at once, which the server then verifies in a
+**Models → Advanced → Faster answers** lets llama.cpp models propose several tokens at once, which the server then verifies in a
 single pass – the answer stays the same, it just arrives sooner. **MTP** uses the model's own multi-token-prediction
 layers (GLM-4.5, DeepSeek-V3, Qwen3.5/3.6 and others – either inside the GGUF as `nextn_predict_layers` or as an
 `mtp-*.gguf` file next to it, which Orbwise downloads together with the model) and costs a little VRAM; **n-gram**
