@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <b>A local AI voice assistant for Linux</b> – voice, memory and real control over your PC, nothing leaves your machine.
+  <b>A local AI voice assistant for Linux</b> – voice, memory and real control over your PC, with the model running on your own machine.
 </p>
 
 <p align="center">
