@@ -1779,7 +1779,7 @@
     $("confirm-cmd").classList.toggle("hidden", !!editable.length);
     $("confirm").classList.toggle("editing", !!editable.length);
     $("confirm-yes").innerHTML = editable.length && ev.name === "mail_send"
-      ? `${L("Senden", "Send")} <kbd>Strg+Enter</kbd>` : editable.length ? `${L("Ausführen", "Run")} <kbd>Strg+Enter</kbd>` : APPROVE_HTML;
+      ? `${L("Senden", "Send")} <kbd>${L("Strg", "Ctrl")}+Enter</kbd>` : editable.length ? `${L("Ausführen", "Run")} <kbd>${L("Strg", "Ctrl")}+Enter</kbd>` : APPROVE_HTML;
     $("confirm-summary").textContent = ev.name === "mail_send"
       ? L("Mail prüfen, bei Bedarf ändern und senden:", "Check the e-mail, edit it if needed and send it:")
       : L(`Soll ich ${ev.summary} ausführen?`, `Shall I run ${ev.summary}?`);

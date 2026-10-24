@@ -21,7 +21,7 @@ All notable changes to this project are documented here. The format follows
   Ollama models; new Hugging Face downloads always run on llama.cpp.
 
 ### Changed
-- **Coding permissions:** from the auto level *Edit files* on, files inside the project folder are changed without
+- **Coding permissions:** from the auto level *Read + edit files* on, files inside the project folder are changed without
   asking (also outside `$HOME` and in hidden folders like `.github`; never `.git/`, credentials or as root); files
   outside the project ask.
 - **Activity panel:** steps are grouped under the question (or routine / Telegram run) that caused them, with readable
@@ -104,8 +104,8 @@ All notable changes to this project are documented here. The format follows
   llama.cpp server, unloads Ollama) while the model stays selected; the next question or API request loads it
   again (prompt-cache warming does not), and an unloaded model stays unloaded across a restart. The selected model
   can now be deleted: Orbwise unloads it and selects another one without loading it.
-- **Brave quota in the activity panel:** Brave Search requests are counted per month and the quota Brave reports
-  (`X-RateLimit-*`) is kept; a tile shows used / limit / remaining / reset date (orange from 80 %, a notice below
+- **Brave quota in the activity panel:** the quota Brave reports with every answer
+  (`X-RateLimit-*`) is kept – Orbwise does not count itself; a tile shows used / limit / remaining / reset date (orange from 80 %, a notice below
   10 %), `orbwise doctor` prints it, and a used-up quota is not queried again until it resets (with
   `search_fallback` the result pages are used instead).
 - **Why was it read again?** Every model request is compared with the previous one; when more than 5,000 tokens had

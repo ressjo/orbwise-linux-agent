@@ -180,7 +180,7 @@ vision:                    # understand the screen and images ("what's that erro
   # timeout: 180
   # screenshot_command: "" # empty = automatic (spectacle, gnome-screenshot, grim, maim, …); {file} = target file
 
-coding:                    # CODING mode (works like OpenCode 2: read/edit/grep/glob/shell, subagents, undo)
+coding:                    # Coding mode (works like OpenCode 2: read/edit/grep/glob/shell, subagents, undo)
   snapshots: true          # snapshot of the project before/after each answer → "Undo" under the answer
   # subagent_steps: 15     # max steps of a subagent (explore = read-only search, general = may change things)
   # max_jobs: 4            # background commands (shell with background=true) at the same time
@@ -194,14 +194,14 @@ sandbox:                   # CODING: run the agent's commands in a container on 
   # network: true          # default for new sandboxes (switchable per chat)
   # idle_minutes: 30       # stop the container after this long without commands
 
-github:                    # clone repos and push branches from the CODING mode
+github:                    # clone repos and push branches from the Coding mode
   token: ""                # fine-grained token (Contents: read & write) – or $ORBWISE_GITHUB_TOKEN, or `gh auth login`
   # clone_dir: ""          # empty = ~/Projects (or ~/Projekte)
 
 weather:
   location: ""             # default place for weather and the morning briefing, e.g. "Berlin"
 
-briefing:                  # "good morning" – also adjustable in the dashboard (PLANNER tab → BRIEFING CONTENT)
+briefing:                  # "good morning" – also adjustable in the dashboard (Planner → Briefing content)
   sections: [weather, calendar, reminders, mail, paperless_inbox, news, updates, storage]   # order as listed
   lookahead_days: 2        # events + reminders/deadlines for today and the next days (0 = today only)
   news_topics: []          # e.g. [Linux, Berlin] – headlines of the last 24 h

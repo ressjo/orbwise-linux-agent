@@ -73,18 +73,18 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **SSH (NAS, servers)** | Run Linux commands on other machines like on the PC – user name and password are **asked in the dashboard for every new connection** (never stored, never shown to the model); read-only commands run directly, everything else after confirmation, `sudo` there asks again |
 | **Paperless-ngx** | Search documents, **ask questions about their content**, open them as PDF, suggest and apply correspondent, type, tags, title and date (after confirmation), upload local files or files sent from the phone |
 | **E-mail** | **Proton Mail** (via the Proton Mail Bridge) or any IMAP mailbox: unread mails, search, read, ask about a mail, list folders, archive/move/label/trash, PDF attachments → Paperless (changes after confirmation); optional **writing and replying** (SMTP) – To, Cc, subject and text are editable in the confirmation card before anything is sent |
-| **Tools & Coding mode** | Switch top left: **Tools** (assistant – all tools, web, Paperless, mail, smart home, voice) or **Coding** – a coding agent that works like **OpenCode 2**: `read` (line numbers, folders, PDFs), `edit` (exact replace that forgives curly quotes and indentation, shows a diff), `write`, `grep` (ripgrep, matching lines), `glob`, `shell` (workdir, background jobs for dev servers and builds), `websearch` (Brave API) and `webfetch` (Markdown), **subagents** (`explore` searches read-only in its own context, `general` takes a sub-task), **questions** with answer buttons, **AGENTS.md** of the project in the prompt, **diffs** in confirmations and **Undo** per answer. Each mode has its own chat history; a coding chat has a **project folder** (shell starts there, relative paths refer to it, and from the auto level *Edit files* changes inside it run without asking). Pick a model while in a mode and Orbwise remembers it for that mode (e.g. a coder model) – switching then reloads it. Details: [Coding mode](#coding-mode) |
-| **Plan mode** | **Plan** button: Jarvis thinks it through, only looks things up (read-only) and presents a step-by-step plan – **RUN**, **CHANGE** (say what should be different) or **DISCARD**; also by voice ("yes") and via Telegram (`/plan …`) |
+| **Tools & Coding mode** | Switch top left: **Tools** (assistant – all tools, web, Paperless, mail, smart home, voice) or **Coding** – a coding agent that works like **OpenCode 2**: `read` (line numbers, folders, PDFs), `edit` (exact replace that forgives curly quotes and indentation, shows a diff), `write`, `grep` (ripgrep, matching lines), `glob`, `shell` (workdir, background jobs for dev servers and builds), `websearch` (Brave API) and `webfetch` (Markdown), **subagents** (`explore` searches read-only in its own context, `general` takes a sub-task), **questions** with answer buttons, **AGENTS.md** of the project in the prompt, **diffs** in confirmations and **Undo** per answer. Each mode has its own chat history; a coding chat has a **project folder** (shell starts there, relative paths refer to it, and from the auto level *Read + edit files* changes inside it run without asking; the chip shows `owner/repo` and the branch), an optional **sandbox** (container on a working copy, like Claude on the web) and **GitHub** clone/push. Pick a model while in a mode and Orbwise remembers it for that mode (e.g. a coder model) – switching then reloads it. Details: [Coding mode](#coding-mode) |
+| **Plan mode** | **Plan** button: Jarvis thinks it through, only looks things up (read-only) and presents a step-by-step plan – **Run**, **Change** (say what should be different) or **Discard**; also by voice ("yes") and via Telegram (`/plan …`) |
 | **Auto mode** | Drop-down button next to *Think*: **Off** – every shell command asks · **Read only** (default) – recognised read-only commands (`ls`, `df`, `docker ps`, `git status`, `nmcli device status`, `apt list --installed`, `journalctl` …) run without asking · **Read + edit files** – also create, write, copy and move files in your own home (`write_file`, `mkdir`, `touch`, `cp`, `mv`, `tee`, `>`), never with root, never deleting, never hidden files (shell start files, autostart, `~/.ssh`, `~/.config` …), launchers (`.desktop`, `~/bin`) or credentials · **Auto** – everything without root runs without asking (`python …`, `cd … && make`, `git commit`, `pip install --user`, `systemctl --user restart` …, plus `write_file`); still asking: deleting (`rm`, `find -delete`, `git clean` …), sudo, shutting down, sending over the network (`git push`, `ssh`, uploads), start-up files/autostart/`~/.ssh`/Orbwise's own config and credentials. Note: a script or `python -c` can do anything you may do – Auto only catches what is visible in the command. Plan mode and untrusted content (mail, screen) still ask. If Orbwise itself runs as **root**, "without root" cannot be checked – *Read + edit files* and *Auto* then approve nothing (`orbwise doctor` warns). The mode (like *Think*) is kept by the server: every open window, Telegram and routines use the same setting. The rules live in code, so they cost no prompt context |
-| **Images and PDFs in the chat** | Attach images or PDFs to a message (paperclip button, paste with Ctrl+V or drag them onto the input field) – models that can see images (llama.cpp models with a vision module, Ollama vision models) get them directly, others hand them to the local vision model via `look_at_image`; PDFs are read locally and their text goes along with the question |
+| **Images and PDFs in the chat** | Attach images or PDFs (paperclip, Ctrl+V or drag and drop) – vision models get images directly, others via the local vision model; PDFs are read locally. Details: [Screen & images](#screen--images) |
 | **Screen & images** | "What's that error message?", "What does this window say?", "Help me with this dialog" – Orbwise takes a screenshot and asks a **local vision model** (e.g. Qwen2.5-VL); also for image files and photos sent from the phone. Nothing leaves your PC |
 | **Telegram** | Chat with Orbwise from your phone (text or voice messages, own chat in the sidebar), reminders also arrive on the phone, confirmations via ✅/❌ buttons, **files in both directions** (PDFs/photos → PC or Paperless, local files and Paperless documents → phone), `/stop` cancels what is running |
 | **Obsidian** | Search, read and ask questions about notes in your vault, create/append/update notes, open them in Obsidian |
 | **Trilium** | Search and read notes, create notes in the inbox, append to and update notes |
 | **Calendar** | iCloud or any CalDAV server: list events, find free time, create/change/delete events |
-| **Learning from experience** | Short lessons from errors, your corrections and 👎 ("docker on the NAS needs sudo") – thought about while idle, only matching ones go along with a question under a small fixed limit, so the context window does not grow; viewable, editable and deletable under Memory → Experience |
-| **Memory** | Remembers everything permanently (see below), `remember` / `recall` / `forget`, **chat history** with search, favourites, rename and delete; the search index repairs itself if it gets damaged |
-| **Dashboard** | Calm, warm design in **light, dark or system** (Settings → General → Appearance), petrol accent, a serif reading font (Newsreader) for headings and answers and Inter for the controls – both bundled, nothing is loaded from the internet. The **orb** is three fine rings around a dot: it breathes when idle, follows your voice when listening or speaking, circles while thinking, shows running tools as small dots and the **context** as a thin outer arc. Collapsible sidebar with chats, the orb with greeting and suggestions on an empty chat that docks small at the side once you talk, a live line in each answer showing what the model is doing (reading the prompt, thinking, writing a call) and a small time/token summary afterwards, an activity panel with live telemetry (tokens/s, context, GPU, VRAM, RAM, power), Planner and Memory as large windows like the model page, a settings page; works on the phone too |
+| **Learning from experience** | Short lessons from errors, your corrections and thumbs-down ratings ("docker on the NAS needs sudo") – thought about while idle, only matching ones go along with a question under a small fixed limit, so the context window does not grow; viewable, editable and deletable under Memory → Experience |
+| **Memory** | Remembers everything permanently (see below), `remember` / `recall` / `forget`, **chat history** with search, pinning, rename, Markdown export and delete; the search index repairs itself if it gets damaged |
+| **Dashboard** | Calm, warm design in **light, dark or system** (Settings → General → Appearance), petrol accent, a serif reading font (Newsreader) for headings and answers and Inter for the controls – both bundled, nothing is loaded from the internet. The **orb** is three fine rings around a dot: it breathes when idle, follows your voice when listening or speaking, circles while thinking, shows running tools as small dots and the **context** as a thin outer arc. Collapsible sidebar with chats, the orb with greeting and suggestions on an empty chat that docks small at the side once you talk, a live line in each answer showing what the model is doing (reading the prompt, thinking, writing a call) and a small time/token summary afterwards, an activity panel with live telemetry (tokens/s, context, GPU, VRAM, RAM, power, Brave search) and every step grouped under the question that caused it (readable names, duration, click for the raw call), Models, Planner, Memory and Settings as large windows, Orbwise's own dialogs instead of browser pop-ups; works on the phone too |
 | **Models & voices** | **Models page** (sidebar, like LM Studio): all models with engine, quantization, size and VRAM fit; load with one click (quick switch on the model chip at the top); per model context window (Tools/Coding), KV cache, sampling, context test and llama-server log; add models from Hugging Face, `~/models` or presets with download progress and cancel; delete models · **Settings → Voice:** natural **Pocket TTS** voices on the CPU, each with the language it speaks (which is also the language of the answers), "Jarvis" voice effect · **Think** button for reasoning models |
 | **Safety** | Confirmation for everything that changes the system, blocklist for destructive commands, root only via a one-time password prompt, keys and passwords are never read or sent, local-only server – see [Security](#security) |
 
@@ -106,9 +106,9 @@ git clone https://github.com/ressjo/orbwise-linux-agent.git ~/orbwise
 ~/orbwise/scripts/install.sh --lang en      # --lang de for German
 ```
 
-The installer asks three questions – **language**, **graphics card** (NVIDIA / AMD / none, the detected one is
-pre-selected) and the **language model** from a list of presets that shows what fits your video memory
-(✔ fits · ~ partly in RAM · ✘ too big) with a recommendation. On AMD cards that ROCm doesn't officially support
+The installer asks for the **language**, the **graphics card** (NVIDIA / AMD / none, the detected one is
+pre-selected), the **language model** from a list of presets that shows what fits your video memory
+(✔ fits · ~ partly in RAM · ✘ too big) with a recommendation, and optionally a **Brave Search API key**. On AMD cards that ROCm doesn't officially support
 (RX 6600/6650/6700, RX 7600) it offers to set the needed `HSA_OVERRIDE_GFX_VERSION` for Ollama.
 
 Options: `--model qwen3:8b` (skip the model question), `--gpu auto|cuda|rocm|vulkan|cpu`, `--lang de|en`,
@@ -164,12 +164,16 @@ from now on. Your assistant keeps its name "Jarvis".
 - The speaker icon toggles speech output; while Jarvis works, the send button turns into **stop** (or press `Esc`).
   **Think** lets the model reason before answering (see [Thinking mode](#thinking-mode)), **Plan** makes it present
   a plan first (see [Plan mode](#plan-mode)).
-- **Sidebar:** new chat, search, all chats; at the bottom **Planner** (routines, reminders, morning briefing),
-  **Memory** (facts, journal) and **Settings** (models, voices, general, status). The model chip at the top opens the
-  model settings, the pulse icon the **activity** panel (live tool output and telemetry) – it opens by itself when a
-  tool runs. Between tools a **Model** row shows what the model is doing right now (reading the prompt with estimated
-  time or real progress, thinking, writing a tool call, answering, reloading, folding history) with a running timer,
-  and afterwards where the time went.
+- **Sidebar:** Tools / Coding / Image switch, new chat, search, all chats; at the bottom **Models**, **Planner**
+  (routines, reminders, morning briefing), **Memory** (facts, journal, experience) and **Settings** (general, voice,
+  status) – each opens as a large window. The **model chip** at the top switches models quickly (plus *Unload model*
+  and *Manage models …*), the pulse icon opens the **activity** panel – it opens by itself when a tool runs.
+- **Activity:** every step is grouped under the question (or routine / Telegram run) that caused it, with a readable
+  name and icon ("Web search · linux 6.18 release notes"), a spinner while it runs and a check mark with the
+  duration or a cross afterwards; click a step for the raw call and its output. Model steps without a message (e.g.
+  compacting) show what the model is doing with a running timer.
+- **Confirmations** appear as a card below the last message (*Cancel* / *Run*, `Esc` / `Enter`, or by voice); other
+  questions (delete, project folder …) use Orbwise's own dialogs – no browser pop-ups.
 
 Examples:
 
@@ -198,22 +202,22 @@ Everything is stored as readable files in `~/.local/share/orbwise/memory/`:
 the prompt **only grows at the end**: instructions, tools, earlier messages and the note in front of each of your
 questions (date and time, memories, the approved plan) stay byte for byte the same once they were sent. llama.cpp
 (llama-server) and Ollama therefore reuse what they already processed and only read the new part – a slow graphics card does
-not have to re-read the conversation for every question or tool step. The CONTEXT tile's tooltip shows how many tokens
+not have to re-read the conversation for every question or tool step. The *Context* tile's tooltip shows how many tokens
 came from the cache.
 
 **Two stages – below 16k and from 16k:** how much room each part gets depends on the model's context window
-(`orbwise/context_plan.py`; the CONTEXT tile's tooltip shows the stage).
+(`orbwise/context_plan.py`; the *Context* tile's tooltip shows the stage).
 
 | | below 16k (e.g. 8k on an 8 GB card): **lean mode** | from 16k |
 |---|---|---|
-| Tools up front | 9 core tools (~1.5k tokens): shell, read/find/list files, web search, recall/remember, date_info, load_tools – everything else by keyword or `load_tools` | core groups (~4k tokens) plus matching groups; from ~48k all tools |
+| Tools up front | 9 core tools (~1.5k tokens): shell, read/find/list files, web search, recall/remember, date_info, load_tools – everything else by keyword or `load_tools` | core groups (~4k tokens) plus matching groups; from 32k all tools if they fit (see [Models & profiles](#models--profiles)) |
 | Big groups (Paperless, mail, calendar, system, notes, packages) | reading part first; the changing part (sort, apply, send, add events …) only when the request sounds like it | whole group |
 | One tool result | ~10 % of the window (8k: ~2,500 characters, the rest in a file / by `offset`) | ~15 %, up to the configured `max_output_chars` / `max_chars` |
 | Memories / facts | ~6 % / ~5 % of the window | up to 1,500 / 1,200 tokens |
 | Room for the answer | 1,024 tokens; thinking capped at 20 % of the window (also "thorough") | 1,500; with thinking up to 3,000 |
 | Summary | short (4 sections, ≤ ~900 tokens) | structured (9 sections, ~10 % of the window) |
 
-A new chat with every integration set up starts at **~2.3k tokens with 8k** (before: ~4.8k) and ~4.8k from 16k.
+Details on lean mode: [Small context windows](#models--profiles).
 
 - **Memories** (hybrid search: BM25 full text + bge-m3 embeddings, slight preference for recent entries): the first
   question of a chat gets up to `memory.retrieval_max_tokens` (lean mode: less, see above), later questions a third of
@@ -225,10 +229,9 @@ A new chat with every integration set up starts at **~2.3k tokens with 8k** (bef
   "/mnt/nas"), the old line in `facts.md` is replaced instead of keeping both.
 - **Facts** are a snapshot: `remember` saves right away and the model knows the new fact from the tool result, but it
   moves into the instructions only with the next compaction (otherwise the whole prompt would be re-read).
-- **Tools:** if all tool descriptions fit comfortably (≤ 30 % of the budget), all of them are always sent. Otherwise
-  see [below](#models--profiles). The selection only changes when something new is needed – then the start of the
-  prompt changes anyway, so in lean mode it is repacked (groups that were not needed for two questions are dropped),
-  from 16k it only grows. Instructions for a tool are only in the prompt while the tool is loaded.
+- **Tools:** if all tool descriptions fit comfortably, all of them are always sent (from 32k: ≤ 25 % of the budget and
+  under a minute to read). Otherwise see [Models & profiles](#models--profiles). Instructions for a tool are only in
+  the prompt while the tool is loaded.
 - **Long tool output is limited at the source** (see the table). `read_file` reads big files page by
   page (`offset`/`limit`: "lines 1–300 of 1,240 – continue with offset=301") instead of silently cutting the middle;
   Paperless, mail, Obsidian and Trilium read long documents section by section; long shell, log and web output keeps
@@ -242,7 +245,7 @@ A new chat with every integration set up starts at **~2.3k tokens with 8k** (bef
    thinking earlier, because the reasoning needs room; 32k: ~30.4k) – the next step still needs room for its answer –
    Orbwise first **hides old tool results**: each becomes a short placeholder with its start and the file that holds
    it completely ("older result hidden … complete in ~/.cache/orbwise/outputs/… (read it with read_file if needed)");
-   long arguments of old calls (e.g. a whole file for `write_file`) are shortened too. The newest results stay (8k:
+   long arguments of old calls (e.g. a whole file for `write_file` / `write`) are shortened too. The newest results stay (8k:
    ~12 % of the window, at least the last step; from 16k ~25 %). This needs no model call – the model server only
    re-reads from the first hidden result. The activity panel shows *made room · 6 old tool results hidden*. In a
    simulated task with 24 big files this replaced most summaries (8k: 4 instead of 23, 16k: 1 instead of 6) and cut
@@ -265,7 +268,7 @@ A new chat with every integration set up starts at **~2.3k tokens with 8k** (bef
    the spot), journal and search index keep everything, and the search brings details from the compacted part back
    when they are relevant.
 6. **By hand:** type `/compact` (or `/komprimieren`), optionally with a focus – `/compact keep the error messages` – or
-   click the CONTEXT tile. This always writes a summary.
+   click the *Context* tile. This always writes a summary.
 7. If the model server still refuses a prompt as too large, Orbwise hides old results (if that covers the overflow) or
    compacts and continues; if even that does not fit,
    the finished steps stay in the chat and "say *continue*" picks up there. With thinking on, more room is kept free
@@ -273,8 +276,8 @@ A new chat with every integration set up starts at **~2.3k tokens with 8k** (bef
 
 **Pre-reading the chat:** Telegram, routines and daily summaries use the same model server and overwrite its cache.
 Afterwards – and after switching chat, mode or model – Orbwise reads the current chat in the background as soon as
-nothing else runs, and again when you start typing or recording if needed. The activity panel shows it as
-*pre-reading the chat*; the next question then only reads its new part. See also the
+nothing else runs, and again when you start typing or recording if needed. A quiet note above the activity list
+shows it (*chat pre-read · 4,716 tokens*); the next question then only reads its new part. See also the
 [prompt cache tips](#prompt-cache-tips).
 
 ### Learning from experience
@@ -283,8 +286,8 @@ The model's weights cannot be retrained locally, so Orbwise learns the way large
 outside the model.
 
 - **Candidates** are noted for free during a turn: a tool failed and the model then solved it differently (or not at
-  all), you corrected the previous answer ("no, that's wrong …", "use … instead"), or you pressed 👎 (optionally with a
-  note on what was wrong).
+  all), you corrected the previous answer ("no, that's wrong …", "use … instead"), or you gave a thumbs-down
+  (optionally with a note on what was wrong).
 - **Reflection while idle** (no question for ~10 minutes, nothing else loaded): the model looks at each candidate and
   writes at most **one short lesson** – or nothing if there is nothing general to learn. Similar lessons are merged
   instead of appended; lessons that went along often without helping are removed; at most `memory.lessons_max` (300).
@@ -293,24 +296,25 @@ outside the model.
   (2 lessons) and ~3 % from 16k (5 lessons), often none. 10 or 300 stored lessons cost the same. Lessons already shown
   in a chat are not repeated, and the prompt cache stays intact.
 - **Memory → Experience** lists everything learned (where it came from, how often it was used and helped); click a
-  lesson to edit it, 🗑 deletes it, and you can add your own rules. `memory.learning: false` turns it off.
+  lesson to edit it, the trash icon deletes it, and you can add your own rules. `memory.learning: false` turns it off.
 
 ### Chat history
 
-The **sidebar** lists all chats (starred first, then newest) with search across titles and content.
-**NEW** starts a new chat; the old one is kept. Click a chat to open and continue it – Orbwise still remembers
+The **sidebar** lists all chats (Pinned, Today, Yesterday, …) with search across titles and content.
+**New chat** starts a new one; the old one is kept. Click a chat to open and continue it – Orbwise still remembers
 everything from the other chats.
 
-- **★** marks important chats. Nothing is deleted automatically.
-- **Double-click the title** to rename it (otherwise it is taken from the first question).
-- **✕** deletes a chat **completely**: from the list, the journal and the search index; affected daily summaries
-  are rebuilt from the rest. Learned facts are kept (delete them in the MEMORY tab or say "forget …").
+- The **⋯ menu** of a chat: *Rename*, *Pin*, *Export as Markdown*, *Delete*. Clicking the title at the top renames
+  it too (otherwise it is taken from the first question). Nothing is deleted automatically.
+- **In the chat:** copy any message, edit your own message and send it again, or regenerate the last answer.
+- **Delete** removes a chat **completely**: from the list, the journal and the search index; affected daily
+  summaries are rebuilt from the rest. Learned facts are kept (delete them under **Memory** or say "forget …").
 
 ## Models & profiles
 
 **Adding models after installation:** open **Models** in the sidebar (or **Manage models …** on the model chip at the
 top) → **Add** and pick one of the presets (with the same fit marks and download progress; a running download can be
-cancelled there with **✕ CANCEL**). Models added this way can be deleted on the model page via
+cancelled there with **Cancel**). Models added this way can be deleted on the model page via
 **⋯ → Delete**, which also removes their files (models from `config.yaml` stay). Or run
 
 ```bash
@@ -331,10 +335,10 @@ API server) loads it again, warming the prompt cache does not. Handy before a ga
 deleting. It also survives a restart: Orbwise then starts without loading the model. Deleting the selected model
 unloads it first and selects another one (loaded with the next question).
 
-**Any model from Hugging Face – no config needed:** in **+ ADD MODEL** type a search term (`qwen3.6 27b`) or paste
+**Any model from Hugging Face – no config needed:** in **Add model** (tab **Add**) type a search term (`qwen3.6 27b`) or paste
 a Hugging Face link into the search field. Pick a repository, then a quantization: each shows its download size, the
 estimated video memory (weights + vision module + ~1.5 GB for context) and whether it fits; the largest one that fits
-completely is marked **RECOMMENDED**. Orbwise then
+completely is marked **Recommended**. Orbwise then
 
 - downloads the GGUF file – split files (`-00001-of-00003`) and the vision module (`mmproj`, for pictures in the chat)
   included, resumable – to `~/models/<user>_<repo>/` (`llm.models_dir`),
@@ -344,15 +348,15 @@ completely is marked **RECOMMENDED**. Orbwise then
   fits your video memory, prompt-cache checkpoints for hybrid models.
 
 Pick it in the model list like any other model; the context size can be changed there too. GGUF files you already
-have show up under **ON DISK (~/models)** – one click turns them into a model without downloading (pasting a path to a
-`.gguf` into the search field works too). New model types often need a newer llama.cpp: **UPDATE** next to the
+have show up under **On disk · ~/models** – one click turns them into a model without downloading (pasting a path to a
+`.gguf` into the search field works too). New model types often need a newer llama.cpp: **Update** next to the
 llama.cpp line (or `orbwise model llamacpp --update`) fetches the latest build; running models switch on their next
 start. Deleting a model (**⋯ → Delete**) removes files Orbwise downloaded; files you put into `~/models` yourself stay.
 Gated repositories need a Hugging Face token in `HF_TOKEN`. Ollama is still used for the memory embeddings and the
 Ollama presets above.
 
 **Context window, KV cache and sampling per model** (Models page, for any model – changes to a model that is not
-loaded apply the next time it is loaded): the context window (4k–256k, separately for Tools and Coding), the KV cache level (f16 / q8 ≈ half / q4 ≈ a quarter of the memory – own llama-server only; with Ollama it
+loaded apply the next time it is loaded): the context window (4k–256k, up to what the model was trained for, separately for Tools and Coding), the KV cache level (f16 / q8 ≈ half / q4 ≈ a quarter of the memory – own llama-server only; with Ollama it
 is service-wide via `OLLAMA_KV_CACHE_TYPE`) and the sampling values for **thinking** and **non-thinking** answers
 (temperature, top_p, top_k, min_p, presence and repeat penalty; a **Qwen** preset fills in the vendor recommendation).
 Context and KV cache restart the model server; sampling applies from the next answer. Empty sampling fields keep the
@@ -404,11 +408,11 @@ selection only changes when something new is needed (the activity shows "tools a
 dropped); groups used in the last two questions stay while they fit (~35 % of the budget). If no keyword matched, the
 model can still get any tool: **load_tools** lists exactly the groups that are missing and loads the one it needs for
 the next step (it then stays until the next compaction). From 16k the core groups are always there and added groups
-stay. A new chat with every integration set up starts at ~2.3k tokens with 8k and ~4.8k from 16k. When the model asks
+stay. A new chat with every integration set up starts at ~2.3k tokens with 8k (before: ~4.8k) and ~4.8k from 16k. When the model asks
 for several things at once that need no confirmation (e.g. weather and calendar), they run in parallel. You can also
 switch tools or whole groups off: `tools: {disabled: [sysadmin, paperless]}`.
 
-#### Prompt cache tips
+### Prompt cache tips
 
 How long the model reads before it answers depends mostly on how much of the prompt the model server can reuse. The
 activity panel shows it for every step ("1,240 tokens read in 4 s (+11,980 cached)") – after the first question in
@@ -442,7 +446,7 @@ faster, at ~1–2 GB more VRAM.
 
 Expect roughly +10–40 %, not MoE speed: a dense model (e.g. 27B) computes all its parameters for every prompt token,
 an MoE model only its few active billions – prompt reading is compute-bound, so that gap stays. The bigger
-lever remains not reading at all (prompt cache, see below).
+lever remains not reading at all (prompt cache, see above).
 
 ### Why was so much read again?
 
@@ -516,7 +520,7 @@ hundred MB, cached in `~/.cache/huggingface`. It runs as a small local server (i
 time on a desktop CPU). Until it is installed, or if it fails, the browser speaks.
 
 **Settings → Voice** lists its **27 voices**: the one recorded in your language comes first (German: *Juergen*,
-English: *Alba*) and has no accent; the others keep the timbre of their English, French … recording. Preview with ▶,
+English: *Alba*) and has no accent; the others keep the timbre of their English, French … recording. Preview with the play button,
 or [listen online](https://kyutai.org/pocket-tts). Next to each voice you choose **the language it speaks**
 (German, English, French, Spanish, Italian, Portuguese, Dutch) – and that is also **the language Orbwise answers
 in**: pick *Alba · English* and the answers are written and read out in English (the dashboard stays in its language).
@@ -584,7 +588,7 @@ Locks, alarm panels and garage doors/gates always require confirmation.
 orbwise model add qwen-image     # stable-diffusion.cpp (Vulkan build) + model files, ~10–15 GB depending on the GPU
 ```
 
-Then pick **Bild / Image** at the top left. Describe the image (English usually works best), choose format,
+Then pick **Image** in the mode switch at the top of the sidebar. Describe the image (English usually works best), choose format,
 resolution (0.5 / 1 / 1.5 / 2 megapixels, a custom width × height, or "like reference"), steps, count and seed – or
 **edit**: add up to **3 references** (upload them or press *Use as reference* in the gallery). They are numbered
 image 1–3, so the prompt can combine them – e.g. "the woman from image 1 and the man from image 2 together on a park
@@ -624,7 +628,7 @@ confirmation `portainer_update` (a container of a Portainer stack → the stack 
 image*; a single container → Portainer's *recreate* with a fresh pull, Portainer 2.19+), `portainer_container_action`
 (start/stop/restart/kill/pause/unpause/remove), `portainer_stack_action` (start/stop/remove) and
 `portainer_deploy_stack` (install a new app from a docker-compose file – the file is editable in the confirmation
-dialog – or replace the compose file of an existing stack). Removing keeps named volumes. `run_shell` refuses
+card – or replace the compose file of an existing stack). Removing keeps named volumes. `run_shell` refuses
 `curl` calls to the Portainer address and points to these tools instead.
 
 ### SSH (NAS, servers)
@@ -707,7 +711,7 @@ first and list the affected mails. Unread mails can be part of the [morning brie
 
 **Sending mail (optional, off by default):** set `mail.send_enabled: true`. Orbwise then drafts mails and replies
 ("Reply to Jörg that Friday works"), but never sends on its own: the confirmation card shows **To, Cc, Subject and Text** as
-editable fields, and only a click on **SEND** (or Ctrl+Enter) sends it – a spoken "yes" does not count here, "no"
+editable fields, and only a click on **Send** (or Ctrl+Enter) sends it – a spoken "yes" does not count here, "no"
 cancels. Replies keep the thread (In-Reply-To/References). With the Proton Mail Bridge the defaults fit (SMTP on
 `127.0.0.1:1025`, STARTTLS, same Bridge password); for other providers set `smtp_host`, `smtp_port` and
 `smtp_security`.
@@ -778,12 +782,12 @@ Routines are tasks Orbwise carries out on its own at a set time – daily, on ch
 - "Tomorrow at 7 once: check whether system updates are available."
 
 Say it like that (Orbwise asks before creating it) or use **+ Routine** in the **Planner**: name, task, time,
-weekdays (none = daily) or a date for a one-off run. The list shows the schedule and the next run; ▶ runs a routine
-now, ✎ edits, ✕ deletes, the checkbox pauses it. A coloured dot shows the last result.
+weekdays (none = daily) or a date for a one-off run. The list shows the schedule and the next run; the play icon runs a routine
+now, the pencil edits, the trash icon deletes, the checkbox pauses it. A coloured dot shows the last result.
 
 Every routine writes into **its own chat** ("⟳ Linux news" in the sidebar) – your current chat is never touched, and you
 can ask follow-up questions right there. When a run finishes you get a short notice in the dashboard and a desktop
-notification. If a routine wants to do something that needs confirmation, the normal dialog appears when the
+notification. If a routine wants to do something that needs confirmation, the normal confirmation card appears when the
 dashboard is open; otherwise the action is declined and the routine says what would still be needed.
 
 Routines run while Orbwise is running (autostart). A run that was missed because the PC was off is caught up only
@@ -810,9 +814,9 @@ The bot only answers this one chat; anyone else just gets told their chat ID. It
 polling), so no port has to be opened on your router – but the PC with Orbwise must be running. Questions from
 the phone run in their own chat **"📱 Telegram"** in the sidebar (your open chat in the dashboard stays untouched), and
 **voice messages** are transcribed with Whisper. **Every reminder** is also sent to the phone. Actions that need
-confirmation come with **✅ Run / ❌ Deny** buttons; sending e-mail is only possible in the dashboard (edit dialog).
+confirmation come with **✅ Run / ❌ Deny** buttons; sending e-mail is only possible in the dashboard (editable confirmation card).
 **`/stop`** (or just "stop") cancels whatever is running – the request from the phone, open confirmations, and
-everything running on the PC (dashboard requests, routines, speech output) – like STOP in the dashboard.
+everything running on the PC (dashboard requests, routines, speech output) – like the stop button (or `Esc`) in the dashboard.
 Tip: tell Orbwise once when you start work ("I start work at 8") – it remembers that for "at work" reminders.
 
 **Files in both directions:**
@@ -850,8 +854,10 @@ the **Brave Search API** when a key is set (see [Web search](#web-search)).
 | `websearch` / `webfetch` | Brave API (then SearXNG/DuckDuckGo as configured) / page as Markdown |
 | `subagent` | `explore`: searches the code read-only in its **own context** and returns only the result – saves context on small windows. `general`: a self-contained sub-task, same confirmations. Its steps appear indented in the activity panel |
 | `question` | Asks you with answer buttons (or free text) when something is genuinely unclear |
+| `job_output` | Status and last output of a background job, or stop it |
+| `github_clone` / `github_push` | Clone a repo as the project / push the current branch with a link to create the pull request – both always ask (only with a GitHub token) |
 
-Also: `todo_write` (task list in the answer), `remember`/`recall`.
+Also: `todo_write` (task list in the answer), `remember`/`recall`/`forget`.
 
 - **AGENTS.md:** the project's `AGENTS.md` (or `CLAUDE.md`, see `coding.instructions`) goes into the system prompt,
   together with the project folder, whether it is a git repository and the shell.
@@ -860,7 +866,10 @@ Also: `todo_write` (task list in the answer), `remember`/`recall`.
   (`~/.local/share/orbwise/snapshots/` – your repository is not touched, `.gitignore` applies). Under an answer that
   changed files: "3 files changed +12 −4" with the file list and **Undo** / **Restore**. The agent is told about it.
   Off for folders with more than 20,000 files or without git (`coding.snapshots: false` switches it off).
-- **Permissions:** from the auto level **Edit files** on, `edit`/`write` inside the project folder run without asking
+- **Project chip:** shows the folder – or `owner/repo` and the current branch when `origin` points to GitHub (in the
+  sandbox the `orbwise/…` branch of the working copy); click it to pick a folder (folder browser) or to clone from
+  GitHub.
+- **Permissions:** from the auto level **Read + edit files** on, `edit`/`write` inside the project folder run without asking
   (also hidden folders like `.github`, also outside `$HOME`) – never `.git/`, credentials, or as root. Anything
   outside the project folder asks. Deleting, root and network still ask as everywhere.
 - Not taken over from OpenCode: `patch` (for GPT models), Code Mode, worktrees, LSP (OpenCode 2 runs no language
@@ -891,7 +900,7 @@ Sign in once with the GitHub CLI (`gh auth login`) – Orbwise uses its token �
 
 - **Project chip → Clone from GitHub …**: search your repos, one click clones into `~/Projects` (`github.clone_dir`)
   and makes it the project of the chat.
-- **Push:** from the sandbox menu or by the agent (`github_push`, always asks – also in auto mode *Auto*); afterwards
+- **Push:** from the sandbox menu, the *Changes* window (*Push to GitHub*) or by the agent (`github_push`, always asks – also in auto mode *Auto*); afterwards
   a link to **create the pull request** on GitHub. The token is handed to git only for that one call (via
   `GIT_ASKPASS`) and never written into `.git/config`.
 - `orbwise doctor` shows the container engine and the GitHub account.
@@ -901,11 +910,11 @@ Sign in once with the GitHub CLI (`gh auth login`) – Orbwise uses its token �
 For bigger jobs switch on **Plan** in the input bar. Jarvis then may only
 look things up with read-only tools (system info, file and package search, status …) and answers with a numbered
 plan: what it will do, with which tool or exact command, and where it will ask for confirmation. Anything that would
-change something is not run – it becomes a step of the plan. After **RUN** plan mode switches itself off. While the plan runs it stays pinned to the current request, so it is never cut from the context even when long tool output fills it up. Plan mode uses thinking only when **Think** is
+change something is not run – it becomes a step of the plan. After **Run** plan mode switches itself off. While the plan runs it stays pinned to the current request, so it is never cut from the context even when long tool output fills it up. Plan mode uses thinking only when **Think** is
 switched on too – leave it off for fast plans, switch it on for more thorough ones (also for Telegram `/plan`).
 
-Under the plan: **▶ RUN** carries it out (confirmations for changes still appear as usual), **✎ CHANGE** lets you
-write what should be different ("keep the journal logs") and Jarvis presents a revised plan, **✕ DISCARD** drops it.
+Under the plan: **Run** carries it out (confirmations for changes still appear as usual), **Change** lets you
+write what should be different ("keep the journal logs") and Jarvis presents a revised plan, **Discard** drops it.
 By voice, a short "yes" or "no" decides; the plan itself is not read out, Jarvis only says how many steps it has.
 From the phone: `/plan clean up my disk` – the plan arrives with ✅ Run / ✏️ Change / ❌ Discard buttons.
 
@@ -936,8 +945,8 @@ the question keeps the PDF.
 ### Morning briefing
 
 "Good morning", "briefing" or "what's on today?" gives you a short overview. Choose its items and their order in
-the **Planner** of the dashboard under **Briefing content** (tick, ▲▼, **Preview**) or in the config – dashboard changes take precedence
-until you click **RESET**:
+the **Planner** of the dashboard under **Briefing content** (tick, move up/down, **Preview**) or in the config – dashboard changes take precedence
+until you click **Reset**:
 
 ```yaml
 briefing:
@@ -954,25 +963,25 @@ updates are checked with `checkupdates` (Arch) or `apt list --upgradable` (Debia
 
 ## Telemetry
 
-The activity panel shows (every 2 s, with a sparkline): **TOK/S** (generation speed), **CONTEXT** (prompt
+The activity panel shows (every 2 s, with a sparkline): **Token/s** (generation speed), **Context** (prompt
 size vs. the model's context window, with a breakdown and the compaction point in the tooltip – click it to compact),
-**GPU** load and temperature, **VRAM**, **RAM**/CPU and **POWER** draw. NVIDIA is read via `nvidia-smi`, AMD directly
+**GPU** load and temperature, **VRAM**, **RAM**/CPU, **Power** draw and – with a Brave key – the **Brave search**
+quota as reported by the API. NVIDIA is read via `nvidia-smi`, AMD directly
 from the `amdgpu` driver.
 
 **Context in memory** shows how big the model's KV cache is and where it lives – green in VRAM, orange in RAM (slow) –
 plus a recommendation: "up to ~32k possible" when VRAM is free, or "better 12k" when parts already spill into RAM.
 For a llama-server started by Orbwise the numbers come straight from its log; for Ollama they are estimated
-from the model architecture. **Models → Context window** changes the size per model (4k … 128k, each
-with its KV-cache size and a warning if it won't fit); Orbwise restarts the model server or makes Ollama reload the
-model and remembers the choice.
+from the model architecture. The context window itself is set per model on the **Models** page (see
+[Models & profiles](#models--profiles)).
 
 ## Security
 
 Orbwise can run commands on your system, so:
 
 - **Confirmation required:** everything that changes something (installs, updates, `rm`, writing files, service
-  control, killing processes, unknown programs, command substitution `$(…)`) shows a dialog with the exact
-  command. Confirm by click, `Enter`/`Esc` or voice ("yes"/"no").
+  control, killing processes, unknown programs, command substitution `$(…)`) shows a confirmation card in the chat with
+  the exact command (for file changes a diff). Confirm by click, `Enter`/`Esc` or voice ("yes"/"no").
 - **Read-only commands** (`ls`, `df`, `systemctl status`, `grep`, …) run directly. While an e-mail, a fetched web page,
   an attached PDF or screen/image content is part of the chat (it could contain hidden instructions), every action
   that changes or starts something (writing files, memory, reminders, shell commands that change things, opening
@@ -1031,7 +1040,7 @@ See [SECURITY.md](SECURITY.md) for details and how to report vulnerabilities.
 | `llm.profiles`, `llm.active` | Several models, see [Models & profiles](#models--profiles) |
 | `memory.context_budget_tokens` | Optional cap for the prompt size (default: automatic from the context window) |
 | `memory.compact_idle` | Compact a nearly full context right after an answer instead of before the next question (default on) |
-| `voice.stt_model` | Whisper size: `base`, `small`, `medium`, `large-v3` |
+| `voice.stt_model` | Whisper size: `tiny`, `base`, `small`, `medium`, `large-v3` |
 | `voice.wakeword_threshold` | Wake word sensitivity (lower = more sensitive) |
 | `tools.nas_paths` | Mounted NAS folders |
 | `tools.privilege_cmd` | `dashboard` (password field, default), `pkexec` or `sudo` (NOPASSWD) |
@@ -1041,13 +1050,16 @@ See [SECURITY.md](SECURITY.md) for details and how to report vulnerabilities.
 | `tools.disabled` | Tools or groups to switch off, e.g. `[sysadmin, open_ports]` |
 | `user_name`, `persona_extra` | How the assistant addresses you and extra personality instructions (its name: `assistant_name`) |
 | `host`, `allow_remote` | Keep `127.0.0.1`; other addresses only with `allow_remote: true` |
-| `mail.send_enabled` | Let Orbwise write and send mails (always through the edit-and-confirm dialog) |
+| `mail.send_enabled` | Let Orbwise write and send mails (always through the editable confirmation card) |
 | `vision.model` | Vision model for screen and images, e.g. `qwen2.5vl:7b` (`ollama pull` it once) |
 | `telegram.token`, `telegram.chat_id` | Telegram bot, see [Telegram](#telegram-phone) |
+| `coding.*` | Coding mode: undo snapshots, subagent steps, background jobs, project instructions (`AGENTS.md`) – see [Coding mode](#coding-mode) |
+| `sandbox.*` | Container engine (`auto`/`podman`/`docker`), image, memory, CPUs, network default, idle stop |
+| `github.token`, `github.clone_dir` | GitHub token (or `gh auth login`) and where repos are cloned |
 
 Passwords and tokens can also come from environment variables (`ORBWISE_MAIL_PASSWORD`, `ORBWISE_TELEGRAM_TOKEN`,
-`ORBWISE_PAPERLESS_TOKEN`, `ORBWISE_HA_TOKEN`, `ORBWISE_TRILIUM_TOKEN`, `ORBWISE_CALENDAR_PASSWORD`,
-`ORBWISE_BRAVE_API_KEY`) – then they don't have to be written into the config file at all.
+`ORBWISE_PAPERLESS_TOKEN`, `ORBWISE_HA_TOKEN`, `ORBWISE_TRILIUM_TOKEN`, `ORBWISE_PORTAINER_TOKEN`,
+`ORBWISE_CALENDAR_PASSWORD`, `ORBWISE_BRAVE_API_KEY`, `ORBWISE_GITHUB_TOKEN`) – then they don't have to be written into the config file at all.
 
 ## Commands
 
@@ -1076,7 +1088,7 @@ orbwise init-config            # create the example configuration
 | `orbwise: command not found` | Open a new terminal (PATH was extended) or run `~/orbwise/scripts/install.sh` again |
 | The orb stays "OFFLINE" | Is `orbwise serve` running? Log: `~/.local/state/orbwise.log` |
 | "Ollama not reachable" | `sudo systemctl enable --now ollama` |
-| Context: "shortened", slow answers, the window seems smaller | `orbwise context-test` (or Settings → Context window → *Test context*): checks whether the server really runs with the configured window, KV cache in VRAM, token estimate, prompt cache (same prompt and follow-up), a prompt up to the compaction point (the model must still repeat a code word from its start) and overflow detection. `--quick` skips the two slow fill checks |
+| Context: "shortened", slow answers, the window seems smaller | `orbwise context-test` (or Models → model → *Diagnostics* → *Test context*): checks whether the server really runs with the configured window, KV cache in VRAM, token estimate, prompt cache (same prompt and follow-up), a prompt up to the compaction point (the model must still repeat a code word from its start) and overflow detection. `--quick` skips the two slow fill checks |
 | No natural voice (the browser speaks) | `orbwise doctor` → Pocket TTS missing? `orbwise voice install`; its log: `~/.local/share/orbwise/pocket-tts/server.log` |
 | Microphone doesn't work | Open `http://localhost:8765` (not the IP), check the browser's microphone permission |
 | Wake word triggers too often/rarely | Adjust `voice.wakeword_threshold` (0.3–0.7) |
@@ -1087,7 +1099,7 @@ orbwise init-config            # create the example configuration
 | Web search: "Brave … HTTP 429" | Brave API quota or rate limit reached – wait, check your plan, or allow `tools.search_fallback: true` |
 | Web search: "Brave API key invalid" | Check `tools.brave_api_key` / `$ORBWISE_BRAVE_API_KEY`; `orbwise doctor` tests the key |
 | File search misses new files | `sudo updatedb` |
-| Answers get cut off / "context too small" | Increase the model's context window (more room between two compactions); watch the CONTEXT tile, `/compact` frees it by hand |
+| Answers get cut off / "context too small" | Increase the model's context window (more room between two compactions); watch the *Context* tile, `/compact` frees it by hand |
 | Every question takes long before the answer starts | The model server re-reads the prompt – see [prompt cache tips](#prompt-cache-tips) |
 
 ## Development
@@ -1108,11 +1120,11 @@ It lets a language model run shell commands, install and remove packages, contro
 if you enter your password – act as root. Language models make mistakes and can misunderstand you. Orbwise asks
 for confirmation before changing anything, but that only protects you if you read what you approve.
 
-- Read every confirmation dialog before clicking **Allow**.
+- Read every confirmation card before clicking **Run** (or **Send**).
 - Keep backups, and do not run Orbwise on production systems or computers that are not yours.
 - Keep `host: 127.0.0.1` – never expose Orbwise to a network or the internet (see [SECURITY.md](SECURITY.md)).
 - If you use the Telegram bot, your Telegram account can control this PC: enable two-step verification.
-- Sending mails, changing documents in Paperless or devices in Home Assistant acts in your name – check the dialog.
+- Sending mails, changing documents in Paperless or devices in Home Assistant acts in your name – check the confirmation card.
 - Check answers that matter (health, money, legal, security) against reliable sources.
 
 **AI-generated code.** Large parts of Orbwise were written with the help of an AI coding assistant. The code is
