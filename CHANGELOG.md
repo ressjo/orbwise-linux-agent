@@ -5,6 +5,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Removed
+- **Strata engine:** the experimental Strata integration for Qwen3.8-Flash-Next is gone again – the dense
+  Qwen3.8-27B on llama.cpp answered better, and loading froze AMD desktops. On the first start Orbwise removes Strata
+  profiles from `state.json`, stops a running Strata server and deletes the model (`~/models/strata`) and the engine it
+  installed (`~/.local/share/strata`).
+
 ### Changed
 - **Fewer full re-reads in big windows:** from 32k on all tools go along from the start (if they take ≤ 25 % of the
   budget and < 60 s to read) instead of growing mid-chat, which re-read the whole chat; the step-limit summary keeps
@@ -20,22 +26,9 @@ All notable changes to this project are documented here. The format follows
   with one click (`POST /api/llamacpp/flavor`, kept as preferred build for updates). IQ quants get a note about
   K quants. Lossless: only speed settings change.
 - **Unload the model by hand:** **Unload** on the model page and the model chip frees the video memory (stops the
-  llama.cpp/Strata server, unloads Ollama) while the model stays selected; the next question or API request loads it
+  llama.cpp server, unloads Ollama) while the model stays selected; the next question or API request loads it
   again (prompt-cache warming does not), and an unloaded model stays unloaded across a restart. The selected model
   can now be deleted: Orbwise unloads it and selects another one without loading it.
-- **Strata context window:** new Strata models start with Strata's own recommendation for the card (< 14 GB → 32k,
-  < 20 GB → 64k, otherwise 128k); the model page offers Strata's steps up to the trained 256k, each with the KV size and
-  whether the KV cache fits in RAM or takes VRAM from the experts (IQ3: RAM estimate above 128k). Larger values are
-  refused.
-- **Strata on NVIDIA:** the Strata card checks the NVIDIA driver and card (RTX 20+ via compute capability; driver
-  ≥ 580.65 → CUDA 13 engine, ≥ 525 → CUDA 12 engine with a note, older → asks to update) – e.g. RTX 4080 + 64 GB RAM
-  gets IQ2_XS.
-- **Strata engine for Qwen3.8-Flash-Next:** Models → Add offers the large MoE model with the variant that fits VRAM +
-  RAM (32 GB RAM → Coder IQ1_M). Orbwise installs the Strata terminal like its `install.sh` (manifest SHA-256, signed
-  feed check), runs it as a detached model server (new `server.detached`, `stop_command`, `ready_key`,
-  `progress_dir`/`progress_gb` options: start command returns, stop via `strata launch --stop`, ready on
-  `/health` `loaded`, download progress while loading), checks tool calling once after the first load, and hides
-  the llama.cpp-only settings for it. Deleting the model removes its folder in `~/models/strata`.
 - **Brave quota in the activity panel:** Brave Search requests are counted per month and the quota Brave reports
   (`X-RateLimit-*`) is kept; a tile shows used / limit / remaining / reset date (orange from 80 %, a notice below
   10 %), `orbwise doctor` prints it, and a used-up quota is not queried again until it resets (with
@@ -116,10 +109,6 @@ All notable changes to this project are documented here. The format follows
   the open chat stays untouched.
 
 ### Fixed
-- **PC froze while loading a Strata model on AMD:** Strata kept only 700 MiB of VRAM free; with the desktop on the
-  same AMD card amdgpu moved the expert cache into the already full RAM. Strata models on AMD now keep 3 GB free
-  (`--set vram-reserve-mib=3072`, Strata's recommendation; existing profiles get it at the next start), adjustable on
-  the model page (0.7 / 1 / 1.5 / 2 / 3 / 4 GB); the context recommendation accounts for the smaller room (RX 7900 XT: 64k).
 - **Cache numbers for one-token requests:** llama-server sometimes omits the generation speed when only one token is
   generated (warm-up, self-test); the prompt counts then came from `usage`, which includes cached tokens, so a
   cache hit looked like a full re-read. The prompt counts now always come from the timings, and the self-test

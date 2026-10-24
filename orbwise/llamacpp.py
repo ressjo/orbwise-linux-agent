@@ -597,14 +597,6 @@ def forget(cfg, state_path: Path, name: str, delete_files: bool = True) -> int:
     data = _read(state_path)
     rec = (data.get("local_models") or {}).pop(name, None)
     _write(state_path, data)
-    if rec and rec.get("engine") == "strata" and rec.get("dir") and delete_files:  # Strata: der Ordner der Variante
-        folder = Path(rec["dir"]).resolve()
-        if folder.is_dir() and models_dir(cfg).resolve() in folder.parents:
-            from .strata import dir_bytes
-            freed = dir_bytes(folder)
-            shutil.rmtree(folder, ignore_errors=True)
-            return freed
-        return 0
     if not rec or not rec.get("downloaded") or not delete_files:
         return 0
     base = models_dir(cfg).resolve()

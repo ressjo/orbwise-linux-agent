@@ -310,7 +310,7 @@ orbwise model remove qwen3-14b # remove it from the list (optionally also delete
 ```
 
 **Unloading:** **Unload** on the model page (or **Unload model** on the model chip) frees the video memory – the
-llama.cpp/Strata server stops, Ollama drops the model – while the model stays selected; the next question (or the
+llama.cpp server stops, Ollama drops the model – while the model stays selected; the next question (or the
 API server) loads it again, warming the prompt cache does not. Handy before a game, during a big download or before
 deleting. It also survives a restart: Orbwise then starts without loading the model. Deleting the selected model
 unloads it first and selects another one (loaded with the next question).
@@ -428,53 +428,6 @@ shows the full command; restored checkpoints appear in the same log.
 - **Vision model** (screen understanding): on a small GPU it can push the language model out of VRAM; the next step
   then reads the chat again (the activity shows it). `vision.keep_alive: 2m` unloads it soon afterwards.
 
-### Large MoE models with Strata (Qwen3.8-Flash-Next)
-
-Qwen3.8-Flash-Next (~125B parameters, 6B active per token, plus a ~29 GB lookup table) does not fit on a gaming card
-with llama.cpp. [Strata](https://github.com/Niko1221/Strata) (MIT, a separate engine that uses parts of ggml) keeps
-the most-used experts in VRAM, all of them in RAM and the lookup table on the SSD. **Models → Add → Strata** sets it
-up like Strata's own `install.sh`: it reads the release's `install-manifest.txt`, checks the SHA-256 of the terminal
-archive, unpacks it to `~/.local/share/strata/terminal/` and verifies the signed release feed with it
-(`strata update --check`) before using it – then adds the variant that fits your memory as a model:
-
-| RAM (+ a 12 GB+ card) | Variant |
-|---|---|
-| 32 GB | Coder IQ1_M (half the experts – strong at code and tools, weaker at other text; ~58 GB download) |
-| 48–64 GB | IQ2_XS (or Q2_0, the fastest) |
-| ≥ 96 GB | IQ3_S (matches the full model) |
-
-On the first **Load** Strata downloads its engine and the model into `~/models/strata/<variant>` (progress shows while
-loading); afterwards loading can make the PC sluggish for 1–3 minutes. Orbwise starts it as a detached server
-(`strata launch … --no-tui`, its own API key passed via the environment, ready once `/health` reports `loaded`),
-stops it with `strata launch --stop` (also before image mode or another model) and checks once whether it returns
-tool calls – without them Orbwise can only chat with it. KV cache, batch size and speculative decoding are handled by
-Strata itself, so the model page only offers the context window and sampling. Cards: NVIDIA RTX 20–50 series with
-12 GB+ (driver 580+ gets Strata's CUDA 13 engine, older drivers from 525 the CUDA 12 one – Orbwise checks the driver
-and refuses GTX cards) or AMD RX 6800 and newer (experimental in Strata). Example: an RTX 4080 (16 GB) with 64 GB RAM
-gets IQ2_XS (Q2_0 and IQ3_S are offered too).
-
-**Context window:** the model is trained for 256k tokens; the model page offers Strata's steps 8k – 256k. The KV cache
-is small (~13.7 KB per token: 64k ≈ 0.9 GB, 128k ≈ 1.8 GB, 256k ≈ 3.6 GB), but where it lives matters: from 64k Strata
-keeps it in RAM when there is room next to the experts, otherwise it takes VRAM away from the expert cache. New
-models start with Strata's own recommendation, marked on the model page:
-
-| Card | Recommended | Example |
-|---|---|---|
-| under 14 GB | 32k | |
-| 14 – 19 GB | 64k | RTX 4080 + 64 GB RAM (IQ2_XS): 128k – 256k also fine, the KV cache goes to RAM |
-| 20 GB and more | 128k | RX 7900 XT + 32 GB RAM (Coder): KV cache stays in VRAM – 64k is the faster choice |
-
-The card size counts minus the desktop reserve below – with 3 GB kept free, a 20 GB card gets 64k.
-
-**PC freezes while loading (AMD):** Strata fills the VRAM with experts and keeps only 700 MiB free – sized for a card
-without a desktop. When the same AMD card also drives the screen on Linux, the desktop needs VRAM too; amdgpu then
-moves experts into RAM, which Strata already fills, and the PC hangs (Strata issues #560/#516). Orbwise therefore keeps
-**3 GB free on AMD cards** (`strata launch … --set vram-reserve-mib=3072`; Strata's own recommendation), also for
-Strata models added before. Change it on the model page under **Video memory for the desktop** (0.7 / 1 / 1.5 / 2 / 3 / 4 GB) – a lean
-desktop often gets by with 1–2 GB: measure what it uses without a model loaded
-(`cat /sys/class/drm/card*/device/mem_info_vram_used`, in bytes) and keep the reserve above that. If the PC still runs short of RAM: close the browser or other big
-programs while loading, and consider `earlyoom` or `systemd-oomd` so Linux ends a program instead of freezing.
-
 ### Faster prompt reading (llama.cpp)
 
 **Find the fastest setting** on the model page (section *Prompt processing*) measures with `llama-bench` – part of
@@ -487,7 +440,7 @@ updates). For IQ quants it notes that a K quant (Q4_K_M, UD-Q4_K_XL) has at leas
 faster, at ~1–2 GB more VRAM.
 
 Expect roughly +10–40 %, not MoE speed: a dense model (e.g. 27B) computes all its parameters for every prompt token,
-an MoE like Strata's Qwen3.8-Flash-Next only ~6B – prompt reading is compute-bound, so that gap stays. The bigger
+an MoE model only its few active billions – prompt reading is compute-bound, so that gap stays. The bigger
 lever remains not reading at all (prompt cache, see below).
 
 ### Why was so much read again?
@@ -1105,7 +1058,6 @@ from their original sources, and their licenses apply:
 | Language models via Ollama / Bonsai-demo (Qwen, Llama, Mistral, gpt-oss, Bonsai, …) | chat | per model – see its model card |
 | [ddgs](https://pypi.org/project/ddgs/), [trafilatura](https://github.com/adbar/trafilatura), [caldav](https://github.com/python-caldav/caldav) | web search, page text, calendar | MIT · Apache-2.0 · GPL-3.0-or-later OR Apache-2.0 |
 | [pypdf](https://github.com/py-pdf/pypdf) | reading attached PDFs | BSD-3-Clause |
-| [Strata](https://github.com/Niko1221/Strata) (optional, downloaded on request) | large MoE models (Qwen3.8-Flash-Next) | MIT · models per model card |
 
 If you redistribute Orbwise together with these components (e.g. as a package or image), you must comply with
 their licenses as well. Using the "Hey Jarvis" wake word model commercially is not allowed by its license.

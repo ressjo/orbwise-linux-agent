@@ -25,16 +25,6 @@ class ServerConfig(BaseModel):
     startup_timeout: float = 240.0
     # Standard: <base_url ohne /v1>/health
     health_url: str = ""
-    # Der Startbefehl kehrt zurück und lässt den Server im Hintergrund laufen (z. B. Strata: launch --no-tui) –
-    # Exit-Code 0 ist dann kein Fehler, beendet wird über stop_command
-    detached: bool = False
-    stop_command: str = ""
-    # Feld der Health-Antwort (JSON), das wahr sein muss – „antwortet“ heißt bei manchen Servern noch nicht „geladen“
-    ready_key: str = ""
-    # Lädt der Startbefehl selbst Dateien herunter (Strata beim ersten Start): Ordner und erwartete Größe für die
-    # Fortschrittsanzeige
-    progress_dir: str = ""
-    progress_gb: float = 0.0
 
 
 class ProfileConfig(BaseModel):

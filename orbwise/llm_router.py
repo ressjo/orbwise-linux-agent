@@ -11,7 +11,6 @@ import re
 import shlex
 import signal
 import subprocess
-import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 
@@ -64,8 +63,6 @@ def _log_path() -> Path:
 class ManagedServer:
     """Startet einen Modell-Server als eigene Prozessgruppe und wartet, bis er bereit ist."""
 
-    STOP_WAIT_S = 20.0  # so lange auf das Freiwerden des Ports warten, nachdem stop_command lief
-
     def __init__(self, server: ServerConfig, base_url: str, transport: httpx.AsyncBaseTransport | None = None):
         self.cfg = server
         self.base_url = base_url.rstrip("/")
@@ -83,12 +80,8 @@ class ManagedServer:
         try:
             async with httpx.AsyncClient(timeout=3, transport=self.transport) as c:
                 r = await c.get(self.health_url)
-            if r.status_code != 200:
-                return False
-            if self.cfg.ready_key:  # z. B. Strata: {"loaded": false} solange das Modell noch lädt
-                return bool(r.json().get(self.cfg.ready_key))
-            return True
-        except (httpx.HTTPError, ValueError, AttributeError):
+            return r.status_code == 200
+        except httpx.HTTPError:
             return False
 
     async def port_in_use(self) -> bool:
@@ -132,14 +125,13 @@ class ManagedServer:
         while waited < self.cfg.startup_timeout:
             if await self.healthy():
                 return True
-            if self.proc is not None and self.proc.poll() is not None \
-                    and not (self.cfg.detached and self.proc.returncode == 0):  # abgelöst: Starter ist fertig, Server läuft
+            if self.proc is not None and self.proc.poll() is not None:
                 raise LLMError(f"Modell-Server ist beim Start beendet worden (Exit-Code {self.proc.returncode}).\n"
                                + tail_log() + library_hint(self.cfg.command))
             await asyncio.sleep(1)
             waited += 1
             if progress and int(waited) % 10 == 0:
-                await progress(await self._progress_text(waited))
+                await progress(f"Modell wird geladen … {int(waited)} s")
         await self.stop()
         raise LLMError(f"Modell-Server nicht rechtzeitig bereit ({int(self.cfg.startup_timeout)} s).\n" + tail_log())
 
@@ -172,8 +164,6 @@ class ManagedServer:
         return killed
 
     async def stop(self) -> None:
-        if self.cfg.stop_command:  # abgelöster Server (Strata): über seinen eigenen Befehl beenden
-            await self._run_stop_command()
         if not self.running():
             self.proc = None
             return
@@ -191,35 +181,6 @@ class ManagedServer:
             except (ProcessLookupError, PermissionError):
                 pass
         self.proc = None
-
-
-    async def _progress_text(self, waited: float) -> str:
-        """„Modell wird geladen … 40 s“ – lädt der Starter erst Dateien herunter, mit dem Stand des Downloads."""
-        if self.cfg.progress_dir and self.cfg.progress_gb:
-            from .strata import dir_bytes
-            have = await asyncio.to_thread(dir_bytes, Path(os.path.expanduser(self.cfg.progress_dir))) / 1e9
-            if have < self.cfg.progress_gb * 0.98:
-                return T(f"Lade Modell herunter … {have:.1f} von ~{self.cfg.progress_gb:.0f} GB",
-                         f"Downloading the model … {have:.1f} of ~{self.cfg.progress_gb:.0f} GB")
-        return f"Modell wird geladen … {int(waited)} s"
-
-    async def _run_stop_command(self) -> None:
-        command = os.path.expanduser(self.cfg.stop_command)
-        env = {**os.environ, **{k: os.path.expanduser(str(v)) for k, v in self.cfg.env.items()}}
-        try:
-            with _log_path().open("ab") as log_file:
-                log_file.write(f"\n===== Stoppe: {command}\n".encode())
-                log_file.flush()
-                proc = await asyncio.create_subprocess_exec("bash", "-c", command, env=env, stdin=subprocess.DEVNULL,
-                                                            stdout=log_file, stderr=subprocess.STDOUT)
-                await asyncio.wait_for(proc.wait(), 120)
-        except (OSError, asyncio.TimeoutError) as e:
-            log.warning("Modell-Server ließ sich nicht beenden (%s): %s", command, e)
-        deadline = time.monotonic() + self.STOP_WAIT_S
-        while time.monotonic() < deadline:  # warten, bis der Port frei ist (Grafikspeicher wieder verfügbar)
-            if not await self.port_in_use():
-                break
-            await asyncio.sleep(0.2)
 
 
 def library_hint(command: str) -> str:
@@ -259,13 +220,8 @@ def _server_ctx(server: ServerConfig) -> int | None:
     env = str((server.env or {}).get("BONSAI_CTX", "")).strip()
     if env.isdigit():
         return int(env)
-    m = re.findall(r"(?:^|\s)(?:-c|--ctx-size|--context)\s+(\d+)", server.command)
+    m = re.findall(r"(?:^|\s)(?:-c|--ctx-size)\s+(\d+)", server.command)
     return int(m[-1]) if m else None
-
-
-def is_strata(server: ServerConfig | None) -> bool:
-    """Strata-Engine (eigene MoE-Engine, siehe strata.py): verwaltet KV-Cache, Experten und Spekulation selbst."""
-    return bool(server) and bool(re.search(r"(^|/)strata\s+launch\b", server.command))
 
 
 def _help_text(command: str, env: dict) -> str:
@@ -466,12 +422,6 @@ class LLMRouter:
         for name, n in (state.get("ubatch") or {}).items():
             if name in self.profiles and n in UBATCH_SIZES and self.profiles[name].server:
                 self._apply_ubatch(name, n)
-        for name, mib in (state.get("strata_reserve") or {}).items():
-            if name in self.profiles and is_strata(self.profiles[name].server):
-                try:
-                    self._apply_strata_reserve(name, mib)
-                except LLMError as e:
-                    log.warning("VRAM-Reserve für '%s' nicht gesetzt: %s", name, e)
         for name, mode in (state.get("speculative") or {}).items():
             if name in self.profiles and mode in SPEC_MODES and self.profiles[name].server:
                 try:
@@ -752,8 +702,6 @@ class LLMRouter:
             command = p.server.command
             if "BONSAI_CTX" in env:
                 env["BONSAI_CTX"] = str(n)
-            elif is_strata(p.server):
-                command = re.sub(r"\s+--context\s+\S+", "", command) + f" --context {n}"
             elif re.search(r"(^|\s)(-c|--ctx-size)\s+\d+", command):
                 command = re.sub(r"(^|\s)(-c|--ctx-size)\s+\d+", rf"\1\2 {n}", command)
             else:
@@ -798,30 +746,9 @@ class LLMRouter:
             raise LLMError(f"Unbekanntes Profil '{name}'")
         if n not in UBATCH_SIZES:
             raise LLMError(T("Batch-Größe bitte 512, 1024 oder 2048", "Batch size please 512, 1024 or 2048"))
-        if is_strata(self.profiles[name].server):
-            raise LLMError(T("Strata regelt das selbst – diese Einstellung gibt es dort nicht.",
-                             "Strata handles this itself – this setting does not exist there."))
         if not self.profiles[name].server:
             self._apply_ubatch(name, n)  # meldet den Grund
         await self._reconfigure(name, lambda: self._apply_ubatch(name, n), "ubatch", n, progress)
-
-    def _apply_strata_reserve(self, name: str, mib: int) -> None:
-        """Grafikspeicher, den Strata frei lässt (für den Desktop auf derselben Karte) – wirkt beim nächsten Start."""
-        from . import strata
-        p = self.profiles[name]
-        if not is_strata(p.server):
-            raise LLMError(T("Nur bei Strata-Modellen einstellbar.", "Only available for Strata models."))
-        if mib not in strata.RESERVE_STEPS:
-            raise LLMError(strata.reserve_error())
-        p.server = p.server.model_copy(update={"command": strata.with_reserve(p.server.command, mib)})
-        self.servers.pop(name, None)  # neuer Startbefehl
-
-    async def set_strata_reserve(self, name: str, mib: int, progress: Progress | None = None) -> None:
-        """VRAM-Reserve eines Strata-Profils ändern und merken; beim geladenen Profil startet Strata neu."""
-        if name not in self.profiles:
-            raise LLMError(f"Unbekanntes Profil '{name}'")
-        self._apply_strata_reserve(name, mib)  # prüft Profil und Wert
-        await self._reconfigure(name, lambda: self._apply_strata_reserve(name, mib), "strata_reserve", mib, progress)
 
     def _apply_spec(self, name: str, mode: str) -> None:
         """Spekulatives Decoding eines eigenen llama-server setzen (wirkt beim nächsten Start)."""
@@ -849,9 +776,6 @@ class LLMRouter:
             raise LLMError(f"Unbekanntes Profil '{name}'")
         if mode not in SPEC_MODES:
             raise LLMError(T("Bitte off, mtp oder ngram", "Please off, mtp or ngram"))
-        if is_strata(self.profiles[name].server):
-            raise LLMError(T("Strata regelt das selbst – diese Einstellung gibt es dort nicht.",
-                             "Strata handles this itself – this setting does not exist there."))
         option = next(o for o in spec_options(self.profiles[name].server) if o["mode"] == mode)
         if not option["ok"]:
             raise LLMError(option.get("why") or "nicht möglich")
@@ -969,9 +893,6 @@ class LLMRouter:
         """KV-Cache-Stufe (f16/q8_0/q4_0) ändern und merken; beim aktiven Profil startet der Server neu."""
         if name not in self.profiles:
             raise LLMError(f"Unbekanntes Profil '{name}'")
-        if is_strata(self.profiles[name].server):
-            raise LLMError(T("Strata regelt das selbst – diese Einstellung gibt es dort nicht.",
-                             "Strata handles this itself – this setting does not exist there."))
         p = self.profiles[name]
         allowed = kv_types(p.server.command, p.server.env) if p.server else list(KV_TYPES)
         if kv not in allowed:
@@ -1024,17 +945,14 @@ class LLMRouter:
 
     @staticmethod
     def _server_options(p: ProfileConfig) -> dict:
-        """Startoptionen für die Modellseite – bei Strata keine: die Engine regelt KV-Cache, Batch und Spekulation."""
-        if not p.server or is_strata(p.server):
-            from .strata import reserve_of
+        """Startoptionen für die Modellseite (nur bei einem eigenen llama-server einstellbar)."""
+        if not p.server:
             return {"kv": None, "kv_settable": False, "kv_options": [], "ubatch": None, "ubatch_settable": False,
-                    "spec": "off", "spec_options": [] if p.server else spec_options(None),
-                    "strata": is_strata(p.server),
-                    **({"strata_reserve": reserve_of(p.server.command)} if is_strata(p.server) else {})}
+                    "spec": "off", "spec_options": spec_options(None)}
         return {"kv": cache_type(p.server.command, p.server.env), "kv_settable": True,
                 "kv_options": kv_types(p.server.command, p.server.env),
                 "ubatch": ubatch_of(p.server.command), "ubatch_settable": True,
-                "spec": spec_mode(p.server.command), "spec_options": spec_options(p.server), "strata": False}
+                "spec": spec_mode(p.server.command), "spec_options": spec_options(p.server)}
 
     async def close(self) -> None:
         for server in self.servers.values():

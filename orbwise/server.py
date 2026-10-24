@@ -22,12 +22,12 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import askpass, metrics, prompts, usage
+from . import askpass, metrics, prompts, retire, usage
 from .agent import Agent
 from .config import BRIEFING_SECTIONS, BriefingConfig, Config, env
 from .lang import T, set_lang
 from .llm import FakeLLM, LLMError
-from .llm_router import LLMRouter, is_strata
+from .llm_router import LLMRouter
 from .memory import Memory
 from .memory.files import valid_day
 from .reminders import ReminderStore
@@ -399,6 +399,8 @@ class FreshStaticFiles(StaticFiles):
 def create_app(cfg: Config) -> FastAPI:
     set_lang(cfg.language)  # Meldungen außerhalb der Prompts (z. B. Modell-Server-Fehler)
     fake = env("FAKE_LLM") == "1"
+    # Profile entfernter Engines (Strata) aus state.json nehmen, bevor der Router sie liest – Dateien beim Start
+    retired = None if fake else retire.clean_state(cfg.memory.dir.parent / "state.json")
     llm = FakeLLM(language=cfg.language) if fake else LLMRouter(cfg.llm, state_path=cfg.memory.dir.parent / "state.json")
     memory = Memory(cfg.memory, llm)
     agent = Agent(cfg, llm, memory)
@@ -529,6 +531,12 @@ def create_app(cfg: Config) -> FastAPI:
             await asyncio.sleep(0.25)
         await startup.set("telegram", "warn", T("noch keine Verbindung", "not connected yet"))
 
+    async def remove_retired(found: dict) -> None:
+        """Strata ist aus Orbwise entfernt: laufenden Server stoppen, Modell und Engine löschen (einmalig)."""
+        freed = await asyncio.to_thread(retire.remove_strata_files, found["strata_dirs"])
+        log.info("Strata entfernt (Profile: %s, %.1f GB frei)", ", ".join(found["profiles"]), freed / 1e9)
+        await hub.broadcast({"type": "models_changed"})
+
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
         hub.speaker.start()
@@ -536,6 +544,8 @@ def create_app(cfg: Config) -> FastAPI:
         heal_index_soon()
         if isinstance(llm, LLMRouter):
             background.append(asyncio.create_task(start_model()))
+            if retired and retired["profiles"]:
+                background.append(asyncio.create_task(remove_retired(retired)))
         else:
             await startup.set("model", "ok", T("Demo-Modus", "demo mode"))
         background.append(asyncio.create_task(warm_voice()))
@@ -581,28 +591,8 @@ def create_app(cfg: Config) -> FastAPI:
         if not agent.busy():
             await hub.broadcast({"type": "state", "state": "idle"})
 
-    async def strata_reserve_default() -> None:
-        """Strata-Profile ohne gewählte VRAM-Reserve bekommen die Vorgabe für diese Karte (AMD: 3 GB für den Desktop –
-        mit Stratas 700 MiB friert der PC beim Laden ein). Vor dem Start, damit sie gleich gilt."""
-        if not isinstance(llm, LLMRouter):
-            return
-        from . import llamacpp as llamacpp_mod
-        from . import strata as strata_mod
-        data = llamacpp_mod._read(state_file)
-        chosen = data.get("strata_reserve") or {}
-        missing = [n for n, p in llm.profiles.items() if is_strata(p.server) and n not in chosen]
-        if not missing:
-            return
-        mib = strata_mod.default_reserve(await gpu_info())
-        for name in missing:
-            llm._apply_strata_reserve(name, mib)
-            chosen[name] = mib
-        data["strata_reserve"] = chosen
-        llamacpp_mod._write(state_file, data)
-
     async def start_model() -> None:
         # Beim Start das aktive Profil vorbereiten (z. B. llama-server starten); Chats warten so lange
-        await strata_reserve_default()
         name = llm.active
         label = llm.profile.label or llm.profile.model
         if llm.unloaded:  # beim Beenden entladen → bleibt so, bis jemand fragt
@@ -886,7 +876,6 @@ def create_app(cfg: Config) -> FastAPI:
         added = mdl.added_profiles(state_file)  # state.json nur einmal lesen
         added_slugs = {mdl.slug(t) for t in mdl.added_models(state_file)}
         gpu = await gpu_info()
-        ram_total = None  # nur für Strata-Profile (Kontext-Empfehlung) gebraucht
         for p in profiles:
             p["deletable"] = p["name"] in added or p["name"] in added_slugs
             size = sizes.get(p["model"]) or sizes.get(f"{p['model']}:latest") if p["backend"] == "ollama" else None
@@ -895,23 +884,7 @@ def create_app(cfg: Config) -> FastAPI:
             if p["name"] in bonsai_mod.VARIANTS:
                 files = [str(f) for f in bonsai_mod.model_files(variant=p["name"])]
                 p["engine"] = "Bonsai (llama.cpp)"
-            elif (local := llamacpp_mod.local_record(state_file, p["name"])) is not None \
-                    and local.get("engine") == "strata":
-                from . import strata as strata_mod
-                folder = Path(local.get("dir") or "")
-                size = await asyncio.to_thread(strata_mod.dir_bytes, folder) if folder.is_dir() else 0
-                p.update(engine="Strata", quant=str(local.get("strata_model") or "").upper(), keeps_files=False,
-                         path=llamacpp_mod._tilde(folder), downloaded_gb=round(size / 1e9, 1),
-                         download_gb=strata_mod.MODELS.get(local.get("strata_model"), {}).get("download_gb"),
-                         tools_ok=local.get("tools_ok"))
-                if local.get("strata_model") in strata_mod.MODELS:
-                    if ram_total is None:
-                        ram_total = ((await asyncio.to_thread(metrics.collect)).get("ram") or {}).get("total") or 0
-                    p["ctx_options"] = strata_mod.context_options(
-                        local["strata_model"], gpu.get("vram_gb") or 0, ram_total / 1024 ** 3,
-                        p.get("strata_reserve") or strata_mod.DEFAULT_RESERVE)
-                    p["strata_reserve_default"] = strata_mod.default_reserve(gpu)
-            elif local is not None:
+            elif (local := llamacpp_mod.local_record(state_file, p["name"])) is not None:
                 files = [f for f in local.get("files", []) if Path(f).is_file()]
                 p["keeps_files"] = not local.get("downloaded")
                 p["repo"] = local.get("repo") or ""
@@ -926,7 +899,7 @@ def create_app(cfg: Config) -> FastAPI:
                 q = re.search(r":((?:UD-)?I?Q\d\w*|[bf]f16)$", p["model"], re.I)
                 p["quant"] = q.group(1) if q else None
             p["size_gb"] = round(size / 1e9, 1) if size else None
-            if size and p["engine"] != "Strata":  # Strata hält die Experten im RAM – passt laut eigener Wahl der Variante
+            if size:
                 p["vram_gb"] = mdl.need_gb(round(size / 1e9, 1))
                 p["fit"] = mdl.fit_need(p["vram_gb"], gpu["vram_gb"]) if gpu["vram_gb"] else None
             p["prefill_tps"] = agent.prefill_speed(p["name"])
@@ -1171,96 +1144,6 @@ def create_app(cfg: Config) -> FastAPI:
         return {"installed": llamacpp.installed(cfg), "tag": m.get("tag"), "flavor": m.get("flavor"),
                 "updating": "llama.cpp" in pulls}
 
-    # ---------- Strata (große MoE-Modelle: Qwen3.8-Flash-Next, siehe strata.py) ----------
-    @app.get("/api/strata")
-    async def strata_status():
-        from . import strata
-        gpu = await gpu_info()
-        ram = ((await asyncio.to_thread(metrics.collect)).get("ram") or {}).get("total") or 0
-        ok, note = strata.gpu_supported(gpu)
-        have = {r.get("strata_model") for r in (llamacpp_state().get("local_models") or {}).values()
-                if r.get("engine") == "strata"}
-        return {"installed": strata.installed(), "version": strata.version(), "supported": ok, "note": note,
-                "gpu": gpu, "ram_gb": round(ram / 1024 ** 3, 1), "installing": "Strata" in pulls,
-                "options": [{**o, "added": o["model"] in have}
-                            for o in strata.options(gpu.get("vram_gb") or 0, ram / 1024 ** 3)]}
-
-    def llamacpp_state() -> dict:
-        from . import llamacpp
-        return llamacpp._read(state_file)
-
-    @app.post("/api/strata/install")
-    async def strata_install(request: Request):
-        """Strata-Terminal einrichten (bzw. aktualisieren) und die Variante als Modell anlegen. Engine und Modell
-        lädt Strata beim ersten Laden selbst (Fortschritt erscheint dann beim Laden)."""
-        from . import strata
-        if not isinstance(llm, LLMRouter):
-            raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
-        body = await request.json()
-        model = str(body.get("model") or "")
-        if model not in strata.MODELS:
-            raise HTTPException(400, T("Unbekannte Strata-Variante", "Unknown Strata variant"))
-        gpu = await gpu_info()
-        ok, note = strata.gpu_supported(gpu)
-        if not ok:
-            raise HTTPException(400, note)
-        reserve = strata.default_reserve(gpu)  # AMD: Platz für den Desktop, sonst friert der PC beim Laden ein
-        context = strata.recommend_context(gpu.get("vram_gb") or 0, reserve)
-
-        async def job() -> dict:
-            async def step(done: int, total: int) -> None:
-                pull_state["Strata"] = {"completed": done, "total": total, "status": "Strata"}
-                await hub.broadcast({"type": "model_pull", "tag": "Strata", "completed": done, "total": total})
-            await strata.install(step)
-            async with add_lock:
-                name = await asyncio.to_thread(strata.add_model, cfg, state_file, model, llm.profiles, context,
-                                               reserve)
-                llm.add_downloaded_models()
-            await hub.broadcast({"type": "models_changed"})
-            return {"profile": name, "kind": "strata", "version": strata.version()}
-        return {"ok": True, "tag": start_job("Strata", job)}
-
-    @app.post("/api/strata/update")
-    async def strata_update():
-        """Neueres Strata-Terminal laden – gilt ab dem nächsten Start (die Engine aktualisiert Strata selbst)."""
-        from . import strata
-
-        async def job() -> dict:
-            async def step(done: int, total: int) -> None:
-                await hub.broadcast({"type": "model_pull", "tag": "Strata", "completed": done, "total": total})
-            return {"kind": "strata", "version": await strata.install(step)}
-        return {"ok": True, "tag": start_job("Strata", job)}
-
-    async def strata_tool_check(name: str) -> None:
-        """Kann das Strata-Modell Werkzeuge aufrufen? Orbwise braucht das – einmal nach dem ersten Laden prüfen."""
-        from . import llamacpp
-        from .llm import OpenAICompatLLM
-        tools = [{"type": "function", "function": {
-            "name": "get_time", "description": "Returns the current time.",
-            "parameters": {"type": "object", "properties": {}, "required": []}}}]
-        ok = False
-        client = OpenAICompatLLM(llm.profiles[name], timeout=300)
-        try:
-            async for ev in client.chat_stream([{"role": "user", "content": "What time is it? Use the tool."}], tools,
-                                               think=False, max_tokens=256):
-                if ev.get("type") == "done":
-                    ok = bool((ev.get("message") or {}).get("tool_calls"))
-        except LLMError as e:
-            log.warning("Strata-Werkzeugtest fehlgeschlagen: %s", e)
-        finally:
-            await client.close()
-        data = llamacpp._read(state_file)
-        rec = (data.get("local_models") or {}).get(name)
-        if rec is not None:
-            rec["tools_ok"] = ok
-            llamacpp._write(state_file, data)
-        agent._cache_owner = None
-        if not ok:
-            await hub.broadcast({"type": "model_error", "name": name, "text": T(
-                "Strata liefert keine Werkzeug-Aufrufe – mit diesem Modell kann Orbwise nur chatten, nichts ausführen.",
-                "Strata returns no tool calls – with this model Orbwise can only chat, not run anything.")})
-        await hub.broadcast({"type": "models_changed"})
-
     @app.post("/api/llamacpp/update")
     async def llamacpp_update():
         """Neuesten llama.cpp-Build laden – laufende Modelle nutzen ihn ab dem nächsten Start."""
@@ -1409,7 +1292,6 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
         if name not in llm.profiles:
             raise HTTPException(404, "Unbekanntes Profil")
-        await strata_reserve_default()  # z. B. gerade angelegtes oder älteres Strata-Profil
         await hub.broadcast({"type": "model_switching", "name": name, "label": llm.profiles[name].label})
         llm.switching = name
         try:
@@ -1423,9 +1305,6 @@ def create_app(cfg: Config) -> FastAPI:
             await idle_if_free()
         await hub.broadcast({"type": "model_active", "name": name})
         remember_mode_model(mode_info()["mode"], name)  # gilt ab jetzt für diesen Modus
-        rec = llamacpp_state().get("local_models", {}).get(name) or {}
-        if rec.get("engine") == "strata" and rec.get("tools_ok") is None:  # einmalig: kann es Werkzeuge aufrufen?
-            background.append(asyncio.create_task(strata_tool_check(name)))
         agent._cache_owner = None  # neues Modell = leerer Cache → offenen Chat gleich einlesen
         hub.prewarm_soon()
         return {"ok": True, "active": llm.active}
@@ -1637,11 +1516,6 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(400, "Unbekannter Modus")
         if ctx == 0 and mode != "coding":
             raise HTTPException(400, "ctx fehlt")
-        if is_strata(llm.profiles[name].server):
-            from . import strata
-            if ctx > strata.MAX_CONTEXT:
-                raise HTTPException(400, T(f"Strata: höchstens {strata.MAX_CONTEXT} Token (so lang ist das Modell trainiert)",
-                                           f"Strata: at most {strata.MAX_CONTEXT} tokens (the model's trained length)"))
         active = name == llm.active and mode == llm.mode
         if active:
             await hub.broadcast({"type": "model_switching", "name": name, "label": llm.profiles[name].label})
@@ -1701,9 +1575,6 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
         if name not in llm.profiles:
             raise HTTPException(404, "Unbekanntes Profil")
-        if is_strata(llm.profiles[name].server):
-            raise HTTPException(400, T("Strata regelt das selbst – diese Einstellung gibt es dort nicht.",
-                                       "Strata handles this itself – this setting does not exist there."))
         kv = str((await request.json()).get("kv", ""))
         if kv not in KV_TYPES:
             raise HTTPException(400, "KV-Cache-Stufe bitte f16, q8_0 oder q4_0")
@@ -1742,9 +1613,6 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
         if name not in llm.profiles:
             raise HTTPException(404, "Unbekanntes Profil")
-        if is_strata(llm.profiles[name].server):
-            raise HTTPException(400, T("Strata regelt das selbst – diese Einstellung gibt es dort nicht.",
-                                       "Strata handles this itself – this setting does not exist there."))
         try:
             size = int((await request.json()).get("size", 0))
         except (TypeError, ValueError):
@@ -1774,42 +1642,6 @@ def create_app(cfg: Config) -> FastAPI:
             hub.prewarm_soon()
         await hub.broadcast({"type": "models_changed"})
         return {"ok": True, "ubatch": size}
-
-    @app.post("/api/models/{name}/strata-reserve")
-    async def set_strata_reserve(name: str, request: Request):
-        """Grafikspeicher, den Strata frei lässt – für den Desktop auf derselben (AMD-)Karte, sonst friert der PC ein."""
-        from . import strata
-        if not isinstance(llm, LLMRouter):
-            raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
-        if name not in llm.profiles:
-            raise HTTPException(404, "Unbekanntes Profil")
-        if not is_strata(llm.profiles[name].server):
-            raise HTTPException(400, T("Nur bei Strata-Modellen einstellbar.", "Only available for Strata models."))
-        try:
-            mib = int((await request.json()).get("mib", 0))
-        except (TypeError, ValueError):
-            mib = 0
-        if mib not in strata.RESERVE_STEPS:
-            raise HTTPException(400, strata.reserve_error())
-        active = name == llm.active and not llm.unloaded
-        if active:
-            await hub.broadcast({"type": "model_switching", "name": name, "label": llm.profiles[name].label})
-            llm.switching = name
-        try:
-            async with agent.lock:  # wartet, bis eine laufende Antwort fertig ist
-                await llm.set_strata_reserve(name, mib, model_progress)
-        except LLMError as e:
-            await hub.broadcast({"type": "model_error", "name": name, "text": str(e)})
-            raise HTTPException(502, str(e)) from e
-        finally:
-            llm.switching = None
-            await idle_if_free()
-        if active:
-            await hub.broadcast({"type": "model_active", "name": name})
-            agent._cache_owner = None  # neu gestartet = leerer Cache
-            hub.prewarm_soon()
-        await hub.broadcast({"type": "models_changed"})
-        return {"ok": True, "mib": mib}
 
     @app.post("/api/models/{name}/tune")
     async def tune_model(name: str):
@@ -1888,9 +1720,6 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
         if name not in llm.profiles:
             raise HTTPException(404, "Unbekanntes Profil")
-        if is_strata(llm.profiles[name].server):
-            raise HTTPException(400, T("Strata regelt das selbst – diese Einstellung gibt es dort nicht.",
-                                       "Strata handles this itself – this setting does not exist there."))
         mode = str((await request.json()).get("mode", ""))
         if mode not in SPEC_MODES:
             raise HTTPException(400, "Bitte off, mtp oder ngram")

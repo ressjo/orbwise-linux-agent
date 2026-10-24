@@ -1,4 +1,4 @@
-"""Schnellste verlustfreie llama.cpp-Einstellung für ein Modell messen – wie Stratas `--tune`.
+"""Schnellste verlustfreie llama.cpp-Einstellung für ein Modell messen.
 
 Gemessen wird mit `llama-bench` (liegt in den offiziellen Builds neben llama-server): Einlesen (Prefill) eines
 2k-Prompts am Chat-Anfang und bei langem Chat (Tiefe 16k) sowie die Ausgabe, je Batch-Größe (-ub 512/1024/2048) und
@@ -6,8 +6,8 @@ je Build (ROCm ↔ Vulkan bzw. CUDA ↔ Vulkan). Alles davon ändert nur das Tem
 Batch-Größe wird übernommen; ist der andere Build schneller, schlägt die Modellseite den Wechsel vor (gilt für alle
 llama.cpp-Modelle, darum nicht automatisch).
 
-Ein dichtes Modell (z. B. 27B) rechnet beim Einlesen pro Token alle Parameter – ein MoE wie bei Strata nur einen
-Bruchteil. Das Tuning holt das Maximum aus der Karte, erreicht aber nicht das Tempo eines MoE."""
+Ein dichtes Modell (z. B. 27B) rechnet beim Einlesen pro Token alle Parameter – ein MoE-Modell nur einen Bruchteil.
+Das Tuning holt das Maximum aus der Karte, erreicht aber nicht das Tempo eines MoE."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ Runner = Callable[[list[str], dict, float], Awaitable[tuple[int, str, str]]]
 
 
 def uses_own_build(cfg, command: str) -> bool:
-    """Startet das Profil Orbwises eigenen llama-server (nicht Bonsai, Strata oder einen fremden Server)?"""
+    """Startet das Profil Orbwises eigenen llama-server (keinen fremden Server)?"""
     try:
         exe = os.path.expanduser(shlex.split(command)[0])
     except (ValueError, IndexError):

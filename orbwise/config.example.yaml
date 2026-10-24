@@ -57,11 +57,6 @@ llm:
   #       startup_timeout: 240
   #       # cwd: ~/bonsai            # working directory for the command
   #       # health_url: ""           # default: <base_url without /v1>/health
-  #       # detached: false          # the command returns and leaves the server running (e.g. Strata --no-tui)
-  #       # stop_command: ""         # how to stop a detached server (e.g. "strata launch --stop")
-  #       # ready_key: ""            # JSON field of the health answer that must be true (Strata: loaded)
-  #       # progress_dir: ""         # the start command downloads files here first – shown as progress
-  #       # progress_gb: 0           # expected size of that download
 
 memory:
   dir: ~/.local/share/orbwise/memory
