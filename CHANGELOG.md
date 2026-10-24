@@ -38,6 +38,10 @@ All notable changes to this project are documented here. The format follows
   only actions that change or start something do; the data-leak guard still checks what goes out.
 
 ### Added
+- **Pocket TTS voices:** *Settings → Voice → Install Pocket TTS* downloads Kyutai's Pocket TTS (a ready-made program,
+  no PyTorch) and runs it as a local CPU server – far more natural than Piper. Its 27 voices appear in the voice menu
+  (German: *Juergen* first, recorded in German); preview with ▶. If Pocket fails, Piper speaks; *Remove Pocket TTS*
+  deletes program, model and voices.
 - **Find the fastest llama.cpp setting:** the model page measures with `llama-bench` which build (ROCm ↔ Vulkan,
   CUDA ↔ Vulkan) and batch size (512/1024/2048) read prompts fastest – at the start of a chat and at 16k depth – and
   shows a table with prompt and output speed. The fastest batch size is applied; a faster other build can be adopted

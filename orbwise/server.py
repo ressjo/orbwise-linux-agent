@@ -33,7 +33,7 @@ from .tools import briefing, proc
 from .tools.calendar_tools import calendar_status
 from .tools.registry import ToolContext, get_tool
 from .tools.trilium import trilium_status
-from .voice import catalog
+from .voice import catalog, pocket
 from .voice.listen import AudioSession, WakeWordFactory, WhisperSTT
 from .voice.tts import PiperTTS, Speaker
 from .web_i18n import translate_index
@@ -417,7 +417,7 @@ def create_app(cfg: Config) -> FastAPI:
         stt = WhisperSTT(cfg.voice)
         stt = stt if stt.available() else None
         wake = WakeWordFactory(cfg.voice)
-        tts = PiperTTS(cfg.voice)
+        tts = PiperTTS(cfg.voice, cfg.memory.dir.parent)
     hub = Hub(cfg, agent, tts, stt, wake)
     from .imagegen import ImageEngine, ImageError
     images = ImageEngine(cfg, llm if isinstance(llm, LLMRouter) else None,
@@ -490,7 +490,8 @@ def create_app(cfg: Config) -> FastAPI:
             await startup.set("tts", "running", T("lade Stimme ", "loading voice ") + tts.current + " …")
             try:
                 await asyncio.to_thread(tts._load, tts.current)
-                await startup.set("tts", "ok", "Piper · " + tts.current)
+                await startup.set("tts", "ok", ("Pocket TTS · " if pocket.is_pocket(tts.current) else "Piper · ")
+                                  + pocket.bare(tts.current))
             except Exception as e:  # noqa: BLE001
                 await startup.set("tts", "warn", T("Browser-Stimme – ", "browser voice – ") + str(e))
         if wake is None:
@@ -561,6 +562,8 @@ def create_app(cfg: Config) -> FastAPI:
         if images.server is not None:
             await images.server.stop()  # Bildserver nicht verwaist laufen lassen  # offene SSH-Verbindungen schließen (sonst bleiben sie bis zum Zeitlimit angemeldet)
         await hub.speaker.close()
+        if tts:
+            await asyncio.to_thread(tts.pocket.stop)
         await llm.close()
         memory.close()
 
@@ -1399,7 +1402,32 @@ def create_app(cfg: Config) -> FastAPI:
         for v in voices:
             f = tts.path(v["name"])
             v["size_mb"] = round(f.stat().st_size / 1e6) if v["installed"] and f.exists() else None
-        return {"available": True, "current": tts.current, "rate": tts.rate, "voices": voices}
+            v["engine"] = "piper"
+        voices += pocket.voice_list(cfg.language, tts.current, tts.pocket.installed())
+        return {"available": True, "current": tts.current, "rate": tts.rate, "voices": voices,
+                "pocket": tts.pocket.describe()}
+
+    @app.post("/api/pocket/install")
+    async def install_pocket():
+        """Pocket TTS installieren (Programm von GitHub), danach im Hintergrund starten – das lädt beim ersten Mal
+        Modell und Stimme von Hugging Face."""
+        if not tts:
+            raise HTTPException(400, "Sprachausgabe ist deaktiviert")
+        lines: list[str] = []
+        if not await asyncio.to_thread(pocket.install, tts.pocket.data_dir, lines.append):
+            raise HTTPException(502, (lines[-1] if lines else "Installation fehlgeschlagen").lstrip("✘ "))
+        tts.pocket.warm(pocket.PREFIX + pocket.NATIVE.get(cfg.language, "alba"))
+        return {"ok": True, "pocket": tts.pocket.describe()}
+
+    @app.delete("/api/pocket")
+    async def remove_pocket():
+        if not tts:
+            raise HTTPException(400, "Sprachausgabe ist deaktiviert")
+        if pocket.is_pocket(tts.current):
+            tts.current = tts.piper_voice() or tts.current
+        await asyncio.to_thread(tts.pocket.stop)
+        freed = await asyncio.to_thread(pocket.remove, tts.pocket.data_dir)
+        return {"ok": True, "freed_mb": round(freed / 1e6), "current": tts.current}
 
     @app.delete("/api/voices/{name}")
     async def delete_voice(name: str):
@@ -1467,11 +1495,18 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.get("/api/voices/{name}/preview")
     async def preview_voice(name: str, text: str = ""):
-        if not tts or name not in tts.installed() or not tts.available():
+        if not tts or not tts.usable(name) or not (pocket.is_pocket(name) or tts.available()):
             raise HTTPException(404, "Stimme nicht installiert")
-        sample = text.strip()[:200] or "Guten Abend. Alle Systeme sind einsatzbereit. Womit kann ich dienen?"
-        wav = await asyncio.to_thread(tts.synth, sample, name)
-        return Response(wav, media_type="audio/wav")
+        sample = text.strip()[:200] or T("Guten Abend. Alle Systeme sind einsatzbereit. Womit kann ich dienen?",
+                                         "Good evening. All systems are ready. How may I help?")
+        try:  # bei der Probe kein Ausweichen auf Piper – man will ja genau diese Stimme hören
+            if pocket.is_pocket(name):
+                wav, rate = await asyncio.to_thread(tts.pocket.synth, sample, name), 1.0
+            else:
+                wav, rate = await asyncio.to_thread(tts.synth, sample, name), None
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(502, f"Probe fehlgeschlagen: {e}") from e
+        return Response(wav, media_type="audio/wav", headers={"X-Playback-Rate": str(rate)} if rate else None)
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket):

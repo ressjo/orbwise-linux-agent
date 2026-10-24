@@ -684,6 +684,8 @@ details.card[open] > summary .caret { transform: rotate(180deg); }
 .vm-search { flex: 1; min-width: 0; }
 .vm-tools a { color: var(--accent); font-size: 12.5px; white-space: nowrap; text-decoration: none; }
 .vm-group { margin-top: 6px; }
+.vm-pocket-head { display: flex; justify-content: space-between; align-items: baseline; margin-top: 12px; }
+.vm-pocket-head a { color: var(--accent); font-size: 12px; letter-spacing: 0; text-decoration: none; }
 .vm-upload .mi-note { font-size: 12px; color: var(--muted); margin-top: 3px; }
 .voice-play:hover:not(:disabled) { color: var(--accent); }
 

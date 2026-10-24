@@ -12,7 +12,8 @@ import wave
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 
-from ..config import VoiceConfig
+from ..config import DATA_DIR, VoiceConfig
+from . import pocket
 
 log = logging.getLogger(__name__)
 
@@ -89,16 +90,19 @@ class SentenceSplitter:
 
 
 class PiperTTS:
-    """Piper mit mehreren installierbaren Stimmen. `rate` < 1 bedeutet: die Oberfläche spielt das Audio
-    langsamer (= tiefer) ab – Piper spricht dafür entsprechend schneller, damit das Tempo gleich bleibt."""
+    """Sprachausgabe: Piper mit mehreren installierbaren Stimmen, dazu optional Pocket TTS (Stimmen „pocket:<name>“,
+    siehe pocket.py). `rate` < 1 bedeutet: die Oberfläche spielt das Audio langsamer (= tiefer) ab – Piper spricht
+    dafür entsprechend schneller, damit das Tempo gleich bleibt. Pocket kennt kein Tempo – sein Audio läuft
+    unverändert (Rate 1)."""
 
-    def __init__(self, cfg: VoiceConfig):
+    def __init__(self, cfg: VoiceConfig, data_dir: Path = DATA_DIR):
         self.cfg = cfg
         self.voices_dir = cfg.tts_voice.parent
         self.current = cfg.tts_voice.stem.removesuffix(".onnx")
         self.rate = 1.0
         self._voices: dict[str, tuple[object, int | None]] = {}
         self._error: str | None = None
+        self.pocket = pocket.PocketTTS(data_dir, cfg.language or "de")
 
     def path(self, name: str | None = None) -> Path:
         return self.voices_dir / f"{name or self.current}.onnx"
@@ -106,11 +110,26 @@ class PiperTTS:
     def installed(self) -> list[str]:
         return sorted(p.stem for p in self.voices_dir.glob("*.onnx")) if self.voices_dir.exists() else []
 
+    def usable(self, name: str) -> bool:
+        if pocket.is_pocket(name):
+            return pocket.bare(name) in pocket.BY_NAME and self.pocket.installed()
+        return bool(name) and name in self.installed()
+
     def select(self, name: str) -> bool:
-        if name and self.path(name).exists():
-            self.current = name
-            return True
-        return False
+        if not self.usable(name):
+            return False
+        if pocket.is_pocket(name) and name != self.current:
+            self.pocket.warm(name)  # Server schon jetzt starten – der erste Satz soll nicht warten
+        self.current = name
+        return True
+
+    def piper_voice(self) -> str | None:
+        """Piper-Stimme für den Notfall (Pocket gewählt, aber nicht nutzbar): die aus der Konfiguration, sonst irgendeine."""
+        default = self.cfg.tts_voice.stem.removesuffix(".onnx")
+        if self.path(default).exists():
+            return default
+        others = self.installed()
+        return others[0] if others else None
 
     def forget(self, name: str) -> None:
         """Geladene Stimme aus dem Zwischenspeicher werfen (z. B. nach einem neuen Upload gleichen Namens)."""
@@ -126,6 +145,11 @@ class PiperTTS:
         self.rate = min(1.0, max(0.8, float(rate)))
 
     def available(self) -> bool:
+        if pocket.is_pocket(self.current):
+            if self.usable(self.current):
+                self._error = None
+                return True
+            self.current = self.piper_voice() or self.cfg.tts_voice.stem.removesuffix(".onnx")
         if not self.path().exists():
             others = self.installed()
             if others:
@@ -146,6 +170,9 @@ class PiperTTS:
         return self._error
 
     def _load(self, name: str):
+        if pocket.is_pocket(name):
+            self.pocket.ensure_running(pocket.bare(name))
+            return None
         if name not in self._voices:
             from piper import PiperVoice
             voice = PiperVoice.load(str(self.path(name)))
@@ -160,6 +187,21 @@ class PiperTTS:
             return None
         ids = json.loads(meta.read_text(encoding="utf-8")).get("speaker_id_map") or {}
         return ids.get(wanted)
+
+    def speak(self, text: str, name: str | None = None) -> tuple[bytes, float | None]:
+        """(WAV, Abspielrate) – die Rate ist 1, wenn Pocket gesprochen hat, sonst None (= die der Oberfläche).
+        Fällt Pocket aus, spricht Piper."""
+        name = name or self.current
+        if pocket.is_pocket(name):
+            try:
+                return self.pocket.synth(text, name), 1.0
+            except Exception as e:  # noqa: BLE001
+                fallback = self.piper_voice()
+                if not fallback:
+                    raise
+                log.warning("Pocket TTS fehlgeschlagen (%s) – spreche mit Piper", e)
+                name = fallback
+        return self.synth(text, name), None
 
     def synth(self, text: str, name: str | None = None) -> bytes:
         voice, speaker_id = self._load(name or self.current)
@@ -234,8 +276,10 @@ class Speaker:
             event = {"type": "speak", "id": msg_id, "seq": seq, "text": text}
             if self.tts and self.tts.available():
                 try:
-                    wav = await asyncio.to_thread(self.tts.synth, text)
+                    wav, rate = await asyncio.to_thread(self.tts.speak, text)
                     event["audio"] = base64.b64encode(wav).decode()
+                    if rate:
+                        event["rate"] = rate
                 except Exception as e:  # noqa: BLE001
                     log.warning("TTS fehlgeschlagen: %s", e)
             if gen == self.generation:

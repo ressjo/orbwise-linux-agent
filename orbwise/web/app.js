@@ -129,7 +129,7 @@
         if (gen !== A.gen) return;
         const src = A.ctx.createBufferSource();
         src.buffer = buf;
-        src.playbackRate.value = fxRate();
+        src.playbackRate.value = ev.rate || fxRate();  // Pocket TTS: unverändert abspielen (kein Tempo-Ausgleich)
         src.connect(A.fx ? A.fx.input : A.outAnalyser);
         src.onended = done;
         A.current = src;
@@ -1977,7 +1977,8 @@
         "Piper speech output is disabled – the browser speaks instead.")}</div>`);
     } else if (!catalog) {
       if (!S.voiceName) S.voiceName = data.current;
-      for (const v of data.voices.filter((x) => x.installed)) list.appendChild(voiceRow(v, data.current));
+      for (const v of data.voices.filter((x) => x.installed && x.engine !== "pocket")) list.appendChild(voiceRow(v, data.current));
+      pocketSection(list, data);
       const add = document.createElement("button");
       add.className = "model-item add";
       add.textContent = L("+ STIMME HINZUFÜGEN …", "+ ADD VOICE …");
@@ -2001,7 +2002,7 @@
       list.appendChild(up);
     } else {
       // ganzer Piper-Katalog: Auswahl (empfohlen) zuerst, dann alle weiteren nach Region, mit Suchfeld
-      const missing = data.voices.filter((x) => !x.installed);
+      const missing = data.voices.filter((x) => !x.installed && x.engine !== "pocket");
       const tools = document.createElement("div");
       tools.className = "vm-tools";
       tools.innerHTML = `<input type="search" class="vm-search" placeholder="${L("Stimme suchen …", "Search voices …")}">
@@ -2039,6 +2040,70 @@
     }
     voiceMenu.classList.toggle("catalog", catalog);
     voiceMenu.classList.remove("hidden");
+  }
+
+  // Pocket TTS (Kyutai): natürlichere Stimmen auf der CPU – installieren, Stimmen wählen/anhören, entfernen
+  let pocketPoll = null;
+  function pocketSection(list, data) {
+    const pk = data.pocket || {};
+    const head = document.createElement("div");
+    head.className = "mm-title vm-group vm-pocket-head";
+    head.innerHTML = `<span>POCKET TTS · ${L("NATÜRLICH", "NATURAL")}</span>
+      <a href="https://kyutai.org/pocket-tts" target="_blank" rel="noopener">${L("Probehören ↗", "Listen ↗")}</a>`;
+    head.querySelector("a").onclick = (e) => e.stopPropagation();
+    list.appendChild(head);
+    const note = (text) => {
+      list.insertAdjacentHTML("beforeend", `<div class="mm-hint"></div>`);
+      list.lastElementChild.textContent = text;
+    };
+    if (!pk.installed) {
+      if (!pk.supported) { note(L("Braucht eine CPU mit AVX2 (x86-64) oder ARM64.", "Needs a CPU with AVX2 (x86-64) or ARM64.")); return; }
+      const b = document.createElement("button");
+      b.className = "model-item add";
+      b.innerHTML = `<div>${L("＋ POCKET TTS INSTALLIEREN", "＋ INSTALL POCKET TTS")}</div><div class="mi-note"></div>`;
+      b.querySelector(".mi-note").textContent = L(
+        "Klingt deutlich menschlicher als Piper, läuft auf der CPU. Programm wenige MB, beim ersten Start lädt es Modell und Stimmen (einige hundert MB).",
+        "Sounds much more human than Piper, runs on the CPU. The program is a few MB; on first start it downloads the model and voices (a few hundred MB).");
+      b.onclick = async (e) => {
+        e.stopPropagation();
+        b.disabled = true;
+        b.querySelector(".mi-note").textContent = L("Lade Pocket TTS …", "Downloading Pocket TTS …");
+        try {
+          await api("POST", "/api/pocket/install");
+          toast(L("✔ Pocket TTS installiert – das Modell wird jetzt geladen", "✔ Pocket TTS installed – loading the model now"));
+          openVoiceMenu();
+        } catch { b.disabled = false; b.querySelector(".mi-note").textContent = L("Nochmal versuchen?", "Try again?"); }
+      };
+      list.appendChild(b);
+      return;
+    }
+    if (pk.state === "starting") {
+      note(L("Startet … beim ersten Mal werden Modell und Stimme heruntergeladen.", "Starting … the first time, the model and voice are downloaded."));
+    } else if (pk.state === "error" && pk.error) {
+      note(L("Fehler: ", "Error: ") + pk.error + L(" – es spricht solange Piper.", " – Piper speaks meanwhile."));
+    }
+    for (const v of data.voices.filter((x) => x.engine === "pocket")) list.appendChild(voiceRow(v, data.current));
+    const rm = document.createElement("button");
+    rm.className = "model-item add";
+    rm.textContent = L("POCKET TTS ENTFERNEN", "REMOVE POCKET TTS");
+    rm.onclick = async (e) => {
+      e.stopPropagation();
+      if (!confirm(L("Pocket TTS mit Modell und Stimmen löschen?", "Delete Pocket TTS with its model and voices?"))) return;
+      try {
+        const r = await api("DELETE", "/api/pocket");
+        if (S.voiceName && S.voiceName.startsWith("pocket:")) { S.voiceName = r.current; store.set("voice", r.current); }
+        toast(L(`✔ Pocket TTS entfernt (${r.freed_mb} MB frei)`, `✔ Pocket TTS removed (${r.freed_mb} MB freed)`));
+        openVoiceMenu();
+      } catch { /* Meldung kommt von api() */ }
+    };
+    list.appendChild(rm);
+    // solange der Server startet, die Anzeige nachziehen (nur solange das Menü offen ist)
+    clearTimeout(pocketPoll);
+    if (pk.state === "starting") {
+      pocketPoll = setTimeout(() => {
+        if (!voiceMenu.classList.contains("hidden") && !voiceMenu.classList.contains("catalog") && voiceMenu.offsetParent) openVoiceMenu();
+      }, 3000);
+    }
   }
 
   function catalogItem(v) {
@@ -2087,6 +2152,10 @@
     play.textContent = "▶";
     play.title = L("Anhören", "Preview");
     play.onclick = (e) => { e.stopPropagation(); previewVoice(v.name); };
+    if (v.engine === "pocket") {  // Pocket-Stimmen gehören zum Programm – einzeln nichts zu löschen
+      row.append(b, play);
+      return row;
+    }
     const del = document.createElement("button");
     del.className = "model-del";
     del.textContent = "🗑";
@@ -2162,13 +2231,20 @@
   async function previewVoice(name) {
     await initAudio();
     sendVoiceSettings();
+    const slow = name.startsWith("pocket:") && setTimeout(() => toast(L("Pocket TTS startet noch …", "Pocket TTS is still starting …")), 1500);
     const r = await fetch(`/api/voices/${encodeURIComponent(name)}/preview`);
-    if (!r.ok) { toast(L("Probe nicht möglich", "Preview not possible")); return; }
+    clearTimeout(slow);
+    if (!r.ok) {
+      let msg = L("Probe nicht möglich", "Preview not possible");
+      try { msg = (await r.json()).detail || msg; } catch { /* egal */ }
+      toast(msg);
+      return;
+    }
     const buf = await A.ctx.decodeAudioData(await r.arrayBuffer());
     stopSpeech(true);
     const src = A.ctx.createBufferSource();
     src.buffer = buf;
-    src.playbackRate.value = fxRate();
+    src.playbackRate.value = +r.headers.get("X-Playback-Rate") || fxRate();
     src.connect(A.fx ? A.fx.input : A.outAnalyser);
     A.current = src;
     S.playing = true;

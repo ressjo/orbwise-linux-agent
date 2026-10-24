@@ -117,8 +117,12 @@ def cmd_doctor(args) -> None:
     from .voice.tts import PiperTTS
     stt = WhisperSTT(cfg.voice)
     line(stt.available(), T("faster-whisper (Spracherkennung)", "faster-whisper (speech recognition)"), "uv sync --extra voice")
-    tts = PiperTTS(cfg.voice)
+    tts = PiperTTS(cfg.voice, cfg.memory.dir.parent)
     line(tts.available(), f"{T('Piper-Stimme', 'Piper voice')} {cfg.voice.tts_voice.name}", tts.error or "")
+    if tts.pocket.installed():
+        info = tts.pocket.describe()
+        line(info["supported"], f"Pocket TTS {info['version']}".rstrip(),
+             "" if info["supported"] else T("CPU ohne AVX2", "CPU without AVX2"))
     wake = WakeWordFactory(cfg.voice)
     line(wake.available(), f"Wake-Word '{cfg.voice.wakeword_model}'", wake.error or "")
     print(T("Desktop (Dateien/Programme öffnen):", "Desktop (opening files/apps):"))
