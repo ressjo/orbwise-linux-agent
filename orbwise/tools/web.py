@@ -116,8 +116,8 @@ BRAVE_NEWS_URL = "https://api.search.brave.com/res/v1/news/search"
 
 
 async def _brave_get(key: str, url: str, query: str, n: int, language: str, cfg=None, **extra) -> dict:
-    """Offizielle Brave Search API – kein Auslesen von Suchseiten, daher kein Bot-Blockieren. Mit cfg wird die
-    Anfrage gezählt und das Monatskontingent laut Brave gemerkt (usage.py); ist es aufgebraucht, gar nicht erst fragen."""
+    """Offizielle Brave Search API – kein Auslesen von Suchseiten, daher kein Bot-Blockieren. Mit cfg wird das
+    Monatskontingent laut Brave gemerkt (usage.py); ist es aufgebraucht, gar nicht erst fragen."""
     from .. import usage
     if cfg is not None and (until := usage.exhausted(cfg, "brave")):
         raise RuntimeError("Brave hat das Monatskontingent als aufgebraucht gemeldet (HTTP 429) – Orbwise fragt bis "
@@ -128,7 +128,7 @@ async def _brave_get(key: str, url: str, query: str, n: int, language: str, cfg=
     async with httpx.AsyncClient(timeout=20, transport=TRANSPORT, headers=headers) as client:
         r = await client.get(url, params=params)
     if cfg is not None and r.status_code in (200, 429):
-        usage.record(cfg, "brave", r.headers, count=r.status_code == 200, status=r.status_code)
+        usage.record(cfg, "brave", r.headers, status=r.status_code)
     if r.status_code in (401, 403) or (r.status_code == 422 and "TOKEN" in r.text.upper()):
         raise RuntimeError(f"Brave-API-Schlüssel ungültig oder ohne Berechtigung (HTTP {r.status_code})")
     if r.status_code == 429:

@@ -2242,30 +2242,42 @@
     showBraveUsage((m.usage || {}).brave);
   }
 
-  // Brave Search API: Anfragen diesen Monat und Kontingent laut Brave (Stand der letzten Antwort)
+  // Brave Search API: Kontingent laut Brave (Stand der letzten Antwort) – bei Guthaben-Tarifen meldet Brave keinen
+  // Verbrauch, dann verweist die Kachel aufs Brave-Dashboard
   let braveWarned = false;
+  let braveDashboard = null;
+  $("tele-brave").addEventListener("click", () => { if (braveDashboard) window.open(braveDashboard, "_blank", "noopener"); });
   function showBraveUsage(b) {
     const el = $("tele-brave");
     el.hidden = !b;
     if (!b) return;
-    const pct = b.limit ? (100 * (b.limit - (b.remaining ?? b.limit))) / b.limit : null;
-    const reset = b.reset_at ? new Date(b.reset_at * 1000).toLocaleDateString(LOCALE, { day: "numeric", month: "short" }) : "";
-    const sub = b.limit != null
-      ? L(`von ${num(b.limit)} · noch ${num(b.remaining)}`, `of ${num(b.limit)} · ${num(b.remaining)} left`) + (reset ? L(` · neu ab ${reset}`, ` · resets ${reset}`) : "")
-      : L("Anfragen diesen Monat · Abrechnung über Guthaben", "requests this month · billed from credit");
-    setTile("brave", b.month, { pct, digits: 0, sub });
-    el.title = [
-      L("Anfragen an die Brave Search API (Websuche, Briefing-Schlagzeilen, orbwise doctor).", "Requests to the Brave Search API (web search, briefing headlines, orbwise doctor)."),
-      b.limit != null ? L(`Kontingent laut Brave: ${num(b.limit - b.remaining)} von ${num(b.limit)} verbraucht (Stand der letzten Anfrage).`,
-                          `Quota according to Brave: ${num(b.limit - b.remaining)} of ${num(b.limit)} used (as of the last request).`) : "",
-      (b.last_months || []).length ? L("Frühere Monate: ", "Earlier months: ") + b.last_months.map(([k, v]) => `${k}: ${num(v)}`).join(", ") : "",
-      L("Ist es aufgebraucht, sucht Orbwise mit search_fallback über die Suchseiten weiter, sonst bis zum Monatswechsel nicht.",
-        "Once used up, Orbwise searches via result pages if search_fallback is on, otherwise not until it resets."),
-    ].filter(Boolean).join("\n");
-    if (b.limit && b.remaining != null && b.remaining < 0.1 * b.limit && !braveWarned) {
-      braveWarned = true;
-      toast(L(`Brave-Suche: nur noch ${num(b.remaining)} von ${num(b.limit)} Anfragen diesen Monat.`,
-              `Brave search: only ${num(b.remaining)} of ${num(b.limit)} requests left this month.`));
+    const day = (t) => new Date(t * 1000).toLocaleDateString(LOCALE, { day: "numeric", month: "short" });
+    const time = b.at ? new Date(b.at * 1000).toLocaleString(LOCALE, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+    const blocked = b.blocked_until ? L(`aufgebraucht – wieder ab ${day(b.blocked_until)}`, `used up – again from ${day(b.blocked_until)}`) : "";
+    braveDashboard = b.plan === "credit" ? b.dashboard : null;
+    el.classList.toggle("link", !!braveDashboard);
+    const fallback = L("Ist das Kontingent aufgebraucht, sucht Orbwise mit search_fallback über die Suchseiten weiter, sonst bis zur Freigabe nicht.",
+      "Once the quota is used up, Orbwise searches via result pages if search_fallback is on, otherwise not until it resets.");
+    if (b.plan === "quota") {
+      const reset = b.reset_at ? L(` · neu ab ${day(b.reset_at)}`, ` · resets ${day(b.reset_at)}`) : "";
+      setTile("brave", b.used, { pct: (100 * b.used) / b.limit, digits: 0,
+        sub: blocked || L(`von ${num(b.limit)} · noch ${num(b.remaining)}`, `of ${num(b.limit)} · ${num(b.remaining)} left`) + reset,
+        title: [L(`Verbraucht laut Brave: ${num(b.used)} von ${num(b.limit)} Anfragen diesen Monat.`,
+                  `Used according to Brave: ${num(b.used)} of ${num(b.limit)} requests this month.`),
+                time ? L(`Stand der letzten Anfrage: ${time}.`, `As of the last request: ${time}.`) : "", fallback].filter(Boolean).join("\n") });
+      if (b.remaining < 0.1 * b.limit && !braveWarned) {
+        braveWarned = true;
+        toast(L(`Brave-Suche: nur noch ${num(b.remaining)} von ${num(b.limit)} Anfragen diesen Monat.`,
+                `Brave search: only ${num(b.remaining)} of ${num(b.limit)} requests left this month.`));
+      }
+    } else if (b.plan === "credit") {
+      setTile("brave", null, { sub: blocked || L("Guthaben-Tarif · Stand im Brave-Dashboard ↗", "Credit plan · balance in the Brave dashboard ↗"),
+        title: [L("Brave meldet bei Guthaben-Tarifen keinen Verbrauch – Guthaben und Kosten stehen im Brave-Dashboard (Klick öffnet es).",
+                  "Brave reports no usage for credit plans – balance and costs are in the Brave dashboard (click to open)."), fallback].join("\n") });
+    } else {
+      setTile("brave", null, { sub: blocked || L("noch keine Antwort von Brave", "no answer from Brave yet"),
+        title: L("Das Kontingent zeigt Brave mit jeder Antwort – nach der ersten Suche steht es hier.",
+                 "Brave reports the quota with every answer – it appears here after the first search.") });
     }
   }
 

@@ -677,6 +677,8 @@ details.card[open] > summary .caret { transform: rotate(180deg); }
 .voice-menu .fx-row { display: flex; align-items: center; gap: 12px; padding: 4px 2px 0; }
 #fx-amount { flex: 1; }
 .fx-value { font-family: var(--mono); font-size: 12px; color: var(--muted); width: 44px; text-align: right; }
+#tele-brave.link { cursor: pointer; }
+#tele-brave.link:hover .tele-sub { color: var(--accent); }
 .fx-hint { color: var(--muted); font-size: 12.5px; margin: 8px 2px 0; }
 .vm-pocket-head { display: flex; justify-content: space-between; align-items: baseline; }
 .vm-pocket-head a { color: var(--accent); font-size: 12px; letter-spacing: 0; text-decoration: none; }

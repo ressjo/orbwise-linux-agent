@@ -1,15 +1,15 @@
-"""Verbrauch kostenpflichtiger bzw. kontingentierter Dienste je Monat – zurzeit die Brave Search API.
+"""Kontingent kostenpflichtiger bzw. kontingentierter Dienste laut Dienst selbst – zurzeit die Brave Search API.
 
 Brave schickt bei jeder Antwort sein Kontingent mit (X-RateLimit-Limit/-Remaining/-Reset, jeweils „pro Sekunde, pro
-Monat“). Orbwise zählt selbst mit und merkt sich die Zahlen von Brave – die Aktivität zeigt so, wie viel vom
-Monatskontingent schon verbraucht ist, und die Websuche weicht aus, wenn es aufgebraucht ist."""
+Monat“). Orbwise zählt nicht selbst, sondern zeigt genau diese Angaben: bei Tarifen mit festem Monatskontingent
+verbraucht/Limit/Rest, bei Guthaben-Tarifen (Monatswert 0) nur „Guthaben-Tarif“ – das Guthaben meldet Brave nicht,
+es steht im Brave-Dashboard. Ist das Kontingent aufgebraucht (HTTP 429), weicht die Websuche aus."""
 
 from __future__ import annotations
 
 import json
 import logging
 import time
-from datetime import datetime
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -46,23 +46,18 @@ def _monthly(value: str | None) -> int | None:
         return None
 
 
-def month_key(now: float | None = None) -> str:
-    return datetime.fromtimestamp(now or time.time()).strftime("%Y-%m")
+DASHBOARD = {"brave": "https://api-dashboard.search.brave.com"}
 
 
-def record(cfg, service: str, headers=None, count: bool = True, now: float | None = None,
-           status: int = 200) -> None:
-    """Eine Anfrage zählen (count=False: nur das Kontingent aus den Headern übernehmen, z. B. bei HTTP 429).
-    Ein festes Monatskontingent gibt es nur, wenn der Dienst ein Limit > 0 meldet – Brave rechnet inzwischen auch
-    über Guthaben ab und meldet dann 0 als Monatswert, was nicht „aufgebraucht“ heißt. Gesperrt wird nur nach einer
-    echten Absage (HTTP 429 bei Rest 0); jede erfolgreiche Antwort hebt das wieder auf."""
+def record(cfg, service: str, headers=None, now: float | None = None, status: int = 200) -> None:
+    """Das Kontingent aus den Antwort-Headern übernehmen. Ein festes Monatskontingent gibt es nur, wenn der Dienst ein
+    Limit > 0 meldet – Brave rechnet auch über Guthaben ab und meldet dann 0 als Monatswert, was nicht „aufgebraucht“
+    heißt. Gesperrt wird nur nach einer echten Absage (HTTP 429 bei Rest 0); jede erfolgreiche Antwort hebt das wieder
+    auf."""
     now = now or time.time()
     data = _read(cfg)
-    entry = data.setdefault(service, {})
-    months = entry.setdefault("months", {})
-    if count:
-        key = month_key(now)
-        months[key] = int(months.get(key, 0)) + 1
+    entry = data.get(service) or {}
+    entry.pop("months", None)  # frühere eigene Zählung
     if status == 200:
         entry.pop("blocked_until", None)
     if headers is not None:
@@ -70,7 +65,7 @@ def record(cfg, service: str, headers=None, count: bool = True, now: float | Non
         remaining = _monthly(headers.get("x-ratelimit-remaining"))
         reset = _monthly(headers.get("x-ratelimit-reset"))
         if limit is not None and limit > 0 and remaining is not None:
-            entry.update(limit=limit, remaining=remaining, at=now)
+            entry.update(plan="quota", limit=limit, remaining=remaining, at=now)
             if reset is not None:
                 entry["reset_at"] = now + reset
             if status == 429 and remaining <= 0 and reset:
@@ -78,7 +73,7 @@ def record(cfg, service: str, headers=None, count: bool = True, now: float | Non
         elif limit is not None:  # kein festes Monatslimit (Abrechnung über Guthaben)
             for key in ("limit", "remaining", "reset_at"):
                 entry.pop(key, None)
-            entry["at"] = now
+            entry.update(plan="credit", at=now)
     data[service] = entry
     _write(cfg, data)
 
@@ -92,16 +87,15 @@ def exhausted(cfg, service: str, now: float | None = None) -> float | None:
 
 
 def summary(cfg, now: float | None = None) -> dict:
-    """Für die Aktivität: je Dienst Anfragen diesen Monat, Kontingent laut Dienst, frühere Monate."""
+    """Für die Aktivität: je Dienst Tarif und Kontingent laut Dienst (Stand der letzten Antwort)."""
     out = {}
     if getattr(cfg.tools, "brave_key", ""):
         entry = _read(cfg).get("brave") or {}
-        months = entry.get("months") or {}
-        current = month_key(now)
-        fixed = (entry.get("limit") or 0) > 0  # ältere Einträge: 0 = kein festes Limit (Guthaben)
-        out["brave"] = {"month": int(months.get(current, 0)), "limit": entry.get("limit") if fixed else None,
-                        "remaining": entry.get("remaining") if fixed else None,
-                        "reset_at": entry.get("reset_at") if fixed else None, "at": entry.get("at"),
-                        "blocked_until": exhausted(cfg, "brave", now),
-                        "last_months": sorted(((k, v) for k, v in months.items() if k != current), reverse=True)[:6]}
+        quota = (entry.get("limit") or 0) > 0  # ältere Einträge: 0 = kein festes Limit (Guthaben)
+        plan = "quota" if quota else entry.get("plan") or ("credit" if entry.get("at") else None)
+        limit, remaining = (entry.get("limit"), entry.get("remaining")) if quota else (None, None)
+        out["brave"] = {"plan": plan, "limit": limit, "remaining": remaining,
+                        "used": limit - remaining if quota and remaining is not None else None,
+                        "reset_at": entry.get("reset_at") if quota else None, "at": entry.get("at"),
+                        "blocked_until": exhausted(cfg, "brave", now), "dashboard": DASHBOARD["brave"]}
     return out

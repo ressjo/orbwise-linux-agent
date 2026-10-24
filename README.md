@@ -534,12 +534,14 @@ Orbwise searches in this order:
 
 `orbwise doctor` shows which one is active and tests the Brave key.
 
-**Brave quota:** Orbwise counts every Brave request (web search, briefing headlines, the doctor test) per month and
-keeps the quota Brave reports with each answer (`X-RateLimit-*`). The activity panel shows a **Brave search** tile:
-requests this month, “of 2,000 · 266 left · resets 1 Nov” and a bar that turns orange at 80 %; earlier months are in
-its tooltip, and a one-time notice appears below 10 % left. Once Brave reports the quota as used up, Orbwise does not
-ask it again until the reset – with `search_fallback: true` it searches via result pages instead. The numbers are
-stored in `~/.local/share/orbwise/usage.json`.
+**Brave quota:** Orbwise does not count requests itself – the **Brave search** tile in the activity panel shows what
+Brave reports with each answer (`X-RateLimit-*`). On a plan with a fixed monthly quota that is the usage according to
+Brave, e.g. “123 · of 2,000 · 1,877 left · resets 1 Nov”, with a bar that turns orange at 80 % and a one-time notice
+below 10 % left. On a credit (prepaid) plan Brave reports no monthly figure and offers no API for the balance, so the
+tile says “Credit plan · balance in the Brave dashboard ↗” and opens the
+[Brave dashboard](https://api-dashboard.search.brave.com) on click. Once Brave refuses a request because the quota is
+used up (HTTP 429), Orbwise does not ask it again until the reset – with `search_fallback: true` it searches via
+result pages instead. The last values are stored in `~/.local/share/orbwise/usage.json`.
 
 ### Home Assistant
 

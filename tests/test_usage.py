@@ -1,4 +1,4 @@
-"""Brave-Verbrauch: Anfragen je Monat zählen, Kontingent aus den Antwort-Headern merken, bei leerem Kontingent
+"""Brave-Kontingent: nur Braves Angaben aus den Antwort-Headern merken (keine eigene Zählung), bei leerem Kontingent
 nicht mehr fragen – und in der Aktivität bzw. bei /api/metrics anzeigen."""
 
 import time
@@ -20,22 +20,31 @@ def ctx(cfg):
     return ToolContext(cfg=cfg, memory=None)
 
 
-def test_record_counts_per_month_and_keeps_the_quota(cfg):
+def test_record_keeps_braves_quota(cfg):
     cfg.tools.brave_api_key = "secret"
-    oct_ = datetime(2026, 10, 18, 12).timestamp()
-    usage.record(cfg, "brave", httpx.Headers(BRAVE_HEADERS), now=oct_)
-    usage.record(cfg, "brave", httpx.Headers({"X-RateLimit-Limit": "kaputt"}), now=oct_)  # zählt trotzdem
-    s = usage.summary(cfg, now=oct_)["brave"]
-    assert s["month"] == 2 and s["limit"] == 2000 and s["remaining"] == 1877 and s["reset_at"] == oct_ + 86400
-    nov = datetime(2026, 11, 2, 9).timestamp()
-    usage.record(cfg, "brave", None, now=nov)
-    s = usage.summary(cfg, now=nov)["brave"]
-    assert s["month"] == 1 and s["last_months"] == [("2026-10", 2)]
-    usage.record(cfg, "brave", httpx.Headers({**BRAVE_HEADERS, "X-RateLimit-Remaining": "0, 1800"}), count=False,
-                 now=nov)  # HTTP 429: nur das Kontingent
-    assert usage.summary(cfg, now=nov)["brave"]["month"] == 1
+    assert usage.summary(cfg)["brave"]["plan"] is None  # noch keine Antwort von Brave
+    now = datetime(2026, 10, 18, 12).timestamp()
+    usage.record(cfg, "brave", httpx.Headers(BRAVE_HEADERS), now=now)
+    usage.record(cfg, "brave", httpx.Headers({"X-RateLimit-Limit": "kaputt"}), now=now + 5)  # ändert nichts
+    s = usage.summary(cfg, now=now)["brave"]
+    assert (s["plan"], s["limit"], s["remaining"], s["used"]) == ("quota", 2000, 1877, 123)
+    assert s["reset_at"] == now + 86400 and s["at"] == now and "month" not in s
+    usage.record(cfg, "brave", httpx.Headers({**BRAVE_HEADERS, "X-RateLimit-Remaining": "0, 1800"}), status=429,
+                 now=now)
+    assert usage.summary(cfg, now=now)["brave"]["used"] == 200
     cfg.tools.brave_api_key = ""
     assert usage.summary(cfg) == {}
+
+
+def test_old_counter_is_dropped(cfg):
+    """Frühere eigene Zählung in usage.json: wird nicht mehr gezeigt und beim nächsten Schreiben entfernt."""
+    cfg.tools.brave_api_key = "secret"
+    path = cfg.memory.dir.parent / "usage.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"brave": {"months": {"2026-10": 42}}}')
+    assert usage.summary(cfg)["brave"]["plan"] is None
+    usage.record(cfg, "brave", httpx.Headers(BRAVE_HEADERS))
+    assert "months" not in path.read_text()
 
 
 def test_blocked_only_after_a_real_refusal(cfg):
@@ -43,7 +52,7 @@ def test_blocked_only_after_a_real_refusal(cfg):
     empty = httpx.Headers({**BRAVE_HEADERS, "X-RateLimit-Remaining": "0, 0"})
     usage.record(cfg, "brave", empty, now=now)  # HTTP 200 mit Rest 0: Brave hat geantwortet → nicht sperren
     assert usage.exhausted(cfg, "brave", now=now) is None
-    usage.record(cfg, "brave", empty, count=False, status=429, now=now)
+    usage.record(cfg, "brave", empty, status=429, now=now)
     assert usage.exhausted(cfg, "brave", now=now + 10) == pytest.approx(now + 86400)
     assert usage.exhausted(cfg, "brave", now=now + 90000) is None
     usage.record(cfg, "brave", httpx.Headers(BRAVE_HEADERS), now=now)  # wieder erfolgreich → frei
@@ -53,11 +62,12 @@ def test_blocked_only_after_a_real_refusal(cfg):
 def test_credit_billing_has_no_monthly_limit(cfg):
     """Brave mit Guthaben: Monatswert 0 heißt „kein festes Limit“, nicht „aufgebraucht“."""
     cfg.tools.brave_api_key = "secret"
-    credit = httpx.Headers({"X-RateLimit-Limit": "1, 0", "X-RateLimit-Remaining": "1, 0", "X-RateLimit-Reset": "1, 0"})
+    credit = httpx.Headers({"X-RateLimit-Limit": "50, 0", "X-RateLimit-Remaining": "49, 0", "X-RateLimit-Reset": "1, 0"})
     usage.record(cfg, "brave", credit)
-    usage.record(cfg, "brave", credit, count=False, status=429)
+    usage.record(cfg, "brave", credit, status=429)
     s = usage.summary(cfg)["brave"]
-    assert s["month"] == 1 and s["limit"] is None and s["remaining"] is None and s["blocked_until"] is None
+    assert s["plan"] == "credit" and s["limit"] is None and s["used"] is None and s["blocked_until"] is None
+    assert s["dashboard"].startswith("https://api-dashboard.search.brave.com")
     assert usage.exhausted(cfg, "brave") is None
 
 
@@ -67,10 +77,11 @@ def test_old_usage_file_does_not_block(cfg):
     path = cfg.memory.dir.parent / "usage.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text('{"brave": {"months": {}, "limit": 0, "remaining": 0, "reset_at": %d}}' % (time.time() + 9999))
-    assert usage.exhausted(cfg, "brave") is None and usage.summary(cfg)["brave"]["limit"] is None
+    s = usage.summary(cfg)["brave"]
+    assert usage.exhausted(cfg, "brave") is None and s["limit"] is None and s["plan"] is None
 
 
-def test_web_search_counts_and_skips_brave_when_used_up(cfg, monkeypatch):
+def test_web_search_records_quota_and_skips_brave_when_used_up(cfg, monkeypatch):
     cfg.tools.brave_api_key = "secret"
     calls = []
 
@@ -81,10 +92,9 @@ def test_web_search_counts_and_skips_brave_when_used_up(cfg, monkeypatch):
     monkeypatch.setattr(web, "TRANSPORT", httpx.MockTransport(handler))
     run(web.web_search(ctx(cfg), "x"))
     run(web.web_search(ctx(cfg), "y"))
-    assert len(calls) == 2 and usage.summary(cfg)["brave"]["month"] == 2
+    assert len(calls) == 2 and usage.summary(cfg)["brave"]["used"] == 123
 
-    usage.record(cfg, "brave", httpx.Headers({**BRAVE_HEADERS, "X-RateLimit-Remaining": "0, 0"}), count=False,
-                 status=429)
+    usage.record(cfg, "brave", httpx.Headers({**BRAVE_HEADERS, "X-RateLimit-Remaining": "0, 0"}), status=429)
     cfg.tools.search_fallback = True
     monkeypatch.setattr(web, "_ddgs", lambda q, n: [{"title": "D", "href": "https://d.de", "body": "E"}])
     out = run(web.web_search(ctx(cfg), "z"))
@@ -104,4 +114,4 @@ def test_metrics_include_brave_usage(cfg, monkeypatch):
         cfg.tools.brave_api_key = "secret"
         usage.record(cfg, "brave", httpx.Headers(BRAVE_HEADERS))
         brave = client.get("/api/metrics").json()["usage"]["brave"]
-        assert brave["month"] == 1 and brave["remaining"] == 1877
+        assert brave["plan"] == "quota" and brave["used"] == 123 and brave["remaining"] == 1877

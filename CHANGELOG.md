@@ -21,6 +21,9 @@ All notable changes to this project are documented here. The format follows
   Ollama models; new Hugging Face downloads always run on llama.cpp.
 
 ### Changed
+- **Brave tile shows Brave's numbers:** instead of Orbwise's own request count, the tile shows the usage Brave reports
+  (used / limit / left / reset) on plans with a monthly quota; on credit plans – where Brave reports no usage and has
+  no balance API – it links to the Brave dashboard. `orbwise doctor` says the same.
 - **Thoughts in the chat:** in thinking mode the reasoning now streams directly into Orbwise's answer and collapses
   as soon as the model answers or calls a tool ("Thoughts · 12 s"), instead of a bubble next to the orb with zoom.
 - **Tidier model page:** a *Performance* section (prompt speed, find the fastest setting) follows the context window;
