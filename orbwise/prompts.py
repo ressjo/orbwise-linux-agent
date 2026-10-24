@@ -230,6 +230,7 @@ TEXTS = {
         "auto_read_off": "nur lesend – Auto ist aus, darum frage ich trotzdem",
         "auto_files": "ändert nur Dateien in deinem Home (Auto: Dateien bearbeiten)",
         "auto_full": "ohne Root-Rechte (Auto)",
+        "auto_root": "Orbwise läuft als root – Auto gibt darum nichts frei",
         "tainted_confirm": "Nach dem Lesen einer E-Mail, Webseite, eines PDFs oder Bildschirm-/Bildinhalts fragt alles nach, "
                            "was etwas verändert oder startet (Lesen und Suchen laufen weiter) – Schutz vor versteckten "
                            "Anweisungen. Nur erlauben, wenn du diese Aktion selbst verlangt hast.",
@@ -275,6 +276,7 @@ TEXTS = {
         "auto_read_off": "read-only – Auto is off, so I ask anyway",
         "auto_files": "only changes files in your home folder (Auto: edit files)",
         "auto_full": "without root privileges (Auto)",
+        "auto_root": "Orbwise runs as root – so Auto approves nothing",
         "tainted_confirm": "After reading an e-mail, web page, PDF or screen/image content, everything that changes or "
                            "starts something asks first (reading and searching keep running) – protection against "
                            "hidden instructions. Only allow it if you asked for this action yourself.",

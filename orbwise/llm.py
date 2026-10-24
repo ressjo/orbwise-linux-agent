@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 import re
 import time
 from collections.abc import AsyncIterator
@@ -279,6 +280,20 @@ class OllamaLLM:
             return False
         return "vision" in (show.get("capabilities") or [])
 
+    async def thinking_caps(self) -> str | None:
+        """Wie kann das Modell denken? "levels" (echte Stufen), "toggle" (nur an/aus), "none" – None = unbekannt.
+        Ollama: /api/show → capabilities enthält "thinking"; Stufen kennt Ollama bisher nur bei gpt-oss."""
+        try:
+            show = (await self._client.post("/api/show", json={"model": self.cfg.model}, timeout=10)).json()
+        except (httpx.HTTPError, ValueError):
+            return None
+        caps = show.get("capabilities")
+        if not isinstance(caps, list):
+            return None
+        if "thinking" not in caps:
+            return "none"
+        return "levels" if supports_effort(self.cfg.model) else "toggle"
+
     async def unload_all(self) -> list[str]:
         """Alle geladenen Ollama-Modelle aus dem (Grafik-)Speicher entfernen."""
         names = await self.loaded_models()
@@ -521,6 +536,13 @@ class OpenAICompatLLM:
         data = await self.server_props()
         return bool((data.get("modalities") or {}).get("vision"))
 
+    async def thinking_caps(self) -> str | None:
+        """Wie kann das Modell denken? Aus der Chat-Vorlage des llama-servers (GET /props → chat_template):
+        reasoning_effort → "levels", enable_thinking/<think> → "toggle", sonst "none"; ohne Vorlage None."""
+        if supports_effort(self.profile.model):
+            return "levels"
+        return template_thinking((await self.server_props()).get("chat_template"))
+
     async def server_context(self) -> int | None:
         """Tatsächliche Kontextgröße des llama-servers (GET /props), sonst None."""
         data = await self.server_props()
@@ -576,6 +598,17 @@ def generation_stats(chunk: dict) -> dict:
     }
 
 
+def template_thinking(template) -> str | None:
+    """Denkfähigkeit laut Chat-Vorlage (Jinja-Text) – None, wenn es keine Vorlage gibt."""
+    if not isinstance(template, str) or not template.strip():
+        return None
+    if "reasoning_effort" in template:
+        return "levels"
+    if any(mark in template for mark in ("enable_thinking", "<think>", "reasoning_content", "thinking")):
+        return "toggle"
+    return "none"
+
+
 def supports_effort(model: str) -> bool:
     """Kennt das Modell echte Denkstufen (low/medium/high)? Bisher gpt-oss; andere können nur an/aus."""
     return "gpt-oss" in (model or "").lower()
@@ -608,6 +641,8 @@ class FakeLLM:
         self.calls: list[list[dict]] = []
         self.opts: list[dict] = []  # Optionen je Aufruf (Werkzeuge, max_tokens, tool_choice) – für Tests
         self.thought_repeat = 1  # Tests: wie lang die Denkkette wird (Denk-Budget)
+        # Denkfähigkeit (levels | toggle | none) – für die UI-Demo per $ORBWISE_FAKE_THINK umstellbar
+        self.think_caps = os.environ.get("ORBWISE_FAKE_THINK") or "levels"
 
     async def close(self) -> None:
         pass
@@ -693,6 +728,9 @@ class FakeLLM:
         n = max(1, len(msg["content"].split()))
         yield {"type": "done", "message": msg,
                "stats": {"tokens": n, "tps": 42.0, "prompt_tokens": 800, "prompt_tps": 950.0, "prompt_ms": 842}}
+
+    async def thinking_caps(self) -> str | None:
+        return self.think_caps
 
     async def chat(self, messages: list[dict]) -> str:
         self.calls.append(messages)

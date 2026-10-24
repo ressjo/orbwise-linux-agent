@@ -19,7 +19,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import askpass, metrics, prompts, retire, usage
+from . import agent_safety, askpass, metrics, prompts, retire, usage
 from .agent import Agent
 from .config import BRIEFING_SECTIONS, BriefingConfig, Config, env
 from .lang import T, set_lang
@@ -1200,6 +1200,19 @@ def create_app(cfg: Config) -> FastAPI:
         if agent.busy():
             raise HTTPException(409, "Jarvis arbeitet gerade – bitte kurz warten oder STOP drücken")
 
+    def settings_info() -> dict:
+        """Was der Server gerade anwendet – alle Fenster zeigen dasselbe (Handy und PC, Telegram nutzt es auch).
+        think: None, solange noch keine Oberfläche es gesetzt hat; root: Auto-Erleichterungen sind dann aus."""
+        think = hub.think
+        return {"auto_mode": agent.auto_mode, "root": agent_safety.running_as_root(),
+                "think": None if think is None else "off" if think is False else "on" if think is True else think}
+
+    @app.get("/api/think")
+    async def think_caps():
+        """Denkfähigkeit des aktiven Modells: levels | toggle | none, null = unbekannt (Oberfläche: an/aus)."""
+        caps = await llm.thinking_caps() if hasattr(llm, "thinking_caps") else None
+        return {"caps": caps}
+
     def mode_info() -> dict:
         conv = memory.active
         return {"mode": conv.meta.get("mode") or "tools", "project": conv.meta.get("project") or "",
@@ -1498,7 +1511,7 @@ def create_app(cfg: Config) -> FastAPI:
         hub.clients.add(client)
         await client.send({"type": "hello", "busy": agent.busy(),
                            "pending": [cid for cid in hub.pending], "context": agent.last_context,
-                           **mode_info()})
+                           **mode_info(), **settings_info()})
         await client.send(startup.snapshot())
         await client.send({"type": "sudo_cached", "until": broker.cached_until()})
         if not getattr(llm, "switching", None):
@@ -1544,8 +1557,9 @@ def create_app(cfg: Config) -> FastAPI:
                     broker.answer(str(data.get("id", "")), None)
                 elif t == "think":
                     level = str(data.get("level") or "")
-                    # Stufe (low/medium/high) oder nur an/aus von älteren Oberflächen
+                    # Stufe (low/medium/high) bei Modellen mit Stufen, sonst nur an/aus
                     hub.think = (level if level in ("low", "medium", "high") else True) if data.get("enabled") else False
+                    await hub.broadcast({"type": "settings_sync", **settings_info()})
                 elif t == "prewarm":  # die Oberfläche merkt: gleich kommt eine Frage (Tippen, Sprechen)
                     hub.prewarm_soon()
                 elif t == "compact":  # Knopf an der Kontext-Kachel
@@ -1557,6 +1571,7 @@ def create_app(cfg: Config) -> FastAPI:
                     hub.agent.auto_mode = mode if mode in ("off", "read", "files", "auto") else "read"
                     with contextlib.suppress(OSError):
                         auto_file.write_text(hub.agent.auto_mode, encoding="utf-8")
+                    await hub.broadcast({"type": "settings_sync", **settings_info()})
                 elif t == "plan_mode":
                     hub.plan_mode = bool(data.get("enabled"))
                 elif t in ("plan_accept", "plan_revise", "plan_discard"):

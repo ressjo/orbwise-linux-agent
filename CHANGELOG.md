@@ -21,6 +21,14 @@ All notable changes to this project are documented here. The format follows
   Ollama models; new Hugging Face downloads always run on llama.cpp.
 
 ### Changed
+- **Think menu follows the model:** levels (Brief/Normal/Thorough) only for models with real levels (gpt-oss), plain
+  on/off for the others, greyed out for models that cannot think – read from the chat template or Ollama's
+  capabilities. "On" no longer invents a level or a token budget.
+- **One setting for all windows:** the server keeps *Think* and the auto mode and sends them to every window (phone
+  and PC no longer overwrite each other silently); Telegram and routines use the same values.
+- **Calmer interface:** one scale for font sizes, corner radii and colours; normal capitalisation instead of
+  ALL-CAPS buttons and tags; SVG icons instead of emoji; less glow and shorter help texts; monospace only for code,
+  paths and numbers.
 - **Brave tile shows Brave's numbers:** instead of Orbwise's own request count, the tile shows the usage Brave reports
   (used / limit / left / reset) on plans with a monthly quota; on credit plans – where Brave reports no usage and has
   no balance API – it links to the Brave dashboard. `orbwise doctor` says the same.
@@ -139,6 +147,8 @@ All notable changes to this project are documented here. The format follows
   the open chat stays untouched.
 
 ### Fixed
+- **Auto mode as root:** when Orbwise runs as root, *Read + edit files* and *Auto* no longer approve system changes as
+  "without root" – they ask, and `orbwise doctor` warns.
 - **Cache numbers for one-token requests:** llama-server sometimes omits the generation speed when only one token is
   generated (warm-up, self-test); the prompt counts then came from `usage`, which includes cached tokens, so a
   cache hit looked like a full re-read. The prompt counts now always come from the timings, and the self-test

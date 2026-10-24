@@ -373,7 +373,7 @@ def test_think_toggle_per_request(cfg, memory):
     run(agent.run("a", emit, confirm))
     run(agent.run("b", emit, confirm, think=True))
     run(agent.run("c", emit, confirm, think="low"))
-    assert seen == [{}, {"think": True, "effort": "medium"}, {"think": True, "effort": "low"}]
+    assert seen == [{}, {"think": True}, {"think": True, "effort": "low"}]  # „an“ ohne erfundene Stufe
 
 
 def test_think_effort_reaches_the_server(cfg):

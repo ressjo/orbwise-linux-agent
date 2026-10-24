@@ -495,6 +495,23 @@ class LLMRouter:
             self._vision_cache = cache
         return cache[key]
 
+    async def thinking_caps(self) -> str | None:
+        """Wie kann das aktive Modell denken? levels | toggle | none, None = unbekannt (je Profil gemerkt)."""
+        if self.unloaded:
+            return None
+        key = (self.active, id(self.client))
+        cache = getattr(self, "_think_cache", {})
+        if key not in cache:
+            try:
+                caps = await self.client.thinking_caps()
+            except Exception:  # noqa: BLE001 – im Zweifel: an/aus anbieten
+                return None
+            if caps is None:
+                return None  # nicht merken – der Server ist vielleicht noch nicht bereit
+            cache[key] = caps
+            self._think_cache = cache
+        return cache[key]
+
     @property
     def context_size(self) -> int:
         """Kontextfenster des aktiven Modells: vom Server gemeldet > Profil (num_ctx) > llm.num_ctx."""

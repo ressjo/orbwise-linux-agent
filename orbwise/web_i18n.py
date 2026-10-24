@@ -67,28 +67,23 @@ HTML_EN = [
      'href="#i-sparkles"/></svg><span id="think-label">Think<'),
     ('<b>Nicht denken</b><small>Direkte Antworten – am schnellsten.</small>',
      '<b>No thinking</b><small>Direct answers – fastest.</small>'),
-    ('<b>Kurz</b><small>Kurz überlegen, dann handeln (Denkkette höchstens ~500 Token).</small>',
-     '<b>Brief</b><small>Think briefly, then act (reasoning up to ~500 tokens).</small>'),
-    ('<b>Normal</b><small>Zügig durchdenken (höchstens ~2.000 Token).</small>',
-     '<b>Normal</b><small>Think it through efficiently (up to ~2,000 tokens).</small>'),
+    ('<b>Denken</b><small>Das Modell überlegt vor der Antwort.</small>',
+     '<b>Think</b><small>The model reasons before answering.</small>'),
+    ('<b>Kurz</b><small>Das Modell überlegt knapp.</small>', '<b>Brief</b><small>The model reasons briefly.</small>'),
+    ('<b>Normal</b><small>Ausgewogen zwischen Tempo und Gründlichkeit.</small>',
+     '<b>Normal</b><small>Balanced between speed and depth.</small>'),
     ('<b>Gründlich</b><small>So lange wie nötig – am langsamsten.</small>',
      '<b>Thorough</b><small>As long as needed – slowest.</small>'),
     ('title="Auto-Modus: was ohne Rückfrage laufen darf"', 'title="Auto mode: what may run without asking"'),
     ('<span id="auto-label">Lesen<', '<span id="auto-label">Read<'),
     ('<b>Aus</b><small>Jeder Shell-Befehl fragt vorher.</small>',
      '<b>Off</b><small>Every shell command asks first.</small>'),
-    ('<b>Nur lesen</b><small>Erkannte lesende Befehle (ls, df, docker ps, git status …) laufen ohne Rückfrage.</small>',
-     '<b>Read only</b><small>Recognised read-only commands (ls, df, docker ps, git status …) run without asking.</small>'),
-    ('<b>Lesen + Dateien bearbeiten</b><small>Zusätzlich Dateien im eigenen Home anlegen, schreiben, kopieren, '
-     'verschieben – ohne Root. Löschen und versteckte Dateien fragen weiter.</small>',
-     '<b>Read + edit files</b><small>Also create, write, copy and move files in your own home – without root. '
-     'Deleting and hidden files still ask.</small>'),
-    ('<b>Auto</b><small>Alles ohne Root: Shell-Befehle (python, git, make, pip --user …) und Dateien laufen ohne '
-     'Rückfrage. Löschen, sudo, Ausschalten, Senden ins Netz (git push, ssh, Uploads), Autostart/Startdateien und '
-     'Zugangsdaten fragen weiter.</small>',
-     '<b>Auto</b><small>Everything without root: shell commands (python, git, make, pip --user …) and files run '
-     'without asking. Deleting, sudo, shutting down, sending over the network (git push, ssh, uploads), '
-     'autostart/start-up files and credentials still ask.</small>'),
+    ('<b>Nur lesen</b><small>Lesende Befehle (ls, df, git status …) laufen ohne Rückfrage.</small>',
+     '<b>Read only</b><small>Read-only commands (ls, df, git status …) run without asking.</small>'),
+    ('<b>Lesen + Dateien bearbeiten</b><small>Dazu Dateien im eigenen Home anlegen und ändern. Löschen fragt weiter.</small>',
+     '<b>Read + edit files</b><small>Also create and change files in your home. Deleting still asks.</small>'),
+    ('<b>Auto</b><small>Alles ohne Root. Löschen, sudo, Senden ins Netz, Autostart und Zugangsdaten fragen weiter.</small>',
+     '<b>Auto</b><small>Everything without root. Deleting, sudo, sending over the network, autostart and credentials still ask.</small>'),
     ('title="Senden" aria-label="Senden"', 'title="Send" aria-label="Send"'),
     ('title="Aktuelle Aufgabe abbrechen (Esc)" aria-label="Abbrechen"', 'title="Cancel the current task (Esc)" aria-label="Cancel"'),
     ('>Leertaste halten zum Sprechen · Esc bricht ab · Änderungen am System fragt Jarvis vorher<',
@@ -136,9 +131,9 @@ HTML_EN = [
     ('<h3>Fakten</h3>', '<h3>Facts</h3>'),
     ('<h3>Tagebuch</h3>', '<h3>Journal</h3>'),
     ('<h3>Erfahrungen</h3>', '<h3>Experience</h3>'),
-    ('Kurze Lektionen, die Jarvis aus Fehlern, deinen Korrekturen und 👎 gelernt hat. Zu einer Frage gehen nur die '
+    ('Kurze Lektionen, die Jarvis aus Fehlern, deinen Korrekturen und schlechten Bewertungen gelernt hat. Zu einer Frage gehen nur die '
      'passenden mit (feste kleine Grenze) – das Kontextfenster wächst dadurch nicht.',
-     'Short lessons Jarvis learned from errors, your corrections and 👎. Only matching ones go along with a question '
+     'Short lessons Jarvis learned from errors, your corrections and bad ratings. Only matching ones go along with a question '
      '(small fixed limit) – the context window does not grow.'),
     ('placeholder="Eigene Regel hinzufügen, z. B. „Docker auf dem NAS immer mit sudo“"',
      'placeholder="Add your own rule, e.g. “always use sudo for docker on the NAS”"'),
@@ -188,10 +183,12 @@ HTML_EN = [
     ('data-mirror="btn-tts">Aus<', 'data-mirror="btn-tts">Off<'),
     ('data-mirror="btn-wake">Aus<', 'data-mirror="btn-wake">Off<'),
     ('data-mirror="btn-plan">Aus<', 'data-mirror="btn-plan">Off<'),
-    ('data-think="off">Aus</button><button type="button" data-think="low">Kurz</button><button type="button" '
-     'data-think="medium">Normal</button><button type="button" data-think="high">Gründlich<',
-     'data-think="off">Off</button><button type="button" data-think="low">Brief</button><button type="button" '
-     'data-think="medium">Normal</button><button type="button" data-think="high">Thorough<'),
+    ('data-think="off">Aus</button><button type="button" data-think="on" class="hidden">An</button><button '
+     'type="button" data-think="low">Kurz</button><button type="button" data-think="medium">Normal</button><button '
+     'type="button" data-think="high">Gründlich<',
+     'data-think="off">Off</button><button type="button" data-think="on" class="hidden">On</button><button '
+     'type="button" data-think="low">Brief</button><button type="button" data-think="medium">Normal</button><button '
+     'type="button" data-think="high">Thorough<'),
     ('>Weitere Einstellungen (Integrationen, Telegram, Mail …) stehen in ',
      '>Further settings (integrations, Telegram, mail …) live in '),
     (' – <code>orbwise doctor</code> prüft sie.<', ' – <code>orbwise doctor</code> checks them.<'),

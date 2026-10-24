@@ -25,6 +25,9 @@
     set(k, v) { try { localStorage.setItem("orbwise." + k, JSON.stringify(v)); } catch { /* egal */ } },
   };
 
+  // SVG-Symbol aus dem Sprite in index.html; Farbe/Wert einer CSS-Variablen (für Canvas)
+  const ico = (name) => `<svg class="i"><use href="#i-${name}"/></svg>`;
+  const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   // Denkstufe: off | low | medium | high (früher gespeichert als true/false)
   function thinkLevel(v) { return v === true ? "medium" : ["low", "medium", "high"].includes(v) ? v : "off"; }
   const THINK_LABEL = { off: L("Denken", "Think"), low: L("Denken · kurz", "Think · brief"),
@@ -212,7 +215,8 @@
     orb.setState(s);
     const label = $("state-label");
     label.textContent = loadingModel && S.connected ? L("LADE MODELL", "LOADING MODEL") : (LABELS[s] || s.toUpperCase());
-    label.style.color = { listening: "#3ddc97", executing: "#f5b14c", confirm: "#f5b14c", error: "#ff5f6d", offline: "#8a92a5", thinking: "#a9b3ff" }[s] || "";
+    label.style.color = { listening: "var(--success)", executing: "var(--warn)", confirm: "var(--warn)", error: "var(--danger)",
+                          offline: "var(--muted)", thinking: "var(--reason)" }[s] || "";
     let sub = S.substate || (S.startupModel && !S.modelSwitching ? S.startupModel : "");
     if (S.recording) sub = S.recordingMode === "ptt" ? L("Loslassen zum Senden", "Release to send") : L("Sprich jetzt …", "Speak now …");
     else if (S.transcribing) sub = L("Transkribiere …", "Transcribing …");
@@ -224,13 +228,16 @@
     $("btn-mic").classList.toggle("recording", S.recording);
     $("btn-wake").classList.toggle("on", S.wake);
     $("btn-tts").classList.toggle("on", S.tts);
-    $("btn-think").classList.toggle("on", S.think !== "off");
-    $("think-label").textContent = THINK_LABEL[S.think];
-    document.querySelectorAll("[data-think]").forEach((b) => b.classList.toggle("on", b.dataset.think === S.think));
+    renderThink();
     $("btn-auto").classList.toggle("on", S.autoMode !== "off");
     $("btn-auto").classList.toggle("files", S.autoMode === "files");
     $("btn-auto").classList.toggle("full", S.autoMode === "auto");
     $("auto-label").textContent = AUTO_LABEL[S.autoMode];
+    $("btn-auto").classList.toggle("root", !!S.root);
+    $("btn-auto").title = S.root
+      ? L("Orbwise läuft als root – darum gibt der Auto-Modus nichts ohne Rückfrage frei. Besser als normaler Benutzer starten.",
+          "Orbwise runs as root – so Auto mode approves nothing without asking. Better run it as a normal user.")
+      : L("Auto-Modus: was ohne Rückfrage laufen darf", "Auto mode: what may run without asking");
     document.querySelectorAll("[data-auto]").forEach((b) => b.classList.toggle("on", b.dataset.auto === S.autoMode));
     $("btn-plan").classList.toggle("on", S.plan);
     // Senden wird während einer Anfrage zum Stopp-Knopf
@@ -255,9 +262,7 @@
       S.connected = true;
       S.retry = 0;
       send({ type: "tts", enabled: S.tts });
-      send({ type: "think", enabled: S.think !== "off", level: S.think });
-      send({ type: "auto_mode", mode: S.autoMode });
-      send({ type: "plan_mode", enabled: S.plan });
+      send({ type: "plan_mode", enabled: S.plan });  // Denken und Auto-Modus kommen vom Server (hello)
       if (S.wake && A.micReady) send({ type: "wake", enabled: true });
       refresh();
       loadStatus();
@@ -342,8 +347,13 @@
         S.transcribing = false;  // neue Verbindung = neue Audio-Sitzung, eine alte Transkription meldet sich nie mehr
         if (ev.context) showContext(ev.context);
         applyMode(ev);
+        applySettings(ev, true);
+        loadThinkCaps();
         loadChats();  // Chats des aktuellen Modus
         break;
+      case "settings_sync":  // ein anderes Fenster (oder dieses) hat Denken/Auto-Modus geändert
+        applySettings(ev, false);
+        return;
       case "context":
         showContext(ev);
         return;
@@ -503,6 +513,7 @@
         S.substate = "";
         loadStatus();
         refreshModelViews();
+        loadThinkCaps();
         setTimeout(loadCtxMemory, 1500);
         break;
       case "model_unloaded":
@@ -515,6 +526,7 @@
       case "models_changed":
         refreshModelViews();
         loadStatus();
+        loadThinkCaps();
         return;
       case "model_pull":
         modelPullEvent(ev);
@@ -537,7 +549,9 @@
         T.exactTps = ev.tps;
         T.lastExact = Date.now();
         T.tokenTimes = [];
-        setTile("tps", ev.tps, { sub: `${ev.tokens || "?"} Tok · Prompt ${fmt(ev.prompt_tps, 0)}/s` });
+        setTile("tps", ev.tps, { sub: L(`Einlesen ${fmt(ev.prompt_tps, 0)}/s`, `prompt ${fmt(ev.prompt_tps, 0)}/s`),
+          title: L(`${ev.tokens || "?"} Token geschrieben · Einlesen ${fmt(ev.prompt_tps, 0)} Token/s`,
+                   `${ev.tokens || "?"} tokens written · prompt ${fmt(ev.prompt_tps, 0)} tokens/s`) });
         pushSpark("tps", ev.tps);
         break;
       case "conversation_reset":
@@ -606,7 +620,7 @@
   function renderMarkdown(src) {
     const blocks = [];
     let text = src.replace(/```[\w-]*\n?([\s\S]*?)(```|$)/g, (_, code) => {
-      blocks.push(`<div class="code"><button class="copy" type="button" title="${L("Kopieren", "Copy")}">⧉</button>`
+      blocks.push(`<div class="code"><button class="copy" type="button" title="${L("Kopieren", "Copy")}">${ico("copy")}</button>`
         + `<pre>${escapeHtml(code.replace(/\n$/, ""))}</pre></div>`);
       return `\u0000${blocks.length - 1}\u0000`;
     });
@@ -655,31 +669,22 @@
       const r = document.createRange(); r.selectNodeContents(btn.parentElement.querySelector("pre"));
       const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); document.execCommand("copy"); sel.removeAllRanges();
     }
-    btn.textContent = "✔"; btn.classList.add("done");
-    setTimeout(() => { btn.textContent = "⧉"; btn.classList.remove("done"); }, 1200);
+    btn.innerHTML = ico("check"); btn.classList.add("done");
+    setTimeout(() => { btn.innerHTML = ico("copy"); btn.classList.remove("done"); }, 1200);
   });
 
   // Ecken eines Panels kurz aufleuchten lassen (neue Nachricht / neue Aktivität)
-  function flashPanel(el) {
-    const panel = el && el.closest(".panel");
-    if (!panel) return;
-    panel.classList.remove("flash");
-    void panel.offsetWidth;  // Animation neu starten
-    panel.classList.add("flash");
-  }
-
   function addMsg(cls, who, html) {
     const el = document.createElement("div");
     el.className = "msg " + cls;
     el.innerHTML = `<div class="who">${who}</div><div class="tools"></div><div class="body">${html}</div>`;
     chat.appendChild(el);
-    flashPanel(chat);
     scrollChat();
     return el;
   }
 
   function addUser(text, source, images, turn, editable, files) {
-    const el = addMsg("user", source === "voice" ? L("DU · SPRACHE", "YOU · VOICE") : L("DU", "YOU"), escapeHtml(text));
+    const el = addMsg("user", source === "voice" ? L("Du · Sprache", "You · voice") : L("Du", "You"), escapeHtml(text));
     el._raw = text;
     if (turn) el.dataset.turn = turn;
     userActions(el, editable !== false && !!turn);
@@ -712,7 +717,7 @@
     chat.appendChild(el);
     scrollChat();
   }
-  function addError(text) { addMsg("assistant error", "SYSTEM", escapeHtml(text)); }
+  function addError(text) { addMsg("assistant error", "System", escapeHtml(text)); }
 
   // Trenner, wo der Kontext zusammengefasst wurde – darüber bleibt alles sichtbar, das Modell arbeitet ab hier
   // mit der (aufklappbaren) Zusammenfassung weiter
@@ -735,7 +740,7 @@
   }
 
   function startAssistant(id, plan) {
-    const el = addMsg("assistant streaming" + (plan ? " plan" : ""), "JARVIS", "");
+    const el = addMsg("assistant streaming" + (plan ? " plan" : ""), "Jarvis", "");
     el.dataset.msg = id;
     if (S.turns) el.dataset.turn = S.turns;
     // statt eines blinkenden Cursors: was das Modell gerade macht (Einlesen, Denken, Aufruf schreiben …)
@@ -981,8 +986,8 @@
     if (!a || a.el.querySelector(".msg-feedback")) return;
     const bar = document.createElement("span");
     bar.className = "msg-feedback";
-    bar.innerHTML = `<button type="button" data-good="1" title="${L("Hilfreich", "Helpful")}">👍</button>`
-      + `<button type="button" data-good="0" title="${L("Nicht gut – Jarvis lernt daraus", "Not good – Jarvis learns from it")}">👎</button>`
+    bar.innerHTML = `<button type="button" data-good="1" title="${L("Hilfreich", "Helpful")}">${ico("thumb-up")}</button>`
+      + `<button type="button" data-good="0" title="${L("Nicht gut – Jarvis lernt daraus", "Not good – Jarvis learns from it")}">${ico("thumb-down")}</button>`
       + `<span class="fb-note"></span>`;
     bar.querySelectorAll("button").forEach((b) => (b.onclick = () => {
       if (bar.classList.contains("done")) return;
@@ -1005,8 +1010,8 @@
 
   // ---------------------------------------------------------------- Planmodus
   const PLAN_OUTCOME = {
-    accepted: L("▶ wird ausgeführt", "▶ being carried out"), revised: L("✎ wird überarbeitet", "✎ being revised"),
-    discarded: L("✕ verworfen", "✕ discarded"), replaced: L("ersetzt", "replaced"),
+    accepted: L("wird ausgeführt", "being carried out"), revised: L("wird überarbeitet", "being revised"),
+    discarded: L("verworfen", "discarded"), replaced: L("ersetzt", "replaced"),
   };
   function showPlan(ev) {
     const el = chat.querySelector(`.msg[data-msg="${ev.id}"]`);
@@ -1014,9 +1019,9 @@
     const bar = document.createElement("div");
     bar.className = "plan-bar";
     bar.innerHTML = `<div class="plan-actions">
-        <button class="btn plan-run">▶ ${L("AUSFÜHREN", "RUN")}</button>
-        <button class="btn plan-edit">✎ ${L("ÄNDERN", "CHANGE")}</button>
-        <button class="btn plan-drop">✕ ${L("VERWERFEN", "DISCARD")}</button></div>
+        <button class="btn plan-run">${ico("play")}${L("Ausführen", "Run")}</button>
+        <button class="btn plan-edit">${ico("edit")}${L("Ändern", "Change")}</button>
+        <button class="btn plan-drop">${ico("x")}${L("Verwerfen", "Discard")}</button></div>
       <form class="plan-revise hidden"><input type="text" maxlength="4000"
         placeholder="${L("Was soll anders sein? (Enter sendet)", "What should be different? (Enter sends)")}"></form>
       <div class="plan-status"></div>`;
@@ -1313,7 +1318,7 @@
       if (empty) empty.remove();
       el = document.createElement("div");
       el.className = "act model running";
-      el.innerHTML = `<div class="act-head"><span class="act-name">🧠 ${L("Modell", "Model")}</span>
+      el.innerHTML = `<div class="act-head"><span class="act-name">${L("Modell", "Model")}</span>
         <span><span class="act-time">${new Date().toLocaleTimeString(LOCALE)}</span>
         <span class="act-status">0 s</span></span></div>
         <div class="act-args"></div><div class="act-bar"><i></i></div>`;
@@ -1340,12 +1345,12 @@
 
   // Kurzname für den Werkzeug-Satelliten am Orb
   const SAT_GROUPS = [
-    [/^look_at_/, ["SEHEN", "VISION"]], [/^(web_search|fetch_url|open_website)$/, ["WEB", "WEB"]], [/^paperless_/, ["PAPERLESS", "PAPERLESS"]],
-    [/^mail_/, ["MAIL", "MAIL"]], [/^obsidian_/, ["OBSIDIAN", "OBSIDIAN"]], [/^trilium_/, ["TRILIUM", "TRILIUM"]],
-    [/^ha_/, ["SMART HOME", "SMART HOME"]], [/^calendar_/, ["KALENDER", "CALENDAR"]], [/^run_shell$/, ["SHELL", "SHELL"]],
-    [/(package|system_update)/, ["PAKETE", "PACKAGES"]], [/(file|folder)/, ["DATEIEN", "FILES"]],
-    [/^weather/, ["WETTER", "WEATHER"]], [/^routine_/, ["ROUTINEN", "ROUTINES"]], [/reminder/, ["ERINNERUNG", "REMINDER"]],
-    [/(remember|recall|forget|memory)/, ["GEDÄCHTNIS", "MEMORY"]],
+    [/^look_at_/, ["Sehen", "Vision"]], [/^(web_search|fetch_url|open_website)$/, ["Web", "Web"]], [/^paperless_/, ["Paperless", "Paperless"]],
+    [/^mail_/, ["Mail", "Mail"]], [/^obsidian_/, ["Obsidian", "Obsidian"]], [/^trilium_/, ["Trilium", "Trilium"]],
+    [/^ha_/, ["Smart Home", "Smart Home"]], [/^calendar_/, ["Kalender", "Calendar"]], [/^run_shell$/, ["Shell", "Shell"]],
+    [/(package|system_update)/, ["Pakete", "Packages"]], [/(file|folder)/, ["Dateien", "Files"]],
+    [/^weather/, ["Wetter", "Weather"]], [/^routine_/, ["Routinen", "Routines"]], [/reminder/, ["Erinnerung", "Reminder"]],
+    [/(remember|recall|forget|memory)/, ["Gedächtnis", "Memory"]],
   ];
   function satLabel(name) {
     const hit = SAT_GROUPS.find(([rx]) => rx.test(name));
@@ -1373,10 +1378,9 @@
       <button class="toggle-out" title="${L("Ausgabe ein-/ausblenden", "Show/hide output")}">▾</button></span></div>
       <div class="act-args"></div><pre class="act-out"></pre>`;
     el.querySelector(".act-args").textContent = fmtArgs(ev.name, ev.args);
-    if (ev.routine) el.querySelector(".act-name").textContent = `⟳ ${ev.routine} · ${ev.name}`;
+    if (ev.routine) el.querySelector(".act-name").textContent = `${ev.routine} · ${ev.name}`;
     el.querySelector(".toggle-out").onclick = () => el.classList.toggle("open");
     activity.prepend(el);
-    flashPanel(activity);
     acts[ev.id] = el;
     while (activity.children.length > 60) activity.lastChild.remove();
 
@@ -1388,7 +1392,7 @@
       const chip = document.createElement("span");
       chip.className = "tool-chip running";
       chip.id = "chip-" + ev.id;
-      chip.textContent = "⚙ " + ev.name;
+      chip.textContent = ev.name;
       tools.appendChild(chip);
       if (a.toolCount > 1) {
         const more = document.createElement("button");
@@ -1428,7 +1432,7 @@
   // Felder, die der Nutzer vor dem Bestätigen noch ändern darf (z. B. mail_send)
   const EDIT_FIELDS = {
     to: [L("AN", "TO"), "input"], cc: [L("CC", "CC"), "input"],
-    subject: [L("BETREFF", "SUBJECT"), "input"], body: [L("TEXT", "TEXT"), "textarea"],
+    subject: [L("Betreff", "Subject"), "input"], body: [L("Text", "Text"), "textarea"],
   };
   const APPROVE_HTML = $("confirm-yes").innerHTML;
 
@@ -1454,7 +1458,7 @@
     $("confirm-cmd").classList.toggle("hidden", !!editable.length);
     document.querySelector(".confirm-modal").classList.toggle("editing", !!editable.length);
     $("confirm-yes").innerHTML = editable.length && ev.name === "mail_send"
-      ? `${L("SENDEN", "SEND")} <kbd>Strg+Enter</kbd>` : editable.length ? `${L("AUSFÜHREN", "RUN")} <kbd>Strg+Enter</kbd>` : APPROVE_HTML;
+      ? `${L("Senden", "Send")} <kbd>Strg+Enter</kbd>` : editable.length ? `${L("Ausführen", "Run")} <kbd>Strg+Enter</kbd>` : APPROVE_HTML;
     $("confirm-summary").textContent = ev.name === "mail_send"
       ? L("Mail prüfen, bei Bedarf ändern und senden:", "Check the e-mail, edit it if needed and send it:")
       : L(`Soll ich ${ev.summary} ausführen?`, `Shall I run ${ev.summary}?`);
@@ -1763,16 +1767,54 @@
     thinkMenu.classList.toggle("hidden", !open);
     $("btn-think").setAttribute("aria-expanded", String(open));
   }
+  // Was das geladene Modell kann: "levels" (echte Stufen), "toggle" (nur an/aus), "none" – null = unbekannt (an/aus)
+  async function loadThinkCaps() {
+    try { S.thinkCaps = (await getJSON("/api/think")).caps; } catch { S.thinkCaps = null; }
+    refresh();
+  }
+  function renderThink() {
+    const caps = S.thinkCaps, levels = caps === "levels", none = caps === "none";
+    const on = S.think !== "off" && !none;
+    const btn = $("btn-think");
+    btn.classList.toggle("on", on);
+    btn.disabled = none;
+    btn.title = none ? L("Dieses Modell kann nicht denken.", "This model cannot think.")
+      : L("Denkmodus: Jarvis überlegt vor der Antwort – langsamer, dafür gründlicher.", "Thinking mode: Jarvis reasons before answering – slower but more thorough.");
+    $("think-label").textContent = levels && on ? THINK_LABEL[S.think] : THINK_LABEL.off;
+    document.querySelectorAll("[data-think]").forEach((b) => {
+      const k = b.dataset.think;
+      b.classList.toggle("hidden", k === "on" ? levels : k !== "off" && !levels);
+      b.classList.toggle("on", k === "off" ? !on : k === "on" ? on : on && levels && k === S.think);
+      b.disabled = none && k !== "off";
+    });
+  }
+  function sendThink() {
+    const on = S.think !== "off" && S.thinkCaps !== "none";
+    send({ type: "think", enabled: on, level: on && S.thinkCaps === "levels" ? S.think : undefined });
+  }
+  function applySettings(ev, fromHello) {
+    if (["off", "read", "files", "auto"].includes(ev.auto_mode)) { S.autoMode = ev.auto_mode; store.set("autoMode", S.autoMode); }
+    S.root = !!ev.root;
+    if (ev.think === null || ev.think === undefined) {
+      if (fromHello) sendThink();  // der Server kennt noch keine Wahl → die gemerkte schicken
+    } else if (ev.think === "on") {
+      if (S.think === "off") S.think = "medium";  // „an“ bei Modellen ohne Stufen – die gemerkte Stufe bleibt
+    } else {
+      S.think = thinkLevel(ev.think);
+    }
+    store.set("think", S.think);
+    refresh();
+  }
   function setThink(level) {
+    if (level === "on") level = S.think !== "off" ? S.think : "medium";
     S.think = thinkLevel(level);
     store.set("think", S.think);
-    send({ type: "think", enabled: S.think !== "off", level: S.think });
-    toast({ off: L("Denkmodus aus – schnelle Antworten.", "Thinking mode off – fast answers."),
-            low: L("Denken: kurz – Jarvis überlegt knapp und legt dann los.", "Thinking: brief – Jarvis thinks briefly, then acts."),
-            medium: L("Denken: normal – zügig durchdacht, der Gedankengang läuft direkt in der Antwort mit.",
-                      "Thinking: normal – thought through efficiently, the reasoning shows right in the answer."),
-            high: L("Denken: gründlich – so lange wie nötig, Antworten dauern länger.",
-                    "Thinking: thorough – as long as needed, answers take longer.") }[S.think]);
+    sendThink();
+    const levels = S.thinkCaps === "levels";
+    toast(S.think === "off" ? L("Denken aus – schnelle Antworten.", "Thinking off – fast answers.")
+      : !levels ? L("Denken an – der Gedankengang läuft in der Antwort mit.", "Thinking on – the reasoning shows in the answer.")
+      : { low: L("Denken: kurz.", "Thinking: brief."), medium: L("Denken: normal.", "Thinking: normal."),
+          high: L("Denken: gründlich – Antworten dauern länger.", "Thinking: thorough – answers take longer.") }[S.think]);
     refresh();
   }
   $("btn-think").onclick = (e) => { e.stopPropagation(); setThinkMenu(thinkMenu.classList.contains("hidden")); };
@@ -1792,13 +1834,11 @@
     S.autoMode = mode;
     store.set("autoMode", mode);
     send({ type: "auto_mode", mode });
-    toast({ off: L("Auto aus – jeder Shell-Befehl fragt vorher.", "Auto off – every shell command asks first."),
-            read: L("Auto: nur lesen – erkannte lesende Befehle laufen ohne Rückfrage, Veränderndes fragt weiter.",
-                    "Auto: read only – recognised read-only commands run without asking, changes still ask."),
-            files: L("Auto: lesen + Dateien – Dateien in deinem Home werden ohne Rückfrage angelegt und geändert (ohne Root, Löschen fragt weiter).",
-                     "Auto: read + files – files in your home are created and changed without asking (no root, deleting still asks)."),
-            auto: L("Auto – alles ohne Root läuft ohne Rückfrage. Löschen, sudo, Ausschalten, Senden ins Netz und Startdateien fragen weiter.",
-                    "Auto – everything without root runs without asking. Deleting, sudo, shutting down, sending over the network and start-up files still ask.") }[mode]);
+    toast({ off: L("Auto aus – jeder Befehl fragt vorher.", "Auto off – every command asks first."),
+            read: L("Auto: nur lesen.", "Auto: read only."),
+            files: L("Auto: lesen und Dateien im Home ändern.", "Auto: read and change files in your home."),
+            auto: L("Auto: alles ohne Root – Löschen, sudo und Senden ins Netz fragen weiter.",
+                    "Auto: everything without root – deleting, sudo and sending over the network still ask.") }[mode]);
     refresh();
   }
   $("btn-auto").onclick = (e) => { e.stopPropagation(); setAutoMenu(autoMenu.classList.contains("hidden")); };
@@ -1967,14 +2007,9 @@
     const list = $("voice-list");
     let data;
     try { data = await getJSON("/api/voices"); } catch { toast(L("Stimmen nicht ladbar", "Could not load voices")); return; }
-    const st = S.status && S.status.voice;
-    list.innerHTML = `<div class="mm-title vm-pocket-head"><span>${L("STIMME WÄHLEN", "CHOOSE VOICE")}</span>
-      <a href="https://kyutai.org/pocket-tts" target="_blank" rel="noopener">${L("Probehören ↗", "Listen ↗")}</a></div>
-      <div class="mm-hint"></div>`;
+    list.innerHTML = `<div class="mm-title vm-pocket-head"><span>${L("Stimme wählen", "Choose voice")}</span>
+      <a href="https://kyutai.org/pocket-tts" target="_blank" rel="noopener">${L("Probehören ↗", "Listen ↗")}</a></div>`;
     list.querySelector("a").onclick = (e) => e.stopPropagation();
-    list.querySelector(".mm-hint").textContent = st ? [
-      st.stt ? L("Spracherkennung ✔", "Speech recognition ✔") : L("Spracherkennung aus", "Speech recognition off"),
-      st.wake ? L("Wake-Word ✔", "Wake word ✔") : L("Wake-Word aus", "Wake word off")].join(" · ") : "";
     const note = (text) => {
       list.insertAdjacentHTML("beforeend", `<div class="mm-hint"></div>`);
       list.lastElementChild.textContent = text;
@@ -1989,7 +2024,7 @@
       if (!pk.supported) { note(L("Pocket TTS braucht eine CPU mit AVX2 (x86-64) oder ARM64 – es spricht der Browser.", "Pocket TTS needs a CPU with AVX2 (x86-64) or ARM64 – the browser speaks instead.")); return; }
       const b = document.createElement("button");
       b.className = "model-item add";
-      b.innerHTML = `<div>${L("＋ POCKET TTS INSTALLIEREN", "＋ INSTALL POCKET TTS")}</div><div class="mi-note"></div>`;
+      b.innerHTML = `<div>${L("Pocket TTS installieren", "Install Pocket TTS")}</div><div class="mi-note"></div>`;
       b.querySelector(".mi-note").textContent = L(
         "Natürliche Sprachausgabe auf der CPU. Programm wenige MB, beim ersten Start lädt es Modell und Stimme (einige hundert MB). Bis dahin spricht der Browser.",
         "Natural speech output on the CPU. The program is a few MB; on first start it downloads the model and voice (a few hundred MB). Until then the browser speaks.");
@@ -2012,12 +2047,10 @@
     } else if (pk.state === "error" && pk.error) {
       note(L("Fehler: ", "Error: ") + pk.error + L(" – solange spricht der Browser.", " – the browser speaks meanwhile."));
     }
-    note(L("Die Sprache einer Stimme gilt auch für die Antworten: wählst du z. B. Englisch, antwortet Orbwise auf Englisch.",
-      "A voice's language also applies to the answers: choose e.g. German and Orbwise answers in German."));
     for (const v of data.voices) list.appendChild(voiceRow(v, data.languages));
     const rm = document.createElement("button");
     rm.className = "model-item add";
-    rm.textContent = L("POCKET TTS ENTFERNEN", "REMOVE POCKET TTS");
+    rm.textContent = L("Pocket TTS entfernen", "Remove Pocket TTS");
     rm.onclick = async (e) => {
       e.stopPropagation();
       if (!confirm(L("Pocket TTS mit Modell und Stimmen löschen? Danach spricht der Browser.", "Delete Pocket TTS with its model and voices? The browser speaks afterwards."))) return;
@@ -2056,7 +2089,7 @@
     b.className = "model-item" + (active ? " active" : "");
     b.innerHTML = `<div class="mi-head"><span class="mi-name"></span><span class="mi-tag"></span></div><div class="mi-sub"></div>`;
     b.querySelector(".mi-name").textContent = v.label;
-    b.querySelector(".mi-tag").textContent = active ? L("AKTIV", "ACTIVE") : v.male ? L("MÄNNLICH", "MALE") : L("WEIBLICH", "FEMALE");
+    b.querySelector(".mi-tag").textContent = active ? L("Aktiv", "Active") : v.male ? L("männlich", "male") : L("weiblich", "female");
     b.querySelector(".mi-sub").textContent = v.description;
     b.onclick = (e) => { e.stopPropagation(); if (!active) chooseVoice(v, v.language); };
     const lang = document.createElement("select");
@@ -2067,7 +2100,7 @@
     lang.onchange = () => chooseVoice(v, lang.value);
     const play = document.createElement("button");
     play.className = "model-del voice-play";
-    play.textContent = "▶";
+    play.innerHTML = ico("play");
     play.title = L("Anhören", "Preview");
     play.onclick = (e) => { e.stopPropagation(); previewVoice(v.name); };
     const row = document.createElement("div");
@@ -2204,7 +2237,7 @@
       i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
     });
     const tile = canvas.closest(".tele");
-    const color = tile.classList.contains("crit") ? "#ff5d6c" : tile.classList.contains("warn") ? "#ffb347" : "#3fd0ff";
+    const color = cssVar(tile.classList.contains("crit") ? "--danger" : tile.classList.contains("warn") ? "--warn" : "--accent");
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.5;
     ctx.stroke();
@@ -2230,7 +2263,7 @@
       pushSpark("vram", gb(g.vram_used));
       pushSpark("power", g.power);
     } else {
-      setTile("gpu", null, { sub: L("keine GPU erkannt", "no GPU detected") });
+      setTile("gpu", null, { sub: L("keine GPU", "no GPU"), title: L("keine GPU erkannt", "no GPU detected") });
       setTile("vram", null);
       setTile("power", null);
     }
@@ -2420,11 +2453,11 @@
     box.title = L("Startet Modelle von Hugging Face und aus ~/models. Neue Modelltypen brauchen oft einen neuen Build.",
                   "Runs models from Hugging Face and ~/models. New model types often need a newer build.");
     const btn = box.querySelector("button");
-    btn.textContent = st.updating ? L("WIRD GELADEN …", "DOWNLOADING …") : st.installed ? L("AKTUALISIEREN", "UPDATE") : L("INSTALLIEREN", "INSTALL");
+    btn.textContent = st.updating ? L("Wird geladen …", "Downloading …") : st.installed ? L("Aktualisieren", "Update") : L("Installieren", "Install");
     btn.disabled = st.updating;
     btn.onclick = async () => {
       btn.disabled = true;
-      btn.textContent = L("WIRD GELADEN …", "DOWNLOADING …");
+      btn.textContent = L("Wird geladen …", "Downloading …");
       try { await api("POST", "/api/llamacpp/update"); renderPulls(); } catch { btn.disabled = false; }
     };
   }
@@ -2454,8 +2487,8 @@
       row.querySelector(".mp-meta").textContent = [p.engine, p.quant, p.size_gb ? `${fmt(p.size_gb, 1)} GB` : "",
                                                    p.num_ctx ? ctxLabel(modelCtx(p, "tools")) : ""].filter(Boolean).join(" · ");
       const tag = row.querySelector(".mp-tag");
-      if (p.name === d.switching) { tag.textContent = L("LÄDT …", "LOADING …"); row.classList.add("loading"); }
-      else if (p.active) tag.textContent = p.loaded === false ? L("ENTLADEN", "UNLOADED") : L("GELADEN", "LOADED");
+      if (p.name === d.switching) { tag.textContent = L("Lädt …", "Loading …"); row.classList.add("loading"); }
+      else if (p.active) tag.textContent = p.loaded === false ? L("Entladen", "Unloaded") : L("Geladen", "Loaded");
       else if (p.fit) { tag.textContent = FIT_MARKS[p.fit]; tag.className = "mp-tag fit-" + p.fit; tag.title = fitText(p.fit); }
       row.onclick = () => {
         MP.sel = p.name;
@@ -2987,7 +3020,7 @@
     const reset = document.createElement("button");
     reset.type = "button";
     reset.className = "mm-link";
-    reset.textContent = L("ZURÜCKSETZEN", "RESET");
+    reset.textContent = L("Zurücksetzen", "Reset");
     reset.onclick = () => fill(null);
     const save = document.createElement("button");
     save.type = "button";
@@ -3126,7 +3159,7 @@
       mark.className = "fit-" + p.fit;
       mark.textContent = FIT_MARKS[p.fit] + " ";
       const b = hfItem([mark, document.createTextNode(p.label)],
-                       pulling ? L("LÄDT …", "LOADING …") : p.installed ? L("INSTALLIERT", "INSTALLED") : p.recommended ? L("EMPFOHLEN", "RECOMMENDED") : "",
+                       pulling ? L("Lädt …", "Loading …") : p.installed ? L("Installiert", "Installed") : p.recommended ? L("Empfohlen", "Recommended") : "",
                        `${p.tag} · ~${p.download_gb} GB`, p.note);
       b.disabled = pulling;
       b.onclick = () => startPull(p.tag, p.label, p.fit);
@@ -3176,7 +3209,7 @@
     }
     if (data.results.length === 1) return hfQuants(data.results[0].repo, box);
     for (const r of data.results) {
-      const b = hfItem([document.createTextNode(r.repo)], r.downloads ? `⬇ ${r.downloads.toLocaleString(LOCALE)}` : "",
+      const b = hfItem([document.createTextNode(r.repo)], r.downloads ? L(`${r.downloads.toLocaleString(LOCALE)} Downloads`, `${r.downloads.toLocaleString(LOCALE)} downloads`) : "",
                        L("GGUF · Quantisierung wählen →", "GGUF · choose quantization →"));
       b.onclick = () => hfQuants(r.repo, box);
       box.appendChild(b);
@@ -3204,8 +3237,8 @@
       mark.textContent = FIT_MARKS[x.fit] + " ";
       const pulling = data.pulling.includes(x.tag);
       const b = hfItem([mark, document.createTextNode(x.quant)],
-                       pulling ? L("LÄDT …", "LOADING …") : x.installed ? L("HERUNTERGELADEN", "DOWNLOADED")
-                         : x.recommended ? L("EMPFOHLEN", "RECOMMENDED") : "",
+                       pulling ? L("Lädt …", "Loading …") : x.installed ? L("Heruntergeladen", "Downloaded")
+                         : x.recommended ? L("Empfohlen", "Recommended") : "",
                        `~${x.download_gb} GB · ${L("braucht", "needs")} ~${x.vram_gb} GB VRAM`
                          + (x.parts > 1 ? ` · ${x.parts} ${L("Teile", "parts")}` : "")
                          + (x.mmproj ? L(" · + Bildmodul", " · + vision") : ""));
@@ -3236,7 +3269,7 @@
       const mark = document.createElement("span");
       mark.className = "fit-" + x.fit;
       mark.textContent = FIT_MARKS[x.fit] + " ";
-      const b = hfItem([mark, document.createTextNode(x.label)], data.pulling.includes(x.label) ? L("LÄDT …", "LOADING …") : "",
+      const b = hfItem([mark, document.createTextNode(x.label)], data.pulling.includes(x.label) ? L("Lädt …", "Loading …") : "",
                        `${x.rel} · ~${x.size_gb} GB · ${L("braucht", "needs")} ~${x.vram_gb} GB VRAM`
                          + (x.parts > 1 ? ` · ${x.parts} ${L("Teile", "parts")}` : "")
                          + (x.mmproj ? L(" · + Bildmodul", " · + vision") : ""));
@@ -3265,7 +3298,7 @@
     row.className = "model-pull";
     row.dataset.tag = d.tag;
     row.innerHTML = `<div class="mp-head"><span class="mp-text"></span>
-      <button class="mp-cancel">✕ ${L("ABBRECHEN", "CANCEL")}</button></div><div class="mp-bar"><i></i></div>`;
+      <button class="mp-cancel">${L("Abbrechen", "Cancel")}</button></div><div class="mp-bar"><i></i></div>`;
     row.querySelector(".mp-cancel").onclick = async (e) => {
       e.target.disabled = true;
       try { await api("DELETE", `/api/models/pull/${encodeURIComponent(d.tag)}`); } catch { /* Meldung kommt von api() */ }
@@ -3276,7 +3309,7 @@
 
   function updatePullRow(row, d) {
     const pct = pullPct(d);
-    row.querySelector(".mp-text").textContent = (d.tag === "Tuning" ? `⏱ ${L("Messen", "Measuring")}` : `⬇ ${d.tag}`)
+    row.querySelector(".mp-text").textContent = (d.tag === "Tuning" ? L("Messen", "Measuring") : d.tag)
       + (pct !== null ? ` · ${pct} %` : d.status ? ` · ${d.status}` : " …");
     row.querySelector(".mp-bar i").style.width = (pct || 0) + "%";
   }
@@ -3366,18 +3399,18 @@
     };
     fields[0].querySelector(".api-label").textContent = L("Adresse", "Base URL");
     fields[0].querySelector("code").textContent = st.url;
-    fields[0].querySelector(".api-btns").append(small(L("KOPIEREN", "COPY"), () => copyText(st.url)));
+    fields[0].querySelector(".api-btns").append(small(L("Kopieren", "Copy"), () => copyText(st.url)));
     fields[1].querySelector(".api-label").textContent = L("API-Schlüssel", "API key");
     const keyEl = fields[1].querySelector("code");
     const masked = st.key ? st.key.slice(0, 6) + "•".repeat(18) : L("wird beim Einschalten erzeugt", "created when turned on");
     keyEl.textContent = masked;
     if (st.key) {
-      const show = small(L("ANZEIGEN", "SHOW"), () => {
+      const show = small(L("Anzeigen", "Show"), () => {
         const open = keyEl.textContent === st.key;
         keyEl.textContent = open ? masked : st.key;
-        show.textContent = open ? L("ANZEIGEN", "SHOW") : L("VERBERGEN", "HIDE");
+        show.textContent = open ? L("Anzeigen", "Show") : L("Verbergen", "Hide");
       });
-      fields[1].querySelector(".api-btns").append(show, small(L("KOPIEREN", "COPY"), () => copyText(st.key)),
+      fields[1].querySelector(".api-btns").append(show, small(L("Kopieren", "Copy"), () => copyText(st.key)),
         small(L("NEU", "NEW"), () => {
           if (confirm(L("Neuen Schlüssel erzeugen? Programme mit dem alten Schlüssel kommen dann nicht mehr durch.",
                         "Create a new key? Programs using the old key will no longer get through."))) save({ new_key: true });
@@ -3523,9 +3556,9 @@
       li.innerHTML = `<input type="checkbox" ${r.enabled ? "checked" : ""} title="${L("aktiv / pausiert", "active / paused")}">
         <div class="rt-main"><div class="rt-name"><span class="rt-dot ${status}"></span><span class="n"></span></div>
           <div class="rt-meta"></div></div>
-        <button class="ghost" data-a="run" title="${L("jetzt ausführen", "run now")}">▶</button>
-        <button class="ghost" data-a="edit" title="${L("bearbeiten", "edit")}">✎</button>
-        <button class="ghost" data-a="del" title="${L("löschen", "delete")}">✕</button>`;
+        <button class="ghost" data-a="run" title="${L("jetzt ausführen", "run now")}">${ico("play")}</button>
+        <button class="ghost" data-a="edit" title="${L("bearbeiten", "edit")}">${ico("edit")}</button>
+        <button class="ghost" data-a="del" title="${L("löschen", "delete")}">${ico("trash")}</button>`;
       li.querySelector(".n").textContent = r.name;
       // „morgen 08:00“ → „morgen“, wenn die Uhrzeit ohnehin im Zeitplan steht
       const nextShort = r.next.endsWith(" " + r.time) ? r.next.slice(0, -r.time.length - 1) : r.next;
@@ -3534,7 +3567,7 @@
       li.querySelector(".rt-meta").title = r.enabled && r.next !== "–" ? `${L("nächste Ausführung", "next run")}: ${r.next}` : "";
       li.querySelector(".rt-main").title = r.task + (r.last_summary ? "\n\n" + L("Zuletzt: ", "Last: ") + r.last_summary : "");
       li.querySelector(".rt-main").onclick = () => {
-        if (!r.chat_id) { toast(L("Noch kein Ergebnis – ▶ startet die Routine jetzt.", "No result yet – ▶ runs it now.")); return; }
+        if (!r.chat_id) { toast(L("Noch kein Ergebnis – „Jetzt ausführen“ startet die Routine.", "No result yet – “run now” starts the routine.")); return; }
         api("POST", `/api/chats/${r.chat_id}/activate`).catch(() => {});
       };
       li.querySelector("input").onchange = (e) => api("PUT", `/api/routines/${r.id}`, { enabled: e.target.checked })
@@ -3686,7 +3719,7 @@
         l.switching ? L("lädt …", "loading …") : l.unloaded ? `${l.label || l.model} · ${L("entladen", "unloaded")}` : !l.online ? `${l.label || l.model} offline` : l.model_available ? name : l.model + L(" fehlt", " missing"));
       const v = st.voice;
       const vCls = v.stt && v.tts ? "ok" : v.stt || v.tts ? "warn" : "bad";
-      setPill("pill-voice", vCls, [v.stt ? "STT" : null, v.tts ? "TTS" : "TTS(Browser)", v.wake ? "WAKE" : null].filter(Boolean).join(" · "));
+      setPill("pill-voice", vCls, [v.stt ? "STT" : null, v.tts ? "TTS" : "TTS(Browser)", v.wake ? "Wake-Word" : null].filter(Boolean).join(" · "));
       setPill("pill-mem", "ok", `${st.memory.days} ${L("Tage", "days")} · ${st.memory.facts} ${L("Fakten", "facts")}`);
       const tg = st.telegram || {};
       setPill("pill-tg", tg.running ? "ok" : tg.error ? "bad" : "warn",
@@ -4011,7 +4044,8 @@
     const actions = card.querySelector(".iv-actions");
     const add = (label, title, fn) => {
       const b = document.createElement("button");
-      b.type = "button"; b.className = "btn small"; b.textContent = label; b.title = title; b.onclick = fn;
+      b.type = "button"; b.className = "btn small"; b.innerHTML = label.startsWith("<svg") ? label : escapeHtml(label);
+      b.title = title; b.onclick = fn;
       actions.appendChild(b);
     };
     add(L("Variante", "Variation"), L("Gleicher Prompt, neuer Seed", "Same prompt, new seed"), () => {
@@ -4029,7 +4063,7 @@
     });
     if (IV.status && IV.status.telegram) add(L("Handy", "Phone"), L("Per Telegram aufs Handy", "Send to the phone via Telegram"), () =>
       api("POST", `/api/image/telegram/${encodeURIComponent(img.file)}`).then(() => toast(L("Aufs Handy geschickt.", "Sent to the phone."))).catch(() => {}));
-    add("🗑", L("Löschen", "Delete"), () => {
+    add(ico("trash"), L("Löschen", "Delete"), () => {
       if (!confirm(L("Bild löschen?", "Delete image?"))) return;
       api("DELETE", `/api/image/file/${encodeURIComponent(img.file)}`).then(() => card.remove()).catch(() => {});
     });
@@ -4204,7 +4238,7 @@
       h.messages.forEach((m, i) => {
         if (dividers[i]) { chat.appendChild(compactDivider(dividers[i].summary, dividers[i].ts)); }
         if (m.role === "user") { addUser(m.content, "", m.images, m.turn, m.editable, m.files); return; }
-        const el = addMsg("assistant" + (m.editable === false ? " locked" : ""), "JARVIS", renderMarkdown(m.content));
+        const el = addMsg("assistant" + (m.editable === false ? " locked" : ""), "Jarvis", renderMarkdown(m.content));
         el._raw = m.content;
         if (m.turn) el.dataset.turn = m.turn;
         assistantActions(el);
@@ -4231,8 +4265,8 @@
       list.innerHTML = items.length ? "" : `<li class="empty">${L("Keine anstehenden Erinnerungen.", "No upcoming reminders.")}</li>`;
       for (const r of items) {
         const li = document.createElement("li");
-        li.innerHTML = `<span class="rem-when"></span><span class="rem-text"></span><button class="ghost small" title="${L("Löschen", "Delete")}">✕</button>`;
-        li.querySelector(".rem-when").textContent = (r.kind === "timer" ? "⏱ " : "") + reminderWhen(r.due);
+        li.innerHTML = `<span class="rem-when"></span><span class="rem-text"></span><button class="ghost small" title="${L("Löschen", "Delete")}">${ico("trash")}</button>`;
+        li.querySelector(".rem-when").textContent = (r.kind === "timer" ? L("Timer · ", "Timer · ") : "") + reminderWhen(r.due);
         li.querySelector(".rem-text").textContent = r.text;
         li.querySelector("button").onclick = async () => {
           await fetch(`/api/reminders/${encodeURIComponent(r.id)}`, { method: "DELETE" });
@@ -4264,12 +4298,12 @@
   }
 
   function showReminder(ev) {
-    $("reminder-kind").textContent = ev.late ? L("VERPASSTE ERINNERUNG", "MISSED REMINDER")
-      : ev.kind === "timer" ? L("TIMER ABGELAUFEN", "TIMER FINISHED") : L("ERINNERUNG", "REMINDER");
+    $("reminder-kind").textContent = ev.late ? L("Verpasste Erinnerung", "Missed reminder")
+      : ev.kind === "timer" ? L("Timer abgelaufen", "Timer finished") : L("Erinnerung", "Reminder");
     $("reminder-text").textContent = ev.text;
     $("reminder-banner").classList.remove("hidden");
     chime();
-    addSystem("🔔 " + ev.spoken);
+    addSystem(ev.spoken);
     if (!$("tab-memory").classList.contains("hidden")) loadReminders();
   }
   $("reminder-ok").onclick = () => $("reminder-banner").classList.add("hidden");
@@ -4281,7 +4315,7 @@
         ? facts.map((f) => `<li>${escapeHtml(f.fact)}<small>${f.day}</small></li>`).join("")
         : `<li class="empty">${L("Noch keine Fakten gespeichert.", "No facts stored yet.")}</li>`;
       $("days").innerHTML = days.length
-        ? days.map((d) => `<li><button data-day="${d.day}">${formatDay(d.day)}<span>${d.summary ? L("ZUSAMMENFASSUNG", "SUMMARY") : L("PROTOKOLL", "LOG")}</span></button></li>`).join("")
+        ? days.map((d) => `<li><button data-day="${d.day}">${formatDay(d.day)}<span>${d.summary ? L("Zusammenfassung", "Summary") : L("Protokoll", "Log")}</span></button></li>`).join("")
         : `<li class="empty">${L("Noch keine Einträge.", "No entries yet.")}</li>`;
       $("days").querySelectorAll("button").forEach((b) => (b.onclick = () => openDay(b.dataset.day)));
     } catch (err) {
@@ -4291,7 +4325,7 @@
   }
 
   const LESSON_SOURCE = { error: L("aus einem Fehler", "from an error"), correction: L("aus deiner Korrektur", "from your correction"),
-                          feedback: L("aus 👎", "from 👎"), manual: L("von dir", "by you") };
+                          feedback: L("aus Bewertung", "from a rating"), manual: L("von dir", "by you") };
   async function loadLessons() {
     let data;
     try { data = await getJSON("/api/lessons"); } catch { return; }
@@ -4300,13 +4334,13 @@
     const list = $("lessons");
     list.innerHTML = "";
     if (!data.lessons.length) {
-      list.innerHTML = `<li class="empty">${L("Noch nichts gelernt – das kommt mit Fehlern, Korrekturen und 👎.", "Nothing learned yet – that comes with errors, corrections and 👎.")}</li>`;
+      list.innerHTML = `<li class="empty">${L("Noch nichts gelernt – das kommt mit Fehlern, Korrekturen und schlechten Bewertungen.", "Nothing learned yet – that comes with errors, corrections and bad ratings.")}</li>`;
       return;
     }
     for (const x of data.lessons) {
       const li = document.createElement("li");
       li.innerHTML = `<span class="ls-text" contenteditable="true" spellcheck="false"></span><small></small>`
-        + `<span class="ls-actions"><button class="btn small" type="button" title="${L("Löschen", "Delete")}">🗑</button></span>`;
+        + `<span class="ls-actions"><button class="btn small" type="button" title="${L("Löschen", "Delete")}">${ico("trash")}</button></span>`;
       const text = li.querySelector(".ls-text");
       text.textContent = x.text;
       li.querySelector("small").textContent = [LESSON_SOURCE[x.source] || x.source, (x.scope || []).join(", "),
@@ -4342,8 +4376,8 @@
     const d = await getJSON("/api/memory/day/" + day);
     $("day-title").textContent = formatDay(day).toUpperCase();
     let html = "";
-    if (d.summary) html += `<h3>${L("ZUSAMMENFASSUNG", "SUMMARY")}</h3><div class="body">${renderMarkdown(d.summary.replace(/^# .*\n/, ""))}</div>`;
-    if (d.journal) html += `<h3>${L("PROTOKOLL", "LOG")}</h3><pre>${escapeHtml(d.journal.replace(/^# .*\n/, ""))}</pre>`;
+    if (d.summary) html += `<h3>${L("Zusammenfassung", "Summary")}</h3><div class="body">${renderMarkdown(d.summary.replace(/^# .*\n/, ""))}</div>`;
+    if (d.journal) html += `<h3>${L("Protokoll", "Log")}</h3><pre>${escapeHtml(d.journal.replace(/^# .*\n/, ""))}</pre>`;
     $("day-body").innerHTML = html || L("Keine Einträge.", "No entries.");
     $("day-modal").classList.remove("hidden");
   }

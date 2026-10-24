@@ -58,7 +58,7 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **E-mail** | **Proton Mail** (via the Proton Mail Bridge) or any IMAP mailbox: unread mails, search, read, ask about a mail, list folders, archive/move/label/trash, PDF attachments → Paperless (changes after confirmation); optional **writing and replying** (SMTP) – To, Cc, subject and text are editable in a dialog before anything is sent |
 | **Tools & Coding mode** | Switch top left: **Tools** (assistant – all tools, web, Paperless, mail, smart home, voice) or **Coding** – only files, shell, web search and memory (≈ 2k instead of ≈ 10k tokens of tool descriptions, so far more context for code), a developer prompt, no voice, wider chat. Files are changed with **edit_file** (replace a snippet instead of rewriting the file) and multi-step work gets a **task list** shown as a checklist in the answer. Each mode has its own chat history; a coding chat can have a **project folder** (shell starts there, relative paths refer to it). Pick a model while in a mode and Orbwise remembers it for that mode (e.g. a coder model) – switching then reloads it |
 | **Plan mode** | **Plan** button: Jarvis thinks it through, only looks things up (read-only) and presents a step-by-step plan – **RUN**, **CHANGE** (say what should be different) or **DISCARD**; also by voice ("yes") and via Telegram (`/plan …`) |
-| **Auto mode** | Drop-down button next to *Think*: **Off** – every shell command asks · **Read only** (default) – recognised read-only commands (`ls`, `df`, `docker ps`, `git status`, `nmcli device status`, `apt list --installed`, `journalctl` …) run without asking · **Read + edit files** – also create, write, copy and move files in your own home (`write_file`, `mkdir`, `touch`, `cp`, `mv`, `tee`, `>`), never with root, never deleting, never hidden files (shell start files, autostart, `~/.ssh`, `~/.config` …), launchers (`.desktop`, `~/bin`) or credentials · **Auto** – everything without root runs without asking (`python …`, `cd … && make`, `git commit`, `pip install --user`, `systemctl --user restart` …, plus `write_file`); still asking: deleting (`rm`, `find -delete`, `git clean` …), sudo, shutting down, sending over the network (`git push`, `ssh`, uploads), start-up files/autostart/`~/.ssh`/Orbwise's own config and credentials. Note: a script or `python -c` can do anything you may do – Auto only catches what is visible in the command. Plan mode and untrusted content (mail, screen) still ask. The rules live in code, so they cost no prompt context |
+| **Auto mode** | Drop-down button next to *Think*: **Off** – every shell command asks · **Read only** (default) – recognised read-only commands (`ls`, `df`, `docker ps`, `git status`, `nmcli device status`, `apt list --installed`, `journalctl` …) run without asking · **Read + edit files** – also create, write, copy and move files in your own home (`write_file`, `mkdir`, `touch`, `cp`, `mv`, `tee`, `>`), never with root, never deleting, never hidden files (shell start files, autostart, `~/.ssh`, `~/.config` …), launchers (`.desktop`, `~/bin`) or credentials · **Auto** – everything without root runs without asking (`python …`, `cd … && make`, `git commit`, `pip install --user`, `systemctl --user restart` …, plus `write_file`); still asking: deleting (`rm`, `find -delete`, `git clean` …), sudo, shutting down, sending over the network (`git push`, `ssh`, uploads), start-up files/autostart/`~/.ssh`/Orbwise's own config and credentials. Note: a script or `python -c` can do anything you may do – Auto only catches what is visible in the command. Plan mode and untrusted content (mail, screen) still ask. If Orbwise itself runs as **root**, "without root" cannot be checked – *Read + edit files* and *Auto* then approve nothing (`orbwise doctor` warns). The mode (like *Think*) is kept by the server: every open window, Telegram and routines use the same setting. The rules live in code, so they cost no prompt context |
 | **Images and PDFs in the chat** | Attach images or PDFs to a message (paperclip button, paste with Ctrl+V or drag them onto the input field) – models that can see images (llama.cpp models with a vision module, Ollama vision models) get them directly, others hand them to the local vision model via `look_at_image`; PDFs are read locally and their text goes along with the question |
 | **Screen & images** | "What's that error message?", "What does this window say?", "Help me with this dialog" – Orbwise takes a screenshot and asks a **local vision model** (e.g. Qwen2.5-VL); also for image files and photos sent from the phone. Nothing leaves your PC |
 | **Telegram** | Chat with Orbwise from your phone (text or voice messages, own chat in the sidebar), reminders also arrive on the phone, confirmations via ✅/❌ buttons, **files in both directions** (PDFs/photos → PC or Paperless, local files and Paperless documents → phone), `/stop` cancels what is running |
@@ -479,16 +479,20 @@ or calls a tool (it opens again if the model thinks on after a tool); it can be 
 aloud. It costs time (often 10–60 s per step on smaller GPUs). For
 llama-server, **don't** pass `--reasoning-budget 0`, which disables reasoning server-side.
 
-The button's menu has levels: **Brief** (reasoning up to ~500 tokens), **Normal** (~2,000) and **Thorough**
-(unlimited). Models with real levels (gpt-oss) get `low`/`medium`/`high` directly. For all others (Qwen 3 …)
-the level is a budget: the request asks the model to keep it short, and if the reasoning gets longer anyway Orbwise
-stops it and lets the model continue the step without further thinking, with its thoughts so far (the prompt start
-stays cached). The activity shows "enough thinking – acting now".
+The menu follows what the loaded model can do. Orbwise reads it from the model's chat template (llama-server
+`/props`) or Ollama's capabilities:
+- **Real levels** (gpt-oss: `reasoning_effort` in the template): **Off / Brief / Normal / Thorough**, passed to the
+  model as `low`/`medium`/`high`. As a safety net Brief and Normal also have a budget (~500 / ~2,000 tokens) – if the
+  reasoning runs longer, Orbwise stops it and the model continues the step without further thinking, with its
+  thoughts so far (the activity shows "enough thinking – acting now").
+- **Only on/off** (Qwen 3 and most others): **Off / On** – no invented levels.
+- **No thinking at all**: the button is greyed out.
+In a small context window the reasoning is always capped so the answer still fits.
 
 ## Voice & Jarvis effect
 
 Orbwise speaks with [Kyutai's Pocket TTS](https://github.com/kyutai-labs/pocket-tts) – natural-sounding, on the CPU.
-The installer sets it up (`orbwise voice install`); otherwise **Settings → Voice → ＋ INSTALL POCKET TTS** does. It is a
+The installer sets it up (`orbwise voice install`); otherwise **Settings → Voice → Install Pocket TTS** does. It is a
 ready-made program (a few MB, no Python or PyTorch; checksum verified) in `~/.local/share/orbwise/pocket-tts/`; on
 its first start it fetches the model for the language (~100M parameters) and the voice from Hugging Face – a few
 hundred MB, cached in `~/.cache/huggingface`. It runs as a small local server (int8, 4 CPU threads, faster than real
@@ -503,7 +507,7 @@ Whisper then detects the spoken language itself, so you can talk to Orbwise in t
 spoken phrases ("Shall I run …?") follow in German or English. Each voice keeps its language; the choice is stored
 in `state.json`. Switching to another language loads that language's model (a few seconds, the first time a download).
 
-**REMOVE POCKET TTS** deletes the program, model and voices again (`orbwise voice remove` on the command line).
+**Remove Pocket TTS** deletes the program, model and voices again (`orbwise voice remove` on the command line).
 Needs an x86-64 CPU with AVX2 or ARM64. Cloning your own voice from a recording is not offered yet (Kyutai only hands
 out those weights after accepting terms on Hugging Face).
 

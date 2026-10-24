@@ -54,8 +54,14 @@ def cmd_doctor(args) -> None:
     def line(ok: bool, text: str, hint: str = "") -> None:
         print(f"  {'✔' if ok else '✘'} {text}" + (f"  → {hint}" if hint and not ok else ""))
 
+    from .agent_safety import running_as_root
     from .update import version
     print(f"Version: {version()}")
+    if running_as_root():
+        print("  ⚠ " + T("Orbwise läuft als root – der Auto-Modus gibt dann nichts ohne Rückfrage frei. Besser als "
+                         "normaler Benutzer starten (systemctl --user).",
+                         "Orbwise runs as root – Auto mode then approves nothing without asking. Better run it as a "
+                         "normal user (systemctl --user)."))
     print(T("Konfiguration: ", "Configuration: ") + f"{config_path()} ("
           + (T("vorhanden", "found") if config_path().exists() else T("Standardwerte", "defaults")) + ")")
     print(T("Sprache: ", "Language: ") + cfg.language)

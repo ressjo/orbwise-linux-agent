@@ -380,13 +380,27 @@ class Agent(CompactMixin, ToolSelectionMixin, SafetyMixin, SpeedMixin):
         return self.plan().think_budget(self._think_level) if self._think else 0
 
     def _set_think(self, think) -> None:
-        """think: None (Profil), False, True (= normal) oder eine Stufe low/medium/high."""
+        """think: None (Profil), False, True (an, ohne Stufe) oder eine Stufe low/medium/high."""
         if isinstance(think, str):
             level = think if think in THINK_LEVELS else "medium"
             self._think, self._think_level = (think != "off"), (level if think != "off" else None)
         else:
             self._think = think
-            self._think_level = "medium" if think else None
+            self._think_level = None
+
+    async def _fit_think(self) -> None:
+        """Denken an das Modell anpassen: kann es nicht denken → aus; kennt es nur an/aus → ohne Stufe (dann gibt es
+        weder Stufen-Budget noch „kurz denken“-Hinweis, nur die Grenze im kleinen Fenster). Unbekannt → wie gewählt."""
+        if not self._think or not hasattr(self.llm, "thinking_caps"):
+            return
+        try:
+            caps = await self.llm.thinking_caps()
+        except Exception:  # noqa: BLE001
+            return
+        if caps == "none":
+            self._think, self._think_level = False, None
+        elif caps == "toggle":
+            self._think_level = None
 
     def summary_budget(self) -> int:
         """Höchstlänge der Zusammenfassung bei einer Komprimierung (klein ≈ 8 %, groß ≈ 10 % des Fensters)."""
@@ -451,6 +465,7 @@ class Agent(CompactMixin, ToolSelectionMixin, SafetyMixin, SpeedMixin):
         async with self.lock:
             self._plan, self._approved_plan = plan, approved_plan
             self._set_think(think)
+            await self._fit_think()
             self._tainted = False
             self._prewarm_failed = None  # eine echte Frage darf es wieder versuchen
             try:
@@ -466,6 +481,7 @@ class Agent(CompactMixin, ToolSelectionMixin, SafetyMixin, SpeedMixin):
         async with self.lock:
             self._plan, self._approved_plan = plan, approved_plan
             self._set_think(think)
+            await self._fit_think()
             self._tainted = False
             try:
                 with self.memory.in_chat(chat_id, title) as conv:

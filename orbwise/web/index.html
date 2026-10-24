@@ -47,6 +47,10 @@
       <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5"/></symbol>
       <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 1 1 12 0v5l2 2H4Z"/><path d="M10 21h4"/></symbol>
       <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3v8"/><path d="M6.3 6.8a8 8 0 1 0 11.4 0"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7Z"/></symbol>
+      <symbol id="i-thumb-up" viewBox="0 0 24 24"><path d="M7 11v9H4v-9h3Zm0 0 4-8a2 2 0 0 1 2 2v4h5.5a2 2 0 0 1 2 2.3l-1.2 7A2 2 0 0 1 17.3 20H7"/></symbol>
+      <symbol id="i-thumb-down" viewBox="0 0 24 24"><path d="M7 13V4H4v9h3Zm0 0 4 8a2 2 0 0 0 2-2v-4h5.5a2 2 0 0 0 2-2.3l-1.2-7A2 2 0 0 0 17.3 4H7"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
     </defs>
   </svg>
 
@@ -163,17 +167,18 @@
             <button type="button" class="chip-toggle" id="btn-auto" aria-haspopup="menu" aria-expanded="false" title="Auto-Modus: was ohne Rückfrage laufen darf"><svg class="i"><use href="#i-bolt"/></svg><span id="auto-label">Lesen</span><svg class="i caret"><use href="#i-chevron"/></svg></button>
             <div class="chip-menu hidden" id="auto-menu" role="menu">
               <button type="button" role="menuitemradio" data-auto="off"><b>Aus</b><small>Jeder Shell-Befehl fragt vorher.</small></button>
-              <button type="button" role="menuitemradio" data-auto="read"><b>Nur lesen</b><small>Erkannte lesende Befehle (ls, df, docker ps, git status …) laufen ohne Rückfrage.</small></button>
-              <button type="button" role="menuitemradio" data-auto="files"><b>Lesen + Dateien bearbeiten</b><small>Zusätzlich Dateien im eigenen Home anlegen, schreiben, kopieren, verschieben – ohne Root. Löschen und versteckte Dateien fragen weiter.</small></button>
-              <button type="button" role="menuitemradio" data-auto="auto"><b>Auto</b><small>Alles ohne Root: Shell-Befehle (python, git, make, pip --user …) und Dateien laufen ohne Rückfrage. Löschen, sudo, Ausschalten, Senden ins Netz (git push, ssh, Uploads), Autostart/Startdateien und Zugangsdaten fragen weiter.</small></button>
+              <button type="button" role="menuitemradio" data-auto="read"><b>Nur lesen</b><small>Lesende Befehle (ls, df, git status …) laufen ohne Rückfrage.</small></button>
+              <button type="button" role="menuitemradio" data-auto="files"><b>Lesen + Dateien bearbeiten</b><small>Dazu Dateien im eigenen Home anlegen und ändern. Löschen fragt weiter.</small></button>
+              <button type="button" role="menuitemradio" data-auto="auto"><b>Auto</b><small>Alles ohne Root. Löschen, sudo, Senden ins Netz, Autostart und Zugangsdaten fragen weiter.</small></button>
             </div>
           </div>
           <div class="chip-split" id="think-wrap">
             <button type="button" class="chip-toggle" id="btn-think" aria-haspopup="menu" aria-expanded="false" title="Denkmodus: Jarvis denkt vor der Antwort nach – langsamer, dafür gründlicher."><svg class="i"><use href="#i-sparkles"/></svg><span id="think-label">Denken</span><svg class="i caret"><use href="#i-chevron"/></svg></button>
             <div class="chip-menu hidden" id="think-menu" role="menu">
               <button type="button" role="menuitemradio" data-think="off"><b>Nicht denken</b><small>Direkte Antworten – am schnellsten.</small></button>
-              <button type="button" role="menuitemradio" data-think="low"><b>Kurz</b><small>Kurz überlegen, dann handeln (Denkkette höchstens ~500 Token).</small></button>
-              <button type="button" role="menuitemradio" data-think="medium"><b>Normal</b><small>Zügig durchdenken (höchstens ~2.000 Token).</small></button>
+              <button type="button" role="menuitemradio" data-think="on" class="hidden"><b>Denken</b><small>Das Modell überlegt vor der Antwort.</small></button>
+              <button type="button" role="menuitemradio" data-think="low"><b>Kurz</b><small>Das Modell überlegt knapp.</small></button>
+              <button type="button" role="menuitemradio" data-think="medium"><b>Normal</b><small>Ausgewogen zwischen Tempo und Gründlichkeit.</small></button>
               <button type="button" role="menuitemradio" data-think="high"><b>Gründlich</b><small>So lange wie nötig – am langsamsten.</small></button>
             </div>
           </div>
@@ -319,7 +324,7 @@
       </div>
       <div class="card">
         <div class="card-head"><h3>Erfahrungen</h3><small class="lessons-meta" id="lessons-meta"></small></div>
-        <p class="lessons-hint" id="lessons-hint">Kurze Lektionen, die Jarvis aus Fehlern, deinen Korrekturen und 👎 gelernt hat. Zu einer Frage gehen nur die passenden mit (feste kleine Grenze) – das Kontextfenster wächst dadurch nicht.</p>
+        <p class="lessons-hint" id="lessons-hint">Kurze Lektionen, die Jarvis aus Fehlern, deinen Korrekturen und schlechten Bewertungen gelernt hat. Zu einer Frage gehen nur die passenden mit (feste kleine Grenze) – das Kontextfenster wächst dadurch nicht.</p>
         <ul class="lessons" id="lessons"></ul>
         <form class="lesson-add" id="lesson-add"><input id="lesson-new" type="text" maxlength="220" placeholder="Eigene Regel hinzufügen, z. B. „Docker auf dem NAS immer mit sudo“"><button class="btn small" type="submit">Hinzufügen</button></form>
       </div>
@@ -376,7 +381,7 @@
           <div class="set-row"><div><b>Auto-Modus</b><small>Was ohne Rückfrage laufen darf.</small></div>
             <div class="seg" id="set-auto"><button type="button" data-auto="off">Aus</button><button type="button" data-auto="read">Nur lesen</button><button type="button" data-auto="files">+ Dateien</button><button type="button" data-auto="auto">Auto</button></div></div>
           <div class="set-row"><div><b>Denkmodus</b><small>Gründlicher, dafür langsamer.</small></div>
-            <div class="seg" id="set-think"><button type="button" data-think="off">Aus</button><button type="button" data-think="low">Kurz</button><button type="button" data-think="medium">Normal</button><button type="button" data-think="high">Gründlich</button></div></div>
+            <div class="seg" id="set-think"><button type="button" data-think="off">Aus</button><button type="button" data-think="on" class="hidden">An</button><button type="button" data-think="low">Kurz</button><button type="button" data-think="medium">Normal</button><button type="button" data-think="high">Gründlich</button></div></div>
           <p class="set-hint">Weitere Einstellungen (Integrationen, Telegram, Mail …) stehen in <code>~/.config/orbwise/config.yaml</code> – <code>orbwise doctor</code> prüft sie.</p>
         </div>
         <div class="set-section hidden" id="set-status">

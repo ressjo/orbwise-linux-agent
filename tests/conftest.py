@@ -14,6 +14,13 @@ def _own_cache_dir(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
 
 
+@pytest.fixture(autouse=True)
+def _not_root(monkeypatch):
+    """Tests laufen wie bei einem normalen Benutzer – auch wenn der Testrechner (Container) root ist."""
+    from orbwise import agent_safety
+    monkeypatch.setattr(agent_safety, "running_as_root", lambda: False)
+
+
 @pytest.fixture
 def cfg(tmp_path: Path) -> Config:
     c = Config()

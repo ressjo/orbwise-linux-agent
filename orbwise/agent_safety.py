@@ -6,6 +6,7 @@ Mixin für Agent – nutzt dessen Zustand (self.cfg, self.memory, self._tainted 
 from __future__ import annotations
 
 import logging
+import os
 
 from . import prompts
 from .tools.leakguard import LOCAL_DATA_TOOLS, find_leak, outbound_text
@@ -39,6 +40,11 @@ TAINT_READ_OK = {"read_file", "list_directory", "find_files", "search_file_conte
                  "ha_find", "ha_state", "obsidian_search", "obsidian_read", "obsidian_ask", "trilium_search",
                  "trilium_read", "portainer_containers", "portainer_stacks", "portainer_logs",
                  "portainer_check_updates", "list_installed_apps"}
+
+
+def running_as_root() -> bool:
+    """Läuft Orbwise als root? Dann ist „ohne Root-Rechte“ nicht prüfbar – Auto „Dateien“/„Auto“ fragen wie „Lesen“."""
+    return hasattr(os, "geteuid") and os.geteuid() == 0
 
 
 def is_taint_source(name: str, result: str) -> bool:
@@ -81,9 +87,12 @@ class SafetyMixin:
         """Risiko eines Aufrufs nach Auto-Modus, Planmodus und Schutz vor fremden Inhalten."""
         cwd = ctx.cwd
         risk, reason = spec.assess(ctx, args)
-        if risk == CONFIRM and self.auto_mode == "files" and not self._plan and self._file_edit_ok(name, args, cwd):
+        relaxed = not self._plan and not running_as_root()  # als root gilt nichts als „ohne Root“
+        if risk == CONFIRM and self.auto_mode in ("files", "auto") and not self._plan and running_as_root():
+            reason = prompts.text(self.cfg, "auto_root") + (f"; {reason}" if reason else "")
+        if risk == CONFIRM and self.auto_mode == "files" and relaxed and self._file_edit_ok(name, args, cwd):
             risk, reason = SAFE, prompts.text(self.cfg, "auto_files")
-        elif risk == CONFIRM and self.auto_mode == "auto" and not self._plan and name in AUTO_TOOLS:
+        elif risk == CONFIRM and self.auto_mode == "auto" and relaxed and name in AUTO_TOOLS:
             ok, why = self._auto_ok(name, args, cwd)
             risk, reason = (SAFE, prompts.text(self.cfg, "auto_full")) if ok else (risk, why or reason)
         # Nach fremden Inhalten (Mail, Webseite, Bild, PDF) fragt alles nach, was etwas verändert oder startet –
