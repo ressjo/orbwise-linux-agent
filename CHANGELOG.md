@@ -114,7 +114,7 @@ All notable changes to this project are documented here. The format follows
 - **PC froze while loading a Strata model on AMD:** Strata kept only 700 MiB of VRAM free; with the desktop on the
   same AMD card amdgpu moved the expert cache into the already full RAM. Strata models on AMD now keep 3 GB free
   (`--set vram-reserve-mib=3072`, Strata's recommendation; existing profiles get it at the next start), adjustable on
-  the model page; the context recommendation accounts for the smaller room (RX 7900 XT: 64k).
+  the model page (0.7 / 1 / 1.5 / 2 / 3 / 4 GB); the context recommendation accounts for the smaller room (RX 7900 XT: 64k).
 - **Cache numbers for one-token requests:** llama-server sometimes omits the generation speed when only one token is
   generated (warm-up, self-test); the prompt counts then came from `usage`, which includes cached tokens, so a
   cache hit looked like a full re-read. The prompt counts now always come from the timings, and the self-test

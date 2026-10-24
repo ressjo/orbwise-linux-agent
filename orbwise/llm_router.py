@@ -812,7 +812,7 @@ class LLMRouter:
         if not is_strata(p.server):
             raise LLMError(T("Nur bei Strata-Modellen einstellbar.", "Only available for Strata models."))
         if mib not in strata.RESERVE_STEPS:
-            raise LLMError(T("Reserve bitte 700, 1536, 3072 oder 4096 MiB", "Reserve please 700, 1536, 3072 or 4096 MiB"))
+            raise LLMError(strata.reserve_error())
         p.server = p.server.model_copy(update={"command": strata.with_reserve(p.server.command, mib)})
         self.servers.pop(name, None)  # neuer Startbefehl
 

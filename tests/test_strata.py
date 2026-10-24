@@ -180,6 +180,9 @@ def test_profile_runs_strata_detached(home, cfg):
     run(router.set_strata_reserve("s", 3072))
     assert "--set vram-reserve-mib=3072" in router.profiles["s"].server.command
     assert router.describe()[0]["strata_reserve"] == 3072
+    run(router.set_strata_reserve("s", 1024))  # schlanker Desktop: 1 GB
+    assert "--set vram-reserve-mib=1024" in router.profiles["s"].server.command
+    run(router.set_strata_reserve("s", 3072))
     with pytest.raises(LLMError, match="Reserve"):
         run(router.set_strata_reserve("s", 1000))
     again = LLMRouter(LLMConfig(profiles={"s": ProfileConfig(**{**p, "server": server})}, active="s"),

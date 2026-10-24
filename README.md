@@ -470,8 +470,9 @@ The card size counts minus the desktop reserve below – with 3 GB kept free, a 
 without a desktop. When the same AMD card also drives the screen on Linux, the desktop needs VRAM too; amdgpu then
 moves experts into RAM, which Strata already fills, and the PC hangs (Strata issues #560/#516). Orbwise therefore keeps
 **3 GB free on AMD cards** (`strata launch … --set vram-reserve-mib=3072`; Strata's own recommendation), also for
-Strata models added before. Change it on the model page under **Video memory for the desktop** (0.7 / 1.5 / 3 / 4 GB) –
-less only when the desktop runs on another card. If the PC still runs short of RAM: close the browser or other big
+Strata models added before. Change it on the model page under **Video memory for the desktop** (0.7 / 1 / 1.5 / 2 / 3 / 4 GB) – a lean
+desktop often gets by with 1–2 GB: measure what it uses without a model loaded
+(`cat /sys/class/drm/card*/device/mem_info_vram_used`, in bytes) and keep the reserve above that. If the PC still runs short of RAM: close the browser or other big
 programs while loading, and consider `earlyoom` or `systemd-oomd` so Linux ends a program instead of freezing.
 
 ### Why was so much read again?

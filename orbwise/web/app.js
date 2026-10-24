@@ -2829,25 +2829,28 @@
     const rec = p.strata_reserve_default || 700;
     const current = p.strata_reserve || 700;
     const opts = sec.querySelector(".reserve-opts");
-    const notes = { 700: L("Strata-Standard", "Strata default"), 1536: "", 3072: "", 4096: L("sicherer, etwas langsamer", "safer, a bit slower") };
-    for (const mib of [700, 1536, 3072, 4096]) {
+    const tight = L("knapp – reicht für schlanken Desktop", "tight – enough for a lean desktop");
+    const notes = { 700: L("Strata-Standard", "Strata default"), 1024: amd ? tight : "", 1536: amd ? L("knapp", "tight") : "", 2048: "",
+                    3072: "", 4096: L("sicherer, etwas langsamer", "safer, a bit slower") };
+    for (const mib of [700, 1024, 1536, 2048, 3072, 4096]) {
       const b = document.createElement("button");
       b.type = "button";
-      b.className = "ctx-opt" + (mib === current ? " on" : "") + (amd && mib < 3072 ? " big" : "");
+      b.className = "ctx-opt" + (mib === current ? " on" : "") + (amd && mib < 1024 ? " big" : "");
       b.innerHTML = "<span></span><small></small>";
       b.querySelector("span").textContent = `${fmt(mib / 1024, 1)} GB`;
       b.querySelector("small").textContent = [mib === rec ? L("empfohlen", "recommended") : "", notes[mib],
-                                              amd && mib < 3072 ? L("Einfrier-Gefahr", "may freeze") : ""].filter(Boolean).join(" · ");
+                                              amd && mib < 1024 ? L("Einfrier-Gefahr", "may freeze") : ""].filter(Boolean).join(" · ");
       b.disabled = !!MP.data.switching;
       b.onclick = async () => {
         if (mib === current) return;
-        if (amd && mib < 3072 && !confirm(L("Weniger als 3 GB freihalten? Treibt die AMD-Karte auch den Bildschirm an, kann der PC beim Laden einfrieren. Nur wählen, wenn der Desktop auf einer anderen Grafikkarte läuft.",
-                                            "Keep less than 3 GB free? If the AMD card also drives the screen, the PC can freeze while loading. Only choose this when the desktop runs on another graphics card."))) return;
+        if (amd && mib < 1024 && !confirm(L("Weniger als 1 GB freihalten? Treibt die AMD-Karte auch den Bildschirm an, kann der PC beim Laden einfrieren. Nur wählen, wenn der Desktop auf einer anderen Grafikkarte läuft.",
+                                            "Keep less than 1 GB free? If the AMD card also drives the screen, the PC can freeze while loading. Only choose this when the desktop runs on another graphics card."))) return;
         opts.querySelectorAll(".ctx-opt").forEach((x) => { x.disabled = true; });
         if (isLive(p)) toast(L("Strata startet mit der neuen Reserve neu …", "Restarting Strata with the new reserve …"));
         try {
           await api("POST", `/api/models/${encodeURIComponent(p.name)}/strata-reserve`, { mib });
-          toast(L(`Strata hält jetzt ${fmt(mib / 1024, 1)} GB Grafikspeicher frei.`, `Strata now keeps ${fmt(mib / 1024, 1)} GB of video memory free.`));
+          toast(L(`Strata hält jetzt ${fmt(mib / 1024, 1)} GB Grafikspeicher frei.`, `Strata now keeps ${fmt(mib / 1024, 1)} GB of video memory free.`)
+                + (amd && mib < 3072 ? L(" Friert der PC beim Laden ein, wieder 3 GB wählen.", " If the PC freezes while loading, choose 3 GB again.") : ""));
         } catch { /* Meldung kommt von api() */ }
         refreshModelViews();
       };
@@ -2856,11 +2859,13 @@
     sec.querySelector(".set-hint").textContent = L(
       "Strata füllt den Grafikspeicher mit Experten. Treibt dieselbe Karte auch den Bildschirm an (AMD unter Linux), braucht der Desktop dort Platz – "
       + "ist keiner frei, schiebt der Treiber Experten in den RAM, den Strata schon füllt, und der PC friert ein. Für AMD sind 3 GB empfohlen; "
-      + "weniger ist etwas schneller, aber nur sicher, wenn der Desktop auf einer anderen Karte läuft. Mehr Reserve = etwas weniger Kontext empfohlen. "
+      + "weniger ist etwas schneller und reicht oft für einen schlanken Desktop. Nachmessen ohne geladenes Modell, Browser offen: "
+      + "cat /sys/class/drm/card*/device/mem_info_vram_used (Bytes) – die Reserve sollte darüber liegen, plus etwas Luft. Mehr Reserve = etwas weniger Kontext empfohlen. "
       + (isLive(p) ? "Zum Ändern startet Strata neu." : "Gilt ab dem nächsten Laden."),
       "Strata fills the video memory with experts. If the same card also drives the screen (AMD on Linux), the desktop needs room there – "
       + "without it the driver moves experts into RAM, which Strata already fills, and the PC freezes. 3 GB is recommended for AMD; "
-      + "less is a bit faster but only safe when the desktop runs on another card. More reserve = a little less context recommended. "
+      + "less is a bit faster and often enough for a lean desktop. Measure without a model loaded, browser open: "
+      + "cat /sys/class/drm/card*/device/mem_info_vram_used (bytes) – keep the reserve above that, plus some room. More reserve = a little less context recommended. "
       + (isLive(p) ? "Changing it restarts Strata." : "Applies the next time it is loaded."));
   }
 

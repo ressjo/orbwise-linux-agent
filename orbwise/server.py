@@ -1785,8 +1785,7 @@ def create_app(cfg: Config) -> FastAPI:
         except (TypeError, ValueError):
             mib = 0
         if mib not in strata.RESERVE_STEPS:
-            raise HTTPException(400, T("Reserve bitte 700, 1536, 3072 oder 4096 MiB",
-                                       "Reserve please 700, 1536, 3072 or 4096 MiB"))
+            raise HTTPException(400, strata.reserve_error())
         active = name == llm.active and not llm.unloaded
         if active:
             await hub.broadcast({"type": "model_switching", "name": name, "label": llm.profiles[name].label})

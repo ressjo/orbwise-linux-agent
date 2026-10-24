@@ -150,10 +150,15 @@ def kv_gb(ctx: int) -> float:
 # Grafikspeicher, den die Engine frei lässt (MiB). Stratas Standard 700 ist für eine Karte ohne Desktop gedacht: treibt
 # dieselbe AMD-Karte unter Linux den Bildschirm an, verschiebt amdgpu bei vollem VRAM den Experten-Cache in den RAM, den
 # die Experten schon füllen – der PC friert ein. Strata empfiehlt dafür 3072 (serve/server.py desktop_vram_note, #560).
-RESERVE_STEPS = (700, 1536, 3072, 4096)
+RESERVE_STEPS = (700, 1024, 1536, 2048, 3072, 4096)
 DEFAULT_RESERVE = 700
 DESKTOP_RESERVE = 3072
 _RESERVE_RE = re.compile(r"\s+--set\s+vram-reserve-mib=\d+")
+
+
+def reserve_error() -> str:
+    steps = ", ".join(str(n) for n in RESERVE_STEPS)
+    return T(f"Reserve bitte eine dieser Stufen (MiB): {steps}", f"Reserve please one of these steps (MiB): {steps}")
 
 
 def default_reserve(gpu: dict | None) -> int:
