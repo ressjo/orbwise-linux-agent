@@ -446,6 +446,20 @@ class BriefingConfig(BaseModel):
         return max(0, min(int(v), 14))
 
 
+class CodingConfig(BaseModel):
+    # Coding-Modus (Arbeitsweise nach OpenCode 2)
+    snapshots: bool = True          # vor/nach jeder Antwort Schnappschuss des Projekts → „Rückgängig“
+    subagent_steps: int = 15        # höchstens so viele Schritte je Unteragent (explore/general)
+    max_jobs: int = 4               # gleichzeitig laufende Hintergrund-Befehle (shell mit background=true)
+    # Projektanweisungen aus dem Projektordner (die erste vorhandene Datei kommt in den Systemprompt)
+    instructions: list[str] = Field(default_factory=lambda: ["AGENTS.md", "CLAUDE.md"])
+
+    @field_validator("subagent_steps", "max_jobs")
+    @classmethod
+    def _small(cls, v: int) -> int:
+        return max(1, min(int(v), 50))
+
+
 class Config(BaseModel):
     # Sprache von Orbwise und der Oberfläche: "de" (Deutsch) oder "en" (English)
     language: str = "de"
@@ -476,6 +490,7 @@ class Config(BaseModel):
     mail: MailConfig = Field(default_factory=MailConfig)
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     vision: VisionConfig = Field(default_factory=VisionConfig)
+    coding: CodingConfig = Field(default_factory=CodingConfig)
     # Zusätzliche Websites für open_website: Name → URL; "{q}" wird durch die Suche ersetzt
     websites: dict[str, str] = Field(default_factory=dict)
 

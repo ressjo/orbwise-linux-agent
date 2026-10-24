@@ -66,7 +66,7 @@ def clip_saved(text: str, limit: int, label: str = "ausgabe") -> str:
         return clip(text, limit)
     lines = text.count("\n") + 1
     note = (f"\n[Vollständige Ausgabe ({len(text)} Zeichen, {lines} Zeilen): {path} – bei Bedarf Teile mit "
-            f"read_file(path, offset, limit) lesen]")
+            f"read_file bzw. read (path, offset, limit) lesen]")
     return clip(text, max(500, limit - len(note))) + note
 
 

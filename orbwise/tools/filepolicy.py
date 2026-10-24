@@ -17,8 +17,43 @@ EXEC_DIRS = ("bin",)
 GLOB_CHARS = set("*?[]{}")
 
 
-def editable_path(path: str, cwd: str | None = None) -> bool:
-    """Darf diese Datei/dieser Ordner im Auto-Modus „Dateien“ ohne Rückfrage angelegt oder geändert werden?"""
+def in_project(path: str, project: str, cwd: str | None = None) -> bool | None:
+    """Liegt der Pfad (Symlinks aufgelöst) im Projektordner? None = unklar (Glob, Variable, nicht auflösbar)."""
+    raw = (path or "").strip()
+    if not raw or set(raw) & GLOB_CHARS or "$" in raw or raw.startswith("-"):
+        return None
+    p = Path(os.path.expanduser(raw))
+    p = p if p.is_absolute() else Path(cwd or project) / p
+    try:
+        resolved, root = p.resolve(), Path(project).resolve()
+    except (OSError, RuntimeError):
+        return None
+    return resolved == root or root in resolved.parents
+
+
+def project_editable(path: str, project: str, cwd: str | None = None) -> bool:
+    """Coding-Modus: Dateien im Projektordner dürfen ab „Dateien“ ohne Rückfrage geändert werden – auch außerhalb
+    von $HOME und in versteckten Ordnern wie .github. Nie: Zugangsdaten, das Git-Verzeichnis, ohne Schreibrecht."""
+    if not in_project(path, project, cwd):
+        return False
+    p = Path(os.path.expanduser(path.strip()))
+    p = (p if p.is_absolute() else Path(cwd or project) / p).resolve()
+    rel = p.relative_to(Path(project).resolve()).parts
+    if not rel or ".git" in rel or is_secret_path(p):
+        return False
+    if p.exists():
+        return p.is_file() and os.access(p, os.W_OK)
+    parent = p.parent
+    while not parent.exists():
+        parent = parent.parent
+    return parent.is_dir() and os.access(parent, os.W_OK | os.X_OK)
+
+
+def editable_path(path: str, cwd: str | None = None, project: str | None = None) -> bool:
+    """Darf diese Datei/dieser Ordner im Auto-Modus „Dateien“ ohne Rückfrage angelegt oder geändert werden?
+    Mit project (Coding-Modus): genau die Dateien im Projektordner (siehe project_editable)."""
+    if project:
+        return project_editable(path, project, cwd)
     raw = (path or "").strip()
     if not raw or set(raw) & GLOB_CHARS or "$" in raw or raw.startswith("-"):
         return False

@@ -18,8 +18,9 @@ ALL_TOOLS_SECONDS = 10.0
 
 BIG_TOOLS_SECONDS = 60.0  # ab 32k Fenster: so lange darf das einmalige Einlesen aller Werkzeuge dauern
 
-# Coding-Modus: nur was man zum Programmieren braucht – mehr Kontext bleibt für den Code frei
-CODING_GROUPS = {"files", "shell", "web", "memory_tools", "todo_tools"}
+# Coding-Modus: die Werkzeuge nach OpenCode (Gruppe „code“: read, edit, write, grep, glob, shell, websearch, webfetch,
+# subagent, question …) plus Gedächtnis und Aufgabenliste – mehr Kontext bleibt für den Code frei
+CODING_GROUPS = {"code", "memory_tools", "todo_tools"}
 
 
 class ToolSelectionMixin:

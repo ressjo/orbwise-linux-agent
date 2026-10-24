@@ -51,11 +51,14 @@ def test_coding_mode_sends_fewer_tools_and_its_own_prompt(cfg, llm, memory):
     memory.switch_mode("coding")
     names = {s["function"]["name"] for s in agent._mode_schemas()[0]}
     assert "paperless_search" in tools_names and "paperless_search" not in names and "mail_list" not in names
-    assert {"run_shell", "read_file", "write_file", "web_search", "remember"} <= names
+    assert {"shell", "read", "write", "edit", "grep", "glob", "websearch", "webfetch", "subagent", "question",
+            "remember", "todo_write"} <= names
+    assert not {"run_shell", "read_file", "edit_file", "web_search"} & names  # die alten bleiben im Tools-Modus
+    assert not {"read", "edit", "shell"} & tools_names
     assert {agent.groups_of[n] for n in names} <= CODING_GROUPS
     assert agent._mode_schemas()[1] < agent.all_schema_tokens / 2  # deutlich mehr Platz für Code
     prompt = agent.system_prompt()
-    assert "Pair-Programmer" in prompt and "vorgelesen" in tools_prompt and "vorgelesen" not in prompt
+    assert "Coding-Agent" in prompt and "vorgelesen" in tools_prompt and "vorgelesen" not in prompt
 
 
 def test_coding_mode_refuses_other_tools(cfg, llm, memory):
@@ -90,9 +93,9 @@ def test_project_folder_is_the_working_directory(cfg, llm, memory, tmp_path):
     async def confirm(*a):
         return False
 
-    run(agent.run('/tool run_shell {"command": "pwd"}', emit, confirm))
-    run(agent.run('/tool read_file {"path": "README.md"}', emit, confirm))
-    assert str(project) in results[0] and "Hallo Projekt" in results[1]
+    run(agent.run('/tool shell {"command": "pwd"}', emit, confirm))
+    run(agent.run('/tool read {"path": "README.md"}', emit, confirm))
+    assert str(project) in results[0] and "1: Hallo Projekt" in results[1]
     assert str(project) in agent.system_prompt()
 
 

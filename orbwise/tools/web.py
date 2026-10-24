@@ -221,6 +221,12 @@ async def web_search(
 
 @tool("Ruft eine Webseite ab und gibt den lesbaren Haupttext zurück.")
 async def fetch_url(ctx: ToolContext, url: Annotated[str, "Vollständige URL (http/https)"]) -> str:
+    return await fetch_page(ctx, url, "text")
+
+
+async def fetch_page(ctx: ToolContext, url: str, fmt: str = "text") -> str:
+    """Seite abrufen: fmt „text“ (Haupttext), „markdown“ (Haupttext mit Überschriften, Listen, Code und Links – für
+    Dokumentation) oder „html“ (Quelltext)."""
     if not url.startswith(("http://", "https://")):
         return "Nur http(s)-URLs werden unterstützt."
     try:
@@ -234,7 +240,11 @@ async def fetch_url(ctx: ToolContext, url: Annotated[str, "Vollständige URL (ht
     if "html" not in ctype and "text" not in ctype and "json" not in ctype:
         return f"Kein Textinhalt ({ctype})."
     text = r.text
-    if "html" in ctype:
+    if "html" in ctype and fmt != "html":
         import trafilatura
-        text = await asyncio.to_thread(trafilatura.extract, r.text, include_links=False) or ""
+        if fmt == "markdown":
+            text = await asyncio.to_thread(trafilatura.extract, r.text, output_format="markdown", include_links=True,
+                                           include_formatting=True, include_tables=True) or ""
+        else:
+            text = await asyncio.to_thread(trafilatura.extract, r.text, include_links=False) or ""
     return proc.clip_saved(text.strip() or "(kein lesbarer Text gefunden)", ctx.limit(), "webseite")

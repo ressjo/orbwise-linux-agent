@@ -25,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import prompts, toolselect
+from .agent_code import CodingMixin
 from .agent_compact import CompactMixin
 from .agent_safety import TAINT_SOURCES, SafetyMixin, is_taint_source  # noqa: F401 – auch für Aufrufer
 from .agent_speed import SpeedMixin
@@ -120,7 +121,7 @@ class ThinkFilter:
         return rest
 
 
-class Agent(CompactMixin, ToolSelectionMixin, SafetyMixin, SpeedMixin):
+class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMixin):
     def __init__(self, cfg: Config, llm, memory: Memory):
         self.cfg = cfg
         self.llm = llm
@@ -165,9 +166,11 @@ class Agent(CompactMixin, ToolSelectionMixin, SafetyMixin, SpeedMixin):
         self.last_context: dict | None = None  # letzter Prompt-Aufbau (für die Kontext-Anzeige)
         self._vision = False  # sieht das aktive Modell angehängte Bilder selbst? (siehe _check_vision)
         self.tools = load_all_tools()
-        self.all_schemas = tool_schemas(cfg)
-        self._coding_schemas: tuple[list[dict], int] | None = None
         self.groups_of = {name: spec.group for name, spec in self.tools.items()}
+        # die Coding-Werkzeuge (Gruppe „code“, nach OpenCode) gibt es nur im Coding-Modus
+        self.all_schemas = [s for s in tool_schemas(cfg) if self.groups_of.get(s["function"]["name"]) != "code"]
+        self._coding_schemas: tuple[list[dict], int] | None = None
+        self._snap: tuple | None = None  # Schnappschuss vor der laufenden Antwort (Coding-Modus, siehe agent_code)
         self.schemas = self.all_schemas
         self.schema_tokens = est_tokens(json.dumps(self.schemas, ensure_ascii=False))
         self.all_schema_tokens = self.schema_tokens
@@ -191,13 +194,14 @@ class Agent(CompactMixin, ToolSelectionMixin, SafetyMixin, SpeedMixin):
         return str(path) if path and path.is_dir() else None
 
     def tool_allowed(self, name: str) -> bool:
-        return self.mode != "coding" or self.groups_of.get(name, "") in CODING_GROUPS
+        group = self.groups_of.get(name, "")
+        return group in CODING_GROUPS if self.mode == "coding" else group != "code"
 
     def _mode_schemas(self) -> tuple[list[dict], int]:
         if self.mode != "coding":
             return self.all_schemas, self.all_schema_tokens
         if self._coding_schemas is None:
-            schemas = [s for s in self.all_schemas if self.tool_allowed(s["function"]["name"])]
+            schemas = [s for s in tool_schemas(self.cfg) if self.tool_allowed(s["function"]["name"])]
             self._coding_schemas = (schemas, est_tokens(json.dumps(schemas, ensure_ascii=False)))
         return self._coding_schemas
 
@@ -209,7 +213,8 @@ class Agent(CompactMixin, ToolSelectionMixin, SafetyMixin, SpeedMixin):
             return (prompts.coding_prompt(
                 c, name=c.assistant_name, os=_os_name(), host=platform.node(),
                 user=c.user_name or getpass.getuser(), home=Path.home(),
-                project=self.project_dir() or prompts.text(c, "no_project")) + c.persona_extra).strip()
+                project=self.project_dir() or prompts.text(c, "no_project"), env=self.coding_env())
+                    + c.persona_extra).strip()
         base = prompts.base_prompt(
             c, name=c.assistant_name, os=_os_name(), host=platform.node(),
             user=c.user_name or getpass.getuser(), home=Path.home(),
@@ -232,6 +237,8 @@ class Agent(CompactMixin, ToolSelectionMixin, SafetyMixin, SpeedMixin):
         if ep.get("facts") is None:
             ep["facts"] = self.memory.facts_text(min(self.cfg.memory.facts_max_tokens, self.plan().facts))
         sections = [self.system_prompt(self._epoch_tools())]
+        if self.mode == "coding" and self.project_instructions():
+            sections.append(self.project_instructions())
         if ep["facts"]:
             sections.append(prompts.section(self.cfg, "facts") + "\n" + ep["facts"])
         return "\n\n".join(sections)
@@ -262,6 +269,8 @@ class Agent(CompactMixin, ToolSelectionMixin, SafetyMixin, SpeedMixin):
         # Hinweis „kurz/zügig denken“ nur für diese Stufen („gründlich“ wird im kleinen Fenster nur begrenzt)
         hint = prompts.text(self.cfg, f"think_{self._think_level}") \
             if self._think and self._think_level in ("low", "medium") else ""
+        notes = self.coding_notes()  # fertige Hintergrund-Jobs, zurückgesetzte Antworten
+        hint = "\n".join(x for x in (hint, notes) if x)
         msg["note"] = prompts.context_note(self.cfg, stamp, memories, plan=self._plan,
                                            approved_plan=self._approved_plan, extra=hint, lessons=self._turn_lessons)
         msg["note_meta"] = {"time": stamp, "plan": self._plan, "approved": self._approved_plan, "hint": hint,
@@ -623,6 +632,7 @@ class Agent(CompactMixin, ToolSelectionMixin, SafetyMixin, SpeedMixin):
         tool_notes: list[str] = []
         msg_id = uuid.uuid4().hex[:8]
         await emit({"type": "assistant_start", "id": msg_id, "plan": self._plan})
+        await self.snapshot_begin()
         try:
             seen: dict[str, int] = {}  # gleiche Tool-Aufrufe zählen (Schleifenerkennung)
             failures, recovered = 0, False  # fehlgeschlagene Werkzeug-Aufrufe, danach noch ein erfolgreicher?
@@ -704,6 +714,7 @@ class Agent(CompactMixin, ToolSelectionMixin, SafetyMixin, SpeedMixin):
                 conv.add({"role": "assistant", "content": prompts.text(self.cfg, "interrupted").format(error=e)})
                 conv.save()
             await emit({"type": "error", "text": str(e)})
+            await self.snapshot_end(emit, msg_id)
             await emit({"type": "assistant_end", "id": msg_id, "text": ""})
             await emit({"type": "state", "state": "idle"})
             return ""
@@ -713,6 +724,7 @@ class Agent(CompactMixin, ToolSelectionMixin, SafetyMixin, SpeedMixin):
             conv.add({"role": "assistant", "content": "(Vom Nutzer abgebrochen.)"})
             conv.save()
             await self.memory.log_exchange(user_text, "\n\n".join(spoken + ["(abgebrochen)"]), tool_notes)
+            await self.snapshot_end(emit, msg_id)
             await emit({"type": "assistant_end", "id": msg_id, "text": "\n\n".join(spoken), "cancelled": True})
             await emit({"type": "state", "state": "idle"})
             raise
@@ -731,6 +743,7 @@ class Agent(CompactMixin, ToolSelectionMixin, SafetyMixin, SpeedMixin):
                 store.add_candidate({"kind": "error", **record})
             elif not failures and self._turn_lesson_ids:
                 store.mark_helped(self._turn_lesson_ids)  # glatt gelaufen – die Lektionen haben (wohl) geholfen
+        await self.snapshot_end(emit, msg_id)
         await emit({"type": "assistant_end", "id": msg_id, "text": answer, "feedback": True})
         if self._plan and answer.strip():
             await emit({"type": "plan", "id": msg_id, "text": answer, "steps": plan_steps(answer)})
@@ -936,11 +949,17 @@ class Agent(CompactMixin, ToolSelectionMixin, SafetyMixin, SpeedMixin):
             return name, f"Fehlende Parameter: {', '.join(missing)}", f"{name}: Parameter fehlen"
         cwd = self.project_dir()
         ctx = ToolContext(cfg=self.cfg, memory=self.memory, emit=emit, call_id=call_id, services=self.services,
-                          cwd=cwd, output_chars=self.output_chars())
+                          cwd=cwd, output_chars=self.output_chars(), agent=self, confirm=confirm)
         risk, reason = self._final_risk(name, spec, args, ctx)
         args_str = json.dumps(args, ensure_ascii=False)
+        preview = ""
+        if spec.preview and risk != BLOCKED:  # z. B. Diff einer Dateiänderung fürs Bestätigungsfenster
+            try:
+                preview = spec.preview(ctx, args)
+            except Exception as e:  # noqa: BLE001
+                log.debug("Vorschau für %s fehlgeschlagen: %s", name, e)
         await emit({"type": "tool_call", "id": call_id, "name": name, "args": args, "risk": risk, "reason": reason,
-                    "group": spec.group})
+                    "group": spec.group, **({"preview": preview} if preview else {})})
         if self._plan and risk != SAFE:  # Planmodus: Veränderndes nur vormerken, nicht ausführen, nicht nachfragen
             result = prompts.text(self.cfg, "plan_skipped")
             await emit({"type": "tool_result", "id": call_id, "status": "planned", "text": result})
@@ -987,6 +1006,9 @@ class Agent(CompactMixin, ToolSelectionMixin, SafetyMixin, SpeedMixin):
             result += "\n(Vom Nutzer vor dem Ausführen geändert: " + ", ".join(edited) + " – " + \
                 json.dumps({k: args[k] for k in edited}, ensure_ascii=False)[:1500] + ")"
         await emit({"type": "tool_result", "id": call_id, "status": status, "text": clip(result, 3000)})
+        notes = self.coding_notes() if spec.group == "code" else ""
+        if notes:  # z. B. ein Hintergrund-Job ist inzwischen fertig – das Modell erfährt es sofort
+            result += "\n\n[" + notes + "]"
         first = result.strip().splitlines()[0] if result.strip() else ""
         room = ctx.output_chars or 0
         if room and len(result) > room * 1.5:

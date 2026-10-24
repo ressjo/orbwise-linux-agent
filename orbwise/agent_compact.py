@@ -187,7 +187,7 @@ class CompactMixin:
         for m in reversed(messages):
             for call in reversed(m.get("full_tool_calls") or m.get("tool_calls") or []):
                 fn = call.get("function", {})
-                path = _args(call).get("path") if fn.get("name") in ("edit_file", "write_file", "read_file") else None
+                path = _args(call).get("path") if fn.get("name") in ("edit_file", "write_file", "read_file", "edit", "write", "read") else None
                 if isinstance(path, str) and path and path not in paths:
                     paths.append(path)
         found: list[tuple[str, str]] = []

@@ -180,6 +180,12 @@ vision:                    # understand the screen and images ("what's that erro
   # timeout: 180
   # screenshot_command: "" # empty = automatic (spectacle, gnome-screenshot, grim, maim, …); {file} = target file
 
+coding:                    # CODING mode (works like OpenCode 2: read/edit/grep/glob/shell, subagents, undo)
+  snapshots: true          # snapshot of the project before/after each answer → "Undo" under the answer
+  # subagent_steps: 15     # max steps of a subagent (explore = read-only search, general = may change things)
+  # max_jobs: 4            # background commands (shell with background=true) at the same time
+  # instructions: [AGENTS.md, CLAUDE.md]   # first file found in the project folder goes into the system prompt
+
 weather:
   location: ""             # default place for weather and the morning briefing, e.g. "Berlin"
 

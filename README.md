@@ -56,7 +56,7 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **SSH (NAS, servers)** | Run Linux commands on other machines like on the PC – user name and password are **asked in the dashboard for every new connection** (never stored, never shown to the model); read-only commands run directly, everything else after confirmation, `sudo` there asks again |
 | **Paperless-ngx** | Search documents, **ask questions about their content**, open them as PDF, suggest and apply correspondent, type, tags, title and date (after confirmation), upload local files or files sent from the phone |
 | **E-mail** | **Proton Mail** (via the Proton Mail Bridge) or any IMAP mailbox: unread mails, search, read, ask about a mail, list folders, archive/move/label/trash, PDF attachments → Paperless (changes after confirmation); optional **writing and replying** (SMTP) – To, Cc, subject and text are editable in the confirmation card before anything is sent |
-| **Tools & Coding mode** | Switch top left: **Tools** (assistant – all tools, web, Paperless, mail, smart home, voice) or **Coding** – only files, shell, web search and memory (≈ 2k instead of ≈ 10k tokens of tool descriptions, so far more context for code), a developer prompt, no voice, wider chat. Files are changed with **edit_file** (replace a snippet instead of rewriting the file) and multi-step work gets a **task list** shown as a checklist in the answer. Each mode has its own chat history; a coding chat can have a **project folder** (shell starts there, relative paths refer to it). Pick a model while in a mode and Orbwise remembers it for that mode (e.g. a coder model) – switching then reloads it |
+| **Tools & Coding mode** | Switch top left: **Tools** (assistant – all tools, web, Paperless, mail, smart home, voice) or **Coding** – a coding agent that works like **OpenCode 2**: `read` (line numbers, folders, PDFs), `edit` (exact replace that forgives curly quotes and indentation, shows a diff), `write`, `grep` (ripgrep, matching lines), `glob`, `shell` (workdir, background jobs for dev servers and builds), `websearch` (Brave API) and `webfetch` (Markdown), **subagents** (`explore` searches read-only in its own context, `general` takes a sub-task), **questions** with answer buttons, **AGENTS.md** of the project in the prompt, **diffs** in confirmations and **Undo** per answer. Each mode has its own chat history; a coding chat has a **project folder** (shell starts there, relative paths refer to it, and from the auto level *Edit files* changes inside it run without asking). Pick a model while in a mode and Orbwise remembers it for that mode (e.g. a coder model) – switching then reloads it. Details: [Coding mode](#coding-mode) |
 | **Plan mode** | **Plan** button: Jarvis thinks it through, only looks things up (read-only) and presents a step-by-step plan – **RUN**, **CHANGE** (say what should be different) or **DISCARD**; also by voice ("yes") and via Telegram (`/plan …`) |
 | **Auto mode** | Drop-down button next to *Think*: **Off** – every shell command asks · **Read only** (default) – recognised read-only commands (`ls`, `df`, `docker ps`, `git status`, `nmcli device status`, `apt list --installed`, `journalctl` …) run without asking · **Read + edit files** – also create, write, copy and move files in your own home (`write_file`, `mkdir`, `touch`, `cp`, `mv`, `tee`, `>`), never with root, never deleting, never hidden files (shell start files, autostart, `~/.ssh`, `~/.config` …), launchers (`.desktop`, `~/bin`) or credentials · **Auto** – everything without root runs without asking (`python …`, `cd … && make`, `git commit`, `pip install --user`, `systemctl --user restart` …, plus `write_file`); still asking: deleting (`rm`, `find -delete`, `git clean` …), sudo, shutting down, sending over the network (`git push`, `ssh`, uploads), start-up files/autostart/`~/.ssh`/Orbwise's own config and credentials. Note: a script or `python -c` can do anything you may do – Auto only catches what is visible in the command. Plan mode and untrusted content (mail, screen) still ask. If Orbwise itself runs as **root**, "without root" cannot be checked – *Read + edit files* and *Auto* then approve nothing (`orbwise doctor` warns). The mode (like *Think*) is kept by the server: every open window, Telegram and routines use the same setting. The rules live in code, so they cost no prompt context |
 | **Images and PDFs in the chat** | Attach images or PDFs to a message (paperclip button, paste with Ctrl+V or drag them onto the input field) – models that can see images (llama.cpp models with a vision module, Ollama vision models) get them directly, others hand them to the local vision model via `look_at_image`; PDFs are read locally and their text goes along with the question |
@@ -815,6 +815,39 @@ secret; if it leaks, `/revoke` it in @BotFather. Details in [SECURITY.md](SECURI
 logs "Telegram-Bot @name aktiv" at startup, and problems also appear as a notice in the dashboard. Typical causes:
 Orbwise was not restarted after editing the config (`systemctl --user restart orbwise`), the token is wrong, or a
 second Orbwise instance (service + terminal) is fetching the bot's messages at the same time.
+
+### Coding mode
+
+Switch to **Coding** top left and pick a **project folder** (chip at the top). The coding agent works like
+[OpenCode 2](https://github.com/anomalyco/opencode): it reads before it claims, changes files with small exact edits,
+verifies with the project's tests/linters/build and answers briefly with `path:line` references. Web search runs over
+the **Brave Search API** when a key is set (see [Web search](#web-search)).
+
+| Tool | What it does |
+|---|---|
+| `read` | File with line numbers (`12: …`), in sections with `offset`/`limit`; folders (one entry per line, `/` for folders); PDFs. An `AGENTS.md` in a sub-folder comes along once |
+| `edit` | Replaces exact text (`oldString` → `newString`, `replaceAll` for renames). Forgives curly quotes/dashes and wrong indentation as long as the spot is unique, strips line numbers copied from `read`, keeps CRLF; refuses when the file changed on disk since it was read. Result: a short diff |
+| `write` | Creates or overwrites a file (folders are created) |
+| `grep` / `glob` | ripgrep with regex or literal text, matching lines with numbers / file paths by pattern, newest first – both respect `.gitignore` |
+| `shell` | Bash in the project (or `workdir`); `background: true` for dev servers and long builds – the agent is told when the job ends (no polling), the activity panel shows its live output with **Stop** |
+| `websearch` / `webfetch` | Brave API (then SearXNG/DuckDuckGo as configured) / page as Markdown |
+| `subagent` | `explore`: searches the code read-only in its **own context** and returns only the result – saves context on small windows. `general`: a self-contained sub-task, same confirmations. Its steps appear indented in the activity panel |
+| `question` | Asks you with answer buttons (or free text) when something is genuinely unclear |
+
+Also: `todo_write` (task list in the answer), `remember`/`recall`.
+
+- **AGENTS.md:** the project's `AGENTS.md` (or `CLAUDE.md`, see `coding.instructions`) goes into the system prompt,
+  together with the project folder, whether it is a git repository and the shell.
+- **Diffs:** confirmations for `edit`/`write` show the change as a coloured diff instead of JSON.
+- **Undo:** before and after every answer Orbwise takes a snapshot of the project in its own git directory
+  (`~/.local/share/orbwise/snapshots/` – your repository is not touched, `.gitignore` applies). Under an answer that
+  changed files: "3 files changed +12 −4" with the file list and **Undo** / **Restore**. The agent is told about it.
+  Off for folders with more than 20,000 files or without git (`coding.snapshots: false` switches it off).
+- **Permissions:** from the auto level **Edit files** on, `edit`/`write` inside the project folder run without asking
+  (also hidden folders like `.github`, also outside `$HOME`) – never `.git/`, credentials, or as root. Anything
+  outside the project folder asks. Deleting, root and network still ask as everywhere.
+- Not taken over from OpenCode: `patch` (for GPT models), Code Mode, worktrees, LSP (OpenCode 2 runs no language
+  servers either).
 
 ### Plan mode
 

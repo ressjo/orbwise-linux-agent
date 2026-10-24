@@ -34,6 +34,8 @@
                         medium: L("Denken · normal", "Think · normal"), high: L("Denken · gründlich", "Think · thorough") };
   const AUTO_LABEL = { off: L("Auto aus", "Auto off"), read: L("Lesen", "Read"), files: L("Dateien", "Files"), auto: "Auto" };
   const S = {
+    previews: {},  // Diff-Vorschau je Werkzeug-Aufruf (für die Freigabe-Karte)
+    question: null,  // offene Rückfrage (Werkzeug question)
     ws: null, connected: false, retry: 0,
     serverState: "idle", substate: "",
     tts: store.get("tts", true), wake: store.get("wake", false), think: thinkLevel(store.get("think", "off")), autoMode: store.get("autoMode", store.get("auto", true) === false ? "off" : "read"), plan: store.get("plan", false),
@@ -442,6 +444,21 @@
         break;
       case "confirm_done":
         closeConfirm(ev.id);
+        break;
+      case "question_request":
+        openQuestion(ev);
+        break;
+      case "question_done":
+        closeQuestion(ev.id);
+        break;
+      case "changes":
+        if (assistants[ev.id]) showChanges(assistants[ev.id].el, ev.turn, ev.files, false);
+        break;
+      case "reverted":
+        chat.querySelectorAll(`.msg-changes[data-turn="${ev.turn}"]`).forEach((c) => setChangesUndone(c, ev.undone));
+        break;
+      case "job":
+        jobEvent(ev);
         break;
       case "sudo_cached":
         sudoCached(ev);
@@ -1080,6 +1097,11 @@
     todo_write: ["Aufgabenliste", "Task list"], load_tools: ["Werkzeuge laden", "Load tools"],
     daily_briefing: ["Briefing", "Briefing"], weather: ["Wetter", "Weather"], open_app: ["Programm öffnen", "Open app"],
     list_installed_apps: ["Programme auflisten", "List apps"],
+    // Coding-Modus (nach OpenCode)
+    read: ["Lesen", "Read"], edit: ["Bearbeiten", "Edit"], write: ["Schreiben", "Write"], grep: ["Durchsuchen", "Grep"],
+    glob: ["Dateien finden", "Glob"], shell: ["Befehl", "Command"], job_output: ["Job-Ausgabe", "Job output"],
+    websearch: ["Websuche", "Web search"], webfetch: ["Webseite lesen", "Fetch page"],
+    subagent: ["Unteragent", "Subagent"], question: ["Rückfrage", "Question"],
   };
   const TOOL_PREFIX = [[/^mail_/, ["Mail", "Mail"]], [/^paperless_/, ["Paperless", "Paperless"]], [/^ha_/, ["Smart Home", "Smart home"]],
     [/^calendar_/, ["Kalender", "Calendar"]], [/^obsidian_/, ["Obsidian", "Obsidian"]], [/^trilium_/, ["Trilium", "Trilium"]],
@@ -1096,9 +1118,12 @@
   const ACT_ICONS = { shell: "code", ssh: "code", packages: "code", sysadmin: "code", system: "code", power: "power",
     portainer: "code", web: "search", files: "file", apps: "bolt", memory_tools: "brain", calendar_tools: "calendar",
     reminder_tools: "bell", mail: "chat", telegram_tools: "chat", vision: "image", images: "image", paperless: "file" };
+  const CODE_ICONS = { read: "file", edit: "file", write: "file", grep: "search", glob: "search", shell: "code",
+    job_output: "code", websearch: "search", webfetch: "search", subagent: "brain", question: "chat" };
+  const toolIcon = (ev) => (ev.group === "code" ? CODE_ICONS[ev.name] : ACT_ICONS[ev.group]) || "bolt";
   // das aussagekräftigste Argument als Kurzinfo hinter dem Namen
   function keyArg(args) {
-    for (const k of ["command", "query", "path", "url", "text", "name", "topic", "title", "q"]) {
+    for (const k of ["command", "query", "path", "url", "pattern", "description", "text", "name", "topic", "title", "q"]) {
       const v = args && args[k];
       if (typeof v === "string" && v.trim()) {
         const one = v.replace(/\s+/g, " ").trim();
@@ -1136,7 +1161,7 @@
     return actGroup.querySelector(".act-steps");
   }
 
-  function actStep(kind, icon, name, info, routine) {
+  function actStep(kind, icon, name, info, routine, parent) {
     const empty = activity.querySelector(".empty");
     if (empty) empty.remove();
     const el = document.createElement("div");
@@ -1149,7 +1174,11 @@
     el.querySelector(".act-info").textContent = info;
     el.querySelector(".act-row").onclick = () => el.classList.toggle("open");
     el._start = performance.now();
-    stepsFor(routine).appendChild(el);
+    if (parent) {  // Schritt eines Unteragenten: eingerückt unter seinem Aufruf
+      let subs = parent.querySelector(":scope > .act-subs");
+      if (!subs) { subs = document.createElement("div"); subs.className = "act-subs"; parent.insertBefore(subs, parent.querySelector(".act-details")); }
+      subs.appendChild(el);
+    } else stepsFor(routine).appendChild(el);
     if (!phaseTimer) phaseTimer = setInterval(tickPhases, 1000);
     return el;
   }
@@ -1450,6 +1479,9 @@
 
   // Kurzname für den Werkzeug-Satelliten am Orb
   const SAT_GROUPS = [
+    [/^(read|edit|write|grep|glob)$/, ["Dateien", "Files"]], [/^(shell|job_output)$/, ["Shell", "Shell"]],
+    [/^(websearch|webfetch)$/, ["Web", "Web"]], [/^subagent$/, ["Unteragent", "Subagent"]],
+    [/^question$/, ["Rückfrage", "Question"]],
     [/^look_at_/, ["Sehen", "Vision"]], [/^(web_search|fetch_url|open_website)$/, ["Web", "Web"]], [/^paperless_/, ["Paperless", "Paperless"]],
     [/^mail_/, ["Mail", "Mail"]], [/^obsidian_/, ["Obsidian", "Obsidian"]], [/^trilium_/, ["Trilium", "Trilium"]],
     [/^ha_/, ["Smart Home", "Smart Home"]], [/^calendar_/, ["Kalender", "Calendar"]], [/^run_shell$/, ["Shell", "Shell"]],
@@ -1463,18 +1495,32 @@
   }
 
   // Symbol je Aktionsart (weitere Symbole: ICONS in orb.js); Gedächtnis leuchtet im Kern statt als Satellit
-  const ICON_GROUPS = { shell: "cli", packages: "cli", sysadmin: "cli", system: "cli", power: "cli", web: "cloud",
+  const ICON_GROUPS = { code: "cli", shell: "cli", packages: "cli", sysadmin: "cli", system: "cli", power: "cli", web: "cloud",
                         mail: "mail", paperless: "paperless", vision: "eye" };
 
   function toolCall(ev) {
     activityArrived();
+    if (ev.sub) {  // Schritt eines Unteragenten – nur in der Aktivität, eingerückt
+      const parent = acts[ev.sub];
+      const el = actStep("tool", toolIcon(ev), toolLabel(ev.name), keyArg(ev.args), ev.routine, parent);
+      el.querySelector(".act-args").textContent = `${ev.name}  ${fmtArgs(ev.name, ev.args)}`;
+      acts[ev.id] = el;
+      return;
+    }
+    if (ev.preview) S.previews[ev.id] = ev.preview;
     if (!ev.routine) { sayNext(SAYINGS[ev.group] ? ev.group : "think"); refresh(); }
     if (ev.group === "memory_tools") orb.memoryGlow(ev.id, true, satLabel(ev.name));
     else orb.addSatellite(ev.id, satLabel(ev.name), ICON_GROUPS[ev.group] || null);
     const waiting = ev.risk === "confirm";
-    const el = actStep("tool", ACT_ICONS[ev.group] || "bolt", toolLabel(ev.name), keyArg(ev.args), ev.routine);
+    const el = actStep("tool", toolIcon(ev), toolLabel(ev.name), keyArg(ev.args), ev.routine);
     el.querySelector(".act-name").title = ev.name;
     el.querySelector(".act-args").textContent = `${ev.name}  ${fmtArgs(ev.name, ev.args)}`;
+    if (ev.preview) {
+      const d = document.createElement("pre");
+      d.className = "diff act-diff";
+      d.innerHTML = renderDiff(ev.preview);
+      el.querySelector(".act-details").insertBefore(d, el.querySelector(".act-out"));
+    }
     if (waiting) {
       el.classList.add("waiting");
       el.querySelector(".act-status").textContent = STATUS_TEXT.waiting;
@@ -1513,8 +1559,11 @@
   }
 
   function toolResult(ev) {
-    orb.removeSatellite(ev.id, ev.status === "error" || ev.status === "blocked");
-    orb.memoryGlow(ev.id, false);
+    delete S.previews[ev.id];
+    if (!ev.sub) {
+      orb.removeSatellite(ev.id, ev.status === "error" || ev.status === "blocked");
+      orb.memoryGlow(ev.id, false);
+    }
     const el = acts[ev.id];
     if (el) {
       el.classList.remove("waiting");
@@ -1534,6 +1583,173 @@
     subject: [L("Betreff", "Subject"), "input"], body: [L("Text", "Text"), "textarea"],
   };
   const APPROVE_HTML = $("confirm-yes").innerHTML;
+
+  // ---------------------------------------------------------------- Coding: Diffs, Rückfragen, Änderungen, Jobs
+  function renderDiff(text) {
+    return String(text || "").split("\n").map((ln) => {
+      const cls = ln.startsWith("+++") || ln.startsWith("---") ? "d-file" : ln.startsWith("@@") ? "d-hunk"
+        : ln.startsWith("+") ? "d-add" : ln.startsWith("-") ? "d-del" : "";
+      return `<span class="${cls}">${escapeHtml(ln) || " "}</span>`;
+    }).join("");
+  }
+
+  // Werkzeug question: Karte im Gespräch – Optionen anklicken (bei multiple mehrere) oder frei antworten
+  function openQuestion(ev) {
+    closeQuestion();
+    const wrap = document.createElement("section");
+    wrap.className = "confirm-wrap question-wrap";
+    wrap.setAttribute("role", "dialog");
+    const card = document.createElement("div");
+    card.className = "confirm-card question-card";
+    const blocks = (ev.questions || []).map((q, qi) => {
+      const box = document.createElement("div");
+      box.className = "q-block";
+      box.innerHTML = `<div class="q-head">${q.header ? `<span class="q-tag"></span>` : ""}<span class="q-text"></span></div>
+        <div class="q-options"></div><input class="q-other" type="text">`;
+      if (q.header) box.querySelector(".q-tag").textContent = q.header;
+      box.querySelector(".q-text").textContent = q.question;
+      const other = box.querySelector(".q-other");
+      other.placeholder = L("Andere Antwort …", "Other answer …");
+      const opts = box.querySelector(".q-options");
+      (q.options || []).forEach((o, oi) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "q-opt";
+        b.innerHTML = `<span class="q-label"></span>${o.description ? `<span class="q-desc"></span>` : ""}`;
+        b.querySelector(".q-label").textContent = o.label;
+        if (o.description) b.querySelector(".q-desc").textContent = o.description;
+        b.onclick = () => {
+          if (!q.multiple) opts.querySelectorAll(".q-opt").forEach((x) => x.classList.remove("on"));
+          b.classList.toggle("on");
+          if (!q.multiple && ev.questions.length === 1) answerQuestion(collect());
+        };
+        if (oi === 0 && qi === 0) setTimeout(() => b.focus({ preventScroll: true }), 50);
+        opts.appendChild(b);
+      });
+      other.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); answerQuestion(collect()); } };
+      return box;
+    });
+    const collect = () => blocks.map((box) => {
+      const text = box.querySelector(".q-other").value.trim();
+      if (text) return text;
+      return [...box.querySelectorAll(".q-opt.on .q-label")].map((x) => x.textContent);
+    });
+    const title = document.createElement("div");
+    title.className = "confirm-title";
+    title.innerHTML = `<span class="warn-dot"></span><span></span>`;
+    title.lastChild.textContent = L("Jarvis hat eine Rückfrage", "Jarvis has a question");
+    const actions = document.createElement("div");
+    actions.className = "modal-actions";
+    actions.innerHTML = `<button type="button" class="btn ghost q-skip"></button><button type="button" class="btn approve q-send"></button>`;
+    actions.querySelector(".q-skip").textContent = L("Überspringen", "Skip");
+    actions.querySelector(".q-send").textContent = L("Antworten", "Answer");
+    actions.querySelector(".q-skip").onclick = () => answerQuestion(null);
+    actions.querySelector(".q-send").onclick = () => answerQuestion(collect());
+    card.append(title, ...blocks, actions);
+    wrap.appendChild(card);
+    chat.appendChild(wrap);
+    S.question = { id: ev.id, el: wrap };
+    const act = acts[ev.id];
+    if (act) { act.classList.add("waiting"); act.querySelector(".act-status").textContent = STATUS_TEXT.waiting; }
+    scrollChat();
+    refresh();
+  }
+
+  function answerQuestion(answers) {
+    if (!S.question) return;
+    const id = S.question.id;
+    const empty = !answers || answers.every((a) => !a || !a.length);
+    send({ type: "question_answer", id, answers: empty ? null : answers });
+    closeQuestion(id);
+  }
+
+  function closeQuestion(id) {
+    if (!S.question || (id && S.question.id !== id)) return;
+    S.question.el.remove();
+    S.question = null;
+    const act = acts[id];
+    if (act) { act.classList.remove("waiting"); act._start = performance.now(); }
+    refresh();
+  }
+
+  // Coding: geänderte Dateien unter der Antwort – aufklappbar, mit „Rückgängig“ (Schnappschuss, siehe snapshot.py)
+  function showChanges(msgEl, turn, files, undone) {
+    if (!msgEl || !files || !files.length) return;
+    let box = msgEl.querySelector(".msg-changes");
+    if (!box) {
+      box = document.createElement("div");
+      box.className = "msg-changes";
+      msgEl.insertBefore(box, msgEl.querySelector(".msg-actions"));
+    }
+    box.dataset.turn = turn;
+    const add = files.reduce((n, f) => n + (f.add || 0), 0);
+    const del = files.reduce((n, f) => n + (f.del || 0), 0);
+    const n = files.length;
+    box.innerHTML = `<div class="mc-head"><button type="button" class="mc-toggle">${ico("file")}<span class="mc-sum"></span>
+      <span class="mc-add">+${add}</span><span class="mc-del">−${del}</span></button><button type="button" class="btn small ghost mc-undo"></button></div>
+      <ul class="mc-files"></ul>`;
+    box.querySelector(".mc-sum").textContent = n === 1 ? L("1 Datei geändert", "1 file changed") : L(`${n} Dateien geändert`, `${n} files changed`);
+    const ul = box.querySelector(".mc-files");
+    for (const f of files) {
+      const li = document.createElement("li");
+      const tag = f.status === "added" ? L("neu", "new") : f.status === "deleted" ? L("gelöscht", "deleted") : "";
+      li.innerHTML = `<span class="mc-path"></span>${tag ? `<span class="mc-tag"></span>` : ""}<span class="mc-add">${f.add == null ? "" : "+" + f.add}</span><span class="mc-del">${f.del == null ? "" : "−" + f.del}</span>`;
+      li.querySelector(".mc-path").textContent = f.path;
+      if (tag) li.querySelector(".mc-tag").textContent = tag;
+      ul.appendChild(li);
+    }
+    box.querySelector(".mc-toggle").onclick = () => box.classList.toggle("open");
+    box.querySelector(".mc-undo").onclick = async () => {
+      const redo = box.classList.contains("undone");
+      if (isBusy()) { toast(L("Jarvis arbeitet gerade – erst abwarten oder STOP.", "Jarvis is busy – wait or press STOP.")); return; }
+      if (!redo && !confirm(L(`Die Änderungen dieser Antwort an ${n === 1 ? "1 Datei" : n + " Dateien"} zurücksetzen? Spätere Änderungen an denselben Dateien gehen dabei verloren.`,
+                              `Undo this answer's changes to ${n === 1 ? "1 file" : n + " files"}? Later changes to the same files are lost.`))) return;
+      try {
+        const r = await api("POST", "/api/chats/active/revert", { turn: Number(turn), redo });
+        setChangesUndone(box, r.undone);
+        toast(redo ? L("Änderungen wiederhergestellt.", "Changes restored.") : L("Änderungen zurückgesetzt.", "Changes undone."));
+      } catch { /* Meldung kommt von api() */ }
+    };
+    setChangesUndone(box, undone);
+  }
+
+  function setChangesUndone(box, undone) {
+    box.classList.toggle("undone", !!undone);
+    const b = box.querySelector(".mc-undo");
+    b.innerHTML = undone ? `${ico("redo")}${L("Wiederherstellen", "Restore")}` : `${ico("undo")}${L("Rückgängig", "Undo")}`;
+  }
+
+  // Hintergrund-Befehle (shell mit background=true): eigener Schritt mit Live-Ausgabe und „Stoppen“
+  function jobEvent(ev) {
+    const key = "job-" + ev.id;
+    let el = acts[key];
+    if (ev.phase === "start") {
+      el = actStep("tool job", "code", L("Hintergrund-Job", "Background job"), ev.command || "", null);
+      el.querySelector(".act-args").textContent = `${ev.id}  ${ev.cwd || ""}`;
+      const stop = document.createElement("button");
+      stop.type = "button";
+      stop.className = "btn small ghost act-stop";
+      stop.textContent = L("Stoppen", "Stop");
+      stop.onclick = (e) => { e.stopPropagation(); api("POST", `/api/jobs/${ev.id}/stop`).catch(() => {}); };
+      el.querySelector(".act-state").prepend(stop);
+      acts[key] = el;
+      return;
+    }
+    if (!el) return;
+    if (ev.phase === "output") {
+      const out = el.querySelector(".act-out");
+      out.textContent = (out.textContent + ev.text).slice(-20000);
+      out.scrollTop = out.scrollHeight;
+    } else if (ev.phase === "done") {
+      el.querySelector(".act-stop")?.remove();
+      const ok = ev.status === "exit" && ev.rc === 0;
+      finishStep(el, ok ? "ok" : ev.status === "stopped" ? "denied" : "error",
+                 ev.ended && ev.started ? ev.ended - ev.started : undefined);
+      if (ev.status === "stopped") el.querySelector(".act-status").textContent = L("gestoppt", "stopped");
+      else if (!ok) el.querySelector(".act-status").textContent = `Exit ${ev.rc}`;
+      delete acts[key];
+    }
+  }
 
   function openConfirm(ev) {
     S.confirm = ev;
@@ -1561,7 +1777,12 @@
     $("confirm-summary").textContent = ev.name === "mail_send"
       ? L("Mail prüfen, bei Bedarf ändern und senden:", "Check the e-mail, edit it if needed and send it:")
       : L(`Soll ich ${ev.summary} ausführen?`, `Shall I run ${ev.summary}?`);
-    $("confirm-cmd").textContent = ev.name === "run_shell" ? ev.args.command : `${ev.name}(${JSON.stringify(ev.args, null, 2)})`;
+    const cmd = $("confirm-cmd");
+    const preview = S.previews[ev.id];
+    cmd.classList.toggle("diff", !!preview);
+    if (preview) cmd.innerHTML = renderDiff(preview);
+    else cmd.textContent = ev.name === "run_shell" || ev.name === "shell"
+      ? (ev.args.workdir ? `(${ev.args.workdir}) ` : "") + ev.args.command : `${ev.name}(${JSON.stringify(ev.args, null, 2)})`;
     $("confirm-reason").textContent = ev.reason && !editable.length ? L("Grund: ", "Reason: ") + ev.reason : "";
     $("confirm-voice").textContent = editable.length ? L("Senden nur per Klick – „Nein“ bricht ab.", "Send only by click – “no” cancels.")
       : A.micReady ? L("oder sag „Ja“ bzw. „Nein“", "or say “yes” or “no”") : "";
@@ -1729,6 +1950,10 @@
   document.addEventListener("keydown", (e) => {
     if (!$("boot").classList.contains("hidden")) return;
     if (pwId) return;  // Passwortfeld hat Vorrang (kein Push-to-talk mit Leertaste)
+    if (S.question) {
+      if (e.key === "Escape") { e.preventDefault(); answerQuestion(null); }
+      return;
+    }
     if (S.confirm) {
       // im bearbeitbaren Fenster: Enter schreibt (neue Zeile), Strg/Cmd+Enter sendet
       const inForm = $("confirm-form").contains(document.activeElement);
@@ -4367,9 +4592,11 @@
         el._raw = m.content;
         if (m.turn) el.dataset.turn = m.turn;
         assistantActions(el);
+        if (m.changes) showChanges(el, m.turn, m.changes.files, m.changes.undone);
       });
       markLast();
       if (S.confirm) placeConfirm();  // offene Freigabe bleibt unter dem Verlauf
+      if (S.question) chat.appendChild(S.question.el);
     } catch { /* egal */ }
   }
 

@@ -32,6 +32,9 @@ class ToolContext:
     cwd: str | None = None
     # Höchstlänge eines Ergebnisses nach dem Kontextfenster (vom Agenten gesetzt, siehe context_plan.py)
     output_chars: int | None = None
+    # der aufrufende Agent (für subagent) und seine Rückfrage-Funktion
+    agent: Any = None
+    confirm: Any = None
 
     def path(self, raw: str) -> Path:
         p = Path(os.path.expandvars(str(raw or ""))).expanduser()
@@ -64,6 +67,8 @@ class ToolSpec:
     editable: tuple[str, ...] = ()
     # Beschreibung, die von der Konfiguration abhängt (z. B. welche Gruppen load_tools nachladen kann)
     describe: Callable[[Any], str] | None = None
+    # Vorschau fürs Bestätigungsfenster (z. B. Diff einer Dateiänderung)
+    preview: Callable[[ToolContext, dict], str] | None = None
 
     def is_enabled(self, cfg: Any) -> bool:
         if cfg is None:
@@ -119,7 +124,7 @@ def _json_type(tp: Any) -> tuple[str, type]:
 
 def tool(description: str, risk: str | RiskFn = SAFE, name: str | None = None,
          enabled: Callable[[Any], bool] | None = None, editable: tuple[str, ...] = (),
-         describe: Callable[[Any], str] | None = None):
+         describe: Callable[[Any], str] | None = None, preview: Callable[[ToolContext, dict], str] | None = None):
     def deco(func):
         sig = inspect.signature(func)
         hints = typing.get_type_hints(func, include_extras=True)
@@ -152,6 +157,7 @@ def tool(description: str, risk: str | RiskFn = SAFE, name: str | None = None,
             group=func.__module__.rsplit(".", 1)[-1],
             editable=tuple(editable),
             describe=describe,
+            preview=preview,
         )
         REGISTRY[spec.name] = spec
         return func
@@ -202,6 +208,7 @@ def load_all_tools() -> dict[str, ToolSpec]:
         apps,
         briefing,
         calendar_tools,
+        code,
         files,
         homeassistant,
         image_tools,

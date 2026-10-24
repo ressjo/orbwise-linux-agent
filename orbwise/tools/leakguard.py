@@ -18,7 +18,8 @@ from ..lang import T
 LOCAL_DATA_TOOLS = {"read_file", "search_file_contents", "find_files", "list_directory", "search_nas", "run_shell",
                     "ssh_run", "mail_read", "mail_ask", "mail_list", "mail_search", "paperless_read", "paperless_ask",
                     "paperless_search", "obsidian_read", "obsidian_search", "trilium_read", "trilium_search",
-                    "memory_search", "recall", "calendar_events", "system_info", "portainer_containers"}
+                    "memory_search", "recall", "calendar_events", "system_info", "portainer_containers",
+                    "read", "grep", "glob", "shell", "job_output", "subagent"}
 NET_COMMANDS = {"curl", "wget", "http", "https", "xh", "httpie", "aria2c", "lynx", "w3m", "links"}
 
 _TOKENS = [
@@ -70,13 +71,13 @@ def mask(value: str) -> str:
 def outbound_text(name: str, args: dict) -> str:
     """Der Teil eines Aufrufs, der den Rechner verlässt (URL-dekodiert) – leer, wenn nichts hinausgeht."""
     parts: list[str] = []
-    if name == "web_search":
+    if name in ("web_search", "websearch"):
         parts.append(str(args.get("query") or ""))
-    elif name == "fetch_url":
+    elif name in ("fetch_url", "webfetch"):
         parts.append(str(args.get("url") or ""))
     elif name == "open_website":
         parts += [str(args.get("site") or ""), str(args.get("query") or "")]
-    elif name in ("run_shell", "ssh_run"):
+    elif name in ("run_shell", "ssh_run", "shell"):
         command = str(args.get("command") or "")
         try:
             words = shlex.split(command)

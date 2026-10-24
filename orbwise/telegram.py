@@ -521,7 +521,7 @@ class TelegramBot:
         key = uuid.uuid4().hex[:10]
         fut = asyncio.get_running_loop().create_future()
         self.pending[key] = fut
-        detail = str(args.get("command")) if name == "run_shell" else json.dumps(args, ensure_ascii=False)
+        detail = str(args.get("command")) if name in ("run_shell", "shell") else json.dumps(args, ensure_ascii=False)
         text = self.L(f"❓ Soll ich {self.describe(name, args)} ausführen?", f"❓ Shall I run {self.describe(name, args)}?")
         text += f"\n\n{detail[:1500]}" + (f"\n\n{reason[:500]}" if reason else "")
         buttons = {"inline_keyboard": [[{"text": self.L("✅ Ausführen", "✅ Run"), "callback_data": f"ok:{key}"},

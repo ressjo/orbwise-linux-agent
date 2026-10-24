@@ -21,6 +21,9 @@ All notable changes to this project are documented here. The format follows
   Ollama models; new Hugging Face downloads always run on llama.cpp.
 
 ### Changed
+- **Coding permissions:** from the auto level *Edit files* on, files inside the project folder are changed without
+  asking (also outside `$HOME` and in hidden folders like `.github`; never `.git/`, credentials or as root); files
+  outside the project ask.
 - **Activity panel:** steps are grouped under the question (or routine / Telegram run) that caused them, with readable
   names and an icon ("Web search · linux 6.18 release notes" instead of `web_search query=…`), a spinner while running
   and a check mark with the duration or a cross when done. Clicking a step shows the raw call and its output. Reading
@@ -65,6 +68,17 @@ All notable changes to this project are documented here. The format follows
   only actions that change or start something do; the data-leak guard still checks what goes out.
 
 ### Added
+- **Coding mode like OpenCode 2:** the coding agent gets its own tools – `read` (line numbers, folders, PDFs, nested
+  `AGENTS.md`), `edit` (exact replace that forgives curly quotes, dashes and wrong indentation, strips copied line
+  numbers, keeps CRLF, refuses stale files, returns a diff), `write`, `grep` (ripgrep with matching lines), `glob`,
+  `shell` (`workdir`, `background` jobs with a note when they finish and a Stop button), `job_output`, `websearch`
+  (Brave API first) and `webfetch` (Markdown) – plus **subagents** (`explore` read-only in its own context, `general`
+  for sub-tasks; steps shown indented in the activity panel) and **`question`** (answer buttons in the chat). The
+  prompt follows OpenCode's way of working; the project's `AGENTS.md`/`CLAUDE.md`, the folder, git and shell go into
+  it. The tools mode keeps its tools.
+- **Undo per answer** in coding mode: snapshots of the project in a separate git directory before/after each answer;
+  "N files changed +a −d" under the answer with **Undo**/**Restore** (`coding.snapshots`).
+- **Diffs in confirmations** for `edit`/`write` instead of raw JSON.
 - **Pocket TTS voices:** Orbwise now speaks with Kyutai's Pocket TTS (a ready-made program, no PyTorch, local CPU
   server) – far more natural than Piper. The installer sets it up (`orbwise voice install`), otherwise *Settings →
   Voice → Install Pocket TTS*. Its 27 voices are listed with German *Juergen* first; preview with ▶.

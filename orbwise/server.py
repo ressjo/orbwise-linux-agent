@@ -58,17 +58,18 @@ CALL_TEXTS = {"run_shell": ("call_shell", "command"), "install_package": ("call_
               "remove_package": ("call_remove", "names"), "system_update": ("call_update", ""),
               "calendar_update": ("call_cal_update", "query"), "calendar_delete": ("call_cal_delete", "query"),
               "trilium_update_note": ("call_trilium", "note"), "write_file": ("call_write", "path"),
-              "edit_file": ("call_edit", "path"),
+              "edit_file": ("call_edit", "path"), "shell": ("call_shell", "command"),
+              "write": ("call_write", "path"), "edit": ("call_edit", "path"),
               "mail_send": ("call_mail", "to")}
 
 
 def spoken_confirm(name: str, args: dict, cfg=None) -> str:
     """Gesprochene Rückfrage: Befehle werden nicht vorgelesen (sie stehen im Dialog), Pfade nur als Dateiname."""
-    if name == "run_shell":
+    if name in ("run_shell", "shell"):
         return prompts.spoken(cfg, "confirm_shell")
     if name == "mail_send":
         return prompts.spoken(cfg, "confirm_mail", v=str(args.get("to", "")))
-    if name in ("write_file", "edit_file") and args.get("path"):
+    if name in ("write_file", "edit_file", "write", "edit") and args.get("path"):
         args = {**args, "path": Path(str(args["path"])).name}
     return prompts.spoken(cfg, "confirm", what=describe_call(name, args, cfg))
 
@@ -111,6 +112,8 @@ class Hub:
         self.undelivered: list[dict] = []
         self.pending: dict[str, asyncio.Future] = {}
         self.editable_pending: set[str] = set()
+        # offene Rückfragen des Werkzeugs question: ID → (Future, Fragen)
+        self.questions: dict[str, tuple[asyncio.Future, list[dict]]] = {}
         self.tasks: set[asyncio.Task] = set()
         self._prewarm: asyncio.Task | None = None
         self._prewarm_again = False
@@ -226,6 +229,26 @@ class Hub:
             self.editable_pending.discard(call_id)
             await self.broadcast({"type": "confirm_done", "id": call_id})
 
+    async def ask(self, call_id: str, questions: list[dict]) -> list | None:
+        """Werkzeug question: Fragen mit Antwortmöglichkeiten im Gespräch zeigen und auf die Antwort warten.
+        Liefert je Frage die gewählten Antworten (Liste) bzw. den freien Text – None, wenn nicht geantwortet."""
+        fut = asyncio.get_running_loop().create_future()
+        self.questions[call_id] = (fut, questions)
+        await self.broadcast({"type": "question_request", "id": call_id, "questions": questions})
+        await self.broadcast({"type": "state", "state": "confirm"})
+        try:
+            return await asyncio.wait_for(fut, timeout=900)
+        except asyncio.TimeoutError:
+            return None
+        finally:
+            self.questions.pop(call_id, None)
+            await self.broadcast({"type": "question_done", "id": call_id})
+
+    def answer(self, call_id: str, answers: list | None) -> None:
+        entry = self.questions.get(call_id)
+        if entry and not entry[0].done():
+            entry[0].set_result(answers or None)
+
     def resolve(self, call_id: str, approved: bool, changes: dict | None = None) -> None:
         fut = self.pending.get(call_id)
         if fut and not fut.done():
@@ -302,6 +325,10 @@ class Hub:
         for fut in self.pending.values():
             if not fut.done():
                 fut.set_result(False)
+                stopped += 1
+        for fut, _questions in self.questions.values():
+            if not fut.done():
+                fut.set_result(None)
                 stopped += 1
         for task in list(self.tasks):
             if not task.done():
@@ -419,6 +446,9 @@ def create_app(cfg: Config) -> FastAPI:
         wake = WakeWordFactory(cfg.voice)
         tts = TTS(cfg.voice, cfg.memory.dir.parent, cfg.memory.dir.parent / "state.json")
     hub = Hub(cfg, agent, tts, stt, wake)
+    agent.services["ask"] = hub.ask  # Werkzeug question (Coding-Modus)
+    from .tools import jobs as bg_jobs
+    bg_jobs.set_broadcast(hub.broadcast)  # Hintergrund-Jobs melden sich auch nach dem Ende der Antwort
 
     def apply_reply_language() -> None:
         """Die Sprache der gewählten Stimme gilt auch für die Antworten; spricht man eine andere Sprache als die der
@@ -587,6 +617,8 @@ def create_app(cfg: Config) -> FastAPI:
         yield
         for t in [*background, *healing, *side_tasks]:
             t.cancel()
+        bg_jobs.stop_all()  # Dev-Server & Co. nicht verwaist weiterlaufen lassen
+        bg_jobs.set_broadcast(None)
         from .tools.ssh import close_all as close_ssh
         await close_ssh()
         if images.server is not None:
@@ -1112,13 +1144,69 @@ def create_app(cfg: Config) -> FastAPI:
         first = conv.epochs[0].get("summary", "") if conv.epochs else ""  # Zusammenfassung aus älteren Versionen
         turns = user_turns(conv)
         start = conv.epoch["start"]
+        snaps = conv.meta.get("snapshots") or {}
+        last_of_turn = {turns.get(i, 0): i for i, m in shown if m["role"] == "assistant"}
+
+        def changes(i: int, m: dict) -> dict:
+            snap = snaps.get(str(turns.get(i, 0))) if m["role"] == "assistant" else None
+            if not snap or last_of_turn.get(turns.get(i, 0)) != i:
+                return {}
+            return {"changes": {"files": snap["files"], "undone": bool(snap.get("undone"))}}
         return {"summary": first, "chat": {"id": conv.chat_id, "title": conv.meta.get("title", "")},
-                "messages": [{"role": m["role"], "content": m["content"], "turn": turns.get(i, 0),
+                "messages": [{"role": m["role"], "content": m["content"], "turn": turns.get(i, 0), **changes(i, m),
                               "editable": i >= start,
                               **({"images": m["attachments"]} if m.get("attachments") else {}),
                               **({"files": [attachments.doc_info(d) for d in m["docs"]]} if m.get("docs") else {})}
                              for i, m in shown],
                 "turns": max(turns.values(), default=0), "epochs": epochs}
+
+    @app.post("/api/chats/active/revert")
+    async def revert_turn(request: Request):
+        """Coding-Modus: die Dateiänderungen einer Antwort zurücksetzen (oder mit redo wiederherstellen) – wie /undo
+        bei OpenCode. Betrifft nur die Dateien, die sich in dieser Antwort geändert haben."""
+        from . import snapshot
+        data = await request.json()
+        conv = memory.active
+        key = str(int(data.get("turn") or 0))
+        snap = (conv.meta.get("snapshots") or {}).get(key)
+        if not snap:
+            raise HTTPException(404, T("Zu dieser Antwort gibt es keinen Schnappschuss.", "No snapshot for this answer."))
+        if agent.busy():
+            raise HTTPException(409, T("Erst die laufende Antwort abwarten.", "Wait for the running answer first."))
+        paths = [f["path"] for f in snap["files"]]
+        project = snap["project"]
+        if data.get("redo"):
+            if not snap.get("undone"):
+                raise HTTPException(409, T("Nichts wiederherzustellen.", "Nothing to restore."))
+            done = await asyncio.to_thread(snapshot.restore, project, snap["undone"], paths)
+            snap.pop("undone", None)
+            note = T(f"(Hinweis: Der Nutzer hat die zurückgesetzten Dateiänderungen der Antwort auf Frage {key} "
+                     f"wiederhergestellt: {', '.join(done)}. Vor weiteren Änderungen neu lesen.)",
+                     f"(Note: the user restored the reverted file changes of the answer to question {key}: "
+                     f"{', '.join(done)}. Read them again before changing them.)")
+        else:
+            current = await asyncio.to_thread(snapshot.capture, project)
+            done = await asyncio.to_thread(snapshot.restore, project, snap["before"], paths)
+            if current:
+                snap["undone"] = current
+            note = T(f"(Hinweis: Der Nutzer hat die Dateiänderungen der Antwort auf Frage {key} rückgängig gemacht: "
+                     f"{', '.join(done)}. Diese Dateien sind wieder auf dem Stand davor – vor weiteren Änderungen "
+                     "neu lesen.)",
+                     f"(Note: the user undid the file changes of the answer to question {key}: {', '.join(done)}. "
+                     "These files are back to their earlier state – read them again before changing them.)")
+        conv.meta.setdefault("pending_notes", []).append(note)
+        conv.save()
+        event = {"type": "reverted", "turn": int(key), "undone": bool(snap.get("undone")), "files": done}
+        await hub.broadcast(event)
+        return event
+
+    @app.post("/api/jobs/{job_id}/stop")
+    async def stop_job(job_id: str):
+        from .tools import jobs
+        job = jobs.stop(job_id)
+        if not job:
+            raise HTTPException(404, T("Unbekannter Job.", "Unknown job."))
+        return job.info()
 
     def user_turns(conv) -> dict[int, int]:
         """Index im Verlauf → Nummer der Nutzerfrage (1, 2, …), zu der die Nachricht gehört (Antworten zählen zur
@@ -1514,6 +1602,8 @@ def create_app(cfg: Config) -> FastAPI:
                            **mode_info(), **settings_info()})
         await client.send(startup.snapshot())
         await client.send({"type": "sudo_cached", "until": broker.cached_until()})
+        for qid, (_fut, questions) in list(hub.questions.items()):  # offene Rückfrage auch im neuen Fenster
+            await client.send({"type": "question_request", "id": qid, "questions": questions})
         if not getattr(llm, "switching", None):
             hub.prewarm_soon()  # Oberfläche offen → den Chat schon einlesen, bevor die erste Frage kommt
         if hub.undelivered:
@@ -1543,6 +1633,10 @@ def create_app(cfg: Config) -> FastAPI:
                 elif t == "confirm":
                     changes = data.get("args") if isinstance(data.get("args"), dict) else None
                     hub.resolve(str(data.get("id")), bool(data.get("approved")), changes)
+                elif t == "question_answer":  # Antwort auf question (None/leer = abgebrochen)
+                    answers = data.get("answers") if isinstance(data.get("answers"), list) else None
+                    hub.answer(str(data.get("id")), [a if isinstance(a, (str, list)) else str(a)
+                                                     for a in answers] if answers else None)
                 elif t == "stop":
                     await hub.stop()
                 elif t == "tts":

@@ -27,7 +27,8 @@ def test_english_prompt_and_texts(cfg, llm, memory):
     cfg.language = "de"
     assert describe_call("system_update", {}, cfg) == "ein vollständiges Systemupdate"
     assert set(CALL_TEXTS) <= {"run_shell", "install_package", "remove_package", "system_update", "calendar_update",
-                               "calendar_delete", "trilium_update_note", "write_file", "edit_file", "mail_send"}
+                               "calendar_delete", "trilium_update_note", "write_file", "edit_file", "mail_send",
+                               "shell", "write", "edit"}
 
 
 @pytest.mark.parametrize("text,expected", [("yes please", True), ("go ahead", True), ("nope", False),

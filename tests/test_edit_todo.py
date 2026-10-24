@@ -96,7 +96,7 @@ def test_todo_list_lives_in_the_answer_and_survives_compaction(cfg, llm, memory)
     assert "todo_write" in {s["function"]["name"] for s in agent.schemas}
     memory.switch_mode("coding")
     agent.choose_tools()
-    assert {"todo_write", "edit_file"} <= {s["function"]["name"] for s in agent.schemas}
+    assert {"todo_write", "edit"} <= {s["function"]["name"] for s in agent.schemas}
 
 
 def test_unasked_calls_of_one_step_run_in_parallel(cfg, memory, tmp_path, monkeypatch):
