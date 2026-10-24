@@ -408,6 +408,7 @@
         break;
       case "assistant_end":
         Thought.finish(ev.id);
+        if (S.mode === "coding") loadProjectInfo();  // der Agent kann den Branch gewechselt haben
         if (ev.feedback && ev.text) addFeedback(ev.id);
         finishAssistant(ev.id, ev.cancelled);
         S.serverState = "idle";  // Antwort fertig = bereit, auch wenn das „idle“ des Servers noch aussteht
@@ -4532,6 +4533,9 @@
     const chip = $("project-chip");
     chip.classList.toggle("unset", !S.project);
     $("project-label").textContent = S.project ? S.project.replace(/^\/home\/[^/]+/, "~") : L("Projektordner wählen", "Choose project folder");
+    $("project-branch").classList.add("hidden");
+    chip.title = L("Projektordner für diesen Coding-Chat – Shell und relative Pfade starten dort", "Project folder for this coding chat – shell and relative paths start there");
+    loadProjectInfo();
     if (was !== S.mode) {
       if (S.mode === "coding") {  // keine Sprache: Vorlesen stoppen, Wake-Word ruhen lassen
         stopSpeech(true);
@@ -4581,6 +4585,24 @@
       .catch(() => {});  // Fehler zeigt api() schon an
   };
   projectMenu.querySelector('[data-project="github"]').onclick = () => { projectMenu.classList.add("hidden"); openGithub(); };
+
+  // GitHub-Repo und Branch im Projekt-Chip (bei Sandbox: die der Arbeitskopie)
+  let projectInfoSeq = 0;
+  async function loadProjectInfo() {
+    if (S.mode !== "coding" || !S.project) return;
+    const seq = ++projectInfoSeq;
+    let p;
+    try { p = await getJSON("/api/project"); } catch { return; }
+    if (seq !== projectInfoSeq || !p.path) return;
+    const label = $("project-label"), badge = $("project-branch"), chip = $("project-chip");
+    const folder = S.project.replace(/\/+$/, "").split("/").pop();
+    label.textContent = p.repo || (p.branch ? folder : S.project.replace(/^\/home\/[^/]+/, "~"));
+    chip.querySelector(".i use").setAttribute("href", p.repo ? "#i-github" : "#i-folder");
+    badge.classList.toggle("hidden", !p.branch);
+    badge.querySelector("span").textContent = p.branch || "";
+    chip.title = [S.project, p.repo ? `GitHub: ${p.repo}` : "", p.branch ? `Branch: ${p.branch}` : "",
+                  p.sandbox ? L("Arbeitskopie in der Sandbox", "Working copy in the sandbox") : ""].filter(Boolean).join("\n");
+  }
 
   let ghTimer = null;
   async function openGithub() {
@@ -4737,6 +4759,7 @@
       toast(n ? (n === 1 ? L("1 Datei ins Projekt übernommen.", "1 file applied to the project.") : L(`${n} Dateien ins Projekt übernommen.`, `${n} files applied to the project.`))
         : r.conflicts.length ? L("Nichts übernommen.", "Nothing applied.") : L("Keine Änderungen zu übernehmen.", "No changes to apply."));
       if (fromSheet) closeSheet();
+      loadProjectInfo();
     } catch { /* Meldung kommt von api() */ }
   }
   async function pushGithub() {
@@ -4744,6 +4767,7 @@
     try {
       const r = await api("POST", "/api/github/push");
       toastLink(L(`Branch ${r.branch} ist auf GitHub.`, `Branch ${r.branch} is on GitHub.`), r.compare, L("Pull Request erstellen", "Create pull request"));
+      loadProjectInfo();
     } catch { /* Meldung kommt von api() */ }
   }
   function toastLink(text, url, label) {

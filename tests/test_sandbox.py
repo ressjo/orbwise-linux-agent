@@ -306,8 +306,12 @@ def test_sandbox_endpoints(cfg, repo, fake_engine, monkeypatch):
         chat = client.get("/api/history").json()["chat"]["id"]
         assert client.post("/api/sandbox", json={"enabled": True}).status_code == 400  # ohne Projekt
         client.post(f"/api/chats/{chat}/project", json={"path": str(repo)})
+        info = client.get("/api/project").json()
+        assert info["repo"] == "owner/proj" and info["branch"] in ("master", "main") and not info["sandbox"]
         st = client.post("/api/sandbox", json={"enabled": True}).json()
         assert st["enabled"] and st["branch"].startswith("orbwise/") and st["github"] == "owner/proj"
+        info = client.get("/api/project").json()
+        assert info["repo"] == "owner/proj" and info["branch"] == st["branch"] and info["sandbox"]
         (Path(st["path"]) / "fix.py").write_text("ok\n")
         files = client.get("/api/sandbox/changes").json()["files"]
         assert [f["path"] for f in files] == ["fix.py"]

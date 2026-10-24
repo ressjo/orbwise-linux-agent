@@ -72,6 +72,8 @@ All notable changes to this project are documented here. The format follows
   commands run in a Podman/Docker container (no credentials inside, limits, network on/off per chat, stops when
   idle). Shell and file changes in the copy run without asking; **View changes** with diffs, **Apply to project**
   with conflict check, **End sandbox**. Default image `orbwise-sandbox:1` is built on first use (`sandbox.*`).
+- **Project chip shows repo and branch:** `owner/repo` and the current branch (in the sandbox the `orbwise/…` branch
+  of the working copy), updated after every answer.
 - **GitHub:** sign in via `gh` or a token; clone your repos from the project chip, push the branch (sandbox menu or
   `github_push`, always asks) with a link to create the pull request. The token never lands in `.git/config`.
 - **Coding mode like OpenCode 2:** the coding agent gets its own tools – `read` (line numbers, folders, PDFs, nested

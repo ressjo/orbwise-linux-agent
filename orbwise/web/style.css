@@ -291,6 +291,11 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
 .project-chip .i { width: 15px; height: 15px; flex: none; color: var(--coding); }
 .project-chip:hover { border-color: var(--coding); color: var(--text); }
 .head-split { display: inline-flex; }
+.branch-badge { display: inline-flex; align-items: center; gap: 4px; margin-left: 2px; padding: 1px 8px 1px 6px; max-width: 180px;
+  border-radius: var(--r-full); background: var(--surface-3); color: var(--text-2); font-family: var(--mono); font-size: var(--fs-xs); }
+.branch-badge span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-chip .branch-badge .i { width: 12px; height: 12px; color: var(--muted); }
+@media (max-width: 900px) { .branch-badge { display: none !important; } }
 .head-split + .head-split .project-chip { margin-left: 6px; }
 .chip-menu.head-menu { top: calc(100% + 8px); bottom: auto; left: 10px; right: auto; width: 320px; }
 .sandbox-chip.unset em { font-family: inherit; color: var(--muted); }

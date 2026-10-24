@@ -1235,6 +1235,27 @@ def create_app(cfg: Config) -> FastAPI:
     async def sandbox_progress(text: str) -> None:
         await hub.broadcast({"type": "sandbox_progress", "text": text})
 
+    @app.get("/api/project")
+    async def project_info():
+        """Projekt des offenen Coding-Chats für den Chip oben: Pfad, GitHub-Repo und Branch (bei aktiver Sandbox die der
+        Arbeitskopie)."""
+        from . import github
+        path = agent.project_dir() if memory.mode == "coding" else None
+        if not path:
+            return {"path": "", "repo": None, "branch": None, "sandbox": False}
+
+        def read() -> tuple:
+            repo = github.remote_repo(path)
+            try:
+                branch = github.current_branch(path)
+                if branch == "HEAD":  # kein Branch ausgecheckt: kurzer Commit-Hash
+                    branch = github.git(["rev-parse", "--short", "HEAD"], cwd=path).strip()
+            except (github.GitHubError, OSError):
+                branch = None
+            return repo, branch
+        repo, branch = await asyncio.to_thread(read)
+        return {"path": path, "repo": repo, "branch": branch or None, "sandbox": bool(agent.sandbox_state())}
+
     @app.get("/api/sandbox")
     async def sandbox_get():
         coding_chat()
