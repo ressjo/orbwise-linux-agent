@@ -290,37 +290,7 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
   .main.has-messages .substate { max-width: 220px; }
   .main.has-messages .chat { padding-right: 24px; }
 }
-/* Denkmodus: in den Orb hineinzoomen (groß) bzw. Gedankengang als Karte über dem Chat (kompakt) */
-.stage.zoomed #orb { transform: scale(1.75); opacity: .3; }
-.main.has-messages .stage.zoomed #orb { transform: none; opacity: 1; }
-.thought {
-  position: absolute; left: 50%; top: 47%; z-index: 4; width: min(62%, 540px); height: min(62%, 320px);
-  display: flex; flex-direction: column; opacity: 0; pointer-events: none; padding: 16px 18px;
-  border-radius: 50% / 22%;
-  background: radial-gradient(ellipse at center, rgba(11,13,18,.82) 0%, rgba(11,13,18,.6) 62%, transparent 100%);
-  transform: translate(-50%, -50%) scale(.55); transition: opacity .5s, transform .8s cubic-bezier(.2,.8,.2,1);
-}
-.stage.zoomed .thought { opacity: 1; transform: translate(-50%, -50%) scale(1); pointer-events: auto; }
-.thought-head { font-size: 11px; font-weight: 600; letter-spacing: .16em; text-transform: uppercase; color: #a9b3ff; text-align: center; margin-bottom: 8px; }
-.thought-text {
-  flex: 1; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; font-family: var(--mono);
-  font-size: 13px; line-height: 1.6; color: #dfe5ff; white-space: pre-wrap;
-  mask-image: linear-gradient(to bottom, transparent 0, #000 22%, #000 100%);
-}
-/* Gedankengang im Gespräch: Sprechblase links neben dem Orb-Dock, unten bündig; der Chat rückt solange nach oben */
-.main.has-messages .thought {
-  left: auto; top: auto; right: calc(100% + 14px); bottom: 6px; width: min(460px, calc(100cqw - 300px)); height: 190px;
-  border-radius: var(--radius); background: rgba(18, 21, 28, .94); border: 1px solid rgba(169,179,255,.25);
-  box-shadow: var(--shadow); backdrop-filter: blur(10px); transform: translateX(10px); opacity: 0;
-}
-.main.has-messages .thought::after {  /* kleiner Pfeil zum Orb */
-  content: ""; position: absolute; right: -7px; bottom: 60px; width: 12px; height: 12px; transform: rotate(45deg);
-  background: rgba(18, 21, 28, .94); border-top: 1px solid rgba(169,179,255,.25); border-right: 1px solid rgba(169,179,255,.25);
-}
-.main.has-messages .stage.zoomed .thought { transform: none; opacity: 1; }
-.main.has-messages .thought-head { text-align: left; }
-.main.has-messages:has(.stage.zoomed) .chat { padding-bottom: 230px; }
-@media (prefers-reduced-motion: reduce) { #orb, .thought, .main, .orb-wrap, .app { transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { #orb, .main, .orb-wrap, .app { transition: none !important; } }
 
 /* ---------- Gespräch ---------- */
 .conversation { position: relative; min-height: 0; overflow: hidden; }
@@ -423,6 +393,10 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
 .thought-log summary::marker { color: var(--faint); }
 .thought-log pre { white-space: pre-wrap; font-family: var(--mono); font-size: 12px; max-height: 260px; overflow: auto;
   margin: 6px 0 0; padding: 10px 12px; border-left: 2px solid rgba(169,179,255,.35); color: #aeb6d0; background: rgba(169,179,255,.04); border-radius: 0 8px 8px 0; }
+.thought-log.live pre { max-height: 220px; overscroll-behavior: contain; }
+.thought-log.live summary { animation: thought-pulse 1.6s ease-in-out infinite; }
+@keyframes thought-pulse { 50% { opacity: .55; } }
+@media (prefers-reduced-motion: reduce) { .thought-log.live summary { animation: none; } }
 
 /* Planmodus: Plan-Karte mit Ausführen / Ändern / Verwerfen */
 .msg.assistant.plan .body { padding: 14px 16px; border-radius: var(--radius); border: 1px solid rgba(245,177,76,.3); background: linear-gradient(180deg, rgba(245,177,76,.07), rgba(245,177,76,.02)); }
@@ -806,10 +780,6 @@ details.card[open] > summary .caret { transform: rotate(180deg); }
   .main.has-messages .stage-info { margin-top: 0; flex-direction: row; gap: 8px; justify-content: center; }
   .main.has-messages .chat { padding-right: 14px; }
   .main.has-messages .live-transcript { right: 0; left: 0; bottom: auto; top: 100%; margin: 0 auto; text-align: center; }
-  .main.has-messages .thought { left: 50%; right: auto; top: calc(100% + 8px); bottom: auto; width: calc(100% - 24px); height: 140px; transform: translate(-50%, -6px); }
-  .main.has-messages .thought::after { display: none; }
-  .main.has-messages .stage.zoomed .thought { transform: translate(-50%, 0); }
-  .main.has-messages:has(.stage.zoomed) .chat { padding-bottom: 20px; padding-top: 160px; }
 }
 @media (max-width: 860px) {
   .app, .app.drawer-open, .app.side-collapsed { grid-template-columns: minmax(0, 1fr) 0 0; --side-w: 0px; }

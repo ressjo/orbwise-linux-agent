@@ -474,8 +474,9 @@ reload the model with a different context size. For Open WebUI in Docker use `--
 ### Thinking mode
 
 By default the model answers directly (`think: false`) – fast. The **Think** button turns reasoning on per
-request: the orb zooms in and shows the thoughts live, then zooms out when the answer starts; the reasoning can be
-expanded under the answer and is never read aloud. It costs time (often 10–60 s per step on smaller GPUs). For
+request: the thoughts stream into the answer as an open block that collapses as soon as the model writes its answer
+or calls a tool (it opens again if the model thinks on after a tool); it can be expanded any time and is never read
+aloud. It costs time (often 10–60 s per step on smaller GPUs). For
 llama-server, **don't** pass `--reasoning-budget 0`, which disables reasoning server-side.
 
 The button's menu has levels: **Brief** (reasoning up to ~500 tokens), **Normal** (~2,000) and **Thorough**

@@ -18,6 +18,8 @@ All notable changes to this project are documented here. The format follows
   Ollama models; new Hugging Face downloads always run on llama.cpp.
 
 ### Changed
+- **Thoughts in the chat:** in thinking mode the reasoning now streams directly into Orbwise's answer and collapses
+  as soon as the model answers or calls a tool ("Thoughts · 12 s"), instead of a bubble next to the orb with zoom.
 - **Tidier model page:** a *Performance* section (prompt speed, find the fastest setting) follows the context window;
   KV cache, manual batch size and speculative decoding moved under a collapsed *Advanced* section (only for
   llama.cpp models where they apply), and the explanations show one sentence with **More** for the rest.

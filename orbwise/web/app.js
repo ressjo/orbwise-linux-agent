@@ -381,10 +381,10 @@
         appendToken(ev.id, ev.text);
         orb.token();
         T.tokenTimes.push(performance.now());
-        if (Thought.active) Thought.zoomOut();
+        Thought.collapse(ev.id);  // das Modell gibt aus → Gedankengang zuklappen
         return;  // Zustand ändert sich pro Token nicht – kein refresh() nötig
       case "reasoning":
-        // Denkkette: nicht in die Antwort, sondern in den Orb (hineinzoomen) und später aufklappbar im Chat
+        // Denkkette: als aufgeklappter Block in der Antwort, zu beim ersten ausgegebenen Token
         Thought.add(ev.id, ev.text || "");
         orb.token();  // Denk-Puls folgt auch dem Gedankengang
         return;
@@ -414,7 +414,8 @@
         showTodos(ev.items || []);
         break;
       case "tool_call":
-        toolCall(ev);  // im Denkmodus bleibt der Zoom – das Werkzeug erscheint als Chip im Gedankenkasten
+        if (S.currentMsg) Thought.collapse(S.currentMsg);  // Werkzeugaufruf = Ausgabe → Gedankengang zuklappen
+        toolCall(ev);
         break;
       case "tool_output":
         toolOutput(ev);
@@ -765,58 +766,73 @@
       setTimeout(go, 100);
     }
   }
-  // Denkmodus: Gedankengang im Orb anzeigen (Zoom per CSS), danach aufklappbar an der Antwort
+  // Denkmodus: Gedankengang läuft direkt in der Antwort mit (aufgeklappt) und klappt zu, sobald das Modell etwas
+  // ausgibt (Antwort-Token oder Werkzeugaufruf). Denkt es nach einem Werkzeug weiter, geht derselbe Block wieder auf.
   const Thought = {
-    active: false, text: "", byMsg: {}, queued: false, since: 0, outTimer: null, warned: false,
+    byMsg: {}, warned: false,
+    block(id) {
+      let t = this.byMsg[id];
+      if (t) return t;
+      const a = assistants[id] || (startAssistant(id), assistants[id]);
+      const el = document.createElement("details");
+      el.className = "thought-log";
+      el.innerHTML = "<summary></summary><pre></pre>";
+      a.el.insertBefore(el, a.el.querySelector(".tools") || a.el.querySelector(".body"));  // zuerst gedacht, dann gehandelt
+      t = this.byMsg[id] = { el, pre: el.querySelector("pre"), text: "", ms: 0, since: 0, queued: false, own: false, auto: false };
+      // Hat der Nutzer selbst auf- oder zugeklappt, bleibt es so
+      el.addEventListener("toggle", () => { if (t.auto) t.auto = false; else t.own = true; });
+      return t;
+    },
+    setOpen(t, open) {
+      if (t.own || t.el.open === open) return;
+      t.auto = true;
+      t.el.open = open;
+    },
+    summary(t) {
+      const secs = Math.max(1, Math.round(t.ms / 1000));
+      t.el.querySelector("summary").textContent = t.since ? L("Denkt nach …", "Thinking …")
+        : L(`Gedankengang · ${secs} s`, `Thoughts · ${secs} s`);
+    },
     add(id, text) {
       if (!text) return;
-      this.byMsg[id] = (this.byMsg[id] || "") + text;
-      if (!this.active) {
-        this.active = true;
-        this.since = performance.now();
-        this.text = "";
-        clearTimeout(this.outTimer);
-        $("thought-text").textContent = "";
-        $("stage").classList.add("zoomed");
-        if (!isCompact()) orb.setZoom(true);  // Satelliten kreisen dann um den Gedankenkasten
-        else requestAnimationFrame(scrollChat);  // Chat rückt über die Gedanken-Karte
+      const t = this.block(id);
+      if (!t.since) {  // (wieder) am Denken
+        t.since = performance.now();
+        t.el.classList.add("live");
+        this.summary(t);
+        this.setOpen(t, true);
       }
-      this.text += text;
-      if (!this.queued) {
-        this.queued = true;
-        let done = false;
-        const go = () => {
-          if (done) return;
-          done = true;
-          this.queued = false;
-          const el = $("thought-text");
-          el.textContent = this.text.length > 6000 ? "…" + this.text.slice(-6000) : this.text;
-          el.scrollTop = el.scrollHeight;
-        };
-        requestAnimationFrame(go);
-        setTimeout(go, 120);
-      }
+      t.text += text;
+      if (t.queued) return;
+      t.queued = true;
+      let done = false;
+      const go = () => {
+        if (done) return;
+        done = true;
+        t.queued = false;
+        const stick = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80;
+        t.pre.textContent = t.text.trim();
+        t.pre.scrollTop = t.pre.scrollHeight;
+        if (stick) scrollChat();
+      };
+      requestAnimationFrame(go);
+      setTimeout(go, 120);
     },
-    zoomOut() {
-      if (!this.active) return;
-      this.active = false;
-      // kurz stehen lassen, damit das Zoomen nicht flackert
-      const wait = Math.max(0, 700 - (performance.now() - this.since));
-      clearTimeout(this.outTimer);
-      this.outTimer = setTimeout(() => { $("stage").classList.remove("zoomed"); orb.setZoom(false); }, wait);
+    collapse(id) {
+      const t = this.byMsg[id];
+      if (!t || !t.since) return;
+      t.ms += performance.now() - t.since;
+      t.since = 0;
+      t.pre.textContent = t.text.trim();
+      t.el.classList.remove("live");
+      this.summary(t);
+      this.setOpen(t, false);
     },
     finish(id) {
-      this.zoomOut();
-      const text = (this.byMsg[id] || "").trim();
+      const t = this.byMsg[id];
+      this.collapse(id);
       delete this.byMsg[id];
-      const a = assistants[id];
-      if (text && a) {
-        const d = document.createElement("details");
-        d.className = "thought-log";
-        d.innerHTML = `<summary>${L("Gedankengang", "Thoughts")}</summary><pre></pre>`;
-        d.querySelector("pre").textContent = text;
-        a.el.insertBefore(d, a.el.querySelector(".body"));
-      } else if (!text && S.think !== "off" && !this.warned) {
+      if (!t && S.think !== "off" && !this.warned) {
         this.warned = true;
         toast(L("Denkmodus an, aber das Modell hat keinen Gedankengang geliefert – ggf. '--reasoning-budget 0' aus dem Startbefehl entfernen.",
               "Thinking mode is on, but the model returned no reasoning – for llama-server remove '--reasoning-budget 0' from the start command."));
@@ -1747,8 +1763,8 @@
     send({ type: "think", enabled: S.think !== "off", level: S.think });
     toast({ off: L("Denkmodus aus – schnelle Antworten.", "Thinking mode off – fast answers."),
             low: L("Denken: kurz – Jarvis überlegt knapp und legt dann los.", "Thinking: brief – Jarvis thinks briefly, then acts."),
-            medium: L("Denken: normal – zügig durchdacht, der Gedankengang erscheint beim Orb.",
-                      "Thinking: normal – thought through efficiently, the reasoning appears next to the orb."),
+            medium: L("Denken: normal – zügig durchdacht, der Gedankengang läuft direkt in der Antwort mit.",
+                      "Thinking: normal – thought through efficiently, the reasoning shows right in the answer."),
             high: L("Denken: gründlich – so lange wie nötig, Antworten dauern länger.",
                     "Thinking: thorough – as long as needed, answers take longer.") }[S.think]);
     refresh();
@@ -1842,7 +1858,6 @@
     const has = !!$("chat").querySelector(".msg.user, .msg.assistant");
     if (has !== isCompact()) {
       main.classList.toggle("has-messages", has);
-      if (has) orb.setZoom(false);
     }
   };
   new MutationObserver(updateStage).observe($("chat"), { childList: true });

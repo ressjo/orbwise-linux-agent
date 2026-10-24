@@ -28,7 +28,6 @@ HTML_EN = [
     ('title="Aktivität und Systemauslastung" aria-label="Aktivität"', 'title="Activity and system load" aria-label="Activity"'),
     # Bühne
     ('aria-label="Jarvis Statusanzeige"', 'aria-label="Jarvis status display"'),
-    ('<div class="thought-head">Gedankengang</div>', '<div class="thought-head">Thoughts</div>'),
     ('>Wie kann ich helfen?<', '>How can I help?<'),
     ('data-text="Mach ein Systemupdate">Systemupdate<', 'data-text="Run a system update">System update<'),
     ('data-text="Was ist das für eine Fehlermeldung auf meinem Bildschirm?">Bildschirm erklären<',
