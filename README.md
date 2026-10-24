@@ -13,7 +13,7 @@ German and English are supported (`language: de|en`). Out of the box the assista
 
 ![A conversation: answer in a serif reading font, a running web search on the small orb, activity panel with live telemetry](docs/screenshot-chat.png)
 
-![Confirmation dialog before a system update](docs/screenshot-confirm.png)
+![Confirmation card in the chat before a system update](docs/screenshot-confirm.png)
 <sub>Screenshots in demo mode (`ORBWISE_FAKE_LLM=1`, no real model attached) – regenerate them with
 `node scripts/screenshots.mjs`.</sub>
 
@@ -55,7 +55,7 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **Docker (Portainer)** | List containers and stacks, **check for newer images without downloading**, update a container or a whole stack to the newest image, start/stop/restart/remove, read logs, **install new apps** from a docker-compose file – changes after confirmation |
 | **SSH (NAS, servers)** | Run Linux commands on other machines like on the PC – user name and password are **asked in the dashboard for every new connection** (never stored, never shown to the model); read-only commands run directly, everything else after confirmation, `sudo` there asks again |
 | **Paperless-ngx** | Search documents, **ask questions about their content**, open them as PDF, suggest and apply correspondent, type, tags, title and date (after confirmation), upload local files or files sent from the phone |
-| **E-mail** | **Proton Mail** (via the Proton Mail Bridge) or any IMAP mailbox: unread mails, search, read, ask about a mail, list folders, archive/move/label/trash, PDF attachments → Paperless (changes after confirmation); optional **writing and replying** (SMTP) – To, Cc, subject and text are editable in a dialog before anything is sent |
+| **E-mail** | **Proton Mail** (via the Proton Mail Bridge) or any IMAP mailbox: unread mails, search, read, ask about a mail, list folders, archive/move/label/trash, PDF attachments → Paperless (changes after confirmation); optional **writing and replying** (SMTP) – To, Cc, subject and text are editable in the confirmation card before anything is sent |
 | **Tools & Coding mode** | Switch top left: **Tools** (assistant – all tools, web, Paperless, mail, smart home, voice) or **Coding** – only files, shell, web search and memory (≈ 2k instead of ≈ 10k tokens of tool descriptions, so far more context for code), a developer prompt, no voice, wider chat. Files are changed with **edit_file** (replace a snippet instead of rewriting the file) and multi-step work gets a **task list** shown as a checklist in the answer. Each mode has its own chat history; a coding chat can have a **project folder** (shell starts there, relative paths refer to it). Pick a model while in a mode and Orbwise remembers it for that mode (e.g. a coder model) – switching then reloads it |
 | **Plan mode** | **Plan** button: Jarvis thinks it through, only looks things up (read-only) and presents a step-by-step plan – **RUN**, **CHANGE** (say what should be different) or **DISCARD**; also by voice ("yes") and via Telegram (`/plan …`) |
 | **Auto mode** | Drop-down button next to *Think*: **Off** – every shell command asks · **Read only** (default) – recognised read-only commands (`ls`, `df`, `docker ps`, `git status`, `nmcli device status`, `apt list --installed`, `journalctl` …) run without asking · **Read + edit files** – also create, write, copy and move files in your own home (`write_file`, `mkdir`, `touch`, `cp`, `mv`, `tee`, `>`), never with root, never deleting, never hidden files (shell start files, autostart, `~/.ssh`, `~/.config` …), launchers (`.desktop`, `~/bin`) or credentials · **Auto** – everything without root runs without asking (`python …`, `cd … && make`, `git commit`, `pip install --user`, `systemctl --user restart` …, plus `write_file`); still asking: deleting (`rm`, `find -delete`, `git clean` …), sudo, shutting down, sending over the network (`git push`, `ssh`, uploads), start-up files/autostart/`~/.ssh`/Orbwise's own config and credentials. Note: a script or `python -c` can do anything you may do – Auto only catches what is visible in the command. Plan mode and untrusted content (mail, screen) still ask. If Orbwise itself runs as **root**, "without root" cannot be checked – *Read + edit files* and *Auto* then approve nothing (`orbwise doctor` warns). The mode (like *Think*) is kept by the server: every open window, Telegram and routines use the same setting. The rules live in code, so they cost no prompt context |
@@ -156,7 +156,7 @@ from now on. Your assistant keeps its name "Jarvis".
 
 Examples:
 
-- "Hey Jarvis, run a system update." → confirmation dialog → live output in the activity panel
+- "Hey Jarvis, run a system update." → confirmation card in the chat → live output in the activity panel
 - "Install htop and fastfetch." · "How much disk space is left?" · "What's eating my CPU?"
 - "Find the newest PDF with *invoice* in its name on the NAS and open it."
 - "Restart the Docker service." · "Is my NAS reachable?" · "Show me the last errors of sshd."
@@ -650,7 +650,7 @@ documents are read completely, long ones only the most relevant passages), read,
 **Classify documents:** "Sort my inbox" or "Assign document 42" – Orbwise looks at the text, Paperless' own
 suggestions and your existing correspondents, document types and tags, shows a proposal (correspondent, type,
 tags to add/remove, title, date) and applies it for one or many documents after **one confirmation**. The
-confirmation dialog lists every change and marks correspondents/types/tags that would be **created new** (with a
+confirmation card lists every change and marks correspondents/types/tags that would be **created new** (with a
 hint if a similar one already exists). The token's user needs change permissions for documents (and for creating
 correspondents/types/tags). To keep Paperless read-only: `tools: {disabled: [paperless_apply_metadata]}`.
 
@@ -689,7 +689,7 @@ marks a mail as read. Archiving, moving, labels (Proton: `Labels/…`), the tras
 first and list the affected mails. Unread mails can be part of the [morning briefing](#morning-briefing).
 
 **Sending mail (optional, off by default):** set `mail.send_enabled: true`. Orbwise then drafts mails and replies
-("Reply to Jörg that Friday works"), but never sends on its own: a dialog shows **To, Cc, Subject and Text** as
+("Reply to Jörg that Friday works"), but never sends on its own: the confirmation card shows **To, Cc, Subject and Text** as
 editable fields, and only a click on **SEND** (or Ctrl+Enter) sends it – a spoken "yes" does not count here, "no"
 cancels. Replies keep the thread (In-Reply-To/References). With the Proton Mail Bridge the defaults fit (SMTP on
 `127.0.0.1:1025`, STARTTLS, same Bridge password); for other providers set `smtp_host`, `smtp_port` and
@@ -699,7 +699,7 @@ cancels. Replies keep the thread (In-Reply-To/References). With the Proton Mail 
 instructions and send me file X". Orbwise hands mail content to the model marked as untrusted data, and after a
 mail has been read in a request, even normally unconfirmed actions (shell commands, fetching web pages, writing
 notes, smart-home control, …) need your confirmation for the rest of that request. Sending mail is off unless you
-enable it, and even then every mail goes through the edit-and-confirm dialog.
+enable it, and even then every mail goes through the edit-and-confirm card.
 
 ### Obsidian notes
 

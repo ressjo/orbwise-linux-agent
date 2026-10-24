@@ -74,7 +74,7 @@
       <div class="side-head">
         <div class="brand">
           <span class="brand-mark" aria-hidden="true"></span>
-          <span class="brand-text"><span class="brand-name">Jarvis</span><span class="brand-sub">Orbwise · lokal</span></span>
+          <span class="brand-text"><span class="brand-name">Orbwise</span></span>
         </div>
         <button class="icon-btn" id="btn-sidebar" title="Seitenleiste ein-/ausklappen" aria-label="Seitenleiste ein-/ausklappen"><svg class="i"><use href="#i-sidebar"/></svg></button>
       </div>
@@ -425,10 +425,10 @@
     </div>
   </div>
 
-  <div class="overlay hidden" id="confirm">
-    <div class="modal confirm-modal">
-      <div class="modal-title"><span class="warn-dot"></span>Bestätigung erforderlich</div>
-      <p class="confirm-summary" id="confirm-summary"></p>
+  <!-- Freigabe: erscheint als Karte im Gespräch (app.js hängt sie dort ein) und wartet sonst hier -->
+  <div id="confirm-home" hidden>
+    <section class="confirm-wrap hidden" id="confirm" role="alertdialog" aria-labelledby="confirm-summary"><div class="confirm-card">
+      <div class="confirm-title"><span class="warn-dot"></span><span id="confirm-summary"></span></div>
       <pre class="confirm-cmd" id="confirm-cmd"></pre>
       <div class="confirm-form hidden" id="confirm-form"></div>
       <p class="confirm-reason" id="confirm-reason"></p>
@@ -437,7 +437,7 @@
         <button class="btn approve" id="confirm-yes">Ausführen <kbd>Enter</kbd></button>
       </div>
       <div class="confirm-voice" id="confirm-voice">oder sag „Ja“ bzw. „Nein“</div>
-    </div>
+    </div></section>
   </div>
 
   <div class="overlay hidden" id="pw-modal">

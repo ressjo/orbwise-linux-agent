@@ -27,6 +27,9 @@ All notable changes to this project are documented here. The format follows
   the answer reads as plain text. The orb is now three fine rings around a dot (same states, running tools as dots, the
   context as an outer arc) instead of the glowing neural network. **Planner and Memory open as large windows** like the
   model page, with their cards side by side.
+- **Confirmations in the chat:** a request for approval now appears as a card below the last message (title, command,
+  reason, Cancel/Run; Enter/Esc and "yes"/"no" by voice as before; mail fields editable in the card) instead of a
+  dialog over the whole page. The sidebar shows the product name **Orbwise**.
 - **Think menu follows the model:** levels (Brief/Normal/Thorough) only for models with real levels (gpt-oss), plain
   on/off for the others, greyed out for models that cannot think – read from the chat template or Ollama's
   capabilities. "On" no longer invents a level or a token budget.

@@ -12,7 +12,6 @@ HTML_EN = [
      'type="button" data-theme-pick="system">System<'),
     ('<html lang="de">', '<html lang="en">'),
     # Seitenleiste
-    ('<span class="brand-sub">Orbwise · lokal</span>', '<span class="brand-sub">Orbwise · local</span>'),
     ('title="Seitenleiste ein-/ausklappen" aria-label="Seitenleiste ein-/ausklappen"',
      'title="Collapse/expand the sidebar" aria-label="Collapse/expand the sidebar"'),
     ('title="Neuen Chat beginnen (Gedächtnis bleibt erhalten)"', 'title="Start a new chat (memory is kept)"'),
@@ -204,7 +203,6 @@ HTML_EN = [
     ('id="boot-btn" disabled>Orbwise starten<', 'id="boot-btn" disabled>Start Orbwise<'),
     ('id="boot-sub">Orbwise startet …<', 'id="boot-sub">Orbwise is starting …<'),
     ('>Startet von selbst, sobald alles geladen ist<', '>Starts by itself once everything has loaded<'),
-    ('Bestätigung erforderlich', 'Confirmation required'),
     ('Abbrechen <kbd>', 'Cancel <kbd>'),
     ('Ausführen <kbd>', 'Run <kbd>'),
     ('oder sag „Ja“ bzw. „Nein“', 'or say “yes” or “no”'),

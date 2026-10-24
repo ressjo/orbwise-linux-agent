@@ -1456,7 +1456,7 @@
     }
     form.classList.toggle("hidden", !editable.length);
     $("confirm-cmd").classList.toggle("hidden", !!editable.length);
-    document.querySelector(".confirm-modal").classList.toggle("editing", !!editable.length);
+    $("confirm").classList.toggle("editing", !!editable.length);
     $("confirm-yes").innerHTML = editable.length && ev.name === "mail_send"
       ? `${L("Senden", "Send")} <kbd>Strg+Enter</kbd>` : editable.length ? `${L("Ausführen", "Run")} <kbd>Strg+Enter</kbd>` : APPROVE_HTML;
     $("confirm-summary").textContent = ev.name === "mail_send"
@@ -1467,10 +1467,13 @@
     $("confirm-voice").textContent = editable.length ? L("Senden nur per Klick – „Nein“ bricht ab.", "Send only by click – “no” cancels.")
       : A.micReady ? L("oder sag „Ja“ bzw. „Nein“", "or say “yes” or “no”") : "";
     $("confirm-voice").classList.remove("listening");
-    $("confirm").classList.remove("hidden");
+    placeConfirm();
     const act = acts[ev.id];
     if (act) act.querySelector(".act-status").textContent = STATUS_TEXT.waiting;
-    setTimeout(() => (form.querySelector("input, textarea") || $("confirm-yes")).focus(), 50);
+    setTimeout(() => {
+      (form.querySelector("input, textarea") || $("confirm-yes")).focus({ preventScroll: true });
+      scrollChat();
+    }, 50);
     refresh();
     if (!S.tts) onSpeechDrained();
   }
@@ -1481,10 +1484,23 @@
     return out;
   }
 
+  // Die Karte steht am Ende des Gesprächs – auch nachdem der Chat neu gezeichnet wurde
+  function placeConfirm() {
+    const card = $("confirm");
+    card.classList.remove("hidden");
+    if (card.parentElement !== chat || chat.lastElementChild !== card) chat.appendChild(card);
+  }
+
+  function parkConfirm() {
+    const card = $("confirm");
+    card.classList.add("hidden");
+    $("confirm-home").appendChild(card);
+  }
+
   function closeConfirm(id) {
     if (S.confirm && (!id || S.confirm.id === id)) {
       S.confirm = null;
-      $("confirm").classList.add("hidden");
+      parkConfirm();
       if (S.recording) send({ type: "cancel_listen" });
       refresh();
     }
@@ -3717,7 +3733,6 @@
     try {
       const st = await getJSON("/api/status");
       S.status = st;
-      if (st.name) document.querySelector(".brand-name").textContent = st.name;  // Persona (assistant_name)
       greet();
       const l = st.llm;
       const name = l.label && l.label !== l.model ? `${l.label} · ${l.model}` : l.model;
@@ -4229,6 +4244,7 @@
 
   function openChatView(ev) {
     for (const id of Object.keys(assistants)) delete assistants[id];
+    parkConfirm();  // nicht mit dem alten Chat wegwerfen
     $("chat").innerHTML = "";
     $("chat-title").textContent = ev.title || "";
     loadHistory();
@@ -4254,6 +4270,7 @@
         assistantActions(el);
       });
       markLast();
+      if (S.confirm) placeConfirm();  // offene Freigabe bleibt unter dem Verlauf
     } catch { /* egal */ }
   }
 

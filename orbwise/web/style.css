@@ -778,14 +778,24 @@ details.card[open] > summary .caret { transform: rotate(180deg); }
 .overlay { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px; background: var(--scrim); backdrop-filter: blur(4px); animation: fade .2s; }
 .modal { width: min(560px, 100%); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--r-lg); box-shadow: var(--shadow-lg); padding: 20px 22px; }
 .modal-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: var(--fs-lg); font-weight: 650; margin-bottom: 12px; }
+.warn-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 4px var(--warn-soft); }
+/* Freigabe als Karte im Gespräch, eingerückt wie eine Antwort */
 .confirm-modal { border-color: var(--warn-line); }
 .confirm-modal .modal-title { justify-content: flex-start; }
-.warn-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 4px var(--warn-soft); }
-.confirm-summary { font-size: var(--fs-lg); margin: 0 0 12px; color: var(--text); }
+.confirm-card { margin-left: 34px; padding: 16px 18px;
+  border: 1px solid var(--warn-line); border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--shadow);
+  display: flex; flex-direction: column; gap: 12px; animation: msg-in .3s cubic-bezier(.2,.8,.2,1); }
+.confirm-title { display: flex; align-items: center; gap: 10px; font-size: var(--fs-lg); font-weight: 600; color: var(--text); }
+.confirm-card .confirm-reason { margin: 0; }
+.confirm-card .confirm-form { margin: 0; }
+.confirm-card .modal-actions { flex-wrap: wrap; }
+.confirm-card .btn.approve { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.confirm-card .btn.approve:hover { background: var(--accent-hover); }
+.confirm-card .confirm-voice { margin-top: -4px; }
+@media (max-width: 860px) { .confirm-card { margin-left: 0; } }
 .confirm-cmd { font-family: var(--mono); font-size: var(--fs-md); background: var(--code-bg); border: 1px solid var(--border-strong); border-radius: var(--r-md); padding: 11px 13px; white-space: pre-wrap; word-break: break-all; max-height: 220px; overflow: auto; margin: 0; }
-.confirm-reason { color: var(--warn); font-size: var(--fs-md); margin: 12px 0 16px; white-space: pre-line; max-height: 40vh; overflow-y: auto; }
+.confirm-reason { color: var(--muted); font-size: var(--fs-md); margin: 12px 0 16px; white-space: pre-line; max-height: 40vh; overflow-y: auto; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; }
-.confirm-modal.editing { width: min(720px, 100%); }
 .confirm-form { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 12px; }
 .confirm-form label { display: grid; grid-template-columns: 70px minmax(0, 1fr); align-items: start; gap: 10px; font-size: var(--fs-sm); font-weight: 550; color: var(--muted); }
 .confirm-form label > span { padding-top: 8px; }
