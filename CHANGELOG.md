@@ -14,6 +14,11 @@ All notable changes to this project are documented here. The format follows
   only actions that change or start something do; the data-leak guard still checks what goes out.
 
 ### Added
+- **Find the fastest llama.cpp setting:** the model page measures with `llama-bench` which build (ROCm ↔ Vulkan,
+  CUDA ↔ Vulkan) and batch size (512/1024/2048) read prompts fastest – at the start of a chat and at 16k depth – and
+  shows a table with prompt and output speed. The fastest batch size is applied; a faster other build can be adopted
+  with one click (`POST /api/llamacpp/flavor`, kept as preferred build for updates). IQ quants get a note about
+  K quants. Lossless: only speed settings change.
 - **Unload the model by hand:** **Unload** on the model page and the model chip frees the video memory (stops the
   llama.cpp/Strata server, unloads Ollama) while the model stays selected; the next question or API request loads it
   again (prompt-cache warming does not), and an unloaded model stays unloaded across a restart. The selected model

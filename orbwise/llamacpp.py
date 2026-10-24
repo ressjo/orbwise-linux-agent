@@ -89,13 +89,24 @@ def _tilde(path: Path | str) -> str:
 
 
 # ---------------------------------------------------------------- Build holen
-def flavors_for(gpu: dict) -> list[str]:
+def flavors_for(gpu: dict, preferred: str | None = None) -> list[str]:
+    """Varianten in der Reihenfolge, in der sie probiert werden; `preferred` (per Messung gewählt) zuerst."""
     vendor = gpu.get("vendor")
     if vendor == "amd":
-        return ["rocm", "vulkan", "cpu"]
-    if vendor == "nvidia":
-        return ["cuda", "vulkan", "cpu"]
-    return ["cpu"]
+        order = ["rocm", "vulkan", "cpu"]
+    elif vendor == "nvidia":
+        order = ["cuda", "vulkan", "cpu"]
+    else:
+        return ["cpu"]
+    if preferred in order:
+        order.remove(preferred)
+        order.insert(0, preferred)
+    return order
+
+
+def other_flavor(gpu: dict, current: str | None) -> str | None:
+    """Die andere GPU-Variante zum Vergleich (ROCm ↔ Vulkan, CUDA ↔ Vulkan) – None, wenn es keine gibt."""
+    return next((f for f in flavors_for(gpu) if f not in (current, "cpu")), None)
 
 
 def cudart_for(assets: list[dict], asset: dict) -> dict | None:
@@ -119,10 +130,10 @@ def pick_release(releases, gpu: dict) -> tuple[dict | None, list[str]]:
     return None, seen
 
 
-def pick_assets(assets: list[dict], gpu: dict) -> list[tuple[str, dict]]:
+def pick_assets(assets: list[dict], gpu: dict, preferred: str | None = None) -> list[tuple[str, dict]]:
     """(Variante, Asset) in der Reihenfolge, in der sie probiert werden."""
     out = []
-    for flavor in flavors_for(gpu):
+    for flavor in flavors_for(gpu, preferred):
         asset = next((a for a in assets if FLAVORS[flavor].search(a.get("name", ""))), None)
         if asset:
             out.append((flavor, asset))
@@ -205,7 +216,6 @@ def install(cfg, gpu: dict, out: Out = print, update: bool = False, client: http
             run: Runner = subprocess.run, release_api: str | None = None) -> dict | None:
     """Neuesten fertigen Build laden (oder nichts tun, wenn schon einer da ist und update=False). Startet die
     GPU-Variante nicht (fehlende ROCm-/CUDA-Bibliotheken), wird die nächste probiert. → Manifest oder None."""
-    from .imagegen_setup import download
     if installed(cfg) and not update:
         return manifest(cfg)
     base = root(cfg)
@@ -228,35 +238,20 @@ def install(cfg, gpu: dict, out: Out = print, update: bool = False, client: http
             out(T(f"llama.cpp {tag} ist aktuell.", f"llama.cpp {tag} is up to date."))
             return old
         assets = rel.get("assets") or []
-        choices = pick_assets(assets, gpu)
+        preferred = old.get("preferred_flavor")
+        choices = pick_assets(assets, gpu, preferred)
         for flavor, asset in choices:
             target = base / f"{tag}-{flavor}"
-            archive = base / asset["name"]
-            out(T(f"Lade llama.cpp {tag} ({flavor}) …", f"Downloading llama.cpp {tag} ({flavor}) …"))
-            download(asset["browser_download_url"], archive, client, out)
-            if target.exists():
-                shutil.rmtree(target)
-            _extract(archive, target)
-            archive.unlink(missing_ok=True)
-            runtime = cudart_for(assets, asset) if flavor == "cuda" else None
-            if runtime:  # CUDA-Laufzeit in denselben Ordner
-                extra = base / runtime["name"]
-                download(runtime["browser_download_url"], extra, client, out)
-                _extract(extra, target)
-                extra.unlink(missing_ok=True)
-            why = check_build(target, flavor, run)
+            why = _fetch_build(base, assets, flavor, asset, tag, client, out, run)
             if why:
                 out(T(f"  {flavor}-Build läuft hier nicht ({why}) – versuche den nächsten …",
                       f"  {flavor} build does not run here ({why}) – trying the next one …"))
-                shutil.rmtree(target, ignore_errors=True)
                 continue
-            link = base / "current.tmp"
-            if link.is_symlink() or link.exists():
-                link.unlink()
-            os.symlink(target.name, link)
-            os.replace(link, base / "current")  # atomar: ein laufender Server nutzt weiter den alten Build
+            _link_current(base, target)
             data = {"tag": tag, "flavor": flavor, "asset": asset["name"], "dir": target.name,
                     "previous": old.get("dir") if old.get("dir") != target.name else old.get("previous")}
+            if preferred:
+                data["preferred_flavor"] = preferred
             (base / "manifest.json").write_text(json.dumps(data, indent=1), encoding="utf-8")
             keep = {data["dir"], data.get("previous")}
             for d in base.iterdir():  # alte Builds weg (der vorige bleibt als Rückfall)
@@ -268,6 +263,95 @@ def install(cfg, gpu: dict, out: Out = print, update: bool = False, client: http
     finally:
         if own:
             client.close()
+
+
+def _fetch_build(base: Path, assets: list[dict], flavor: str, asset: dict, tag: str, client: httpx.Client, out: Out,
+                 run: Runner) -> str:
+    """Build laden und nach base/<tag>-<flavor> entpacken → '' wenn er hier läuft, sonst der Grund (Ordner weg)."""
+    from .imagegen_setup import download
+    target = base / f"{tag}-{flavor}"
+    archive = base / asset["name"]
+    out(T(f"Lade llama.cpp {tag} ({flavor}) …", f"Downloading llama.cpp {tag} ({flavor}) …"))
+    download(asset["browser_download_url"], archive, client, out)
+    if target.exists():
+        shutil.rmtree(target)
+    _extract(archive, target)
+    archive.unlink(missing_ok=True)
+    runtime = cudart_for(assets, asset) if flavor == "cuda" else None
+    if runtime:  # CUDA-Laufzeit in denselben Ordner
+        extra = base / runtime["name"]
+        download(runtime["browser_download_url"], extra, client, out)
+        _extract(extra, target)
+        extra.unlink(missing_ok=True)
+    why = check_build(target, flavor, run)
+    if why:
+        shutil.rmtree(target, ignore_errors=True)
+    return why
+
+
+def _link_current(base: Path, target: Path) -> None:
+    link = base / "current.tmp"
+    if link.is_symlink() or link.exists():
+        link.unlink()
+    os.symlink(target.name, link)
+    os.replace(link, base / "current")  # atomar: ein laufender Server nutzt weiter den alten Build
+
+
+def flavor_dir(cfg, flavor: str) -> Path:
+    """Ordner des Builds dieser Variante zur installierten Version (für den Vergleich beim Messen)."""
+    return root(cfg) / f"{manifest(cfg).get('tag')}-{flavor}"
+
+
+def fetch_flavor(cfg, gpu: dict, flavor: str, out: Out = print, client: httpx.Client | None = None,
+                 run: Runner = subprocess.run, release_api: str | None = None) -> Path:
+    """Dieselbe llama.cpp-Version in einer anderen Variante daneben legen (z. B. Vulkan neben ROCm) – zum Messen;
+    `current` bleibt, bis use_flavor umstellt. → Ordner des Builds; ValueError, wenn es ihn nicht gibt/nicht läuft."""
+    m = manifest(cfg)
+    tag = m.get("tag")
+    if not tag:
+        raise ValueError(T("llama.cpp ist noch nicht eingerichtet.", "llama.cpp is not set up yet."))
+    target = flavor_dir(cfg, flavor)
+    if flavor == m.get("flavor") or ((target / "llama-server").exists() and not check_build(target, flavor, run)):
+        return target
+    own = client is None
+    client = client or _client()
+    try:
+        r = client.get(release_api or RELEASE_API)
+        r.raise_for_status()
+        releases = r.json()
+        rel = next((x for x in (releases if isinstance(releases, list) else [releases])
+                    if str(x.get("tag_name")) == tag), None)
+        assets = (rel or {}).get("assets") or []
+        asset = next((a for a in assets if FLAVORS[flavor].search(a.get("name", ""))), None)
+        if asset is None:
+            raise ValueError(T(f"Für llama.cpp {tag} gibt es keinen {flavor}-Build.",
+                               f"There is no {flavor} build for llama.cpp {tag}."))
+        why = _fetch_build(root(cfg), assets, flavor, asset, tag, client, out, run)
+        if why:
+            raise ValueError(T(f"Der {flavor}-Build läuft hier nicht: {why}", f"The {flavor} build does not run here: {why}"))
+        (target / "asset.txt").write_text(asset["name"], encoding="utf-8")
+        return target
+    finally:
+        if own:
+            client.close()
+
+
+def use_flavor(cfg, flavor: str) -> dict:
+    """Auf die (mit fetch_flavor geholte) Variante umstellen – gilt für alle llama.cpp-Modelle ab dem nächsten Start
+    und bleibt bei Updates die erste Wahl. Der bisherige Build bleibt als Rückfall liegen."""
+    base = root(cfg)
+    old = manifest(cfg)
+    target = flavor_dir(cfg, flavor)
+    if not (target / "llama-server").exists():
+        raise ValueError(T(f"Der {flavor}-Build ist nicht geladen – erst messen.",
+                           f"The {flavor} build is not downloaded – measure first."))
+    _link_current(base, target)
+    asset = (target / "asset.txt").read_text(encoding="utf-8").strip() if (target / "asset.txt").exists() else ""
+    data = {**old, "flavor": flavor, "asset": asset or old.get("asset", ""), "dir": target.name,
+            "previous": old.get("dir") if old.get("dir") != target.name else old.get("previous"),
+            "preferred_flavor": flavor}
+    (base / "manifest.json").write_text(json.dumps(data, indent=1), encoding="utf-8")
+    return data
 
 
 # ---------------------------------------------------------------- Modelldateien laden

@@ -475,6 +475,21 @@ desktop often gets by with 1–2 GB: measure what it uses without a model loaded
 (`cat /sys/class/drm/card*/device/mem_info_vram_used`, in bytes) and keep the reserve above that. If the PC still runs short of RAM: close the browser or other big
 programs while loading, and consider `earlyoom` or `systemd-oomd` so Linux ends a program instead of freezing.
 
+### Faster prompt reading (llama.cpp)
+
+**Find the fastest setting** on the model page (section *Prompt processing*) measures with `llama-bench` – part of
+every llama.cpp build – which build and batch size read prompts fastest on your card: the installed build (e.g. ROCm)
+against the other one (Vulkan; on NVIDIA CUDA ↔ Vulkan, downloaded once for the comparison), each with `-ub`
+512 / 1024 / 2048, a 2k prompt at the start of a chat and at 16k depth, plus the output speed. None of this changes
+the answers. It takes about 3–6 minutes; the model is unloaded meanwhile and loaded again afterwards. The fastest batch
+size is applied; if the other build is ≥ 10 % faster, the page offers to switch (all llama.cpp models, kept for
+updates). For IQ quants it notes that a K quant (Q4_K_M, UD-Q4_K_XL) has at least the same quality and usually reads
+faster, at ~1–2 GB more VRAM.
+
+Expect roughly +10–40 %, not MoE speed: a dense model (e.g. 27B) computes all its parameters for every prompt token,
+an MoE like Strata's Qwen3.8-Flash-Next only ~6B – prompt reading is compute-bound, so that gap stays. The bigger
+lever remains not reading at all (prompt cache, see below).
+
 ### Why was so much read again?
 
 With a warm prompt cache only what is new gets read; a long wait means the server had to read most of the chat

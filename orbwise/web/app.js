@@ -2916,6 +2916,69 @@
       + "noticeable with long inputs (tool results, files, PDFs, the first message of a chat), hardly with short questions. "
       + "Costs a larger compute buffer in VRAM; the context window may then offer less. "
       + "Compare: “Test context” below shows tokens/s for a full window. " + (isLive(p) ? "Changing it restarts the model server." : "Applies the next time it is loaded."));
+    if (p.tunable) renderTuning(sec, p);
+  }
+
+  // „Schnellste Einstellung messen“: llama-bench über Build (ROCm/Vulkan bzw. CUDA/Vulkan) × Batch-Größe
+  const FLAVOR_LABEL = { rocm: "ROCm", vulkan: "Vulkan", cuda: "CUDA", cpu: "CPU" };
+  function renderTuning(sec, p) {
+    const box = document.createElement("div");
+    box.className = "tune-box";
+    box.innerHTML = `<div class="md-btns"><button type="button" class="btn small tune-btn"></button></div><div class="tune-res"></div>`;
+    sec.querySelector(".set-hint").before(box);
+    const btn = box.querySelector(".tune-btn");
+    const running = (MP.data.pulls || []).some((x) => x.tag === "Tuning");
+    btn.textContent = running ? L("Misst gerade …", "Measuring …") : p.tuning ? L("Erneut messen", "Measure again") : L("Schnellste Einstellung messen", "Find the fastest setting");
+    btn.disabled = running || !!MP.data.switching;
+    btn.onclick = async () => {
+      if (!confirm(L("Misst mit llama-bench, welcher Build (ROCm/Vulkan bzw. CUDA/Vulkan) und welche Batch-Größe hier am schnellsten einlesen – ohne Einfluss auf die Antworten. "
+                     + "Dauert etwa 3–6 Minuten; das Modell wird dafür entladen und danach wieder geladen, Chats warten so lange. Beim ersten Mal wird der zweite Build geladen (einige hundert MB). Starten?",
+                     "Uses llama-bench to measure which build (ROCm/Vulkan or CUDA/Vulkan) and which batch size read prompts fastest here – without changing the answers. "
+                     + "Takes about 3–6 minutes; the model is unloaded for it and loaded again afterwards, chats wait meanwhile. The first time the second build is downloaded (a few hundred MB). Start?"))) return;
+      btn.disabled = true;
+      try { await api("POST", `/api/models/${encodeURIComponent(p.name)}/tune`); btn.textContent = L("Misst gerade …", "Measuring …"); }
+      catch { btn.disabled = false; }
+      refreshModelViews();
+    };
+    const t = p.tuning;
+    const res = box.querySelector(".tune-res");
+    if (!t) return;
+    const kt = (v) => (v ? num(Math.round(v)) : "–");
+    const ok = (t.runs || []).filter((r) => r.pp);
+    const isBest = (r) => t.best && r.flavor === t.best.flavor && r.ubatch === t.best.ubatch;
+    const isNow = (r) => r.flavor === t.flavor && r.ubatch === t.ubatch;
+    const rows = (t.runs || []).map((r) => `<tr class="${isBest(r) ? "best" : ""}"><td>${FLAVOR_LABEL[r.flavor] || r.flavor}</td><td>${r.ubatch}</td>`
+      + (r.pp ? `<td>${kt(r.pp_short)}</td><td>${kt(r.pp_deep)}</td><td>${kt(r.tg)}</td>` : `<td colspan="3" class="err"></td>`)
+      + `<td>${isNow(r) ? L("aktiv", "active") : ""}</td></tr>`).join("");
+    res.innerHTML = `<table class="tune-table"><thead><tr><th>${L("Build", "Build")}</th><th>Batch</th><th>${L("Einlesen", "Prompt")}</th>`
+      + `<th>${L(`bei ${ctxLabel(t.depth || 16384)}`, `at ${ctxLabel(t.depth || 16384)}`)}</th><th>${L("Ausgabe", "Output")}</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+      + `<p class="set-hint tune-note"></p>`;
+    res.querySelectorAll("td.err").forEach((td, i) => { td.textContent = (t.runs.filter((r) => !r.pp)[i] || {}).error || ""; });
+    const notes = [];
+    if (!ok.length) notes.push(L("Keine Messwerte – Details oben.", "No results – details above."));
+    else notes.push(L(`Token/s gemessen am ${new Date(t.at * 1000).toLocaleDateString()}. Batch ${t.ubatch} ist eingestellt`, `Tokens/s measured on ${new Date(t.at * 1000).toLocaleDateString()}. Batch ${t.ubatch} is set`)
+                    + (t.applied_ubatch ? L(" (nach der Messung übernommen).", " (applied after measuring).") : "."));
+    (t.notes || []).forEach((n) => notes.push(n));
+    if (t.quant_hint) notes.push(t.quant_hint);
+    res.querySelector(".tune-note").textContent = notes.join(" ");
+    if (t.other && t.other.gain_pct >= 10) {
+      const name = FLAVOR_LABEL[t.other.flavor] || t.other.flavor;
+      const sw = document.createElement("button");
+      sw.type = "button";
+      sw.className = "btn small primary";
+      sw.textContent = L(`${name} übernehmen (+${t.other.gain_pct} % beim Einlesen)`, `Use ${name} (+${t.other.gain_pct} % prompt speed)`);
+      sw.onclick = async () => {
+        if (!confirm(L(`Auf den ${name}-Build umstellen? Gilt für alle llama.cpp-Modelle; ein geladenes Modell startet neu. Zurück geht es mit „Erneut messen“.`,
+                       `Switch to the ${name} build? Applies to all llama.cpp models; a loaded model restarts. Measure again to switch back.`))) return;
+        sw.disabled = true;
+        try {
+          await api("POST", "/api/llamacpp/flavor", { flavor: t.other.flavor });
+          toast(L(`llama.cpp nutzt jetzt den ${name}-Build.`, `llama.cpp now uses the ${name} build.`));
+        } catch { sw.disabled = false; }
+        refreshModelViews();
+      };
+      box.querySelector(".md-btns").appendChild(sw);
+    }
   }
 
   // Spekulatives Decoding: das Modell schlägt mehrere Token vor, der Server prüft sie auf einmal – schneller antworten
@@ -3376,7 +3439,8 @@
 
   function updatePullRow(row, d) {
     const pct = pullPct(d);
-    row.querySelector(".mp-text").textContent = `⬇ ${d.tag}` + (pct !== null ? ` · ${pct} %` : d.status ? ` · ${d.status}` : " …");
+    row.querySelector(".mp-text").textContent = (d.tag === "Tuning" ? `⏱ ${L("Messen", "Measuring")}` : `⬇ ${d.tag}`)
+      + (pct !== null ? ` · ${pct} %` : d.status ? ` · ${d.status}` : " …");
     row.querySelector(".mp-bar i").style.width = (pct || 0) + "%";
   }
 
@@ -3395,6 +3459,15 @@
     if (ev.done && ev.kind === "llamacpp") {
       toast(L(`✔ llama.cpp ${ev.version || ""} bereit – gilt ab dem nächsten Modellstart.`,
               `✔ llama.cpp ${ev.version || ""} ready – used from the next model start.`));
+      refreshModelViews();
+      return;
+    }
+    if (ev.done && ev.kind === "tuning") {
+      const other = FLAVOR_LABEL[ev.other_flavor] || ev.other_flavor;
+      toast((ev.applied_ubatch ? L(`✔ Gemessen – Batch-Größe jetzt ${ev.applied_ubatch}.`, `✔ Measured – batch size now ${ev.applied_ubatch}.`)
+                               : L("✔ Gemessen – die bisherige Batch-Größe war schon die schnellste.", "✔ Measured – the current batch size was already the fastest."))
+            + (ev.gain_pct >= 10 ? L(` ${other} liest ${ev.gain_pct} % schneller ein – Umstellen auf der Modellseite.`,
+                                     ` ${other} reads prompts ${ev.gain_pct} % faster – switch on the model page.`) : ""));
       refreshModelViews();
       return;
     }

@@ -871,6 +871,7 @@ def create_app(cfg: Config) -> FastAPI:
                                   "base_url": "", "managed": False, "active": True}]}
         from . import bonsai as bonsai_mod
         from . import llamacpp as llamacpp_mod
+        from . import llamacpp_tune
         from . import models as mdl
         profiles = llm.describe()
         sizes: dict[str, int] = {}
@@ -929,6 +930,10 @@ def create_app(cfg: Config) -> FastAPI:
                 p["vram_gb"] = mdl.need_gb(round(size / 1e9, 1))
                 p["fit"] = mdl.fit_need(p["vram_gb"], gpu["vram_gb"]) if gpu["vram_gb"] else None
             p["prefill_tps"] = agent.prefill_speed(p["name"])
+            server = llm.profiles[p["name"]].server
+            if server and llamacpp_tune.uses_own_build(cfg, server.command):  # „Schnellste Einstellung messen“
+                p["tunable"] = True
+                p["tuning"] = llamacpp_tune.saved(state_file, p["name"])
             if p["backend"] == "ollama" and mdl.is_hf(p["model"]):  # alter Weg → auf llama.cpp umstellen anbieten
                 p["convert"] = p["model"]
         return {"active": llm.active, "switching": llm.switching, "unloaded": llm.unloaded, "profiles": profiles, "gpu": gpu,
@@ -1805,6 +1810,75 @@ def create_app(cfg: Config) -> FastAPI:
             hub.prewarm_soon()
         await hub.broadcast({"type": "models_changed"})
         return {"ok": True, "mib": mib}
+
+    @app.post("/api/models/{name}/tune")
+    async def tune_model(name: str):
+        """Schnellste verlustfreie llama.cpp-Einstellung messen (Build, Batch-Größe) – siehe llamacpp_tune.py."""
+        from . import llamacpp_tune
+        from . import models as mdl
+        if not isinstance(llm, LLMRouter):
+            raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
+        if name not in llm.profiles:
+            raise HTTPException(404, "Unbekanntes Profil")
+        server = llm.profiles[name].server
+        if not server or not llamacpp_tune.uses_own_build(cfg, server.command):
+            raise HTTPException(400, T("Messen geht nur bei Modellen mit Orbwises llama.cpp.",
+                                       "Measuring only works for models running on Orbwise's llama.cpp."))
+        if llm.switching:
+            raise HTTPException(409, T("Gerade wird ein Modell geladen – bitte kurz warten.",
+                                       "A model is loading right now – please wait a moment."))
+
+        async def job() -> dict:
+            async def step(text: str) -> None:
+                pull_state["Tuning"] = {"status": text}
+                await hub.broadcast({"type": "model_pull", "tag": "Tuning", "status": text})
+            gpu = await asyncio.to_thread(mdl.detect_gpu)
+            async with agent.lock:  # keine Antwort gleichzeitig – das Modell ist währenddessen entladen
+                result = await llamacpp_tune.tune(cfg, llm, name, gpu, step)
+            agent.forget_prefill(name)  # die Batch-Größe kann sich geändert haben – neu messen
+            agent._cache_owner = None
+            await hub.broadcast({"type": "models_changed"})
+            other = result.get("other") or {}
+            return {"kind": "tuning", "profile": name, "applied_ubatch": result.get("applied_ubatch"),
+                    "gain_pct": other.get("gain_pct"), "other_flavor": other.get("flavor")}
+        return {"ok": True, "tag": start_job("Tuning", job)}
+
+    @app.get("/api/models/{name}/tune")
+    async def tune_result(name: str):
+        from . import llamacpp_tune
+        return {"result": llamacpp_tune.saved(state_file, name)}
+
+    @app.post("/api/llamacpp/flavor")
+    async def llamacpp_flavor(request: Request):
+        """Gemessenen anderen Build (z. B. Vulkan statt ROCm) für alle llama.cpp-Modelle übernehmen."""
+        from . import llamacpp
+        flavor = str((await request.json()).get("flavor") or "")
+        if flavor not in llamacpp.FLAVORS:
+            raise HTTPException(400, T("Unbekannte Variante", "Unknown variant"))
+        try:
+            m = await asyncio.to_thread(llamacpp.use_flavor, cfg, flavor)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        restart = isinstance(llm, LLMRouter) and not llm.unloaded and own_llamacpp(llm.active)
+        if restart:  # das geladene Modell gleich mit dem neuen Build neu starten (im Hintergrund)
+            async def reload() -> None:
+                async with agent.lock:
+                    await llm.unload()
+                    try:
+                        await llm.ensure_loaded()
+                    except LLMError as e:
+                        await hub.broadcast({"type": "model_error", "name": llm.active, "text": str(e)})
+                agent._cache_owner = None
+                await idle_if_free()
+                hub.prewarm_soon()
+            background.append(asyncio.create_task(reload()))
+        await hub.broadcast({"type": "models_changed"})
+        return {"ok": True, "flavor": m.get("flavor"), "tag": m.get("tag"), "restart": restart}
+
+    def own_llamacpp(name: str) -> bool:
+        from . import llamacpp_tune
+        server = llm.profiles[name].server
+        return bool(server) and llamacpp_tune.uses_own_build(cfg, server.command)
 
     @app.post("/api/models/{name}/spec")
     async def set_model_spec(name: str, request: Request):
