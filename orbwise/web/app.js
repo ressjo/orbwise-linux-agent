@@ -1824,6 +1824,16 @@
   document.addEventListener("click", (e) => { if (!e.target.closest("#think-wrap")) setThinkMenu(false); });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !thinkMenu.classList.contains("hidden")) setThinkMenu(false); });
 
+  // Darstellung: hell, dunkel oder wie das System (das Skript im <head> setzt <html data-theme>)
+  function renderTheme() {
+    const pick = store.get("theme", "system");
+    document.querySelectorAll("[data-theme-pick]").forEach((b) => b.classList.toggle("on", b.dataset.themePick === pick));
+  }
+  document.querySelectorAll("[data-theme-pick]").forEach((b) => {
+    b.onclick = () => { store.set("theme", b.dataset.themePick); window.orbwiseApplyTheme(b.dataset.themePick); renderTheme(); };
+  });
+  renderTheme();
+
   // Auto-Modus: aufklappbarer Knopf neben „Denken“ (und Auswahl in den Einstellungen)
   const autoMenu = $("auto-menu");
   function setAutoMenu(open) {

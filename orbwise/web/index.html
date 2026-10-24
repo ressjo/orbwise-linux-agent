@@ -3,9 +3,23 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="light dark">
   <title>Orbwise</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><circle cx='32' cy='32' r='26' fill='none' stroke='%234cc2ff' stroke-width='5'/><circle cx='32' cy='32' r='10' fill='%234cc2ff'/></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><circle cx='32' cy='32' r='26' fill='none' stroke='%232b6f73' stroke-width='5'/><circle cx='32' cy='32' r='10' fill='%232b6f73'/></svg>">
+  <script>
+    // Hell/Dunkel vor dem ersten Zeichnen setzen (kein Aufblitzen); „system“ folgt dem Betriebssystem
+    (function () {
+      var pick; try { pick = JSON.parse(localStorage.getItem("orbwise.theme")); } catch (e) { pick = null; }
+      var dark = window.matchMedia("(prefers-color-scheme: dark)");
+      function apply() {
+        var p = window.orbwiseTheme || pick || "system";
+        document.documentElement.dataset.theme = p === "system" ? (dark.matches ? "dark" : "light") : p;
+      }
+      apply();
+      dark.addEventListener("change", apply);
+      window.orbwiseApplyTheme = function (p) { window.orbwiseTheme = p; apply(); };
+    })();
+  </script>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -261,10 +275,10 @@
   <!-- ---------- Sheets: Planer, Gedächtnis, Einstellungen ---------- -->
   <div class="scrim hidden" id="scrim"></div>
 
-  <section class="sheet hidden" id="sheet-planner" aria-label="Planer">
+  <section class="sheet sheet-xl hidden" id="sheet-planner" aria-label="Planer">
     <div class="sheet-head"><h2>Planer</h2>
       <button class="icon-btn" data-close-sheet title="Schließen" aria-label="Schließen"><svg class="i"><use href="#i-x"/></svg></button></div>
-    <div class="sheet-body" id="tab-planner">
+    <div class="sheet-body sheet-grid" id="tab-planner">
       <div class="card">
         <div class="card-head"><h3>Routinen</h3>
           <button class="btn small" id="rt-new" title="Neue Routine anlegen">+ Routine</button></div>
@@ -288,7 +302,7 @@
         <div class="card-head"><h3>Erinnerungen</h3></div>
         <ul class="reminders" id="reminders"></ul>
       </div>
-      <details class="card brief-box" id="brief-box">
+      <details class="card wide brief-box" id="brief-box">
         <summary class="card-head"><h3>Briefing-Inhalt</h3><svg class="i caret"><use href="#i-chevron"/></svg></summary>
         <div class="field-label">Punkte &amp; Reihenfolge</div>
         <ul class="brief-list" id="brief-list"></ul>
@@ -314,10 +328,10 @@
     </div>
   </section>
 
-  <section class="sheet hidden" id="sheet-memory" aria-label="Gedächtnis">
+  <section class="sheet sheet-xl hidden" id="sheet-memory" aria-label="Gedächtnis">
     <div class="sheet-head"><h2>Gedächtnis</h2>
       <button class="icon-btn" data-close-sheet title="Schließen" aria-label="Schließen"><svg class="i"><use href="#i-x"/></svg></button></div>
-    <div class="sheet-body" id="tab-memory">
+    <div class="sheet-body sheet-grid" id="tab-memory">
       <div class="card">
         <div class="card-head"><h3>Fakten</h3></div>
         <ul class="facts" id="facts"></ul>
@@ -328,7 +342,7 @@
         <ul class="lessons" id="lessons"></ul>
         <form class="lesson-add" id="lesson-add"><input id="lesson-new" type="text" maxlength="220" placeholder="Eigene Regel hinzufügen, z. B. „Docker auf dem NAS immer mit sudo“"><button class="btn small" type="submit">Hinzufügen</button></form>
       </div>
-      <div class="card">
+      <div class="card wide">
         <div class="card-head"><h3>Tagebuch</h3></div>
         <ul class="days" id="days"></ul>
       </div>
@@ -372,6 +386,8 @@
           </div>
         </div>
         <div class="set-section" id="set-general">
+          <div class="set-row"><div><b>Darstellung</b><small>Hell, dunkel oder wie das System.</small></div>
+            <div class="seg" id="set-theme"><button type="button" data-theme-pick="light">Hell</button><button type="button" data-theme-pick="dark">Dunkel</button><button type="button" data-theme-pick="system">System</button></div></div>
           <div class="set-row"><div><b>Sprachausgabe</b><small>Antworten werden vorgelesen.</small></div>
             <button class="switch" data-mirror="btn-tts">Aus</button></div>
           <div class="set-row"><div><b>Wake-Word</b><small>„Hey Jarvis“ startet die Spracheingabe.</small></div>

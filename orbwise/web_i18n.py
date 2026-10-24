@@ -4,6 +4,12 @@ Die dynamischen Texte übersetzt app.js selbst (L("deutsch", "english"))."""
 from __future__ import annotations
 
 HTML_EN = [
+    ('<b>Darstellung</b><small>Hell, dunkel oder wie das System.</small>',
+     '<b>Appearance</b><small>Light, dark or like the system.</small>'),
+    ('data-theme-pick="light">Hell</button><button type="button" data-theme-pick="dark">Dunkel</button><button '
+     'type="button" data-theme-pick="system">System<',
+     'data-theme-pick="light">Light</button><button type="button" data-theme-pick="dark">Dark</button><button '
+     'type="button" data-theme-pick="system">System<'),
     ('<html lang="de">', '<html lang="en">'),
     # Seitenleiste
     ('<span class="brand-sub">Orbwise · lokal</span>', '<span class="brand-sub">Orbwise · local</span>'),

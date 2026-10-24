@@ -1,6 +1,6 @@
 # Orbwise – a local AI voice assistant for Linux
 
-A voice assistant that runs **entirely on your own Linux PC**: an animated HUD web interface, voice input
+A voice assistant that runs **entirely on your own Linux PC**: a calm web interface (light or dark), voice input
 via wake word ("Hey Jarvis") or push-to-talk, spoken answers, a local LLM (Ollama or llama.cpp), **persistent
 memory in plain Markdown files** and real control over your system – updates, packages, files, NAS, apps,
 services, network, smart home, documents, notes and calendar.
@@ -11,7 +11,7 @@ German and English are supported (`language: de|en`). Out of the box the assista
 
 ![Orbwise: start screen with the orb, greeting and suggestions](docs/screenshot.png)
 
-![A conversation: compact orb sending a web search to its cloud symbol, activity panel with live telemetry](docs/screenshot-chat.png)
+![A conversation: answer in a serif reading font, a running web search on the small orb, activity panel with live telemetry](docs/screenshot-chat.png)
 
 ![Confirmation dialog before a system update](docs/screenshot-confirm.png)
 <sub>Screenshots in demo mode (`ORBWISE_FAKE_LLM=1`, no real model attached) – regenerate them with
@@ -19,7 +19,7 @@ German and English are supported (`language: de|en`). Out of the box the assista
 
 ```
 Browser (localhost:8765)                          Python backend (FastAPI, 127.0.0.1 only)
- ├─ neural-network orb (canvas)         ◄──WS──►  Agent ── tool loop ──► tools (confirm dangerous ones)
+ ├─ orb (canvas: rings, state, context) ◄──WS──►  Agent ── tool loop ──► tools (confirm dangerous ones)
  ├─ chat · activity · history · memory             │
  ├─ microphone → 16 kHz PCM             ──WS──►   wake word (openWakeWord) → VAD → Whisper
  └─ playback + level → orb              ◄──────   Pocket TTS (sentence by sentence)
@@ -67,7 +67,7 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **Calendar** | iCloud or any CalDAV server: list events, find free time, create/change/delete events |
 | **Learning from experience** | Short lessons from errors, your corrections and 👎 ("docker on the NAS needs sudo") – thought about while idle, only matching ones go along with a question under a small fixed limit, so the context window does not grow; viewable, editable and deletable under Memory → Experience |
 | **Memory** | Remembers everything permanently (see below), `remember` / `recall` / `forget`, **chat history** with search, favourites, rename and delete; the search index repairs itself if it gets damaged |
-| **Dashboard** | Animated neural-network orb: thinking pulse, **tool symbols** next to the orb (CLI, cloud for the web, mail, Paperless) with a beam of dots flowing to them, golden neurons when memory is used, a **context ring** showing how full the model's context is; calm, modern layout: collapsible sidebar with chats, a big orb with greeting and suggestions on an empty chat that shrinks to a live strip once you talk, a live line in each answer showing what the model is doing (reading the prompt, thinking, writing a call) and a small time/token summary afterwards, an activity panel with live telemetry (tokens/s, context, GPU, VRAM, RAM, power), Planner and Memory sheets, a settings page; works on the phone too |
+| **Dashboard** | Calm, warm design in **light, dark or system** (Settings → General → Appearance), petrol accent, a serif reading font (Newsreader) for headings and answers and Inter for the controls – both bundled, nothing is loaded from the internet. The **orb** is three fine rings around a dot: it breathes when idle, follows your voice when listening or speaking, circles while thinking, shows running tools as small dots and the **context** as a thin outer arc. Collapsible sidebar with chats, the orb with greeting and suggestions on an empty chat that docks small at the side once you talk, a live line in each answer showing what the model is doing (reading the prompt, thinking, writing a call) and a small time/token summary afterwards, an activity panel with live telemetry (tokens/s, context, GPU, VRAM, RAM, power), Planner and Memory as large windows like the model page, a settings page; works on the phone too |
 | **Models & voices** | **Models page** (sidebar, like LM Studio): all models with engine, quantization, size and VRAM fit; load with one click (quick switch on the model chip at the top); per model context window (Tools/Coding), KV cache, sampling, context test and llama-server log; add models from Hugging Face, `~/models` or presets with download progress and cancel; delete models · **Settings → Voice:** natural **Pocket TTS** voices on the CPU, each with the language it speaks (which is also the language of the answers), "Jarvis" voice effect · **Think** button for reasoning models |
 | **Safety** | Confirmation for everything that changes the system, blocklist for destructive commands, root only via a one-time password prompt, keys and passwords are never read or sent, local-only server – see [Security](#security) |
 
@@ -874,7 +874,7 @@ updates are checked with `checkupdates` (Arch) or `apt list --upgradable` (Debia
 
 ## Telemetry
 
-The HUD bar above the orb shows (every 2 s, with a sparkline): **TOK/S** (generation speed), **CONTEXT** (prompt
+The activity panel shows (every 2 s, with a sparkline): **TOK/S** (generation speed), **CONTEXT** (prompt
 size vs. the model's context window, with a breakdown and the compaction point in the tooltip – click it to compact),
 **GPU** load and temperature, **VRAM**, **RAM**/CPU and **POWER** draw. NVIDIA is read via `nvidia-smi`, AMD directly
 from the `amdgpu` driver.
@@ -1051,6 +1051,7 @@ from their original sources, and their licenses apply:
 
 | Component | Used for | License |
 |---|---|---|
+| [Newsreader](https://github.com/productiontype/Newsreader), [Inter](https://github.com/rsms/inter) (bundled in `orbwise/web/fonts/`) | interface fonts | SIL Open Font License 1.1 |
 | [Pocket TTS](https://github.com/kyutai-labs/pocket-tts) + its model and voices (downloaded by the installer or on request) | speech output | program MIT · model see [its model card](https://huggingface.co/kyutai/pocket-tts) · voices per voice, see [kyutai/tts-voices](https://huggingface.co/kyutai/tts-voices) |
 | [openWakeWord](https://github.com/dscripka/openWakeWord) | wake word | code Apache-2.0 · pre-trained "hey_jarvis" model **CC BY-NC-SA 4.0 (non-commercial)** |
 | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) + Whisper models | speech recognition | MIT |

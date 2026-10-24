@@ -21,6 +21,12 @@ All notable changes to this project are documented here. The format follows
   Ollama models; new Hugging Face downloads always run on llama.cpp.
 
 ### Changed
+- **Redesign:** a warm, calm look in **light, dark or system** (Settings → General → Appearance) with a petrol
+  accent; headings and answers in a serif reading font (Newsreader), controls in Inter – both bundled under the SIL
+  Open Font License. The composer has the text on top and the switches below; the user's message sits in a soft bubble,
+  the answer reads as plain text. The orb is now three fine rings around a dot (same states, running tools as dots, the
+  context as an outer arc) instead of the glowing neural network. **Planner and Memory open as large windows** like the
+  model page, with their cards side by side.
 - **Think menu follows the model:** levels (Brief/Normal/Thorough) only for models with real levels (gpt-oss), plain
   on/off for the others, greyed out for models that cannot think – read from the chat template or Ollama's
   capabilities. "On" no longer invents a level or a token budget.
