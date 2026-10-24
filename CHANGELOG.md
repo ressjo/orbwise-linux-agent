@@ -21,7 +21,9 @@ All notable changes to this project are documented here. The format follows
 - **Tidier model page:** a *Performance* section (prompt speed, find the fastest setting) follows the context window;
   KV cache, manual batch size and speculative decoding moved under a collapsed *Advanced* section (only for
   llama.cpp models where they apply), and the explanations show one sentence with **More** for the rest.
-- **Code structure:** the model endpoints moved from `server.py` into `api_models.py`, with one helper for "restart the
+- **Code structure:** `agent.py` is split into focused parts – `agent_compact.py` (making room, summarising),
+  `agent_tools.py` (which tools go along), `agent_safety.py` (approvals, foreign content, leak guard) and
+  `agent_speed.py` (prompt speed, prewarming); the model endpoints moved from `server.py` into `api_models.py`, with one helper for "restart the
   loaded model with a new option" instead of four copies; unused constants removed.
 - **state.json is written safely:** all model profiles and settings go through one module that writes atomically
   (temporary file + rename) under a lock – a crash while saving can no longer leave a half-written file, and two
