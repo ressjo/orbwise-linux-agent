@@ -12,7 +12,8 @@ import os
 import uuid
 from pathlib import Path
 
-from . import prompts, snapshot
+from . import prompts, snapshot, workspace
+from . import sandbox as sbx
 from .llm import LLMError, strip_think
 from .memory import est_tokens
 from .tools import jobs
@@ -33,7 +34,95 @@ class CodingMixin:
         git = bool(project) and any((Path(project) / ".git").exists() or (p / ".git").exists()
                                     for p in Path(project).resolve().parents)
         shell = os.path.basename(os.environ.get("SHELL") or "/bin/bash")
-        return prompts.coding_env(self.cfg, git, shell)
+        text = prompts.coding_env(self.cfg, git, shell)
+        sb = self.sandbox_state()
+        if sb:
+            text += " " + prompts.sandbox_note(self.cfg, engine=sb.get("engine") or "podman", image=sb.get("image", ""),
+                                               network=sb.get("network", True), project=sb.get("project", ""),
+                                               branch=sb.get("branch") or "-")
+        elif project and self.tool_allowed("github_push") and self.tools["github_push"].is_enabled(self.cfg):
+            text += " " + prompts.github_note(self.cfg)
+        return text
+
+    # ---------- Sandbox (Container + Arbeitskopie, siehe sandbox.py / workspace.py) ----------
+    def real_project(self) -> str | None:
+        """Der vom Nutzer gewählte Projektordner (nicht die Arbeitskopie)."""
+        if self.mode != "coding":
+            return None
+        raw = self.memory.conversation.meta.get("project") or ""
+        path = Path(os.path.expanduser(raw)) if raw else None
+        return str(path) if path and path.is_dir() else None
+
+    def sandbox_state(self) -> dict | None:
+        if self.mode != "coding":
+            return None
+        sb = self.memory.conversation.meta.get("sandbox")
+        if not sb or not sb.get("enabled") or not Path(sb.get("path", "")).is_dir():
+            return None
+        project = self.memory.conversation.meta.get("project") or ""
+        if project and Path(os.path.expanduser(project)).resolve() != Path(sb.get("project", "")).resolve():
+            return None  # Projekt gewechselt – diese Arbeitskopie gilt nicht mehr
+        return sb
+
+    async def sandbox_enable(self, progress=None) -> dict:
+        """Sandbox für den offenen Coding-Chat einschalten: Arbeitskopie anlegen (der Container startet beim ersten
+        Befehl). Liefert den Zustand; Fehler als SandboxError/WorkspaceError."""
+        conv = self.memory.conversation
+        project = self.real_project()
+        if not project:
+            raise workspace.WorkspaceError("Erst einen Projektordner wählen.")
+        binary, error = await asyncio.to_thread(sbx.engine, self.cfg)
+        if not binary:
+            raise sbx.SandboxError(error)
+        identity = None
+        from . import github
+        if await asyncio.to_thread(github.token, self.cfg):
+            try:
+                identity = await github.user(self.cfg)
+            except Exception as e:  # noqa: BLE001 – ohne GitHub-Identität nimmt die Kopie die des Projekts
+                log.info("GitHub-Konto nicht abrufbar: %s", e)
+        if progress:
+            await progress("Lege die Arbeitskopie an …")
+        state = await asyncio.to_thread(workspace.create, conv.chat_id, project, conv.meta.get("title", ""), identity)
+        old = conv.meta.get("sandbox") or {}
+        sb = {**state, "enabled": True, "network": old.get("network", self.cfg.sandbox.network),
+              "name": sbx.container_name(conv.chat_id), "image": sbx.image(self.cfg),
+              "engine": os.path.basename(binary)}
+        conv.meta["sandbox"] = sb
+        conv.save()
+        return sb
+
+    async def sandbox_disable(self, discard: bool = True) -> None:
+        """Ausschalten: Container weg, Arbeitskopie weg (discard) – nicht übernommene Änderungen gehen verloren."""
+        conv = self.memory.conversation
+        sb = conv.meta.pop("sandbox", None)
+        conv.save()
+        if not sb:
+            return
+        await asyncio.to_thread(sbx.remove, self.cfg, sb.get("name") or sbx.container_name(conv.chat_id))
+        if discard:
+            await asyncio.to_thread(workspace.discard, sb)
+
+    async def switch_project(self, path: str) -> None:
+        """Projektordner des offenen Coding-Chats wechseln (z. B. nach github_clone). Eine Sandbox gehört zum alten
+        Projekt – sie wird für das neue frisch angelegt."""
+        had = bool(self.memory.conversation.meta.get("sandbox"))
+        if had:
+            await self.sandbox_disable()
+        self.memory.set_project(path)
+        self.memory.conversation.epoch["instructions"] = None  # AGENTS.md des neuen Projekts
+        if had and path:
+            await self.sandbox_enable()
+
+    async def sandbox_network(self, on: bool) -> dict | None:
+        """Netz an/aus: der Container wird mit der neuen Einstellung neu angelegt (die Arbeitskopie bleibt)."""
+        sb = self.sandbox_state()
+        if not sb or sb.get("network", True) == on:
+            return sb
+        sb["network"] = on
+        self.memory.conversation.save()
+        await asyncio.to_thread(sbx.remove, self.cfg, sb["name"])
+        return sb
 
     def project_instructions(self) -> str:
         """AGENTS.md (bzw. die erste vorhandene Datei aus coding.instructions) des Projekts – je Epoche einmal gelesen,

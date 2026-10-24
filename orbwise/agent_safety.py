@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 
 from . import prompts
 from .tools.leakguard import LOCAL_DATA_TOOLS, find_leak, outbound_text
@@ -29,6 +30,8 @@ TAINT_SOURCES = {"mail_list", "mail_search", "mail_read", "mail_ask", "daily_bri
 # Auto-Modus „Auto“ gibt diese ohne Root frei (shell/write/edit: die Coding-Werkzeuge nach OpenCode)
 AUTO_TOOLS = ("run_shell", "ssh_run", "write_file", "edit_file", "shell", "write", "edit")
 SHELL_TOOLS = ("run_shell", "ssh_run", "shell")
+SANDBOX_TOOLS = ("shell", "write", "edit")  # laufen in der Sandbox ohne Rückfrage (außer Auto „Aus“)
+ALWAYS_ASK = {"github_push", "github_clone"}  # fragen immer – auch im Auto-Modus „Auto“ und in der Sandbox
 FILE_TOOLS = ("write_file", "edit_file", "write", "edit")
 
 # Nach dem Lesen fremder Inhalte (Mail, Webseite, Bild) brauchen auch sonst sichere Tools dieser Gruppen eine
@@ -105,6 +108,18 @@ class SafetyMixin:
         cwd = ctx.cwd
         project = self.project_dir() if hasattr(self, "project_dir") else None
         risk, reason = spec.assess(ctx, args)
+        sb = self.sandbox_state() if hasattr(self, "sandbox_state") else None
+        if sb and risk == CONFIRM and name in SANDBOX_TOOLS and self.auto_mode != "off" and not self._plan \
+                and self._in_sandbox(name, args, cwd, sb):
+            # Container + Arbeitskopie: Bauen, Testen, Installieren darf ohne Rückfrage laufen (wie Claude im Web).
+            # Nach fremden Inhalten (Webseite …) fragt die Shell mit Netz trotzdem – siehe unten.
+            risk, reason = SAFE, prompts.text(self.cfg, "auto_sandbox")
+            if getattr(self, "_tainted", False) and name == "shell" and sb.get("network", True):
+                risk, reason = CONFIRM, prompts.text(self.cfg, "tainted_confirm")
+            leak = self._leak(name, args)
+            if leak:
+                risk, reason = CONFIRM, leak
+            return risk, reason
         relaxed = not self._plan and not running_as_root()  # als root gilt nichts als „ohne Root“
         if risk == CONFIRM and self.auto_mode in ("files", "auto") and not self._plan and running_as_root():
             reason = prompts.text(self.cfg, "auto_root") + (f"; {reason}" if reason else "")
@@ -127,7 +142,20 @@ class SafetyMixin:
             leak = self._leak(name, args)
             if leak:
                 risk, reason = CONFIRM, leak + (f"; {reason}" if risk == CONFIRM and reason else "")
+        if name in ALWAYS_ASK and risk == SAFE:
+            risk = CONFIRM
         return risk, reason
+
+    @staticmethod
+    def _in_sandbox(name: str, args: dict, cwd: str | None, sb: dict) -> bool:
+        """Betrifft der Aufruf nur die Arbeitskopie? (Shell läuft ohnehin im Container – nur der Arbeitsordner zählt.)"""
+        from .tools.filepolicy import in_project
+        if name == "shell":
+            workdir = str(args.get("workdir") or "")
+            return not workdir or bool(in_project(workdir, sb["path"], cwd))
+        path = str(args.get("path") or "")
+        rel_ok = bool(in_project(path, sb["path"], cwd))
+        return rel_ok and ".git" not in Path(path).parts
 
     def _leak(self, name: str, args: dict) -> str | None:
         """Würde dieser Aufruf private Daten ins Internet schicken? (siehe tools/leakguard.py)"""

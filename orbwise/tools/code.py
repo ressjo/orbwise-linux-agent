@@ -585,19 +585,37 @@ async def code_shell(
     cwd = _workdir(ctx, workdir)
     if not os.path.isdir(cwd):
         return f"Arbeitsordner {workdir} gibt es nicht."
-    command = apply_privilege(command, ctx.cfg.tools.privilege_cmd)
+    limit = timeout if timeout and timeout > 0 else ctx.cfg.tools.shell_timeout
+    limit = min(limit, ctx.cfg.tools.update_timeout)
+    prefix = None
+    if ctx.sandbox:  # Sandbox: im Container des Chats (Arbeitskopie unter demselben Pfad eingebunden)
+        from .. import sandbox
+        try:
+            binary = await sandbox.ensure_running(ctx.cfg, ctx.sandbox, progress=lambda t: ctx.output(t + "\n"))
+        except (sandbox.SandboxError, OSError) as e:
+            return f"Sandbox nicht verfügbar: {e}"
+        command = sandbox.strip_sudo(command)
+        prefix = sandbox.exec_argv(binary, ctx.sandbox["name"], cwd, command, None if background else limit)
+    else:
+        command = apply_privilege(command, ctx.cfg.tools.privilege_cmd)
     if background:
         coding = getattr(ctx.cfg, "coding", None)
+        jid, stop_argv = jobs.new_id(), None
+        if prefix:
+            from .. import sandbox
+            prefix, stop_argv = sandbox.job_argv(prefix[0], ctx.sandbox["name"], cwd, command, jid)
         try:
-            job = await jobs.start(command, cwd, limit=getattr(coding, "max_jobs", 4), emit=ctx.emit)
+            job = await jobs.start(command, cwd, limit=getattr(coding, "max_jobs", 4), emit=ctx.emit, argv=prefix,
+                                   jid=jid, stop_argv=stop_argv)
         except RuntimeError as e:
             return str(e)
         if ctx.emit:
             await ctx.emit({"type": "job", "phase": "link", "id": job.id, "call": ctx.call_id})
         return (f"Läuft im Hintergrund als Job {job.id} (Ausgabe vollständig in {job.log}). Du bekommst eine Notiz, "
                 "wenn er endet – nicht abfragen; bei Bedarf mit job_output hineinsehen oder ihn stoppen.")
-    limit = timeout if timeout and timeout > 0 else ctx.cfg.tools.shell_timeout
-    rc, out = await proc.run(ctx, command, timeout=min(limit, ctx.cfg.tools.update_timeout), cwd=cwd)
+    rc, out = await proc.run(ctx, prefix or command, timeout=limit + (15 if prefix else 0), cwd=cwd)
+    if prefix and rc == 124:
+        out += f"\n[Abgebrochen: Zeitlimit von {int(limit)} s überschritten]"
     return proc.format_result(rc, out, ctx.limit())
 
 

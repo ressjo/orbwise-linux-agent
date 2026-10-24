@@ -849,6 +849,36 @@ Also: `todo_write` (task list in the answer), `remember`/`recall`.
 - Not taken over from OpenCode: `patch` (for GPT models), Code Mode, worktrees, LSP (OpenCode 2 runs no language
   servers either).
 
+#### Sandbox (container, like Claude on the web)
+
+Click **Sandbox** next to the project chip. Orbwise then makes a **working copy** of the project
+(`~/.local/share/orbwise/workspaces/…`, a local `git clone` plus your uncommitted changes, on a new branch
+`orbwise/<topic>-<id>`) and runs the agent's shell commands in a **container** – Podman preferred (rootless: you are
+root in the container, `apt` works, files stay yours), otherwise Docker. The agent may build, test and install
+freely there: `shell`, `edit` and `write` in the copy run **without asking** (except with auto mode *Off*).
+
+- Your project folder stays untouched until you choose **Apply to project** (copies the changed files; files you
+  changed in the project yourself meanwhile are reported as conflicts and only overwritten if you confirm).
+- **View changes** shows every changed file with its diff; **Network: on/off** per chat (`--network none`);
+  **End sandbox** deletes container and copy.
+- No credentials go into the container (no token, no `~/.ssh`, no Docker socket); memory, CPU and processes are
+  limited; the container stops after 30 minutes without commands and starts again with the next one.
+- The default image `orbwise-sandbox:1` (Debian with git, Python, Node, build tools, ripgrep) is built on first use;
+  `sandbox.image` takes any other image (e.g. `python:3.12`). Install Podman with `sudo apt install podman`.
+
+#### GitHub
+
+Sign in once with the GitHub CLI (`gh auth login`) – Orbwise uses its token – or put a
+[fine-grained token](https://github.com/settings/personal-access-tokens) with *Contents: read & write* into
+`github.token` (or `$ORBWISE_GITHUB_TOKEN`). Then:
+
+- **Project chip → Clone from GitHub …**: search your repos, one click clones into `~/Projects` (`github.clone_dir`)
+  and makes it the project of the chat.
+- **Push:** from the sandbox menu or by the agent (`github_push`, always asks – also in auto mode *Auto*); afterwards
+  a link to **create the pull request** on GitHub. The token is handed to git only for that one call (via
+  `GIT_ASKPASS`) and never written into `.git/config`.
+- `orbwise doctor` shows the container engine and the GitHub account.
+
 ### Plan mode
 
 For bigger jobs switch on **Plan** in the input bar. Jarvis then may only

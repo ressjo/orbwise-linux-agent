@@ -68,6 +68,12 @@ All notable changes to this project are documented here. The format follows
   only actions that change or start something do; the data-leak guard still checks what goes out.
 
 ### Added
+- **Coding sandbox (like Claude on the web):** a working copy of the project on its own branch, the agent's
+  commands run in a Podman/Docker container (no credentials inside, limits, network on/off per chat, stops when
+  idle). Shell and file changes in the copy run without asking; **View changes** with diffs, **Apply to project**
+  with conflict check, **End sandbox**. Default image `orbwise-sandbox:1` is built on first use (`sandbox.*`).
+- **GitHub:** sign in via `gh` or a token; clone your repos from the project chip, push the branch (sandbox menu or
+  `github_push`, always asks) with a link to create the pull request. The token never lands in `.git/config`.
 - **Coding mode like OpenCode 2:** the coding agent gets its own tools – `read` (line numbers, folders, PDFs, nested
   `AGENTS.md`), `edit` (exact replace that forgives curly quotes, dashes and wrong indentation, strips copied line
   numbers, keeps CRLF, refuses stale files, returns a diff), `write`, `grep` (ripgrep with matching lines), `glob`,

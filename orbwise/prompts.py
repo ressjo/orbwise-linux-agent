@@ -230,6 +230,7 @@ TEXTS = {
         "auto_read_off": "nur lesend – Auto ist aus, darum frage ich trotzdem",
         "auto_files": "ändert nur Dateien in deinem Home (Auto: Dateien bearbeiten)",
         "auto_project": "ändert eine Datei im Projektordner (Auto: Dateien bearbeiten)",
+        "auto_sandbox": "läuft in der Sandbox (Container, Arbeitskopie)",
         "auto_full": "ohne Root-Rechte (Auto)",
         "auto_root": "Orbwise läuft als root – Auto gibt darum nichts frei",
         "tainted_confirm": "Nach dem Lesen einer E-Mail, Webseite, eines PDFs oder Bildschirm-/Bildinhalts fragt alles nach, "
@@ -277,6 +278,7 @@ TEXTS = {
         "auto_read_off": "read-only – Auto is off, so I ask anyway",
         "auto_files": "only changes files in your home folder (Auto: edit files)",
         "auto_project": "changes a file in the project folder (Auto: edit files)",
+        "auto_sandbox": "runs in the sandbox (container, working copy)",
         "auto_full": "without root privileges (Auto)",
         "auto_root": "Orbwise runs as root – so Auto approves nothing",
         "tainted_confirm": "After reading an e-mail, web page, PDF or screen/image content, everything that changes or "
@@ -438,6 +440,32 @@ Projektordner: {project}. {env}
         "final": "(System: The step limit has been reached. No more tools – summarise your result now.)",
     },
 }
+
+
+SANDBOX_NOTE = {
+    "de": ("Sandbox: Shell-Befehle laufen in einem Container ({engine}, Image {image}, Netz {network}) – du darfst dort "
+           "frei bauen, testen und Pakete installieren (du bist root, sudo ist nicht nötig). Du arbeitest auf einer "
+           "Arbeitskopie von {project} auf dem Branch {branch}; das Projekt selbst bleibt unberührt, bis der Nutzer "
+           "übernimmt. Committen mit git ist erlaubt; hochladen nur mit github_push (git push hat im Container keine "
+           "Zugangsdaten)."),
+    "en": ("Sandbox: shell commands run in a container ({engine}, image {image}, network {network}) – you may build, "
+           "test and install packages freely there (you are root, no sudo needed). You work on a copy of {project} "
+           "on the branch {branch}; the project itself stays untouched until the user applies the changes. Committing "
+           "with git is fine; upload only with github_push (git push has no credentials in the container)."),
+}
+GITHUB_NOTE = {
+    "de": "GitHub: Branches mit github_push hochladen (fragt den Nutzer); vorher mit git committen.",
+    "en": "GitHub: upload branches with github_push (asks the user); commit with git first.",
+}
+
+
+def sandbox_note(cfg, network: bool, **values) -> str:
+    on = ("an" if network else "aus") if lang_of(cfg) == "de" else ("on" if network else "off")
+    return SANDBOX_NOTE[lang_of(cfg)].format(network=on, **values)
+
+
+def github_note(cfg) -> str:
+    return GITHUB_NOTE[lang_of(cfg)]
 
 
 def subagent_prompt(cfg, kind: str, **values) -> str:

@@ -266,6 +266,23 @@ def cmd_doctor(args) -> None:
     else:
         print("  ℹ " + T("Suchseiten werden ausgelesen (ddgs) – ohne Bot-Sperr-Risiko: tools.brave_api_key setzen",
                          "result pages are scraped (ddgs) – to avoid bot blocking set tools.brave_api_key"))
+    print(T("Coding-Sandbox und GitHub:", "Coding sandbox and GitHub:"))
+    from . import github
+    from . import sandbox as sbx
+    binary, sb_error = sbx.engine(cfg)
+    line(bool(binary), T(f"Sandbox: {os.path.basename(binary)} · Image {sbx.image(cfg)}",
+                         f"Sandbox: {os.path.basename(binary)} · image {sbx.image(cfg)}") if binary
+         else T("Sandbox: keine Container-Engine", "Sandbox: no container engine"), sb_error)
+    tok, source = github.token_info(cfg)
+    if not tok:
+        print("  – " + T("GitHub nicht verbunden (gh auth login oder github.token)",
+                         "GitHub not connected (gh auth login or github.token)"))
+    else:
+        try:
+            gh_user = asyncio.run(github.user(cfg))
+            line(True, f"GitHub @{gh_user['login']} ({source})")
+        except Exception as e:  # noqa: BLE001
+            line(False, f"GitHub ({source})", str(e))
     print(T("Kalender:", "Calendar:"))
     if not cfg.calendar.enabled:
         print(T("  – nicht konfiguriert", "  – not configured") + " (calendar.url, username, password)")

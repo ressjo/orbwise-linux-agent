@@ -290,6 +290,47 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
 .project-chip.unset em { font-family: inherit; color: var(--muted); }
 .project-chip .i { width: 15px; height: 15px; flex: none; color: var(--coding); }
 .project-chip:hover { border-color: var(--coding); color: var(--text); }
+.head-split { display: inline-flex; }
+.head-split + .head-split .project-chip { margin-left: 6px; }
+.chip-menu.head-menu { top: calc(100% + 8px); bottom: auto; left: 10px; right: auto; width: 320px; }
+.sandbox-chip.unset em { font-family: inherit; color: var(--muted); }
+.sandbox-chip em { font-family: inherit; }
+.sandbox-chip .i { color: var(--muted); }
+.sandbox-chip.on { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent); }
+.sandbox-chip.on .i { color: var(--accent); }
+.chip-menu .sb-status { display: flex; flex-direction: column; gap: 2px; padding: 8px 11px 10px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.chip-menu .sb-status b { font-family: var(--mono); font-size: var(--fs-sm); font-weight: 500; }
+.chip-menu button.danger b { color: var(--danger); }
+/* GitHub-Klon und Sandbox-Änderungen */
+.sheet.sheet-xl.sheet-md { width: min(820px, calc(100vw - 24px)); top: 8vh; bottom: auto; max-height: 80vh; }
+.sheet-md .sheet-body { padding-bottom: 20px; }
+.gh-status { margin: 0 8px; color: var(--muted); font-size: var(--fs-md); }
+.gh-status code { font-family: var(--mono); background: var(--code-bg); padding: 1px 6px; border-radius: var(--r-xs); }
+.gh-search { height: 38px; margin: 0 8px; padding: 0 12px; border: 1px solid var(--border-strong); border-radius: var(--r-md);
+  background: var(--field); color: var(--text); font: inherit; }
+.gh-search:focus { outline: none; border-color: var(--accent); }
+.gh-repos { list-style: none; margin: 0; padding: 0 4px; display: flex; flex-direction: column; }
+.gh-repos .empty { color: var(--muted); padding: 12px 8px; }
+.gh-repo { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 10px; border: 0; border-bottom: 1px solid var(--border);
+  background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; border-radius: var(--r-sm); }
+.gh-repo:hover { background: var(--surface-3); }
+.gh-repo svg { width: 16px; height: 16px; color: var(--muted); flex: none; }
+.gh-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.gh-main b { font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gh-main small { color: var(--muted); font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gh-meta { flex: none; color: var(--faint); font-size: var(--fs-xs); }
+.gh-repos li.busy { opacity: .6; pointer-events: none; }
+.sbc-layout { display: grid; grid-template-columns: 240px 1fr; gap: 12px; min-height: 260px; margin: 0 8px; }
+.sbc-files { list-style: none; margin: 0; padding: 4px; border: 1px solid var(--border); border-radius: var(--r-md); overflow: auto; max-height: 52vh; }
+.sbc-files li { display: flex; gap: 8px; align-items: baseline; padding: 6px 8px; border-radius: var(--r-sm); cursor: pointer; }
+.sbc-files li:hover { background: var(--surface-3); }
+.sbc-files li.on { background: var(--accent-soft); }
+.sbc-files .mc-add { margin-left: auto; }
+.sbc-diff { margin: 0; font-family: var(--mono); font-size: var(--fs-xs); background: var(--code-bg); border: 1px solid var(--border);
+  border-radius: var(--r-md); padding: 8px 4px; max-height: 52vh; }
+#sheet-sbchanges .modal-actions { margin: 4px 8px 0; justify-content: flex-end; }
+#toast a { color: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; pointer-events: auto; }
+@media (max-width: 720px) { .sheet.sheet-xl.sheet-md { top: 0; bottom: 0; max-height: none; width: 100vw; } .sbc-layout { grid-template-columns: 1fr; } .chip-menu.head-menu { left: 0; width: min(320px, calc(100vw - 32px)); } }
 
 /* ---------- Hauptbereich ---------- */
 .main {

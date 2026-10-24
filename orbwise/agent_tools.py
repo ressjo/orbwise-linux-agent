@@ -20,7 +20,8 @@ BIG_TOOLS_SECONDS = 60.0  # ab 32k Fenster: so lange darf das einmalige Einlesen
 
 # Coding-Modus: die Werkzeuge nach OpenCode (Gruppe „code“: read, edit, write, grep, glob, shell, websearch, webfetch,
 # subagent, question …) plus Gedächtnis und Aufgabenliste – mehr Kontext bleibt für den Code frei
-CODING_GROUPS = {"code", "memory_tools", "todo_tools"}
+CODING_GROUPS = {"code", "github_tools", "memory_tools", "todo_tools"}
+CODING_ONLY = {"code", "github_tools"}  # gibt es im Tools-Modus nicht
 
 
 class ToolSelectionMixin:

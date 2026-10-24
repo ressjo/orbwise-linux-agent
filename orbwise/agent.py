@@ -29,7 +29,7 @@ from .agent_code import CodingMixin
 from .agent_compact import CompactMixin
 from .agent_safety import TAINT_SOURCES, SafetyMixin, is_taint_source  # noqa: F401 – auch für Aufrufer
 from .agent_speed import SpeedMixin
-from .agent_tools import CODING_GROUPS, ToolSelectionMixin  # noqa: F401
+from .agent_tools import CODING_GROUPS, CODING_ONLY, ToolSelectionMixin  # noqa: F401
 from .config import Config
 from .context_plan import SUMMARY_MIN, THINK_LEVELS, ContextPlan, plan_for
 from .llm import ContextOverflow, LLMError, strip_think
@@ -168,7 +168,7 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         self.tools = load_all_tools()
         self.groups_of = {name: spec.group for name, spec in self.tools.items()}
         # die Coding-Werkzeuge (Gruppe „code“, nach OpenCode) gibt es nur im Coding-Modus
-        self.all_schemas = [s for s in tool_schemas(cfg) if self.groups_of.get(s["function"]["name"]) != "code"]
+        self.all_schemas = [s for s in tool_schemas(cfg) if self.groups_of.get(s["function"]["name"]) not in CODING_ONLY]
         self._coding_schemas: tuple[list[dict], int] | None = None
         self._snap: tuple | None = None  # Schnappschuss vor der laufenden Antwort (Coding-Modus, siehe agent_code)
         self.schemas = self.all_schemas
@@ -189,13 +189,16 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         """Projektordner des Coding-Chats (falls gesetzt und vorhanden)."""
         if self.mode != "coding":
             return None
+        sb = self.sandbox_state()
+        if sb:  # Sandbox: alles läuft auf der Arbeitskopie
+            return sb["path"]
         project = self.memory.conversation.meta.get("project") or ""
         path = Path(os.path.expanduser(project)) if project else None
         return str(path) if path and path.is_dir() else None
 
     def tool_allowed(self, name: str) -> bool:
         group = self.groups_of.get(name, "")
-        return group in CODING_GROUPS if self.mode == "coding" else group != "code"
+        return group in CODING_GROUPS if self.mode == "coding" else group not in CODING_ONLY
 
     def _mode_schemas(self) -> tuple[list[dict], int]:
         if self.mode != "coding":
@@ -949,7 +952,8 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
             return name, f"Fehlende Parameter: {', '.join(missing)}", f"{name}: Parameter fehlen"
         cwd = self.project_dir()
         ctx = ToolContext(cfg=self.cfg, memory=self.memory, emit=emit, call_id=call_id, services=self.services,
-                          cwd=cwd, output_chars=self.output_chars(), agent=self, confirm=confirm)
+                          cwd=cwd, output_chars=self.output_chars(), agent=self, confirm=confirm,
+                          sandbox=self.sandbox_state())
         risk, reason = self._final_risk(name, spec, args, ctx)
         args_str = json.dumps(args, ensure_ascii=False)
         preview = ""

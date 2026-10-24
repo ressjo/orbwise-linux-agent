@@ -35,6 +35,8 @@ class ToolContext:
     # der aufrufende Agent (für subagent) und seine Rückfrage-Funktion
     agent: Any = None
     confirm: Any = None
+    # Coding-Sandbox des Chats (siehe sandbox.py): Shell-Befehle laufen dann im Container
+    sandbox: dict | None = None
 
     def path(self, raw: str) -> Path:
         p = Path(os.path.expandvars(str(raw or ""))).expanduser()
@@ -210,6 +212,7 @@ def load_all_tools() -> dict[str, ToolSpec]:
         calendar_tools,
         code,
         files,
+        github_tools,
         homeassistant,
         image_tools,
         mail,

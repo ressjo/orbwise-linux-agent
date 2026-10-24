@@ -445,6 +445,10 @@
       case "confirm_done":
         closeConfirm(ev.id);
         break;
+      case "sandbox_progress":
+        $("sandbox-label").textContent = L("Sandbox …", "Sandbox …");
+        toast(ev.text);
+        break;
       case "question_request":
         openQuestion(ev);
         break;
@@ -1514,6 +1518,7 @@
     const waiting = ev.risk === "confirm";
     const el = actStep("tool", toolIcon(ev), toolLabel(ev.name), keyArg(ev.args), ev.routine);
     el.querySelector(".act-name").title = ev.name;
+    if (S.sandbox && ev.name === "shell") el.querySelector(".act-name").textContent += L(" · Sandbox", " · sandbox");
     el.querySelector(".act-args").textContent = `${ev.name}  ${fmtArgs(ev.name, ev.args)}`;
     if (ev.preview) {
       const d = document.createElement("pre");
@@ -4518,7 +4523,9 @@
     S.mode = ev.mode;
     S.chatId = ev.chat_id || ev.id || S.chatId;
     S.project = ev.project || "";
+    S.sandbox = ev.sandbox || null;
     app.classList.toggle("coding", S.mode === "coding");
+    renderSandboxChip();
     markModeTabs();
     $("input").placeholder = MODE_TEXT[S.mode].placeholder;
     document.querySelector(".composer-hint").textContent = MODE_TEXT[S.mode].hint;
@@ -4553,7 +4560,19 @@
         .catch(() => {});  // Fehler zeigt api() schon an
     };
   });
-  $("project-chip").onclick = () => {
+  // ---------------------------------------------------------------- Projekt, GitHub, Sandbox (Coding)
+  const projectMenu = $("project-menu"), sandboxMenu = $("sandbox-menu");
+  $("project-chip").onclick = (e) => {
+    e.stopPropagation();
+    sandboxMenu.classList.add("hidden");
+    projectMenu.classList.toggle("hidden");
+  };
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest("#project-wrap")) projectMenu.classList.add("hidden");
+    if (!e.target.closest("#sandbox-wrap")) sandboxMenu.classList.add("hidden");
+  });
+  projectMenu.querySelector('[data-project="folder"]').onclick = () => {
+    projectMenu.classList.add("hidden");
     const path = window.prompt(L("Projektordner für diesen Chat (leer = keiner):", "Project folder for this chat (empty = none):"),
                                S.project || "~/");
     if (path === null || !S.chatId) return;
@@ -4561,6 +4580,184 @@
       .then((r) => toast(r.project ? L(`Projektordner: ${r.project}`, `Project folder: ${r.project}`) : L("Kein Projektordner.", "No project folder.")))
       .catch(() => {});  // Fehler zeigt api() schon an
   };
+  projectMenu.querySelector('[data-project="github"]').onclick = () => { projectMenu.classList.add("hidden"); openGithub(); };
+
+  let ghTimer = null;
+  async function openGithub() {
+    openSheet("github");
+    const status = $("gh-status"), list = $("gh-repos"), search = $("gh-search");
+    list.innerHTML = "";
+    status.textContent = L("Verbinde mit GitHub …", "Connecting to GitHub …");
+    let st;
+    try { st = await getJSON("/api/github/status"); } catch { st = { connected: false }; }
+    search.classList.toggle("hidden", !st.connected);
+    if (!st.connected) {
+      status.innerHTML = "";
+      status.append(st.error || L("GitHub ist nicht verbunden. Melde dich mit der GitHub-CLI an (", "GitHub is not connected. Sign in with the GitHub CLI ("));
+      if (!st.error) {
+        const code = document.createElement("code");
+        code.textContent = "gh auth login";
+        status.append(code, L(") oder trag ein Token unter github.token in der Config ein.", ") or put a token under github.token in the config."));
+      }
+      return;
+    }
+    const src = { gh: "GitHub-CLI", env: L("Umgebungsvariable", "environment variable"), config: "Config" }[st.source] || st.source;
+    status.textContent = L(`Angemeldet als @${st.login} (${src}) · geklont wird nach ${st.clone_dir}`,
+                           `Signed in as @${st.login} (${src}) · clones go to ${st.clone_dir}`);
+    const load = async () => {
+      list.innerHTML = `<li class="empty">${L("Lade Repos …", "Loading repos …")}</li>`;
+      try {
+        const r = await getJSON("/api/github/repos?q=" + encodeURIComponent(search.value.trim()));
+        list.innerHTML = r.repos.length ? "" : `<li class="empty">${L("Keine Repos gefunden.", "No repos found.")}</li>`;
+        for (const repo of r.repos) {
+          const li = document.createElement("li");
+          li.innerHTML = `<button type="button" class="gh-repo">${ico("branch")}<span class="gh-main"><b></b><small></small></span><span class="gh-meta"></span></button>`;
+          li.querySelector("b").textContent = repo.full_name;
+          li.querySelector("small").textContent = repo.description || "";
+          li.querySelector(".gh-meta").textContent = (repo.private ? L("privat", "private") : L("öffentlich", "public"))
+            + (repo.pushed_at ? " · " + new Date(repo.pushed_at).toLocaleDateString(LOCALE) : "");
+          li.querySelector("button").onclick = () => cloneRepo(repo.full_name, li);
+          list.appendChild(li);
+        }
+      } catch { list.innerHTML = `<li class="empty">${L("Repos nicht ladbar.", "Could not load repos.")}</li>`; }
+    };
+    search.oninput = () => { clearTimeout(ghTimer); ghTimer = setTimeout(load, 350); };
+    search.value = "";
+    load();
+    setTimeout(() => search.focus(), 50);
+  }
+  async function cloneRepo(name, li) {
+    li.classList.add("busy");
+    li.querySelector(".gh-meta").textContent = L("klone …", "cloning …");
+    try {
+      const r = await api("POST", "/api/github/clone", { repo: name });
+      closeSheet();
+      toast(L(`Geklont – Projektordner: ${r.project}`, `Cloned – project folder: ${r.project}`));
+    } catch { li.classList.remove("busy"); li.querySelector(".gh-meta").textContent = L("fehlgeschlagen", "failed"); }
+  }
+
+  // Sandbox: Container + Arbeitskopie (Befehle laufen dort, das Projekt bleibt bis „Übernehmen“ unberührt)
+  function renderSandboxChip() {
+    const chip = $("sandbox-chip");
+    const on = !!S.sandbox;
+    chip.classList.toggle("on", on);
+    chip.classList.toggle("unset", !on);
+    $("sandbox-label").textContent = !on ? L("Sandbox", "Sandbox")
+      : S.sandbox.network === false ? L("Sandbox · offline", "Sandbox · offline") : L("Sandbox an", "Sandbox on");
+    chip.title = on ? L(`Sandbox: Befehle laufen im Container (${S.sandbox.engine}), Branch ${S.sandbox.branch || "–"}`,
+                        `Sandbox: commands run in the container (${S.sandbox.engine}), branch ${S.sandbox.branch || "–"}`)
+      : L("Sandbox: Befehle laufen in einem Container auf einer Arbeitskopie", "Sandbox: commands run in a container on a working copy");
+  }
+  $("sandbox-chip").onclick = async (e) => {
+    e.stopPropagation();
+    projectMenu.classList.add("hidden");
+    if (!S.project) { toast(L("Erst einen Projektordner wählen.", "Choose a project folder first.")); return; }
+    if (!S.sandbox) {
+      if (!confirm(L("Sandbox einschalten? Jarvis arbeitet dann in einer Kopie des Projekts in einem Container und darf dort frei bauen, testen und installieren. Dein Projektordner bleibt unberührt, bis du die Änderungen übernimmst.",
+                     "Turn on the sandbox? Jarvis then works on a copy of the project in a container and may build, test and install freely there. Your project folder stays untouched until you apply the changes."))) return;
+      $("sandbox-label").textContent = L("Sandbox …", "Sandbox …");
+      try {
+        await api("POST", "/api/sandbox", { enabled: true });
+        toast(L("Sandbox an – der Container startet beim ersten Befehl.", "Sandbox on – the container starts with the first command."));
+      } catch { renderSandboxChip(); }
+      return;
+    }
+    if (!sandboxMenu.classList.contains("hidden")) { sandboxMenu.classList.add("hidden"); return; }
+    sandboxMenu.innerHTML = `<div class="sb-status">${L("Lade …", "Loading …")}</div>`;
+    sandboxMenu.classList.remove("hidden");
+    let st;
+    try { st = await getJSON("/api/sandbox"); } catch { sandboxMenu.classList.add("hidden"); return; }
+    const container = { running: L("läuft", "running"), exited: L("angehalten", "stopped"), missing: L("startet beim ersten Befehl", "starts with the first command") }[st.container] || st.container || "";
+    sandboxMenu.innerHTML = `<div class="sb-status"><b></b><small></small></div>
+      <button type="button" data-sb="network"><b></b><small></small></button>
+      <button type="button" data-sb="changes"><b></b><small></small></button>
+      <button type="button" data-sb="apply"><b>${L("In Projekt übernehmen", "Apply to project")}</b><small>${L("Geänderte Dateien in deinen Projektordner kopieren.", "Copy changed files into your project folder.")}</small></button>
+      ${st.github ? `<button type="button" data-sb="push"><b>${L("Zu GitHub pushen", "Push to GitHub")}</b><small></small></button>` : ""}
+      <button type="button" data-sb="off" class="danger"><b>${L("Sandbox beenden", "End sandbox")}</b><small>${L("Container und Arbeitskopie löschen – nicht Übernommenes geht verloren.", "Delete container and working copy – anything not applied is lost.")}</small></button>`;
+    sandboxMenu.querySelector(".sb-status b").textContent = `${st.engine || "?"} · ${st.image}`;
+    sandboxMenu.querySelector(".sb-status small").textContent = L(`Container ${container} · Branch ${st.branch || "–"}`, `Container ${container} · branch ${st.branch || "–"}`);
+    const net = sandboxMenu.querySelector('[data-sb="network"]');
+    net.querySelector("b").textContent = st.network ? L("Netz: an", "Network: on") : L("Netz: aus", "Network: off");
+    net.querySelector("small").textContent = st.network ? L("Zum Abschalten klicken (Container startet neu).", "Click to switch off (container restarts).")
+      : L("Kein Internet im Container – zum Einschalten klicken.", "No internet in the container – click to switch on.");
+    const ch = sandboxMenu.querySelector('[data-sb="changes"]');
+    ch.querySelector("b").textContent = L(`Änderungen ansehen (${st.changes})`, `View changes (${st.changes})`);
+    ch.querySelector("small").textContent = L("Was sich in der Arbeitskopie geändert hat, mit Diff.", "What changed in the working copy, with diffs.");
+    const push = sandboxMenu.querySelector('[data-sb="push"]');
+    if (push) push.querySelector("small").textContent = L(`Branch ${st.branch} nach github.com/${st.github}`, `Branch ${st.branch} to github.com/${st.github}`);
+    net.onclick = () => { sandboxMenu.classList.add("hidden"); api("POST", "/api/sandbox", { network: !st.network }).catch(() => {}); };
+    ch.onclick = () => { sandboxMenu.classList.add("hidden"); openSandboxChanges(); };
+    sandboxMenu.querySelector('[data-sb="apply"]').onclick = () => { sandboxMenu.classList.add("hidden"); applySandbox(); };
+    if (push) push.onclick = () => { sandboxMenu.classList.add("hidden"); pushGithub(); };
+    sandboxMenu.querySelector('[data-sb="off"]').onclick = async () => {
+      sandboxMenu.classList.add("hidden");
+      if (!confirm(L("Sandbox beenden? Container und Arbeitskopie werden gelöscht – nicht übernommene Änderungen gehen verloren.",
+                     "End the sandbox? Container and working copy are deleted – changes not applied are lost."))) return;
+      api("POST", "/api/sandbox", { enabled: false }).then(() => toast(L("Sandbox beendet.", "Sandbox ended."))).catch(() => {});
+    };
+  };
+  async function openSandboxChanges() {
+    openSheet("sbchanges");
+    const list = $("sbc-files"), pre = $("sbc-diff");
+    list.innerHTML = "";
+    pre.innerHTML = "";
+    $("sbc-push").classList.toggle("hidden", true);
+    let r;
+    try { r = await getJSON("/api/sandbox/changes"); } catch { return; }
+    const n = r.files.length;
+    $("sbc-info").textContent = n ? (n === 1 ? L("1 Datei geändert.", "1 file changed.") : L(`${n} Dateien geändert – klicke eine Datei für den Diff.`, `${n} files changed – click a file for its diff.`))
+      : L("Noch keine Änderungen in der Arbeitskopie.", "No changes in the working copy yet.");
+    $("sbc-apply").disabled = !r.files.length;
+    getJSON("/api/sandbox").then((st) => $("sbc-push").classList.toggle("hidden", !st.github)).catch(() => {});
+    const show = async (f, li) => {
+      list.querySelectorAll("li").forEach((x) => x.classList.toggle("on", x === li));
+      try { pre.innerHTML = renderDiff((await getJSON("/api/sandbox/changes?path=" + encodeURIComponent(f.path))).diff); } catch { pre.textContent = ""; }
+    };
+    r.files.forEach((f, i) => {
+      const li = document.createElement("li");
+      li.innerHTML = `<span class="mc-path"></span><span class="mc-add">${f.add == null ? "" : "+" + f.add}</span><span class="mc-del">${f.del == null ? "" : "−" + f.del}</span>`;
+      li.querySelector(".mc-path").textContent = f.path;
+      li.onclick = () => show(f, li);
+      list.appendChild(li);
+      if (i === 0) show(f, li);
+    });
+  }
+  $("sbc-apply").onclick = () => applySandbox(true);
+  $("sbc-push").onclick = () => pushGithub();
+  async function applySandbox(fromSheet) {
+    if (isBusy()) { toast(L("Jarvis arbeitet gerade – erst abwarten oder STOP.", "Jarvis is busy – wait or press STOP.")); return; }
+    try {
+      let r = await api("POST", "/api/sandbox/apply", {});
+      if (r.conflicts.length && confirm(L(`Diese Dateien hast du im Projekt inzwischen selbst geändert:\n${r.conflicts.join("\n")}\n\nTrotzdem mit der Version aus der Sandbox überschreiben?`,
+                                          `You changed these files in the project yourself in the meantime:\n${r.conflicts.join("\n")}\n\nOverwrite them with the sandbox version anyway?`))) {
+        const forced = await api("POST", "/api/sandbox/apply", { force: true });
+        r = { applied: [...r.applied, ...forced.applied], conflicts: forced.conflicts };
+      }
+      const n = r.applied.length;
+      toast(n ? (n === 1 ? L("1 Datei ins Projekt übernommen.", "1 file applied to the project.") : L(`${n} Dateien ins Projekt übernommen.`, `${n} files applied to the project.`))
+        : r.conflicts.length ? L("Nichts übernommen.", "Nothing applied.") : L("Keine Änderungen zu übernehmen.", "No changes to apply."));
+      if (fromSheet) closeSheet();
+    } catch { /* Meldung kommt von api() */ }
+  }
+  async function pushGithub() {
+    if (!confirm(L("Den aktuellen Branch zu GitHub pushen?", "Push the current branch to GitHub?"))) return;
+    try {
+      const r = await api("POST", "/api/github/push");
+      toastLink(L(`Branch ${r.branch} ist auf GitHub.`, `Branch ${r.branch} is on GitHub.`), r.compare, L("Pull Request erstellen", "Create pull request"));
+    } catch { /* Meldung kommt von api() */ }
+  }
+  function toastLink(text, url, label) {
+    toast(text);
+    if (!url) return;
+    const a = document.createElement("a");
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener";
+    a.textContent = " " + label + " ↗";
+    $("toast").appendChild(a);
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => $("toast").classList.add("hidden"), 15000);
+  }
 
   function newChat() {
     api("POST", "/api/chats").catch(() => {});

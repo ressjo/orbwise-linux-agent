@@ -37,6 +37,7 @@ class Job:
     tail: deque = field(default_factory=lambda: deque(maxlen=TAIL_LINES))
     proc: asyncio.subprocess.Process | None = None
     task: asyncio.Task | None = None
+    stop_argv: list[str] | None = None  # Sandbox: beendet den Befehl im Container (der exec-Client allein reicht nicht)
 
     def info(self) -> dict:
         return {"id": self.id, "command": self.command, "cwd": self.cwd, "status": self.status, "rc": self.rc,
@@ -82,17 +83,26 @@ async def _send(event: dict, emit: Broadcast | None) -> None:
             await target(event)
 
 
-async def start(command: str, cwd: str, limit: int = 4, emit: Broadcast | None = None) -> Job:
-    """Startet den Befehl in einer eigenen Prozessgruppe. Mehr als limit laufende Jobs → RuntimeError."""
+def new_id() -> str:
+    return uuid.uuid4().hex[:6]
+
+
+async def start(command: str, cwd: str, limit: int = 4, emit: Broadcast | None = None,
+                argv: list[str] | None = None, jid: str | None = None, stop_argv: list[str] | None = None) -> Job:
+    """Startet den Befehl in einer eigenen Prozessgruppe. Mehr als limit laufende Jobs → RuntimeError.
+    argv: stattdessen genau dieses Programm starten (Sandbox: `podman exec … bash -lc <Befehl>`)."""
     if len(running()) >= limit:
         raise RuntimeError(f"Es laufen schon {limit} Hintergrund-Jobs – erst einen mit job_output(id, stop=true) "
                            "beenden.")
-    jid = uuid.uuid4().hex[:6]
+    jid = jid or new_id()
     log = os.path.join(jobs_dir(), f"{jid}.log")
-    job = Job(id=jid, command=command, cwd=cwd, log=log)
-    job.proc = await asyncio.create_subprocess_shell(
-        command, executable="/bin/bash", stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT, cwd=cwd, env={**os.environ, **QUIET_ENV}, start_new_session=True)
+    job = Job(id=jid, command=command, cwd=cwd, log=log, stop_argv=stop_argv)
+    kwargs = dict(stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=cwd,
+                  env={**os.environ, **QUIET_ENV}, start_new_session=True)
+    if argv:
+        job.proc = await asyncio.create_subprocess_exec(*argv, **kwargs)
+    else:
+        job.proc = await asyncio.create_subprocess_shell(command, executable="/bin/bash", **kwargs)
     JOBS[jid] = job
     job.task = asyncio.create_task(_pump(job, emit))
     await _send({"type": "job", "phase": "start", **job.info()}, emit)
@@ -132,6 +142,9 @@ def stop(jid: str) -> Job | None:
     job = JOBS.get(jid)
     if job and job.status == "running" and job.proc:
         job.status = "stopped"
+        if job.stop_argv:
+            with contextlib.suppress(OSError, subprocess.SubprocessError):
+                subprocess.run(job.stop_argv, capture_output=True, timeout=20)
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(job.proc.pid, signal.SIGTERM)
     return job

@@ -612,12 +612,16 @@ def create_app(cfg: Config) -> FastAPI:
         background.append(asyncio.create_task(metrics_loop()))
         background.append(asyncio.create_task(reminder_loop()))
         background.append(asyncio.create_task(routine_loop()))
+        background.append(asyncio.create_task(sandbox_idle_loop()))
         if telegram_bot is not None:
             background.append(asyncio.create_task(telegram_bot.serve()))
         yield
         for t in [*background, *healing, *side_tasks]:
             t.cancel()
         bg_jobs.stop_all()  # Dev-Server & Co. nicht verwaist weiterlaufen lassen
+        from . import sandbox as sbx
+        for name in list(sbx.last_used):  # Sandbox-Container anhalten (nicht löschen – die Arbeit bleibt)
+            await asyncio.to_thread(sbx.stop, cfg, name)
         bg_jobs.set_broadcast(None)
         from .tools.ssh import close_all as close_ssh
         await close_ssh()
@@ -814,6 +818,17 @@ def create_app(cfg: Config) -> FastAPI:
         if shutil.which("notify-send"):
             await proc.launch(["notify-send", "--app-name=Orbwise", f"Orbwise – {r.name}",
                                summary[:200] or prompts.spoken(cfg, "routine_done")], wait=1)
+
+    async def sandbox_idle_loop() -> None:
+        """Sandbox-Container ohne Befehle seit sandbox.idle_minutes anhalten (beim nächsten Befehl startet er wieder)."""
+        from . import sandbox as sbx
+        while True:
+            await asyncio.sleep(60)
+            for name in sbx.idle(cfg):
+                try:
+                    await asyncio.to_thread(sbx.stop, cfg, name)
+                except Exception as e:  # noqa: BLE001
+                    log.info("Sandbox %s nicht angehalten: %s", name, e)
 
     async def routine_loop() -> None:
         await asyncio.sleep(3)
@@ -1200,6 +1215,133 @@ def create_app(cfg: Config) -> FastAPI:
         await hub.broadcast(event)
         return event
 
+    # ---------------------------------------------------------------- Sandbox (Coding)
+    def coding_chat() -> None:
+        if memory.mode != "coding":
+            raise HTTPException(409, T("Nur im Coding-Modus.", "Only in coding mode."))
+
+    def sandbox_json() -> dict:
+        from . import sandbox as sbx
+        from . import workspace
+        sb = agent.sandbox_state()
+        out = {"enabled": bool(sb), **sbx.status(cfg, sb)}
+        if sb:
+            out.update(network=sb.get("network", True), branch=sb.get("branch", ""), path=sb["path"],
+                       project=sb.get("project", ""), changes=len(workspace.changes(sb)))
+            from . import github
+            out["github"] = github.remote_repo(sb["path"])
+        return out
+
+    async def sandbox_progress(text: str) -> None:
+        await hub.broadcast({"type": "sandbox_progress", "text": text})
+
+    @app.get("/api/sandbox")
+    async def sandbox_get():
+        coding_chat()
+        return await asyncio.to_thread(sandbox_json)
+
+    @app.post("/api/sandbox")
+    async def sandbox_set(request: Request):
+        """{enabled}: ein-/ausschalten (aus = Container und Arbeitskopie weg); {network}: Netz an/aus."""
+        from . import sandbox as sbx
+        from . import workspace
+        coding_chat()
+        not_busy()
+        data = await request.json()
+        try:
+            if "enabled" in data:
+                if data["enabled"]:
+                    await agent.sandbox_enable(sandbox_progress)
+                else:
+                    await agent.sandbox_disable()
+            if "network" in data:
+                await agent.sandbox_network(bool(data["network"]))
+        except (sbx.SandboxError, workspace.WorkspaceError, OSError) as e:
+            raise HTTPException(400, str(e)) from e
+        await chat_switched()
+        return await asyncio.to_thread(sandbox_json)
+
+    @app.get("/api/sandbox/changes")
+    async def sandbox_changes(path: str = ""):
+        from . import workspace
+        coding_chat()
+        sb = agent.sandbox_state()
+        if not sb:
+            raise HTTPException(409, T("Keine Sandbox aktiv.", "No sandbox active."))
+        if path:
+            return {"path": path, "diff": await asyncio.to_thread(workspace.diff, sb, path)}
+        return {"files": await asyncio.to_thread(workspace.changes, sb)}
+
+    @app.post("/api/sandbox/apply")
+    async def sandbox_apply(request: Request):
+        """„In Projekt übernehmen“: geänderte Dateien der Arbeitskopie ins Projekt kopieren (Konflikte melden)."""
+        from . import workspace
+        coding_chat()
+        not_busy()
+        sb = agent.sandbox_state()
+        if not sb:
+            raise HTTPException(409, T("Keine Sandbox aktiv.", "No sandbox active."))
+        data = await request.json()
+        out = await asyncio.to_thread(workspace.apply, sb, bool(data.get("force")))
+        memory.active.save()
+        if out["applied"]:
+            memory.active.meta.setdefault("pending_notes", []).append(T(
+                f"(Hinweis: Der Nutzer hat die Änderungen der Sandbox ins Projekt übernommen: {', '.join(out['applied'])}.)",
+                f"(Note: the user applied the sandbox changes to the project: {', '.join(out['applied'])}.)"))
+            memory.active.save()
+        return out
+
+    # ---------------------------------------------------------------- GitHub
+    @app.get("/api/github/status")
+    async def github_status():
+        from . import github
+        tok, source = await asyncio.to_thread(github.token_info, cfg)
+        if not tok:
+            return {"connected": False, "source": "", "clone_dir": str(github.clone_dir(cfg))}
+        try:
+            user = await github.user(cfg)
+        except Exception as e:  # noqa: BLE001
+            return {"connected": False, "source": source, "error": str(e)}
+        return {"connected": True, "source": source, "login": user["login"], "clone_dir": str(github.clone_dir(cfg))}
+
+    @app.get("/api/github/repos")
+    async def github_repos(q: str = ""):
+        from . import github
+        try:
+            return {"repos": await github.repos(cfg, q)}
+        except github.GitHubError as e:
+            raise HTTPException(400, str(e)) from e
+
+    @app.post("/api/github/clone")
+    async def github_clone(request: Request):
+        """Repo klonen und zum Projekt des offenen Coding-Chats machen."""
+        from . import github
+        coding_chat()
+        not_busy()
+        repo = str((await request.json()).get("repo", "")).strip()
+        try:
+            path = await asyncio.to_thread(github.clone, cfg, repo)
+            await agent.switch_project(path)
+        except (github.GitHubError, OSError) as e:
+            raise HTTPException(400, str(e)) from e
+        await chat_switched()
+        await hub.broadcast({"type": "chats_changed"})
+        return {"project": path}
+
+    @app.post("/api/github/push")
+    async def github_push():
+        """Knopf „Zu GitHub pushen“ (der Klick ist die Freigabe): aktuellen Branch der Arbeitskopie bzw. des Projekts."""
+        from . import github
+        coding_chat()
+        not_busy()
+        path = agent.project_dir()
+        if not path:
+            raise HTTPException(409, T("Kein Projektordner gewählt.", "No project folder chosen."))
+        try:
+            return await asyncio.to_thread(github.push, cfg, path)
+        except (github.GitHubError, OSError) as e:
+            raise HTTPException(400, str(e)) from e
+
     @app.post("/api/jobs/{job_id}/stop")
     async def stop_job(job_id: str):
         from .tools import jobs
@@ -1303,8 +1445,11 @@ def create_app(cfg: Config) -> FastAPI:
 
     def mode_info() -> dict:
         conv = memory.active
+        sb = agent.sandbox_state() if memory.mode == "coding" else None
         return {"mode": conv.meta.get("mode") or "tools", "project": conv.meta.get("project") or "",
-                "chat_id": conv.chat_id}
+                "chat_id": conv.chat_id,
+                "sandbox": {"enabled": True, "network": sb.get("network", True), "branch": sb.get("branch", ""),
+                            "engine": sb.get("engine", ""), "path": sb.get("path", "")} if sb else None}
 
     async def chat_switched() -> None:
         conv = memory.active
@@ -1392,7 +1537,11 @@ def create_app(cfg: Config) -> FastAPI:
             raise HTTPException(400, f"Ordner nicht gefunden: {raw}")
         value = str(path) if path else ""
         conv = memory._loaded(chat_id)
-        if conv is not None:
+        if conv is not None and conv is memory.active and conv.meta.get("sandbox") \
+                and (conv.meta.get("project") or "") != value:
+            not_busy()
+            await agent.switch_project(value)  # die Sandbox gehört zum alten Projekt – neu anlegen
+        elif conv is not None:
             conv.meta["project"] = value
             conv.save()
         else:
@@ -1441,6 +1590,10 @@ def create_app(cfg: Config) -> FastAPI:
         was_active = chat_id == memory.active.chat_id
         if was_active or chat_id == memory.conversation.chat_id:
             not_busy()  # weder den offenen Chat noch den einer laufenden Routine/Telegram-Anfrage
+        from . import sandbox as sbx
+        from . import workspace
+        await asyncio.to_thread(sbx.remove, cfg, sbx.container_name(chat_id))  # Sandbox des Chats wegräumen
+        await asyncio.to_thread(workspace.discard_chat, chat_id)
         days = memory.forget_chat(chat_id)
         heal_index_soon()
         if was_active:

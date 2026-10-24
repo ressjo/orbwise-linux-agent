@@ -460,6 +460,28 @@ class CodingConfig(BaseModel):
         return max(1, min(int(v), 50))
 
 
+class SandboxConfig(BaseModel):
+    # Coding-Sandbox: Befehle laufen in einem Container (Podman bevorzugt, sonst Docker) auf einer Arbeitskopie
+    engine: str = "auto"            # auto | podman | docker
+    image: str = ""                 # leer = orbwise-sandbox:1 (wird beim ersten Einschalten gebaut)
+    memory: str = "4g"
+    cpus: float = 2.0
+    network: bool = True            # Standard für neue Sandboxen (je Chat umschaltbar)
+    idle_minutes: int = 30          # danach wird der Container gestoppt (beim nächsten Befehl wieder gestartet)
+
+    @field_validator("engine")
+    @classmethod
+    def _engine(cls, v: str) -> str:
+        v = (v or "auto").strip().lower()
+        return v if v in ("auto", "podman", "docker") else "auto"
+
+
+class GitHubConfig(BaseModel):
+    # Token: leer = $ORBWISE_GITHUB_TOKEN / $GH_TOKEN / $GITHUB_TOKEN, sonst das Token einer angemeldeten GitHub-CLI (gh)
+    token: str = ""
+    clone_dir: str = ""             # wohin geklont wird (leer = ~/Projekte bzw. ~/Projects)
+
+
 class Config(BaseModel):
     # Sprache von Orbwise und der Oberfläche: "de" (Deutsch) oder "en" (English)
     language: str = "de"
@@ -491,6 +513,8 @@ class Config(BaseModel):
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     vision: VisionConfig = Field(default_factory=VisionConfig)
     coding: CodingConfig = Field(default_factory=CodingConfig)
+    sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
+    github: GitHubConfig = Field(default_factory=GitHubConfig)
     # Zusätzliche Websites für open_website: Name → URL; "{q}" wird durch die Suche ersetzt
     websites: dict[str, str] = Field(default_factory=dict)
 
