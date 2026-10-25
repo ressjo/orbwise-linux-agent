@@ -647,38 +647,73 @@
         + `<pre>${escapeHtml(code.replace(/\n$/, ""))}</pre></div>`);
       return `\u0000${blocks.length - 1}\u0000`;
     });
+    // Inline-Code und Links vorab als Platzhalter – darin wird nichts formatiert und kein „|“ trennt Tabellenzellen
+    const inl = [];
+    const keep = (html) => { inl.push(html); return `\u0002${inl.length - 1}\u0002`; };
     text = escapeHtml(text)
-      .replace(/`([^`\n]+)`/g, "<code>$1</code>")
+      .replace(/\\\|/g, "\u0001")
+      .replace(/`([^`\n]+)`/g, (_, c) => keep(`<code>${c}</code>`))
+      .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_, t, u) => keep(`<a href="${u}" target="_blank" rel="noopener">${t}</a>`))
+      .replace(/(^|[\s(])(https?:\/\/[^\s<)|]+)/g, (_, pre, u) => pre + keep(`<a href="${u}" target="_blank" rel="noopener">${u}</a>`))
       .replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
-      .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
-      .replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
+      .replace(/(^|[^\w*])\*(?!\s)([^*\n]+?)\*(?![\w*])/g, "$1<em>$2</em>")
+      .replace(/(^|[^\w])_(?!\s)([^_\n]+?)_(?!\w)/g, "$1<em>$2</em>")
+      .replace(/~~([^~\n]+)~~/g, "<del>$1</del>");
+    // Tabellen (GitHub-Markdown): Kopfzeile, direkt darunter die Trennzeile |---|:--:|
+    const SEP = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/;
+    const cells = (row) => row.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+    const table = (rows) => {
+      const head = cells(rows[0]);
+      const align = cells(rows[1]).map((c) => (c.startsWith(":") && c.endsWith(":") ? "center" : c.endsWith(":") ? "right" : ""));
+      const td = (tag, c, i) => `<${tag}${align[i] ? ` style="text-align:${align[i]}"` : ""}>${c}</${tag}>`;
+      const fit = (r) => head.map((_, i) => r[i] ?? "");
+      const body = rows.slice(2).map((r) => `<tr>${fit(cells(r)).map((c, i) => td("td", c, i)).join("")}</tr>`).join("");
+      return `<div class="md-table"><table><thead><tr>${head.map((c, i) => td("th", c, i)).join("")}</tr></thead>`
+        + `<tbody>${body}</tbody></table></div>`;
+    };
     const html = text.split(/\n{2,}/).map((para) => {
       if (/^\u0000\d+\u0000$/.test(para.trim())) return para.trim();
-      // Zeilenweise: Überschriften (## …), Listen (- … / 1. …) und normaler Text, auch gemischt in einem Absatz
+      // Zeilenweise: Überschriften (## …), Listen (- … / 1. …), Tabellen, Zitate, Trennlinien und normaler Text
       const out = [];
-      let list = null, text = [];
+      let list = null, text = [], quote = [];
       const flushText = () => { if (text.length) out.push(`<p>${text.join("<br>")}</p>`); text = []; };
+      const flushQuote = () => { if (quote.length) out.push(`<blockquote>${quote.join("<br>")}</blockquote>`); quote = []; };
       // nummerierte Listen behalten ihre Nummer – auch wenn Leerzeilen sie in mehrere Absätze teilen („1. … 2. …“)
       const flushList = () => {
         if (list) out.push(`<${list.tag}${list.start > 1 ? ` start="${list.start}"` : ""}>${list.items.join("")}</${list.tag}>`);
         list = null;
       };
-      for (const l of para.split("\n")) {
+      const flushAll = () => { flushText(); flushList(); flushQuote(); };
+      const lines = para.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        const l = lines[i];
+        if (l.includes("|") && i + 1 < lines.length && SEP.test(lines[i + 1]) && lines[i + 1].includes("-")) {
+          let j = i + 2;
+          while (j < lines.length && lines[j].includes("|") && lines[j].trim()) j++;
+          flushAll();
+          out.push(table(lines.slice(i, j)));
+          i = j - 1;
+          continue;
+        }
         const h = /^\s*#{1,4}\s+(.+)$/.exec(l);
         const li = /^\s*([-*•]|\d+[.)])\s+(.*)$/.exec(l);
-        if (h) { flushText(); flushList(); out.push(`<div class="md-h">${h[1]}</div>`); }
+        const q = /^\s*&gt;\s?(.*)$/.exec(l);
+        if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(l)) { flushAll(); out.push("<hr>"); }
+        else if (h) { flushAll(); out.push(`<div class="md-h">${h[1]}</div>`); }
+        else if (q) { flushText(); flushList(); quote.push(q[1]); }
         else if (li) {
           const tag = /\d/.test(li[1]) ? "ol" : "ul";
-          flushText();
+          flushText(); flushQuote();
           if (list && list.tag !== tag) flushList();
           list = list || { tag, items: [], start: tag === "ol" ? parseInt(li[1], 10) : 1 };
           list.items.push(`<li>${li[2]}</li>`);
-        } else if (l.trim()) { flushList(); text.push(l); }
+        } else if (l.trim()) { flushList(); flushQuote(); text.push(l); }
       }
-      flushText(); flushList();
+      flushAll();
       return out.join("");
     }).join("");
-    return html.replace(/\u0000(\d+)\u0000/g, (_, i) => blocks[+i]);
+    return html.replace(/\u0002(\d+)\u0002/g, (_, i) => inl[+i]).replace(/\u0001/g, "|")
+      .replace(/\u0000(\d+)\u0000/g, (_, i) => blocks[+i]);
   }
 
   function scrollChat() { chat.scrollTop = chat.scrollHeight; }

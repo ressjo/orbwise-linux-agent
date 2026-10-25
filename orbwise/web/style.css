@@ -291,6 +291,18 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
 .project-chip .i { width: 15px; height: 15px; flex: none; color: var(--coding); }
 .project-chip:hover { border-color: var(--coding); color: var(--text); }
 .head-split { display: inline-flex; }
+/* Markdown in Antworten: Tabellen, Zitate, Trennlinien */
+.msg .body .md-table { overflow-x: auto; margin: 10px 0 12px; border: 1px solid var(--border); border-radius: var(--r-md); }
+.msg .body .md-table table { border-collapse: collapse; width: 100%; font-family: var(--sans, Inter, system-ui, sans-serif);
+  font-size: var(--fs-md); line-height: 1.45; font-variant-numeric: tabular-nums; }
+.msg .body .md-table th, .msg .body .md-table td { padding: 7px 12px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.msg .body .md-table th { background: var(--surface-2); color: var(--text); font-weight: 600; white-space: nowrap; }
+.msg .body .md-table tbody tr:last-child td { border-bottom: 0; }
+.msg .body .md-table tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--surface-2) 55%, transparent); }
+.msg .body .md-table td + td, .msg .body .md-table th + th { border-left: 1px solid var(--border); }
+.msg .body blockquote { margin: 8px 0; padding: 2px 0 2px 14px; border-left: 3px solid var(--accent-line); color: var(--text-2); }
+.msg .body hr { border: 0; border-top: 1px solid var(--border); margin: 14px 0; }
+.msg .body del { color: var(--muted); }
 /* Eigene Dialoge statt Browser-Fenster */
 .ui-dialog-scrim { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 16px;
   background: var(--scrim); backdrop-filter: blur(2px); animation: fade .15s; }
