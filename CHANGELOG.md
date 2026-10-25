@@ -245,6 +245,9 @@ All notable changes to this project are documented here. The format follows
   the open chat stays untouched.
 
 ### Fixed
+- Building the sandbox image failed when the host had no usable `/dev/net/tun` (pasta: “No such device”): the build
+  now uses the host network (only apt-get for the own Containerfile), and errors naming `/dev/net/tun` explain the
+  usual cause (kernel update without reboot → reboot or `sudo modprobe tun`; meanwhile “Network: off” works).
 - `screenshot` reported only “no image”, so the model guessed a reason (e.g. TUN from an earlier Docker attempt):
   it now checks first whether a server answers at the URL (otherwise: start it with `background=true`, or pass the
   HTML file path), passes on Chromium's own error, and avoids the common renderer crash in containers

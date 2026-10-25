@@ -547,3 +547,8 @@ def test_container_shim_refuses_when_switched_off(tmp_path):
     shim = Path(sandbox.__file__).parent / "sandbox_image" / "container-shim"
     r = subprocess.run(["sh", str(shim), "build", "."], capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"})
     assert r.returncode == 125 and "Sandbox-Menü" in r.stderr
+
+
+def test_missing_tun_on_the_host_is_explained():
+    msg = "setup network: pasta failed with exit code 1:\nFailed to open() /dev/net/tun: No such device"
+    assert "modprobe tun" in sandbox.tun_hint(msg) and sandbox.tun_hint("other error") == ""

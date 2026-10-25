@@ -117,8 +117,10 @@ def image_ready(binary: str, name: str) -> bool:
 
 async def build_image(binary: str, progress: Callable[[str], Awaitable[None]] | None = None) -> None:
     """orbwise-sandbox:3 aus sandbox_image/Containerfile bauen (einmalig, einige Minuten)."""
+    # --network=host: der Bau (nur apt-get mit dem eigenen Containerfile) braucht kein eigenes Container-Netz – so
+    # klappt er auch, wenn pasta/slirp4netns kein /dev/net/tun bekommen
     proc = await asyncio.create_subprocess_exec(
-        binary, "build", "-t", DEFAULT_IMAGE, "-f", str(CONTAINERFILE), str(CONTAINERFILE.parent),
+        binary, "build", "--network=host", "-t", DEFAULT_IMAGE, "-f", str(CONTAINERFILE), str(CONTAINERFILE.parent),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
     tail: list[str] = []
     assert proc.stdout
@@ -131,7 +133,7 @@ async def build_image(binary: str, progress: Callable[[str], Awaitable[None]] | 
         if progress and text:
             await progress(text[:200])
     if await proc.wait() != 0:
-        raise SandboxError("Image-Bau fehlgeschlagen:\n" + "\n".join(tail))
+        raise SandboxError("Image-Bau fehlgeschlagen:\n" + "\n".join(tail) + tun_hint("\n".join(tail)))
 
 
 # ---------------------------------------------------------------- Container
@@ -209,10 +211,20 @@ def state_of(binary: str, name: str) -> str:
     return r.stdout.strip() if r.returncode == 0 else "missing"
 
 
+def tun_hint(msg: str) -> str:
+    """/dev/net/tun fehlt auf dem Rechner (pasta/slirp4netns brauchen es für das Netz des Containers)."""
+    if "/dev/net/tun" not in msg:
+        return ""
+    return ("\n→ Auf deinem Rechner fehlt das TUN-Gerät. Meist nach einem Kernel-Update ohne Neustart (die Module des "
+            "laufenden Kernels sind dann weg): Rechner neu starten oder `sudo modprobe tun`. Bis dahin geht die "
+            "Sandbox mit „Netz: aus“.")
+
+
 def _run(argv: list[str], timeout: float = 120) -> str:
     r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
     if r.returncode != 0:
-        raise SandboxError((r.stderr or r.stdout).strip()[-500:])
+        msg = (r.stderr or r.stdout).strip()[-500:]
+        raise SandboxError(msg + tun_hint(msg))
     return r.stdout
 
 
