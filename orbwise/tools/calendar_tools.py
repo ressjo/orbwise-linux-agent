@@ -347,11 +347,11 @@ async def events_between(cfg, start_day: date, days: int) -> list[Event]:
 
 # ---------------------------------------------------------------- Tools
 
-@tool("Zeigt Termine aus dem Kalender des Nutzers für einen Tag oder Zeitraum.", enabled=_enabled)
+@tool("Zeigt Termine für einen Tag oder Zeitraum.", enabled=_enabled)
 async def calendar_events(
     ctx: ToolContext,
-    start: Annotated[str, "Erster Tag: 'heute', 'morgen', Wochentag oder YYYY-MM-DD (Standard heute)"] = "",
-    days: Annotated[int, "Anzahl Tage (Standard 1, eine Woche = 7)"] = 1,
+    start: Annotated[str, "Erster Tag: 'heute', 'morgen', Wochentag oder YYYY-MM-DD"] = "",
+    days: Annotated[int, "Anzahl Tage (Standard 1)"] = 1,
 ) -> str:
     client = CalendarClient(ctx.cfg)
     try:
@@ -368,13 +368,13 @@ async def calendar_events(
     return f"Termine {span}:\n" + "\n".join(e.line() for e in events) + note
 
 
-@tool("Findet freie Zeitfenster an einem Tag (z. B. für „Hab ich am Freitag Nachmittag Zeit?“).", enabled=_enabled)
+@tool("Findet freie Zeitfenster an einem Tag („Hab ich Freitag Nachmittag Zeit?“).", enabled=_enabled)
 async def calendar_free(
     ctx: ToolContext,
-    day: Annotated[str, "Tag: 'heute', 'morgen', Wochentag oder YYYY-MM-DD"] = "",
-    from_time: Annotated[str, "Beginn des betrachteten Zeitraums (HH:MM, Standard 08:00)"] = "08:00",
-    to_time: Annotated[str, "Ende des betrachteten Zeitraums (HH:MM, Standard 20:00)"] = "20:00",
-    min_minutes: Annotated[int, "Mindestlänge eines freien Fensters in Minuten (Standard 30)"] = 30,
+    day: Annotated[str, "'heute', 'morgen', Wochentag oder YYYY-MM-DD"] = "",
+    from_time: Annotated[str, "HH:MM (Standard 08:00)"] = "08:00",
+    to_time: Annotated[str, "HH:MM (Standard 20:00)"] = "20:00",
+    min_minutes: Annotated[int, "Mindestlänge (Standard 30)"] = 30,
 ) -> str:
     try:
         d = parse_day(day)
@@ -407,17 +407,16 @@ async def calendar_free(
     return text
 
 
-@tool("Legt einen neuen Termin im Kalender an. Mit Uhrzeit = normaler Termin, "
-      "nur Datum = ganztägig.", enabled=_enabled)
+@tool("Legt einen Termin an. Mit Uhrzeit = Termin, nur Datum = ganztägig.", enabled=_enabled)
 async def calendar_add(
     ctx: ToolContext,
-    title: Annotated[str, "Titel, z. B. 'Zahnarzt'"],
-    start: Annotated[str, "Beginn: 'YYYY-MM-DD HH:MM' oder wie gesagt ('nächsten Dienstag 14:00'); nur ein Datum = ganztägig"],
-    duration_minutes: Annotated[int, "Dauer in Minuten (Standard 60; bei ganztägig ignoriert)"] = 60,
-    end: Annotated[str, "Optional: Ende 'YYYY-MM-DD HH:MM' statt Dauer; ganztägig: letzter Tag 'YYYY-MM-DD'"] = "",
-    location: Annotated[str, "Optional: Ort"] = "",
-    notes: Annotated[str, "Optional: Notiz"] = "",
-    calendar: Annotated[str, "Optional: Kalendername (Standard: eingestellter Standardkalender)"] = "",
+    title: str,
+    start: Annotated[str, "'YYYY-MM-DD HH:MM' oder wie gesagt ('nächsten Dienstag 14:00')"],
+    duration_minutes: Annotated[int, "Standard 60"] = 60,
+    end: Annotated[str, "Ende statt Dauer; ganztägig: letzter Tag"] = "",
+    location: str = "",
+    notes: str = "",
+    calendar: Annotated[str, "Kalendername (Standard: Standardkalender)"] = "",
 ) -> str:
     try:
         begin, all_day = parse_start(start)
@@ -447,16 +446,16 @@ def _delete_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     return CONFIRM, T(f"löscht den Kalendertermin '{args.get('query', '')}'", f"deletes the event '{args.get('query', '')}'")
 
 
-@tool("Verschiebt oder ändert einen bestehenden Termin (neue Zeit, Titel oder Ort).", risk=_change_risk,
+@tool("Verschiebt oder ändert einen Termin (Zeit, Titel, Ort).", risk=_change_risk,
       enabled=_enabled)
 async def calendar_update(
     ctx: ToolContext,
-    query: Annotated[str, "Teil des Termin-Titels, z. B. 'Zahnarzt'"],
-    day: Annotated[str, "Optional: aktueller Tag des Termins (hilft bei mehreren Treffern)"] = "",
-    new_start: Annotated[str, "Optional: neuer Beginn 'YYYY-MM-DD HH:MM' (Dauer bleibt gleich)"] = "",
-    duration_minutes: Annotated[int, "Optional: neue Dauer in Minuten"] = 0,
-    new_title: Annotated[str, "Optional: neuer Titel"] = "",
-    new_location: Annotated[str, "Optional: neuer Ort"] = "",
+    query: Annotated[str, "Teil des Titels"],
+    day: Annotated[str, "Aktueller Tag (bei mehreren Treffern)"] = "",
+    new_start: Annotated[str, "'YYYY-MM-DD HH:MM' (Dauer bleibt)"] = "",
+    duration_minutes: int = 0,
+    new_title: str = "",
+    new_location: str = "",
 ) -> str:
     client = CalendarClient(ctx.cfg)
     try:
@@ -488,8 +487,8 @@ async def calendar_update(
 @tool("Löscht einen Termin aus dem Kalender.", risk=_delete_risk, enabled=_enabled)
 async def calendar_delete(
     ctx: ToolContext,
-    query: Annotated[str, "Teil des Termin-Titels"],
-    day: Annotated[str, "Optional: Tag des Termins (hilft bei mehreren Treffern)"] = "",
+    query: Annotated[str, "Teil des Titels"],
+    day: Annotated[str, "Tag (bei mehreren Treffern)"] = "",
 ) -> str:
     client = CalendarClient(ctx.cfg)
     try:

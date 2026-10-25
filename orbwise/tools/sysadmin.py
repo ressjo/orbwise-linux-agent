@@ -28,12 +28,12 @@ def _unit(name: str) -> str:
 
 # ---------------------------------------------------------------- Prozesse
 
-@tool("Zeigt die Prozesse mit der höchsten CPU- oder RAM-Last (optional nach Namen gefiltert).")
+@tool("Prozesse mit der höchsten CPU- oder RAM-Last.")
 async def top_processes(
     ctx: ToolContext,
-    sort: Annotated[str, "cpu oder mem"] = "cpu",
-    filter: Annotated[str, "Optional: nur Prozesse, deren Name/Befehl dies enthält"] = "",
-    limit: Annotated[int, "Anzahl (Standard 10)"] = 10,
+    sort: Annotated[str, "cpu | mem"] = "cpu",
+    filter: Annotated[str, "Teil von Name/Befehl"] = "",
+    limit: Annotated[int, "Standard 10"] = 10,
 ) -> str:
     key = "-pmem" if sort.strip().lower().startswith(("mem", "ram", "speicher")) else "-pcpu"
     rc, out = await proc.run(ctx, ["ps", "-eo", "pid,user,pcpu,pmem,rss,etime,comm,args", f"--sort={key}"],
@@ -69,11 +69,11 @@ def _kill_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     return CONFIRM, T("Prozess beenden: ", "end process: ") + f"{target}{force}"
 
 
-@tool("Beendet einen Prozess per PID oder exaktem Prozessnamen (erst sanft, mit force=true hart).", risk=_kill_risk)
+@tool("Beendet einen Prozess per PID oder exaktem Namen (erst sanft).", risk=_kill_risk)
 async def kill_process(
     ctx: ToolContext,
-    target: Annotated[str, "PID oder exakter Prozessname, z. B. 'firefox'"],
-    force: Annotated[bool, "true = SIGKILL statt SIGTERM"] = False,
+    target: Annotated[str, "PID oder exakter Name"],
+    force: Annotated[bool, "true = SIGKILL"] = False,
 ) -> str:
     target = target.strip()
     sig = "-KILL" if force else "-TERM"
@@ -98,12 +98,11 @@ async def kill_process(
 
 # ---------------------------------------------------------------- Dienste
 
-@tool("Zeigt den Status eines systemd-Dienstes (aktiv, aktiviert, letzte Meldungen). Ohne Namen: alle "
-      "fehlgeschlagenen Dienste.")
+@tool("Status eines systemd-Dienstes; ohne Namen alle fehlgeschlagenen.")
 async def service_status(
     ctx: ToolContext,
-    name: Annotated[str, "Dienstname, z. B. 'sshd' oder 'docker' (leer = fehlgeschlagene Dienste)"] = "",
-    user: Annotated[bool, "true = Benutzerdienst (systemctl --user)"] = False,
+    name: Annotated[str, "z. B. 'sshd'"] = "",
+    user: Annotated[bool, "true = Benutzerdienst"] = False,
 ) -> str:
     scope = ["--user"] if user else []
     if not name.strip():
@@ -132,12 +131,12 @@ def _service_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
         T(" (Benutzerdienst)", " (user service)") if args.get("user") else T(" (Root-Rechte)", " (root privileges)"))
 
 
-@tool("Startet, stoppt, startet neu, lädt neu, aktiviert oder deaktiviert einen systemd-Dienst.", risk=_service_risk)
+@tool("Steuert einen systemd-Dienst.", risk=_service_risk)
 async def service_control(
     ctx: ToolContext,
-    name: Annotated[str, "Dienstname, z. B. 'docker'"],
+    name: str,
     action: Annotated[str, "start | stop | restart | reload | enable | disable"],
-    user: Annotated[bool, "true = Benutzerdienst (ohne Root-Rechte)"] = False,
+    user: Annotated[bool, "true = Benutzerdienst"] = False,
 ) -> str:
     unit, action = _unit(name), action.strip().lower()
     if action not in SERVICE_ACTIONS:
@@ -153,13 +152,13 @@ async def service_control(
     return f"Erledigt: {unit} {action} – Zustand jetzt: {state.strip() or 'unbekannt'}."
 
 
-@tool("Zeigt die letzten Log-Zeilen eines Dienstes (journalctl), optional nur Fehler oder ab einem Zeitpunkt.")
+@tool("Letzte Log-Zeilen eines Dienstes (journalctl).")
 async def service_logs(
     ctx: ToolContext,
-    name: Annotated[str, "Dienstname (leer = gesamtes System-Journal)"] = "",
-    lines: Annotated[int, "Anzahl Zeilen (Standard 40)"] = 40,
-    errors_only: Annotated[bool, "nur Warnungen und Fehler"] = False,
-    since: Annotated[str, "Optional: z. B. 'today', '1 hour ago', '2026-09-27 08:00'"] = "",
+    name: Annotated[str, "Leer = ganzes Journal"] = "",
+    lines: Annotated[int, "Standard 40"] = 40,
+    errors_only: bool = False,
+    since: Annotated[str, "z. B. 'today', '1 hour ago'"] = "",
     user: Annotated[bool, "true = Benutzerdienst"] = False,
 ) -> str:
     argv = ["journalctl", "--no-pager", "-o", "short-iso", "-n", str(max(1, min(int(lines), 400)))]
@@ -186,9 +185,8 @@ async def service_logs(
 
 # ---------------------------------------------------------------- Netzwerk
 
-@tool("Zeigt Netzwerk-Infos: IP-Adressen, Standard-Gateway, DNS-Server, WLAN (falls NetworkManager) und optional "
-      "die öffentliche IP.")
-async def network_info(ctx: ToolContext, public_ip: Annotated[bool, "auch öffentliche IP abfragen"] = False) -> str:
+@tool("IP-Adressen, Gateway, DNS, WLAN und optional die öffentliche IP.")
+async def network_info(ctx: ToolContext, public_ip: bool = False) -> str:
     parts = []
     _, addrs = await proc.run(ctx, ["ip", "-brief", "address"], timeout=10, stream=False)
     parts.append("Adressen:\n" + "\n".join(ln for ln in addrs.splitlines() if not ln.startswith("lo ")))
@@ -219,11 +217,11 @@ async def network_info(ctx: ToolContext, public_ip: Annotated[bool, "auch öffen
     return "\n".join(parts)
 
 
-@tool("Pingt einen Host (Erreichbarkeit und Antwortzeit).")
+@tool("Pingt einen Host.")
 async def ping_host(
     ctx: ToolContext,
-    host: Annotated[str, "Hostname oder IP, z. B. 'nas.local' oder '1.1.1.1'"],
-    count: Annotated[int, "Anzahl Pings (Standard 4)"] = 4,
+    host: Annotated[str, "Hostname oder IP"],
+    count: Annotated[int, "Standard 4"] = 4,
 ) -> str:
     host = host.strip()
     if not HOST_RE.match(host) or host.startswith("-"):
@@ -235,7 +233,7 @@ async def ping_host(
     return ("Erreichbar.\n" if rc == 0 else "Nicht erreichbar.\n") + summary
 
 
-@tool("Listet offene (lauschende) TCP/UDP-Ports dieses Rechners mit zugehörigem Programm.")
+@tool("Offene (lauschende) TCP/UDP-Ports mit Programm.")
 async def open_ports(ctx: ToolContext) -> str:
     rc, out = await proc.run(ctx, ["ss", "-tulpnH"], timeout=15, stream=False)
     if rc != 0:
@@ -250,11 +248,11 @@ async def open_ports(ctx: ToolContext) -> str:
     return "PROTO LOKALE ADRESSE                PROGRAMM\n" + "\n".join(sorted(set(rows))) if rows else "Keine offenen Ports."
 
 
-@tool("Prüft, ob ein TCP-Port auf einem Host erreichbar ist (z. B. ob ein Dienst im Netz läuft).")
+@tool("Prüft, ob ein TCP-Port auf einem Host erreichbar ist.")
 async def check_port(
     ctx: ToolContext,
-    host: Annotated[str, "Hostname oder IP"],
-    port: Annotated[int, "TCP-Port, z. B. 22 oder 8080"],
+    host: str,
+    port: int,
 ) -> str:
     host = host.strip()
     if not HOST_RE.match(host) or not 0 < int(port) < 65536:
@@ -270,11 +268,11 @@ async def check_port(
 
 # ---------------------------------------------------------------- Speicherplatz
 
-@tool("Zeigt freien Speicherplatz aller Laufwerke und optional die größten Ordner unter einem Pfad.")
+@tool("Freier Platz aller Laufwerke, optional die größten Ordner unter path.")
 async def disk_usage(
     ctx: ToolContext,
-    path: Annotated[str, "Optional: Ordner, dessen größte Unterordner gezeigt werden, z. B. '~' oder '~/Downloads'"] = "",
-    top: Annotated[int, "Anzahl der größten Ordner (Standard 10)"] = 10,
+    path: Annotated[str, "z. B. '~/Downloads'"] = "",
+    top: Annotated[int, "Standard 10"] = 10,
 ) -> str:
     _, df = await proc.run(ctx, ["df", "-h", "--output=target,size,used,avail,pcent", "-x", "tmpfs", "-x", "devtmpfs",
                                  "-x", "squashfs", "-x", "overlay", "-x", "efivarfs"], timeout=20, stream=False)
@@ -304,9 +302,9 @@ def _cleanup_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
         else (SAFE, "nur Analyse")
 
 
-@tool("Findet Platz zum Aufräumen (Paket-Cache, verwaiste Pakete, System-Journal). Erst ohne apply aufrufen und dem "
-      "Nutzer zeigen, dann mit apply=true aufräumen.", risk=_cleanup_risk)
-async def cleanup_system(ctx: ToolContext, apply: Annotated[bool, "true = wirklich aufräumen"] = False) -> str:
+@tool("Findet Platz zum Aufräumen (Paket-Cache, verwaiste Pakete, Journal). Erst ohne apply zeigen, dann "
+      "apply=true.", risk=_cleanup_risk)
+async def cleanup_system(ctx: ToolContext, apply: bool = False) -> str:
     pm = package_manager(ctx)
     lines = []
     cache = "/var/cache/pacman/pkg" if pm == "pacman" else "/var/cache/apt/archives"

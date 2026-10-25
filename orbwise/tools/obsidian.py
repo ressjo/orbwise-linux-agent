@@ -154,14 +154,13 @@ def _embedder(ctx: ToolContext):
 
 # ---------------------------------------------------------------- Tools
 
-@tool("Durchsucht die Obsidian-Notizen des Nutzers (Titel und Inhalt, beste Treffer zuerst). Ohne Suchbegriff: "
-      "die zuletzt geänderten Notizen. Liefert Pfade für obsidian_read / obsidian_ask.", enabled=_enabled)
+@tool("Durchsucht die Obsidian-Notizen (Titel und Inhalt). Ohne Suchbegriff: zuletzt geänderte. Liefert Pfade.", enabled=_enabled)
 async def obsidian_search(
     ctx: ToolContext,
-    query: Annotated[str, "Suchbegriffe, z. B. 'docker backup' (leer = zuletzt geänderte Notizen)"] = "",
-    folder: Annotated[str, "Optional: nur in diesem Ordner des Vaults suchen, z. B. 'Projekte'"] = "",
-    tag: Annotated[str, "Optional: nur Notizen mit diesem Tag, z. B. 'meeting'"] = "",
-    limit: Annotated[int, "Maximale Anzahl Treffer"] = 8,
+    query: str = "",
+    folder: Annotated[str, "Nur in diesem Ordner"] = "",
+    tag: Annotated[str, "Nur mit diesem Tag"] = "",
+    limit: int = 8,
 ) -> str:
     async def run() -> str:
         vault = _vault(ctx.cfg)
@@ -205,11 +204,11 @@ async def obsidian_search(
     return await _guard(run())
 
 
-@tool("Liest eine Obsidian-Notiz (per Pfad oder Titel), lange Notizen abschnittsweise.", enabled=_enabled)
+@tool("Liest eine Obsidian-Notiz (Pfad oder Titel), lange abschnittsweise.", enabled=_enabled)
 async def obsidian_read(
     ctx: ToolContext,
-    note: Annotated[str, "Pfad (aus obsidian_search) oder Titel der Notiz"],
-    offset: Annotated[int, "Ab diesem Zeichen weiterlesen (für lange Notizen)"] = 0,
+    note: Annotated[str, "Pfad oder Titel"],
+    offset: Annotated[int, "Ab diesem Zeichen weiterlesen"] = 0,
 ) -> str:
     async def run() -> str:
         vault = _vault(ctx.cfg)
@@ -225,12 +224,11 @@ async def obsidian_read(
     return await _guard(run())
 
 
-@tool("Beantwortet eine Frage zu einer bestimmten Obsidian-Notiz: liefert die dazu relevantesten Textstellen. "
-      "Beantworte die Frage dann aus diesen Stellen.", enabled=_enabled)
+@tool("Liefert die zur Frage relevantesten Stellen einer Obsidian-Notiz; daraus antworten.", enabled=_enabled)
 async def obsidian_ask(
     ctx: ToolContext,
-    note: Annotated[str, "Pfad oder Titel der Notiz"],
-    question: Annotated[str, "Die Frage zur Notiz, z. B. 'Welche Ports braucht der Server?'"],
+    note: Annotated[str, "Pfad oder Titel"],
+    question: str,
 ) -> str:
     async def run() -> str:
         vault = _vault(ctx.cfg)
@@ -253,14 +251,13 @@ async def obsidian_ask(
     return await _guard(run())
 
 
-@tool("Legt eine neue Obsidian-Notiz an – standardmäßig im Inbox-Ordner. Inhalt als Markdown "
-      "(Überschriften mit ##, Listen mit -, Aufgaben mit - [ ], Codeblöcke mit ```).", enabled=_enabled)
+@tool("Legt eine Obsidian-Notiz an (Standard: Inbox-Ordner), Inhalt in Markdown.", enabled=_enabled)
 async def obsidian_create_note(
     ctx: ToolContext,
-    title: Annotated[str, "Titel der Notiz (wird der Dateiname)"],
-    content: Annotated[str, "Inhalt der Notiz in Markdown"],
-    folder: Annotated[str, "Optional: Ordner im Vault, z. B. 'Projekte/Server'; leer = Inbox"] = "",
-    tags: Annotated[str, "Optional: Tags, kommagetrennt, z. B. 'meeting, kunde'"] = "",
+    title: Annotated[str, "Wird der Dateiname"],
+    content: str,
+    folder: Annotated[str, "Ordner im Vault; leer = Inbox"] = "",
+    tags: Annotated[str, "Kommagetrennt"] = "",
 ) -> str:
     async def run() -> str:
         vault = _vault(ctx.cfg)
@@ -283,12 +280,11 @@ async def obsidian_create_note(
     return await _guard(run())
 
 
-@tool("Hängt Text an eine bestehende Obsidian-Notiz an (z. B. Einkaufsliste, Logbuch, Protokoll). "
-      "Der bisherige Inhalt bleibt.", enabled=_enabled)
+@tool("Hängt Text an eine Obsidian-Notiz an (Einkaufsliste, Logbuch …).", enabled=_enabled)
 async def obsidian_append(
     ctx: ToolContext,
-    note: Annotated[str, "Pfad oder Titel der Notiz"],
-    content: Annotated[str, "Anzuhängender Text (Markdown)"],
+    note: Annotated[str, "Pfad oder Titel"],
+    content: str,
 ) -> str:
     async def run() -> str:
         vault = _vault(ctx.cfg)
@@ -309,12 +305,11 @@ def _update_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     return CONFIRM, T(f"überschreibt den Inhalt der Obsidian-Notiz '{note}'", f"overwrites the Obsidian note '{note}'")
 
 
-@tool("Ersetzt den kompletten Inhalt einer Obsidian-Notiz (Frontmatter bleibt erhalten). "
-      "Zum Ergänzen lieber obsidian_append.", risk=_update_risk, enabled=_enabled)
+@tool("Ersetzt den ganzen Inhalt einer Obsidian-Notiz (Frontmatter bleibt). Zum Ergänzen obsidian_append.", risk=_update_risk, enabled=_enabled)
 async def obsidian_update_note(
     ctx: ToolContext,
-    note: Annotated[str, "Pfad oder Titel der Notiz"],
-    content: Annotated[str, "Neuer vollständiger Inhalt (Markdown)"],
+    note: Annotated[str, "Pfad oder Titel"],
+    content: str,
 ) -> str:
     async def run() -> str:
         vault = _vault(ctx.cfg)
@@ -329,11 +324,11 @@ async def obsidian_update_note(
     return await _guard(run())
 
 
-@tool("Öffnet eine Obsidian-Notiz in der Obsidian-App (oder, falls Obsidian fehlt, mit dem Standardprogramm).",
+@tool("Öffnet eine Notiz in der Obsidian-App.",
       enabled=_enabled)
 async def obsidian_open(
     ctx: ToolContext,
-    note: Annotated[str, "Pfad oder Titel der Notiz"],
+    note: Annotated[str, "Pfad oder Titel"],
 ) -> str:
     async def run() -> str:
         vault = _vault(ctx.cfg)

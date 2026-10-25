@@ -176,14 +176,13 @@ async def _analyse(ctx: ToolContext, path: Path, question: str, screen: bool, so
 
 # ---------------------------------------------------------------- Werkzeuge
 
-@tool("Schaut auf den Bildschirm des Nutzers (Screenshot) und beantwortet eine Frage dazu – z. B. „Was ist das für "
-      "eine Fehlermeldung?“, „Was steht in dem Fenster?“, „Hilf mir bei dem Dialog“. Das gewünschte Fenster sollte "
-      "im Vordergrund sein; mit delay_seconds hat der Nutzer Zeit, es nach vorne zu holen.",
+@tool("Macht einen Screenshot und beantwortet eine Frage dazu (z. B. Fehlermeldung, Fensterinhalt, Dialog). "
+      "delay_seconds gibt dem Nutzer Zeit, das Fenster nach vorne zu holen.",
       enabled=_enabled)
 async def look_at_screen(
     ctx: ToolContext,
-    question: Annotated[str, "Was der Nutzer über den Bildschirm wissen will (in seinen Worten)"] = "",
-    delay_seconds: Annotated[int, "Wartezeit vor dem Screenshot in Sekunden (0–10), z. B. „in 5 Sekunden“"] = 0,
+    question: Annotated[str, "Was der Nutzer wissen will"] = "",
+    delay_seconds: Annotated[int, "Wartezeit 0–10 s, z. B. „in 5 Sekunden“"] = 0,
 ) -> str:
     delay = max(0, min(int(delay_seconds or 0), 10))
     if delay:
@@ -203,12 +202,12 @@ def _image_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     return SAFE, ""
 
 
-@tool("Schaut sich eine Bilddatei an (PNG, JPG, WebP – z. B. ein Foto vom Handy) und beantwortet eine Frage dazu.",
+@tool("Schaut sich eine Bilddatei an (PNG, JPG, WebP, z. B. Handyfoto) und beantwortet eine Frage dazu.",
       risk=_image_risk, enabled=_enabled)
 async def look_at_image(
     ctx: ToolContext,
-    path: Annotated[str, "Pfad der Bilddatei"],
-    question: Annotated[str, "Was der Nutzer über das Bild wissen will"] = "",
+    path: str,
+    question: str = "",
 ) -> str:
     p = Path(path).expanduser()
     if not p.is_file():

@@ -23,7 +23,7 @@ def test_schemas_are_lean_but_lose_nothing():
             assert prop["type"] == spec.parameters["properties"][name]["type"]
             assert not (prop.get("description") or "").startswith("Optional: ")
     p = get_tool("find_files").schema()["function"]["parameters"]["properties"]
-    assert p["path"]["description"].startswith("Startverzeichnis")
+    assert p["path"]["description"].startswith("Startordner")
 
 
 def test_coerce_args():

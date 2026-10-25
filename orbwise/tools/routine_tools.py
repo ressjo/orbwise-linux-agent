@@ -70,16 +70,16 @@ def _named_risk(action: str):
     return risk
 
 
-@tool("Legt eine Routine an: Orbwise erledigt eine Aufgabe automatisch zu einer festen Uhrzeit – täglich, an "
-      "bestimmten Wochentagen oder einmalig (z. B. werktags um 8 Linux-News suchen). Ergebnis in einem eigenen Chat.",
+@tool("Legt eine Routine an: eine Aufgabe automatisch zur festen Uhrzeit (täglich, an Wochentagen oder einmalig), "
+      "Ergebnis in eigenem Chat.",
       risk=_create_risk)
 async def routine_create(
     ctx: ToolContext,
-    task: Annotated[str, "Die Aufgabe als klarer Auftrag, z. B. 'Suche die wichtigsten Linux-News von heute und fasse sie zusammen'"],
-    time: Annotated[str, "Uhrzeit HH:MM, z. B. 08:00"],
-    name: Annotated[str, "Kurzer Name, z. B. 'Linux-News'"] = "",
-    days: Annotated[str, "Wochentage: leer = täglich, 'werktags', 'Wochenende' oder z. B. 'Mo, Mi, Fr'"] = "",
-    date: Annotated[str, "Nur für einmalige Routinen: Datum YYYY-MM-DD oder z. B. 'nächsten Freitag'"] = "",
+    task: Annotated[str, "Klarer Auftrag, z. B. 'Suche die Linux-News von heute und fasse sie zusammen'"],
+    time: Annotated[str, "HH:MM"],
+    name: Annotated[str, "Kurzer Name"] = "",
+    days: Annotated[str, "Leer = täglich, 'werktags', 'Wochenende' oder 'Mo, Mi, Fr'"] = "",
+    date: Annotated[str, "Nur einmalig: Datum oder 'nächsten Freitag'"] = "",
 ) -> str:
     try:
         r = store_for(ctx).add(name, task, time, days, date)
@@ -89,7 +89,7 @@ async def routine_create(
     return f"✔ Routine angelegt: „{r.name}“ – {r.schedule()}, nächste Ausführung {when_label(r.next_run(now), now)}."
 
 
-@tool("Listet alle Routinen mit Zeitplan, nächster Ausführung und letztem Ergebnis.", risk=SAFE)
+@tool("Listet Routinen mit Zeitplan, nächster Ausführung und letztem Ergebnis.", risk=SAFE)
 async def routine_list(ctx: ToolContext) -> str:
     items = store_for(ctx).items
     if not items:
@@ -98,16 +98,16 @@ async def routine_list(ctx: ToolContext) -> str:
     return "\n".join(_line(r, now) for r in items)
 
 
-@tool("Ändert eine Routine: Aufgabe, Uhrzeit, Wochentage, Name oder pausieren/fortsetzen (enabled).",
+@tool("Ändert eine Routine; leere Felder bleiben unverändert.",
       risk=_named_risk("ändern"))
 async def routine_update(
     ctx: ToolContext,
-    which: Annotated[str, "ID oder Name der Routine"],
-    task: Annotated[str, "Neue Aufgabe (leer = unverändert)"] = "",
-    time: Annotated[str, "Neue Uhrzeit HH:MM (leer = unverändert)"] = "",
-    days: Annotated[str, "Neue Wochentage (leer = unverändert, 'täglich' = jeden Tag)"] = "",
-    name: Annotated[str, "Neuer Name (leer = unverändert)"] = "",
-    enabled: Annotated[str, "'ja' = aktiv, 'nein' = pausieren (leer = unverändert)"] = "",
+    which: Annotated[str, "ID oder Name"],
+    task: str = "",
+    time: Annotated[str, "HH:MM"] = "",
+    days: Annotated[str, "'täglich' = jeden Tag"] = "",
+    name: str = "",
+    enabled: Annotated[str, "'ja' = aktiv, 'nein' = pausiert"] = "",
 ) -> str:
     try:
         r = _find_one(ctx, which)
@@ -123,7 +123,7 @@ async def routine_update(
 
 
 @tool("Löscht eine Routine.", risk=_named_risk("löschen"))
-async def routine_delete(ctx: ToolContext, which: Annotated[str, "ID oder Name der Routine"]) -> str:
+async def routine_delete(ctx: ToolContext, which: Annotated[str, "ID oder Name"]) -> str:
     try:
         r = _find_one(ctx, which)
     except ValueError as e:
@@ -132,8 +132,8 @@ async def routine_delete(ctx: ToolContext, which: Annotated[str, "ID oder Name d
     return f"✔ Routine „{r.name}“ gelöscht (ihr Chat bleibt im Verlauf)."
 
 
-@tool("Startet eine Routine sofort (zusätzlich zu ihrem Zeitplan). Sie läuft direkt nach dieser Antwort.", risk=SAFE)
-async def routine_run_now(ctx: ToolContext, which: Annotated[str, "ID oder Name der Routine"]) -> str:
+@tool("Startet eine Routine sofort (direkt nach dieser Antwort).", risk=SAFE)
+async def routine_run_now(ctx: ToolContext, which: Annotated[str, "ID oder Name"]) -> str:
     try:
         r = _find_one(ctx, which)
     except ValueError as e:

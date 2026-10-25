@@ -323,13 +323,12 @@ async def _guard(coro) -> str:
 
 # ---------------------------------------------------------------- Tools
 
-@tool("Durchsucht die Trilium-Notizen des Nutzers (Volltext über Titel und Inhalt, neueste zuerst). "
-      "Liefert Titel, Notiz-ID, Änderungsdatum und eine Vorschau. Für den ganzen Text danach trilium_read.",
+@tool("Durchsucht die Trilium-Notizen (Titel und Inhalt, neueste zuerst); liefert Titel, ID und Vorschau.",
       enabled=_enabled)
 async def trilium_search(
     ctx: ToolContext,
-    query: Annotated[str, "Suchbegriffe, z. B. 'docker nas'. Triliums Suchsyntax (#label, note.title *=* …) geht auch."],
-    limit: Annotated[int, "Maximale Anzahl Treffer (Standard 10)"] = 10,
+    query: Annotated[str, "Suchbegriffe; Trilium-Syntax (#label …) geht auch"],
+    limit: Annotated[int, "Standard 10"] = 10,
 ) -> str:
     async def run() -> str:
         async with TriliumClient(ctx.cfg) as tc:
@@ -348,10 +347,10 @@ async def trilium_search(
     return await _guard(run())
 
 
-@tool("Liest den vollständigen Inhalt einer Trilium-Notiz.", enabled=_enabled)
+@tool("Liest eine Trilium-Notiz.", enabled=_enabled)
 async def trilium_read(
     ctx: ToolContext,
-    note: Annotated[str, "Notiz-ID (aus trilium_search) oder Titel der Notiz"],
+    note: Annotated[str, "ID oder Titel"],
 ) -> str:
     async def run() -> str:
         async with TriliumClient(ctx.cfg) as tc:
@@ -364,14 +363,13 @@ async def trilium_read(
     return await _guard(run())
 
 
-@tool("Legt eine neue Notiz in Trilium an – standardmäßig in der Inbox. Inhalt als Text mit einfachem "
-      "Markdown (Überschriften mit ##, Listen mit -, Aufgaben mit - [ ], Codeblöcke mit ```).",
+@tool("Legt eine Trilium-Notiz an (Standard: Inbox), Inhalt in einfachem Markdown.",
       enabled=_enabled)
 async def trilium_create_note(
     ctx: ToolContext,
-    title: Annotated[str, "Titel der Notiz"],
-    content: Annotated[str, "Inhalt der Notiz"],
-    parent: Annotated[str, "Optional: ID oder Titel der Elternnotiz/des Ordners; leer = Inbox"] = "",
+    title: str,
+    content: str,
+    parent: Annotated[str, "ID oder Titel des Ordners; leer = Inbox"] = "",
 ) -> str:
     async def run() -> str:
         async with TriliumClient(ctx.cfg) as tc:
@@ -386,12 +384,12 @@ async def trilium_create_note(
     return await _guard(run())
 
 
-@tool("Hängt Text an eine bestehende Trilium-Notiz an (z. B. Einkaufsliste, Logbuch). Der bisherige Inhalt bleibt.",
+@tool("Hängt Text an eine Trilium-Notiz an.",
       enabled=_enabled)
 async def trilium_append(
     ctx: ToolContext,
-    note: Annotated[str, "Notiz-ID oder Titel"],
-    content: Annotated[str, "Anzuhängender Text (einfaches Markdown erlaubt)"],
+    note: Annotated[str, "ID oder Titel"],
+    content: str,
 ) -> str:
     async def run() -> str:
         async with TriliumClient(ctx.cfg) as tc:
@@ -411,13 +409,13 @@ def _update_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     return CONFIRM, T(f"überschreibt den Inhalt der Trilium-Notiz '{note}'", f"overwrites the Trilium note '{note}'")
 
 
-@tool("Ersetzt den kompletten Inhalt einer Trilium-Notiz (und optional den Titel). Zum Ergänzen lieber trilium_append.",
+@tool("Ersetzt den Inhalt einer Trilium-Notiz (optional den Titel). Zum Ergänzen trilium_append.",
       risk=_update_risk, enabled=_enabled)
 async def trilium_update_note(
     ctx: ToolContext,
-    note: Annotated[str, "Notiz-ID oder Titel"],
-    content: Annotated[str, "Neuer vollständiger Inhalt (einfaches Markdown erlaubt)"],
-    title: Annotated[str, "Optional: neuer Titel"] = "",
+    note: Annotated[str, "ID oder Titel"],
+    content: str,
+    title: str = "",
 ) -> str:
     async def run() -> str:
         async with TriliumClient(ctx.cfg) as tc:

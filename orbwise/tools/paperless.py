@@ -244,19 +244,17 @@ def _embedder(ctx: ToolContext):
 
 # ---------------------------------------------------------------- Tools
 
-@tool("Durchsucht die Dokumente in Paperless (Volltext inkl. OCR-Text von Rechnungen, Verträgen, Briefen, Bescheiden). "
-      "Ohne Suchbegriff: die neuesten Dokumente. Liefert IDs für paperless_ask / paperless_open.", enabled=_enabled)
+@tool("Volltextsuche in Paperless (inkl. OCR). Ohne Suchbegriff: neueste Dokumente. Liefert IDs.", enabled=_enabled)
 async def paperless_search(
     ctx: ToolContext,
-    query: Annotated[str, "Suchbegriffe, z. B. 'Handyvertrag Kündigung' (leer = neueste Dokumente)"] = "",
-    correspondent: Annotated[str, "Optional: Absender/Korrespondent, z. B. 'Telekom'"] = "",
-    tag: Annotated[str, "Optional: Tag, z. B. 'Steuer'"] = "",
-    document_type: Annotated[str, "Optional: Dokumenttyp, z. B. 'Rechnung'"] = "",
-    date_from: Annotated[str, "Optional: ab Datum YYYY-MM-DD"] = "",
-    date_to: Annotated[str, "Optional: bis Datum YYYY-MM-DD"] = "",
-    limit: Annotated[int, "Maximale Anzahl Treffer"] = 8,
-    missing: Annotated[str, "Optional: nur Dokumente OHNE 'correspondent', 'document_type', 'tags' oder 'any' "
-                            "(eins davon fehlt)"] = "",
+    query: Annotated[str, "z. B. 'Handyvertrag Kündigung'"] = "",
+    correspondent: str = "",
+    tag: str = "",
+    document_type: Annotated[str, "z. B. 'Rechnung'"] = "",
+    date_from: Annotated[str, "YYYY-MM-DD"] = "",
+    date_to: Annotated[str, "YYYY-MM-DD"] = "",
+    limit: int = 8,
+    missing: Annotated[str, "Nur Dokumente ohne 'correspondent', 'document_type', 'tags' oder 'any'"] = "",
 ) -> str:
     async def run() -> str:
         params: dict[str, Any] = {"page_size": max(1, min(int(limit), 25)), "truncate_content": "true"}
@@ -317,13 +315,13 @@ async def paperless_search(
     return await _guard(run())
 
 
-@tool("Beantwortet eine Frage zu einem bestimmten Paperless-Dokument: liefert die relevantesten Textstellen "
-      "(OCR-Text) für die Frage. Beantworte die Frage dann aus diesen Stellen und nenne das Dokument.",
+@tool("Liefert die zur Frage relevantesten Textstellen eines Paperless-Dokuments; daraus antworten und das "
+      "Dokument nennen.",
       enabled=_enabled)
 async def paperless_ask(
     ctx: ToolContext,
-    document_id: Annotated[int, "ID des Dokuments (aus paperless_search)"],
-    question: Annotated[str, "Die Frage zum Dokument, z. B. 'Wann endet die Mindestlaufzeit?'"],
+    document_id: int,
+    question: str,
 ) -> str:
     async def run() -> str:
         async with PaperlessClient(ctx.cfg) as pc:
@@ -351,12 +349,11 @@ async def paperless_ask(
     return await _guard(run())
 
 
-@tool("Liest den vollständigen Text (OCR) eines Paperless-Dokuments abschnittsweise, z. B. zum Zusammenfassen "
-      "oder Vorlesen.", enabled=_enabled)
+@tool("Liest den OCR-Text eines Paperless-Dokuments abschnittsweise (z. B. zum Zusammenfassen).", enabled=_enabled)
 async def paperless_read(
     ctx: ToolContext,
-    document_id: Annotated[int, "ID des Dokuments"],
-    offset: Annotated[int, "Ab diesem Zeichen weiterlesen (für lange Dokumente)"] = 0,
+    document_id: int,
+    offset: Annotated[int, "Ab diesem Zeichen weiterlesen"] = 0,
 ) -> str:
     async def run() -> str:
         async with PaperlessClient(ctx.cfg) as pc:
@@ -377,11 +374,11 @@ def _safe_name(doc_id: int, title: str, ext: str) -> str:
     return f"{doc_id}-{stem}{ext}"
 
 
-@tool("Öffnet ein Paperless-Dokument lokal mit dem Standardprogramm (lädt das PDF herunter).", enabled=_enabled)
+@tool("Öffnet ein Paperless-Dokument lokal (lädt das PDF).", enabled=_enabled)
 async def paperless_open(
     ctx: ToolContext,
-    document_id: Annotated[int, "ID des Dokuments (aus paperless_search)"],
-    original: Annotated[bool, "True = Originaldatei statt des archivierten PDFs"] = False,
+    document_id: int,
+    original: Annotated[bool, "true = Originaldatei statt Archiv-PDF"] = False,
 ) -> str:
     async def run() -> str:
         async with PaperlessClient(ctx.cfg) as pc:
@@ -445,13 +442,12 @@ def _upload_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     return CONFIRM, T(f"Datei {path} an Paperless übergeben", f"hand file {path} over to Paperless")
 
 
-@tool("Legt eine lokale Datei (PDF, Foto, Office-Dokument) in Paperless ab – z. B. eine Datei, die der Nutzer per "
-      "Telegram geschickt hat. Paperless erkennt Text und Metadaten danach im Hintergrund.",
+@tool("Legt eine lokale Datei (PDF, Foto, Office) in Paperless ab, z. B. per Telegram geschickte Dateien.",
       risk=_upload_risk, enabled=_enabled)
 async def paperless_upload(
     ctx: ToolContext,
-    path: Annotated[str, "Pfad der Datei"],
-    title: Annotated[str, "Titel (optional; leer = Paperless wählt selbst)"] = "",
+    path: str,
+    title: Annotated[str, "Leer = Paperless wählt"] = "",
 ) -> str:
     p = Path(path).expanduser()
     if not p.is_file():
@@ -647,12 +643,12 @@ def _relevant_names(kind: str, names: list[str], text: str, preset: list[str]) -
     return out[:LIST_RELEVANT]
 
 
-@tool("Sammelt alles, um Korrespondent, Dokumenttyp, Tags, Titel und Datum für Paperless-Dokumente vorzuschlagen: "
-      "aktueller Stand, Vorschläge von Paperless, Textauszug und die vorhandenen Korrespondenten/Typen/Tags. "
-      "Danach den Vorschlag als Liste zeigen und mit paperless_apply_metadata übernehmen.", enabled=_enabled)
+@tool("Sammelt alles für einen Vorschlag zu Korrespondent, Typ, Tags, Titel und Datum (Stand, "
+      "Paperless-Vorschläge, Textauszug, vorhandene Namen). Vorschlag als Liste zeigen, dann "
+      "paperless_apply_metadata.", enabled=_enabled)
 async def paperless_suggest_metadata(
     ctx: ToolContext,
-    document_ids: Annotated[list[int], f"IDs der Dokumente aus paperless_search (höchstens {MAX_SUGGEST}), z. B. [7, 8]"],
+    document_ids: Annotated[list[int], "Max. 5, z. B. [7, 8]"],
 ) -> str:
     async def run() -> str:
         ids = _ids(document_ids)
@@ -720,14 +716,12 @@ async def _apply_one(pc: PaperlessClient, c: dict, created: list[str], mapped: l
     return f"✔ {label}: {_summary(c)}"
 
 
-@tool("Übernimmt Metadaten für ein oder mehrere Paperless-Dokumente nach Bestätigung durch den Nutzer: "
-      "Korrespondent, Dokumenttyp, Tags hinzufügen/entfernen, Titel, Datum. Ähnliche vorhandene Namen (z. B. ohne "
-      "„GmbH“) werden automatisch verwendet, nur wirklich fehlende angelegt. Vorher paperless_suggest_metadata nutzen.", risk=_apply_risk, enabled=_enabled)
+@tool("Übernimmt Metadaten nach Bestätigung: Korrespondent, Typ, Tags (hinzu/weg), Titel, Datum. Ähnliche "
+      "vorhandene Namen werden genutzt, nur fehlende angelegt. Vorher paperless_suggest_metadata.", risk=_apply_risk, enabled=_enabled)
 async def paperless_apply_metadata(
     ctx: ToolContext,
-    changes: Annotated[list[dict], "Eine Änderung pro Dokument: {document_id, title?, created? (YYYY-MM-DD), "
-                                   "correspondent?, document_type?, add_tags? [..], remove_tags? [..]} – "
-                                   "nur Felder angeben, die sich ändern sollen"],
+    changes: Annotated[list[dict], "Je Dokument: {document_id, title?, created? (YYYY-MM-DD), correspondent?, "
+                                   "document_type?, add_tags? [..], remove_tags? [..]} – nur Geändertes"],
 ) -> str:
     async def run() -> str:
         items = _changes(changes)
@@ -886,8 +880,7 @@ def review_guard(ctx: ToolContext, ids: list[int]) -> str | None:
       enabled=_enabled)
 async def paperless_review_next(
     ctx: ToolContext,
-    scope: Annotated[str, "leer = laufenden Durchgang fortsetzen; inbox = Posteingang, incomplete = ohne "
-                          "Korrespondent oder Dokumenttyp"] = "",
+    scope: Annotated[str, "Leer = fortsetzen; inbox = Posteingang; incomplete = ohne Korrespondent/Typ"] = "",
 ) -> str:
     async def run() -> str:
         data = _store_load(ctx.cfg)
@@ -947,12 +940,12 @@ async def paperless_review_next(
     return await _guard(run())
 
 
-@tool("Überspringt Dokumente im Sortier-Durchgang (z. B. unleserlich oder unklar) – sie kommen nicht wieder.",
+@tool("Überspringt Dokumente im Sortier-Durchgang dauerhaft (z. B. unleserlich).",
       enabled=_enabled)
 async def paperless_review_skip(
     ctx: ToolContext,
-    document_ids: Annotated[list[int], "IDs der Dokumente, z. B. [12]"],
-    reason: Annotated[str, "Kurzer Grund"] = "",
+    document_ids: list[int],
+    reason: str = "",
 ) -> str:
     ids = _ids(document_ids)
     ledger = mark_reviewed(ctx.cfg, ids, "skipped")

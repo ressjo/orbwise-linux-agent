@@ -52,13 +52,13 @@ async def _run_with_fallback(ctx: ToolContext, argv: list[str]) -> tuple[int | N
     return rc, out
 
 
-@tool("Fährt den Rechner herunter, startet ihn neu, versetzt ihn in Standby/Ruhezustand, sperrt den Bildschirm "
-      "oder bricht ein geplantes Herunterfahren ab. Dafür IMMER dieses Tool statt run_shell/sudo verwenden.",
+@tool("Herunterfahren, Neustart, Standby/Ruhezustand, Sperren oder geplantes Herunterfahren abbrechen. IMMER "
+      "dieses Tool statt run_shell/sudo.",
       risk=_risk)
 async def power(
     ctx: ToolContext,
     action: Annotated[str, "poweroff | reboot | suspend | hibernate | lock | cancel"],
-    delay_minutes: Annotated[int, "Optional: erst in N Minuten (nur poweroff/reboot)"] = 0,
+    delay_minutes: Annotated[int, "Erst in N Minuten (poweroff/reboot)"] = 0,
 ) -> str:
     act = _action(action)
     if act not in ACTIONS:

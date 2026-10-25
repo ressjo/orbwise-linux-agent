@@ -9,9 +9,9 @@ from . import proc
 from .registry import ToolContext, tool
 
 
-@tool("Merkt sich dauerhaft einen wichtigen Fakt über den Nutzer, seine Vorlieben, sein System oder seine "
-      "Projekte (z. B. 'Das NAS ist unter /mnt/nas gemountet'). Einen vollständigen Satz formulieren.")
-async def remember(ctx: ToolContext, fact: Annotated[str, "Der Fakt als vollständiger Satz"]) -> str:
+@tool("Merkt sich dauerhaft einen Fakt über den Nutzer, seine Vorlieben, sein System oder Projekte – als "
+      "vollständigen Satz.")
+async def remember(ctx: ToolContext, fact: str) -> str:
     added, replaced = await ctx.memory.remember_fact(fact)
     if replaced:
         return f"Aktualisiert (vorher: {replaced})."
@@ -19,18 +19,17 @@ async def remember(ctx: ToolContext, fact: Annotated[str, "Der Fakt als vollstä
 
 
 @tool("Löscht gespeicherte Fakten, die den Suchtext enthalten.")
-async def forget(ctx: ToolContext, query: Annotated[str, "Suchtext des zu löschenden Fakts"]) -> str:
+async def forget(ctx: ToolContext, query: str) -> str:
     removed = await ctx.memory.forget(query)
     return ("Gelöscht: " + "; ".join(removed)) if removed else "Kein passender Fakt gefunden."
 
 
-@tool("Durchsucht das Langzeitgedächtnis (frühere Gespräche, Tageszusammenfassungen, Fakten). Mit 'date' "
-      "wird das Protokoll bzw. die Zusammenfassung dieses Tages geladen – relative Angaben wie 'letzten Dienstag' "
-      "direkt übergeben.")
+@tool("Durchsucht das Gedächtnis (frühere Gespräche, Tageszusammenfassungen, Fakten). Mit date: Protokoll dieses "
+      "Tages; relative Angaben wie 'letzten Dienstag' direkt übergeben.")
 async def recall(
     ctx: ToolContext,
-    query: Annotated[str, "Wonach gesucht wird"] = "",
-    date: Annotated[str, "Optional: Tag als YYYY-MM-DD oder wie gesagt, z. B. 'letzten Dienstag', 'vor 2 Wochen'"] = "",
+    query: str = "",
+    date: Annotated[str, "YYYY-MM-DD oder wie gesagt"] = "",
 ) -> str:
     mem = ctx.memory
     parts = []

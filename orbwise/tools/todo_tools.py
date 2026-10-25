@@ -33,11 +33,11 @@ def format_todos(items: list[dict]) -> str:
     return "\n".join(f"- {MARK.get(i['state'], '[ ]')} {i['text']}" for i in items)
 
 
-@tool("Aufgabenliste für Aufgaben mit 3 oder mehr Schritten: zu Beginn anlegen, nach jedem erledigten Schritt "
-      "aktualisieren (immer die ganze Liste schicken), genau ein Punkt läuft gerade.")
+@tool("Aufgabenliste für Aufgaben ab 3 Schritten: anlegen, nach jedem Schritt die ganze Liste neu schicken, genau "
+      "ein Punkt läuft.")
 async def todo_write(
     ctx: ToolContext,
-    todos: Annotated[str, "Eine Aufgabe pro Zeile: '- [ ] offen', '- [~] läuft gerade', '- [x] erledigt'"],
+    todos: Annotated[str, "Je Zeile '- [ ] offen', '- [~] läuft', '- [x] erledigt'"],
 ) -> str:
     items = parse_todos(todos)
     if not items:

@@ -189,11 +189,11 @@ async def _guard(coro) -> str:
 
 
 # ---------------------------------------------------------------- Werkzeuge
-@tool("Listet die Docker-Container (über Portainer) mit Zustand, Image und Stack.", enabled=_enabled)
+@tool("Listet Docker-Container (Portainer) mit Zustand, Image und Stack.", enabled=_enabled)
 async def portainer_containers(
     ctx: ToolContext,
-    filter: Annotated[str, "Optional: nur Container, deren Name/Image/Stack das enthält"] = "",
-    environment: Annotated[str, "Optional: Portainer-Umgebung (Name oder ID)"] = "",
+    filter: Annotated[str, "Teil von Name/Image/Stack"] = "",
+    environment: Annotated[str, "Umgebung (Name/ID)"] = "",
 ) -> str:
     async def go() -> str:
         async with PortainerClient(ctx.cfg) as pc:
@@ -212,12 +212,12 @@ async def portainer_containers(
     return await _guard(go())
 
 
-@tool("Prüft, ob es für Docker-Container neuere Images gibt (lädt nichts herunter, ändert nichts).",
+@tool("Prüft, ob es neuere Images gibt (lädt nichts, ändert nichts).",
       enabled=_enabled)
 async def portainer_check_updates(
     ctx: ToolContext,
-    container: Annotated[str, "Optional: nur dieser Container (Name); leer = alle laufenden"] = "",
-    environment: Annotated[str, "Optional: Portainer-Umgebung (Name oder ID)"] = "",
+    container: Annotated[str, "Leer = alle laufenden"] = "",
+    environment: Annotated[str, "Umgebung (Name/ID)"] = "",
 ) -> str:
     async def go() -> str:
         async with PortainerClient(ctx.cfg) as pc:
@@ -244,12 +244,12 @@ async def portainer_check_updates(
     return await _guard(go())
 
 
-@tool("Zeigt die letzten Log-Zeilen eines Docker-Containers.", enabled=_enabled)
+@tool("Zeigt die letzten Log-Zeilen eines Containers.", enabled=_enabled)
 async def portainer_logs(
     ctx: ToolContext,
-    container: Annotated[str, "Name des Containers"],
-    lines: Annotated[int, "Optional: Anzahl Zeilen (Standard 100)"] = 100,
-    environment: Annotated[str, "Optional: Portainer-Umgebung (Name oder ID)"] = "",
+    container: str,
+    lines: Annotated[int, "Standard 100"] = 100,
+    environment: Annotated[str, "Umgebung (Name/ID)"] = "",
 ) -> str:
     async def go() -> str:
         async with PortainerClient(ctx.cfg) as pc:
@@ -263,11 +263,11 @@ async def portainer_logs(
     return await _guard(go())
 
 
-@tool("Listet die Portainer-Stacks (docker-compose-Apps); mit name auch deren Compose-Datei.", enabled=_enabled)
+@tool("Listet die Stacks; mit name auch dessen Compose-Datei.", enabled=_enabled)
 async def portainer_stacks(
     ctx: ToolContext,
-    name: Annotated[str, "Optional: Stack, dessen Compose-Datei gezeigt werden soll"] = "",
-    environment: Annotated[str, "Optional: Portainer-Umgebung (Name oder ID)"] = "",
+    name: str = "",
+    environment: Annotated[str, "Umgebung (Name/ID)"] = "",
 ) -> str:
     async def go() -> str:
         async with PortainerClient(ctx.cfg) as pc:
@@ -306,9 +306,9 @@ def _confirm(ctx: ToolContext, args: dict) -> tuple[str, str]:
       risk=_confirm, enabled=_enabled)
 async def portainer_container_action(
     ctx: ToolContext,
-    container: Annotated[str, "Name des Containers"],
+    container: str,
     action: Annotated[str, "start | stop | restart | kill | pause | unpause | remove"],
-    environment: Annotated[str, "Optional: Portainer-Umgebung (Name oder ID)"] = "",
+    environment: Annotated[str, "Umgebung (Name/ID)"] = "",
 ) -> str:
     async def go() -> str:
         act = action.strip().lower()
@@ -343,12 +343,11 @@ async def _redeploy(pc: PortainerClient, env: dict, stack: dict) -> None:
                            "prune": False, "pullImage": True})
 
 
-@tool("Aktualisiert einen Docker-Container oder Stack auf das neueste Image (lädt es, erstellt neu, startet). "
-      "Für Container eines Stacks wird der ganze Stack neu ausgerollt.", risk=CONFIRM, enabled=_enabled)
+@tool("Aktualisiert einen Container oder Stack auf das neueste Image (Container eines Stacks: ganzer Stack).", risk=CONFIRM, enabled=_enabled)
 async def portainer_update(
     ctx: ToolContext,
-    name: Annotated[str, "Name des Containers oder Stacks"],
-    environment: Annotated[str, "Optional: Portainer-Umgebung (Name oder ID)"] = "",
+    name: Annotated[str, "Container oder Stack"],
+    environment: Annotated[str, "Umgebung (Name/ID)"] = "",
 ) -> str:
     async def go() -> str:
         async with PortainerClient(ctx.cfg) as pc:
@@ -395,14 +394,13 @@ def _parse_env(text: str) -> list[dict]:
     return out
 
 
-@tool("Installiert eine neue App als Portainer-Stack aus einer docker-compose-Datei – oder ersetzt die Compose-Datei "
-      "eines vorhandenen Stacks und rollt ihn neu aus.", risk=CONFIRM, enabled=_enabled, editable=("compose", "env"))
+@tool("Installiert eine App als Stack aus einer docker-compose-Datei oder ersetzt die eines vorhandenen Stacks.", risk=CONFIRM, enabled=_enabled, editable=("compose", "env"))
 async def portainer_deploy_stack(
     ctx: ToolContext,
-    name: Annotated[str, "Name des Stacks (klein, ohne Leerzeichen), z. B. 'jellyfin'"],
-    compose: Annotated[str, "Vollständiger Inhalt der docker-compose.yml"],
-    env: Annotated[str, "Optional: Umgebungsvariablen, je Zeile NAME=wert"] = "",
-    environment: Annotated[str, "Optional: Portainer-Umgebung (Name oder ID)"] = "",
+    name: Annotated[str, "Klein, ohne Leerzeichen"],
+    compose: Annotated[str, "Vollständige docker-compose.yml"],
+    env: Annotated[str, "Je Zeile NAME=wert"] = "",
+    environment: Annotated[str, "Umgebung (Name/ID)"] = "",
 ) -> str:
     async def go() -> str:
         stack_name = re.sub(r"[^a-z0-9_-]", "", name.strip().lower().replace(" ", "-"))
@@ -439,9 +437,9 @@ async def portainer_deploy_stack(
       risk=_confirm, enabled=_enabled)
 async def portainer_stack_action(
     ctx: ToolContext,
-    stack: Annotated[str, "Name des Stacks"],
+    stack: str,
     action: Annotated[str, "start | stop | remove"],
-    environment: Annotated[str, "Optional: Portainer-Umgebung (Name oder ID)"] = "",
+    environment: Annotated[str, "Umgebung (Name/ID)"] = "",
 ) -> str:
     async def go() -> str:
         act = action.strip().lower()

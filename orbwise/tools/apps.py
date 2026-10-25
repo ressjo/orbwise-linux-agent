@@ -127,7 +127,7 @@ def _no_display_hint() -> str:
 
 
 @tool("Startet ein installiertes Programm (z. B. 'Firefox', 'Dateimanager', 'Steam', 'Terminal').")
-async def open_app(ctx: ToolContext, name: Annotated[str, "Name des Programms"]) -> str:
+async def open_app(ctx: ToolContext, name: Annotated[str, "Programm, z. B. 'Firefox'"]) -> str:
     app = match_app(name, list_apps())
     if app:
         ok, err = await launch_app(app)
@@ -142,7 +142,7 @@ async def open_app(ctx: ToolContext, name: Annotated[str, "Name des Programms"])
 
 
 @tool("Listet installierte Programme auf, optional gefiltert.")
-async def list_installed_apps(ctx: ToolContext, filter: Annotated[str, "Optionaler Filter"] = "") -> str:
+async def list_installed_apps(ctx: ToolContext, filter: str = "") -> str:
     f = filter.lower()
     names = sorted({a.name for a in list_apps()
                     if not f or f in a.name.lower() or f in a.generic.lower() or f in a.keywords.lower()})

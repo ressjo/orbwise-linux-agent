@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **Leaner tool descriptions:** the tools-mode tool list is about 22 % smaller (≈16.4k → ≈12.7k estimated tokens with
+  all integrations): shorter descriptions, no descriptions for self-explanatory parameters, repeated phrases unified.
+  Names, types, required parameters and the rules the model must follow (confirmations, untrusted mail content,
+  `power` instead of the shell …) are unchanged.
 - **ROCm | Vulkan switch** (CUDA | Vulkan on NVIDIA) on the llama.cpp line of the model page: moves all llama.cpp
   models to the other build of the installed version, downloading it first if needed, and restarts a loaded model.
 - **Thinking levels strictly from the template:** only levels the chat template itself compares or lists (at least

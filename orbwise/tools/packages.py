@@ -76,7 +76,7 @@ def _names_risk(verb):  # verb: () -> Text in der aktuellen Sprache
     return risk
 
 
-@tool("Aktualisiert das komplette System (Arch: pacman -Syu + AUR via yay/paru; Debian/Ubuntu: apt-get upgrade).",
+@tool("Aktualisiert das ganze System (pacman -Syu + AUR bzw. apt-get upgrade).",
       risk=lambda ctx, a: (CONFIRM, T("Systemupdate mit Root-Rechten", "system update with root privileges")))
 async def system_update(ctx: ToolContext) -> str:
     limit = ctx.limit()
@@ -120,8 +120,8 @@ async def list_updates(ctx: ToolContext) -> str:
     return proc.clip(out.strip() or "Keine Updates verfügbar.", ctx.limit())
 
 
-@tool("Sucht Pakete in den Paketquellen der Distribution (bei Arch auch im AUR, falls yay/paru vorhanden).")
-async def search_package(ctx: ToolContext, query: Annotated[str, "Suchbegriff"]) -> str:
+@tool("Sucht Pakete in den Paketquellen (Arch: auch AUR).")
+async def search_package(ctx: ToolContext, query: str) -> str:
     if package_manager(ctx) == "apt":
         rc, out = await proc.run(ctx, ["apt-cache", "search", "--", query], timeout=60, stream=False)
         return "Pakete:\n" + ("\n".join(out.splitlines()[:40]) if out.strip() else "(nichts gefunden)")
@@ -134,10 +134,9 @@ async def search_package(ctx: ToolContext, query: Annotated[str, "Suchbegriff"])
     return result
 
 
-@tool("Installiert ein oder mehrere Pakete (Paketquellen der Distribution, bei Arch notfalls AUR). Paketnamen exakt angeben – "
-      "im Zweifel vorher search_package nutzen.",
+@tool("Installiert Pakete (Arch notfalls aus dem AUR). Namen exakt – im Zweifel erst search_package.",
       risk=_names_risk(lambda: T("Pakete installieren", "install packages")))
-async def install_package(ctx: ToolContext, names: Annotated[str, "Paketnamen, durch Leerzeichen getrennt"]) -> str:
+async def install_package(ctx: ToolContext, names: Annotated[str, "Mit Leerzeichen getrennt"]) -> str:
     pkgs = split_names(names)
     invalid = [p for p in pkgs if not PKG_RE.match(p)]
     if not pkgs or invalid:
@@ -181,9 +180,9 @@ async def install_package(ctx: ToolContext, names: Annotated[str, "Paketnamen, d
     return "\n\n".join(parts)
 
 
-@tool("Deinstalliert Pakete inklusive nicht mehr benötigter Abhängigkeiten.",
+@tool("Deinstalliert Pakete samt nicht mehr benötigter Abhängigkeiten.",
       risk=_names_risk(lambda: T("Pakete entfernen", "remove packages")))
-async def remove_package(ctx: ToolContext, names: Annotated[str, "Paketnamen, durch Leerzeichen getrennt"]) -> str:
+async def remove_package(ctx: ToolContext, names: Annotated[str, "Mit Leerzeichen getrennt"]) -> str:
     pkgs = split_names(names)
     if not pkgs or any(not PKG_RE.match(p) for p in pkgs):
         return "Ungültige Paketnamen."

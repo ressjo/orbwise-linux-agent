@@ -115,13 +115,12 @@ def describe_state(s: dict, area: str = "") -> str:
     return f"{s['entity_id']} – {name}{room}: {state}" + (f" ({', '.join(extra)})" if extra else "")
 
 
-@tool("Findet Smart-Home-Geräte in Home Assistant nach Name, Raum oder Typ und zeigt ihren Zustand "
-      "(z. B. 'wohnzimmer licht', 'temperatur', Typ 'light', 'climate', 'cover', 'sensor').", enabled=_enabled)
+@tool("Findet Home-Assistant-Geräte nach Name, Raum oder Typ und zeigt den Zustand.", enabled=_enabled)
 async def ha_find(
     ctx: ToolContext,
-    query: Annotated[str, "Suchwörter (Name/Raum), leer = alle des Typs"] = "",
-    domain: Annotated[str, "Optional: Typ, z. B. light, switch, climate, cover, sensor, scene"] = "",
-    limit: Annotated[int, "Maximale Anzahl (Standard 25)"] = 25,
+    query: Annotated[str, "Name/Raum, leer = alle des Typs"] = "",
+    domain: Annotated[str, "z. B. light, switch, climate, cover, sensor, scene"] = "",
+    limit: int = 25,
 ) -> str:
     async def run() -> str:
         async with HAClient(ctx.cfg) as ha:
@@ -149,8 +148,8 @@ async def ha_find(
     return await _guard(run())
 
 
-@tool("Zeigt den genauen Zustand eines Home-Assistant-Geräts mit allen Attributen.", enabled=_enabled)
-async def ha_state(ctx: ToolContext, entity_id: Annotated[str, "z. B. light.kueche oder sensor.wohnzimmer_temperatur"]) -> str:
+@tool("Zeigt den Zustand eines Home-Assistant-Geräts mit allen Attributen.", enabled=_enabled)
+async def ha_state(ctx: ToolContext, entity_id: Annotated[str, "z. B. light.kueche"]) -> str:
     entity_id = entity_id.strip().lower()
     if not ENTITY_RE.match(entity_id):
         return "Ungültige entity_id – erst mit ha_find suchen."
@@ -243,15 +242,14 @@ def service_call(entity_id: str, action: str, value: str) -> tuple[str, str, dic
     return f"Unbekannte Aktion '{action}'. Möglich: {', '.join(ACTIONS)}."
 
 
-@tool("Steuert ein Home-Assistant-Gerät: on/off/toggle, brightness (0–100), color (englischer Farbname), "
-      "temperature (°C), open/close/stop/position (Rollos), activate (Szene/Skript/Taster), lock/unlock, set (Wert).",
+@tool("Steuert ein Home-Assistant-Gerät.",
       risk=_control_risk, enabled=_enabled)
 async def ha_control(
     ctx: ToolContext,
-    entity_id: Annotated[str, "entity_id aus ha_find, z. B. light.wohnzimmer"],
-    action: Annotated[str, "on | off | toggle | brightness | color | temperature | open | close | stop | position | "
-                           "activate | lock | unlock | set"],
-    value: Annotated[str, "Wert je nach Aktion, z. B. 40 (Prozent), 21.5 (°C), red"] = "",
+    entity_id: Annotated[str, "Aus ha_find"],
+    action: Annotated[str, "on | off | toggle | brightness | color | temperature | open | close | stop | position "
+                           "| activate | lock | unlock | set"],
+    value: Annotated[str, "z. B. 40 (%), 21.5 (°C), red (englisch)"] = "",
 ) -> str:
     entity_id, action = entity_id.strip().lower(), action.strip().lower()
     if not ENTITY_RE.match(entity_id):

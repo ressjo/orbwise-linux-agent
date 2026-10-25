@@ -130,12 +130,11 @@ async def weather_report(location: str, days: int) -> str:
     return format_weather(place, data)
 
 
-@tool("Wetter: aktuelle Lage und Vorhersage für die nächsten Tage (Temperatur, Regenrisiko, Wind). "
-      "Ohne Ort wird der Standardort des Nutzers verwendet.")
+@tool("Aktuelles Wetter und Vorhersage (Temperatur, Regen, Wind); ohne Ort der Standardort.")
 async def weather(
     ctx: ToolContext,
-    location: Annotated[str, "Ort, z. B. 'Freiburg' oder 'Berlin'; leer = Standardort"] = "",
-    days: Annotated[int, "Anzahl Tage Vorhersage (1–7, Standard 3)"] = 3,
+    location: Annotated[str, "z. B. 'Freiburg'"] = "",
+    days: Annotated[int, "1–7 (Standard 3)"] = 3,
 ) -> str:
     place = location.strip() or ctx.cfg.weather.location
     if not place:

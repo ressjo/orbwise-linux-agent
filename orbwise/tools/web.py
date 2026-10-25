@@ -74,12 +74,11 @@ def website_url(site: str, query: str = "", extra: dict[str, str] | None = None)
     return "https://duckduckgo.com/?q=" + quote_plus(f"!ducky {site} {query}".strip())
 
 
-@tool("Öffnet eine Website im Browser – eine bekannte Seite (YouTube, Amazon, Wikipedia …), eine Domain wie "
-      "heise.de oder direkt eine Suche auf der Seite.")
+@tool("Öffnet eine Website im Browser – bekannte Seite, Domain oder direkt eine Suche dort.")
 async def open_website(
     ctx: ToolContext,
-    site: Annotated[str, "Name der Seite oder Domain, z. B. 'youtube', 'amazon', 'heise.de'"],
-    query: Annotated[str, "Optional: Suchbegriff auf dieser Seite, z. B. 'lofi hip hop'"] = "",
+    site: Annotated[str, "z. B. 'youtube', 'heise.de'"],
+    query: Annotated[str, "Suche auf der Seite"] = "",
 ) -> str:
     url = website_url(site, query, ctx.cfg.websites)
     opener = next((c for c in (["xdg-open"], ["gio", "open"]) if shutil.which(c[0])), None)
@@ -186,11 +185,11 @@ def _ddgs(query: str, n: int) -> list[dict]:
     return DDGS().text(query, region="de-de", max_results=n) or []
 
 
-@tool("Sucht im Internet und liefert Titel, URL und Kurzbeschreibung der Treffer. Für Details danach fetch_url.")
+@tool("Websuche: Titel, URL und Kurztext der Treffer. Details danach mit fetch_url.")
 async def web_search(
     ctx: ToolContext,
-    query: Annotated[str, "Suchanfrage"],
-    max_results: Annotated[int, "Anzahl Treffer (Standard 5)"] = 5,
+    query: str,
+    max_results: Annotated[int, "Standard 5"] = 5,
 ) -> str:
     n = max(1, min(max_results, 10))
     tools = ctx.cfg.tools
@@ -219,8 +218,8 @@ async def web_search(
     return "Websuche fehlgeschlagen: " + "; ".join(errors)
 
 
-@tool("Ruft eine Webseite ab und gibt den lesbaren Haupttext zurück.")
-async def fetch_url(ctx: ToolContext, url: Annotated[str, "Vollständige URL (http/https)"]) -> str:
+@tool("Ruft eine Webseite ab und liefert den lesbaren Haupttext.")
+async def fetch_url(ctx: ToolContext, url: Annotated[str, "http(s)-URL"]) -> str:
     return await fetch_page(ctx, url, "text")
 
 

@@ -17,14 +17,14 @@ def store_for(ctx: ToolContext) -> ReminderStore:
     return store
 
 
-@tool("Setzt eine Erinnerung oder einen Timer. Relative Zeit über in_minutes, feste Zeit über at. Für Angaben wie „auf der Arbeit“ oder „morgen früh“ eine bekannte Uhrzeit "
-      "aus den Fakten nehmen (z. B. Arbeitsbeginn) oder kurz nachfragen.")
+@tool("Setzt eine Erinnerung oder einen Timer: in_minutes relativ, at fest. „Auf der Arbeit“, „morgen früh“: "
+      "Uhrzeit aus den Fakten nehmen oder nachfragen.")
 async def set_reminder(
     ctx: ToolContext,
-    text: Annotated[str, "Woran erinnert werden soll, z. B. 'Pizza aus dem Ofen holen'"],
-    in_minutes: Annotated[float, "In wie vielen Minuten (z. B. 20; 0.5 = 30 Sekunden)"] = 0,
-    at: Annotated[str, "Oder Zeitpunkt: 'YYYY-MM-DD HH:MM', 'HH:MM' oder wie gesagt, z. B. 'nächsten Dienstag 9:00'"] = "",
-    timer: Annotated[bool, "true für einen Timer (Kurzzeitwecker) statt einer Erinnerung"] = False,
+    text: Annotated[str, "Woran erinnert wird"],
+    in_minutes: Annotated[float, "z. B. 20; 0.5 = 30 s"] = 0,
+    at: Annotated[str, "'YYYY-MM-DD HH:MM', 'HH:MM' oder wie gesagt"] = "",
+    timer: Annotated[bool, "true = Timer"] = False,
 ) -> str:
     try:
         due = parse_when(in_minutes, at)
@@ -44,7 +44,7 @@ async def list_reminders(ctx: ToolContext) -> str:
     return "\n".join(r.label() for r in items)
 
 
-@tool("Löscht Erinnerungen/Timer – per ID, per Stichwort aus dem Text oder 'alle'.")
+@tool("Löscht Erinnerungen/Timer per ID, Stichwort oder 'alle'.")
 async def cancel_reminder(ctx: ToolContext, which: Annotated[str, "ID, Stichwort oder 'alle'"]) -> str:
     removed = store_for(ctx).cancel(which)
     if not removed:

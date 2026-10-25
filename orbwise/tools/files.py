@@ -87,14 +87,13 @@ async def _find(ctx: ToolContext, query: str, roots: list[Path], ext: str, use_l
     return await asyncio.to_thread(_walk_find, roots, query, ext, max_hits, deadline)
 
 
-@tool("Sucht Dateien und Ordner nach Namen (Teilstring, Groß/Kleinschreibung egal) auf dem lokalen System. "
-      "Ergebnisse sind nach Änderungsdatum sortiert (neueste zuerst).")
+@tool("Sucht Dateien und Ordner nach Namen (Teilstring, ohne Groß/Klein) auf dem lokalen System, neueste zuerst.")
 async def find_files(
     ctx: ToolContext,
-    query: Annotated[str, "Teil des Datei- oder Ordnernamens, z. B. 'rechnung'"],
-    path: Annotated[str, "Optional: Startverzeichnis, z. B. ~/Dokumente"] = "",
-    extension: Annotated[str, "Optional: Dateiendung ohne Punkt, z. B. pdf"] = "",
-    max_results: Annotated[int, "Maximale Anzahl Treffer (Standard 25)"] = 25,
+    query: Annotated[str, "Teil des Namens, z. B. 'rechnung'"],
+    path: Annotated[str, "Startordner, z. B. ~/Dokumente"] = "",
+    extension: Annotated[str, "Dateiendung ohne Punkt"] = "",
+    max_results: int = 25,
 ) -> str:
     roots = [ctx.path(path)] if path else ([Path(ctx.cwd)] if ctx.cwd else ctx.cfg.tools.search_paths)
     paths = await _find(ctx, query, roots, extension, use_locate=not path)
@@ -103,14 +102,14 @@ async def find_files(
     return _describe(paths, max(1, min(max_results, 100)))
 
 
-@tool("Durchsucht das gemountete NAS nach Dateien/Ordnern (Name), optional auch nach Inhalt.",
+@tool("Durchsucht das gemountete NAS nach Datei-/Ordnernamen, optional nach Inhalt.",
       enabled=lambda cfg: bool(cfg.tools.nas_paths))  # ohne NAS kein Werkzeug (spart Platz im Prompt)
 async def search_nas(
     ctx: ToolContext,
-    query: Annotated[str, "Teil des Datei- oder Ordnernamens bzw. Suchtext"],
-    extension: Annotated[str, "Optional: Dateiendung ohne Punkt"] = "",
-    content: Annotated[bool, "true = im Dateiinhalt suchen statt im Namen"] = False,
-    max_results: Annotated[int, "Maximale Anzahl Treffer (Standard 25)"] = 25,
+    query: Annotated[str, "Namensteil bzw. Suchtext"],
+    extension: str = "",
+    content: Annotated[bool, "true = im Inhalt suchen"] = False,
+    max_results: int = 25,
 ) -> str:
     nas = ctx.cfg.tools.nas_paths
     if not nas:
@@ -143,20 +142,20 @@ async def _grep(ctx: ToolContext, query: str, roots: list[Path], extension: str,
     return _describe(paths, max(1, min(max_results, 100)))
 
 
-@tool("Durchsucht den Inhalt von Textdateien (ripgrep) nach einem Suchtext.")
+@tool("Durchsucht den Inhalt von Textdateien (ripgrep).")
 async def search_file_contents(
     ctx: ToolContext,
-    query: Annotated[str, "Gesuchter Text"],
-    path: Annotated[str, "Verzeichnis, in dem gesucht wird (Standard: Home)"] = "",
-    extension: Annotated[str, "Optional: Dateiendung ohne Punkt"] = "",
-    max_results: Annotated[int, "Maximale Anzahl Treffer (Standard 25)"] = 25,
+    query: str,
+    path: Annotated[str, "Ordner (Standard: Home)"] = "",
+    extension: str = "",
+    max_results: int = 25,
 ) -> str:
     roots = [ctx.path(path)] if path else ([Path(ctx.cwd)] if ctx.cwd else ctx.cfg.tools.search_paths)
     return await _grep(ctx, query, roots, extension, max_results)
 
 
 @tool("Listet den Inhalt eines Verzeichnisses auf.")
-async def list_directory(ctx: ToolContext, path: Annotated[str, "Verzeichnis, z. B. ~/Downloads"]) -> str:
+async def list_directory(ctx: ToolContext, path: Annotated[str, "Ordner, z. B. ~/Downloads"]) -> str:
     p = ctx.path(path)
     if not p.is_dir():
         return f"{p} ist kein Verzeichnis."
@@ -173,13 +172,13 @@ def _read_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     return SAFE, ""
 
 
-@tool("Liest eine Textdatei (z. B. Konfiguration, Log, Notiz, Quellcode) und gibt den Inhalt zurück. Große Dateien "
-      "seitenweise: offset = erste Zeile (ab 1), limit = Anzahl Zeilen.", risk=_read_risk)
+@tool("Liest eine Textdatei (Konfiguration, Log, Notiz, Code). Große Dateien seitenweise mit offset (erste Zeile, "
+      "ab 1) und limit (Zeilen).", risk=_read_risk)
 async def read_file(
     ctx: ToolContext,
-    path: Annotated[str, "Pfad zur Datei"],
-    offset: Annotated[int, "Optional: ab dieser Zeile lesen (1 = Anfang)"] = 0,
-    limit: Annotated[int, "Optional: höchstens so viele Zeilen"] = 0,
+    path: str,
+    offset: int = 0,
+    limit: int = 0,
 ) -> str:
     p = ctx.path(path)
     if not p.is_file():
@@ -234,12 +233,12 @@ async def _resolve_target(ctx: ToolContext, target: str) -> tuple[Path | None, s
                   + _describe(candidates, 10))
 
 
-@tool("Öffnet eine Datei, einen Ordner oder eine URL – mit dem Standardprogramm oder einem gewünschten Programm. "
-      "Ein bloßer Dateiname genügt, die Datei wird dann gesucht.")
+@tool("Öffnet eine Datei, einen Ordner oder eine URL mit dem Standard- oder einem gewünschten Programm. Ein "
+      "bloßer Dateiname genügt (wird gesucht).")
 async def open_file(
     ctx: ToolContext,
     path: Annotated[str, "Pfad, Dateiname oder URL"],
-    app: Annotated[str, "Optional: Programm, mit dem geöffnet werden soll (z. B. 'Kate', 'VS Code', 'GIMP')"] = "",
+    app: Annotated[str, "Programm, z. B. 'Kate', 'GIMP'"] = "",
 ) -> str:
     from .apps import _no_display_hint, launch_app, list_apps, match_app
 
@@ -291,13 +290,12 @@ def _write_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     return (CONFIRM, f"{'überschreibt' if p.exists() else 'erstellt'} {p}") if args.get("path") else (SAFE, "")
 
 
-@tool("Schreibt Text in eine Datei (erstellt oder überschreibt sie). Für Änderungen an bestehenden Dateien "
-      "lieber edit_file.", risk=_write_risk)
+@tool("Schreibt eine Datei (neu oder überschreiben). Für Änderungen an bestehenden Dateien edit_file.", risk=_write_risk)
 async def write_file(
     ctx: ToolContext,
-    path: Annotated[str, "Zielpfad"],
-    content: Annotated[str, "Inhalt der Datei"],
-    append: Annotated[bool, "true = an bestehende Datei anhängen"] = False,
+    path: str,
+    content: str,
+    append: Annotated[bool, "true = anhängen"] = False,
 ) -> str:
     p = ctx.path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
@@ -320,15 +318,14 @@ def _around(text: str, start: int, end: int, context: int = 3) -> tuple[int, int
     return first, last, shown
 
 
-@tool("Ändert eine bestehende Textdatei gezielt: ersetzt den exakten Ausschnitt old_text durch new_text (wie "
-      "Suchen/Ersetzen). old_text muss genau einmal vorkommen – Einrückung und Leerzeichen exakt wie in read_file "
-      "übernehmen und genug Kontext mitgeben. Für neue Dateien write_file.", risk=_edit_risk)
+@tool("Ändert eine Textdatei: ersetzt old_text exakt durch new_text. old_text muss genau einmal vorkommen – "
+      "Einrückung wie in read_file, genug Kontext. Neue Dateien: write_file.", risk=_edit_risk)
 async def edit_file(
     ctx: ToolContext,
-    path: Annotated[str, "Pfad zur Datei"],
-    old_text: Annotated[str, "Der zu ersetzende Ausschnitt, exakt wie in der Datei"],
-    new_text: Annotated[str, "Der neue Text an seiner Stelle (leer = löschen)"],
-    replace_all: Annotated[bool, "true = jedes Vorkommen ersetzen"] = False,
+    path: str,
+    old_text: Annotated[str, "Ausschnitt exakt wie in der Datei"],
+    new_text: Annotated[str, "Ersatz (leer = löschen)"],
+    replace_all: Annotated[bool, "true = jedes Vorkommen"] = False,
 ) -> str:
     p = ctx.path(path)
     if is_secret_path(str(p)):

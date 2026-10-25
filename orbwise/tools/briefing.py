@@ -210,7 +210,7 @@ async def build_briefing(ctx: ToolContext) -> str:
     return "\n".join(parts)
 
 
-@tool("Tagesüberblick für „Guten Morgen“, „Briefing“ oder „Was steht heute an?“ (Wetter, Termine, Erinnerungen "
-      "u. a., wie vom Nutzer gewählt) – als kurze, freundliche Begrüßung zusammenfassen.")
+@tool("Tagesüberblick für „Guten Morgen“ / „Was steht heute an?“ (vom Nutzer gewählte Punkte) – kurz und "
+      "freundlich zusammenfassen.")
 async def daily_briefing(ctx: ToolContext) -> str:
     return await build_briefing(ctx)

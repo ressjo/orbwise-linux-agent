@@ -14,14 +14,14 @@ def _enabled(cfg: Any) -> bool:
     return is_set_up(image_dir(cfg))
 
 
-@tool("Erzeugt ein Bild mit dem lokalen Bildmodell (Qwen-Image-2.1) aus einer Beschreibung. Den Prompt am besten "
-      "auf Englisch und konkret formulieren (Motiv, Stil, Licht, Perspektive). Dauert je nach Grafikkarte 1–3 Minuten.",
+@tool("Erzeugt ein Bild mit dem lokalen Bildmodell (1–3 Minuten). Prompt konkret und am besten Englisch (Motiv, "
+      "Stil, Licht, Perspektive).",
       risk=CONFIRM, enabled=_enabled, editable=("prompt",))
 async def generate_image(
     ctx: ToolContext,
-    prompt: Annotated[str, "Bildbeschreibung (am besten Englisch)"],
-    size: Annotated[str, "Optional: Format 1:1, 4:3, 3:4, 16:9 oder 9:16"] = "",
-    negative: Annotated[str, "Optional: was nicht aufs Bild soll"] = "",
+    prompt: str,
+    size: Annotated[str, "1:1, 4:3, 3:4, 16:9 oder 9:16"] = "",
+    negative: Annotated[str, "Was nicht aufs Bild soll"] = "",
 ) -> str:
     from ..imagegen import ImageError
     engine = ctx.services.get("images")

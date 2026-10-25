@@ -40,14 +40,13 @@ def _risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     return SAFE, ""
 
 
-@tool("Schickt dem Nutzer eine Datei aufs Handy (Telegram): eine lokale Datei (path) oder ein "
-      "Paperless-Dokument (paperless_id, als PDF). Z. B. „schick mir die Rechnung aufs Handy“.",
+@tool("Schickt dem Nutzer eine lokale Datei (path) oder ein Paperless-Dokument (paperless_id) aufs Handy.",
       risk=_risk, enabled=_enabled)
 async def telegram_send_file(
     ctx: ToolContext,
-    path: Annotated[str, "Pfad einer lokalen Datei (oder leer, wenn paperless_id gesetzt ist)"] = "",
-    paperless_id: Annotated[int, "ID eines Paperless-Dokuments (aus paperless_search)"] = 0,
-    caption: Annotated[str, "Kurzer Text zur Datei (optional)"] = "",
+    path: str = "",
+    paperless_id: int = 0,
+    caption: Annotated[str, "Kurzer Text"] = "",
 ) -> str:
     bot = ctx.services.get("telegram")
     if bot is None or not bot.t.enabled:

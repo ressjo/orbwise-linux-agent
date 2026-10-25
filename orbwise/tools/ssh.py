@@ -261,16 +261,15 @@ def _risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
 
 
 @tool(
-    "Meldet sich per SSH an einem anderen Rechner an (NAS, Server, Raspberry Pi). Benutzername und Passwort fragt "
-    "Orbwise selbst im Dashboard ab – frag den Nutzer NIE im Chat danach. Nur nötig, um vorab zu verbinden; "
-    "ssh_run verbindet bei Bedarf selbst.",
+    "Verbindet per SSH mit einem anderen Rechner (NAS, Server). Benutzer und Passwort fragt Orbwise im Dashboard "
+    "ab – NIE im Chat danach fragen. Nur zum Vorab-Verbinden; ssh_run verbindet selbst.",
     enabled=_enabled,
 )
 async def ssh_connect(
     ctx: ToolContext,
-    host: Annotated[str, "Kurzname aus der Config (z. B. 'nas') oder Adresse, optional user@host:port"],
-    user: Annotated[str, "Optional: Benutzername als Vorschlag im Anmeldedialog"] = "",
-    port: Annotated[int, "Optional: Port (Standard 22)"] = 0,
+    host: Annotated[str, "Kurzname aus der Config (z. B. 'nas') oder [user@]host[:port]"],
+    user: Annotated[str, "Vorschlag für den Anmeldedialog"] = "",
+    port: Annotated[int, "Standard 22"] = 0,
 ) -> str:
     s = await open_session(ctx, host, user, port)
     if isinstance(s, str):
@@ -284,17 +283,16 @@ async def ssh_connect(
 
 
 @tool(
-    "Führt einen Bash-Befehl auf einem ANDEREN Rechner per SSH aus (z. B. NAS) – wie run_shell, nur dort. "
-    "Verbindet bei Bedarf selbst (Anmeldung im Dashboard). Für Root-Rechte 'sudo' voranstellen. "
-    "Keine interaktiven Programme (vim, htop, less).",
+    "Führt einen Bash-Befehl auf einem ANDEREN Rechner per SSH aus (verbindet bei Bedarf). Root: 'sudo' "
+    "voranstellen. Keine interaktiven Programme.",
     risk=_risk,
     enabled=_enabled,
 )
 async def ssh_run(
     ctx: ToolContext,
-    host: Annotated[str, "Kurzname (z. B. 'nas') oder Adresse des Rechners"],
-    command: Annotated[str, "Der auszuführende Bash-Befehl"],
-    timeout_seconds: Annotated[int, "Zeitlimit in Sekunden (Standard 120)"] = 0,
+    host: Annotated[str, "Kurzname oder Adresse"],
+    command: str,
+    timeout_seconds: Annotated[int, "Standard 120"] = 0,
 ) -> str:
     from .. import askpass
     s = await open_session(ctx, host)
@@ -330,12 +328,12 @@ async def ssh_run(
 
 
 @tool(
-    "Trennt SSH-Verbindungen (danach wird wieder nach Benutzername und Passwort gefragt).",
+    "Trennt SSH-Verbindungen.",
     enabled=_enabled,
 )
 async def ssh_disconnect(
     ctx: ToolContext,
-    host: Annotated[str, "Optional: Kurzname oder Adresse; leer = alle Verbindungen"] = "",
+    host: Annotated[str, "Leer = alle"] = "",
 ) -> str:
     names = [resolve(ctx.cfg, host)[0].lower()] if host else list(SESSIONS)
     closed = []
