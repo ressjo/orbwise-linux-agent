@@ -517,7 +517,7 @@ def fetch_flavor(cfg, gpu: dict, flavor: str, out: Out = print, client: httpx.Cl
         rel = next((x for x in (releases if isinstance(releases, list) else [releases])
                     if str(x.get("tag_name")) == tag), None)
         assets = (rel or {}).get("assets") or []
-        asset = next((a for a in assets if FLAVORS[flavor].search(a.get("name", ""))), None)
+        asset = next((a for f, a in pick_assets(assets, gpu, flavor, rocm_version()) if f == flavor), None)
         if asset is None:
             raise ValueError(T(f"Für llama.cpp {tag} gibt es keinen {flavor}-Build.",
                                f"There is no {flavor} build for llama.cpp {tag}."))
@@ -529,6 +529,11 @@ def fetch_flavor(cfg, gpu: dict, flavor: str, out: Out = print, client: httpx.Cl
     finally:
         if own:
             client.close()
+
+
+def flavor_ready(cfg, flavor: str) -> bool:
+    """Liegt der Build dieser Variante zur installierten Version schon da (Umschalten ohne Download)?"""
+    return (flavor_dir(cfg, flavor) / "llama-server").exists()
 
 
 def use_flavor(cfg, flavor: str) -> dict:
@@ -545,6 +550,9 @@ def use_flavor(cfg, flavor: str) -> dict:
     data = {**old, "flavor": flavor, "asset": asset or old.get("asset", ""), "dir": target.name,
             "previous": old.get("dir") if old.get("dir") != target.name else old.get("previous"),
             "preferred_flavor": flavor}
+    data.pop("rocm_build", None)
+    if flavor == "rocm" and asset_rocm(data["asset"]):
+        data["rocm_build"] = asset_rocm(data["asset"])
     (base / "manifest.json").write_text(json.dumps(data, indent=1), encoding="utf-8")
     return data
 

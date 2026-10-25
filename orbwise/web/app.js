@@ -2851,9 +2851,23 @@
   }
   // llama.cpp-Build (aktualisierbar) und ROCm (nur Anzeige – Systempaket mit Treibern, das aktualisierst du selbst)
   function drawRuntime(box, st, checked) {
-    box.innerHTML = `<span class="rt-ver"></span><button type="button" class="mm-link rt-btn"></button><span class="rt-rocm"></span>`;
-    box.querySelector(".rt-ver").textContent = st.installed ? `llama.cpp ${st.tag || ""}` + (st.flavor ? ` · ${st.flavor}` : "")
+    box.innerHTML = `<span class="rt-ver"></span><div class="seg rt-seg"></div><button type="button" class="mm-link rt-btn"></button><span class="rt-rocm"></span>`;
+    const switchable = st.installed && (st.flavors || []).length > 1;
+    box.querySelector(".rt-ver").textContent = st.installed ? `llama.cpp ${st.tag || ""}` + (st.flavor && !switchable ? ` · ${st.flavor}` : "")
       : L("llama.cpp nicht installiert", "llama.cpp not installed");
+    const seg = box.querySelector(".rt-seg");
+    if (!switchable) seg.remove();
+    for (const f of switchable ? st.flavors : []) {  // Schalter ROCm/Vulkan (bzw. CUDA/Vulkan) für alle llama.cpp-Modelle
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = FLAVOR_LABEL[f.flavor] || f.flavor;
+      b.classList.toggle("on", f.flavor === st.flavor);
+      b.disabled = !!st.updating;
+      b.title = f.flavor === st.flavor ? L("Aktiver Build", "Active build")
+        : f.ready ? L("Umschalten – ein geladenes Modell startet damit neu.", "Switch – a loaded model restarts with it.")
+        : L("Umschalten – der Build wird zuerst geladen (einige hundert MB).", "Switch – the build is downloaded first (a few hundred MB).");
+      b.onclick = () => switchFlavor(f, st);
+      seg.appendChild(b);
+    }
     box.title = L("Startet Modelle von Hugging Face und aus ~/models. Neue Modelltypen brauchen oft einen neuen Build.",
                   "Runs models from Hugging Face and ~/models. New model types often need a newer build.");
     const btn = box.querySelector(".rt-btn");
@@ -2889,6 +2903,20 @@
       a.textContent = L(`neu: ${r.latest} – Anleitung`, `new: ${r.latest} – guide`);
       rb.appendChild(a);
     }
+  }
+
+  async function switchFlavor(f, st) {
+    if (f.flavor === st.flavor) return;
+    const name = FLAVOR_LABEL[f.flavor] || f.flavor;
+    if (!f.ready && !await ask(L(`Den ${name}-Build von llama.cpp ${st.tag} laden (einige hundert MB) und alle llama.cpp-Modelle darauf umstellen? Ein geladenes Modell startet danach neu.`,
+                                  `Download the ${name} build of llama.cpp ${st.tag} (a few hundred MB) and switch all llama.cpp models to it? A loaded model restarts afterwards.`))) return;
+    try {
+      const r = await api("POST", "/api/llamacpp/flavor", { flavor: f.flavor });
+      if (r.job) { renderPulls(); toast(L(`${name}-Build wird geladen …`, `Downloading the ${name} build …`)); }
+      else toast(r.restart ? L(`✔ ${name} aktiv – das Modell startet damit neu.`, `✔ ${name} active – the model restarts with it.`)
+                           : L(`✔ ${name} aktiv – gilt ab dem nächsten Modellstart.`, `✔ ${name} active – used from the next model start.`));
+    } catch { /* Fehler zeigt api() */ }
+    renderLlamacppChip();
   }
 
   // laufende Downloads stehen über beiden Reitern
@@ -3757,9 +3785,10 @@
     if (ev.error) { toast(L(`✘ ${ev.tag}: `, `✘ ${ev.tag}: `) + ev.error); return; }
     if (ev.done && ev.kind === "llamacpp") {
       const v = ev.version || "";
+      const fl = ev.flavor && ev.kind === "llamacpp" ? ` (${FLAVOR_LABEL[ev.flavor] || ev.flavor})` : "";
       toast(ev.changed === false ? L(`llama.cpp ${v} ist aktuell.`, `llama.cpp ${v} is up to date.`)
-        : ev.restarted ? L(`✔ llama.cpp ${v} bereit – das Modell startet damit neu.`, `✔ llama.cpp ${v} ready – the model restarts with it.`)
-        : L(`✔ llama.cpp ${v} bereit – gilt ab dem nächsten Modellstart.`, `✔ llama.cpp ${v} ready – used from the next model start.`));
+        : ev.restarted ? L(`✔ llama.cpp ${v}${fl} bereit – das Modell startet damit neu.`, `✔ llama.cpp ${v}${fl} ready – the model restarts with it.`)
+        : L(`✔ llama.cpp ${v}${fl} bereit – gilt ab dem nächsten Modellstart.`, `✔ llama.cpp ${v}${fl} ready – used from the next model start.`));
       refreshModelViews();
       return;
     }

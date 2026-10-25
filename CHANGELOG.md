@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **ROCm | Vulkan switch** (CUDA | Vulkan on NVIDIA) on the llama.cpp line of the model page: moves all llama.cpp
+  models to the other build of the installed version, downloading it first if needed, and restarts a loaded model.
+- **Thinking levels strictly from the template:** only levels the chat template itself compares or lists (at least
+  two) are offered – gpt-oss keeps its documented low/medium/high. Templates that merely mention `reasoning_effort`
+  no longer get low/medium/high filled in; they count as on/off.
 - **llama.cpp updates on the model page:** the llama.cpp line shows when a newer build exists ("Update to b…",
   checked at most every 3 hours, offline the last known state), a loaded model restarts with the new build right
   away, and the ROCm build matching the installed ROCm version is chosen when a release has several. The installed

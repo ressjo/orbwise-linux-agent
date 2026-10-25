@@ -610,14 +610,15 @@ def template_thinking(template) -> str | None:
     """Denkfähigkeit laut Chat-Vorlage (Jinja-Text) – None, wenn es keine Vorlage gibt."""
     if not isinstance(template, str) or not template.strip():
         return None
-    if "reasoning_effort" in template:
+    if len(template_levels(template)[0]) >= 2:  # nur, wenn die Vorlage selbst mehrere Stufen nennt
         return "levels"
-    if any(mark in template for mark in ("enable_thinking", "<think>", "reasoning_content", "thinking")):
+    if any(mark in template for mark in ("enable_thinking", "<think>", "reasoning_content", "thinking",
+                                         "reasoning_effort")):  # Stufen erwähnt, aber keine genannt → an/aus
         return "toggle"
     return "none"
 
 
-EFFORT_LEVELS = ["low", "medium", "high"]  # Stufen von gpt-oss – wenn die Vorlage selbst keine nennt
+EFFORT_LEVELS = ["low", "medium", "high"]  # die dokumentierten Stufen von gpt-oss (dessen Vorlage nennt sie nicht)
 _EFFORT_CMP = re.compile(r"reasoning_effort\s*(?:==|!=)\s*['\"]([\w-]{2,16})['\"]|['\"]([\w-]{2,16})['\"]\s*(?:==|!=)\s*"
                          r"reasoning_effort")
 _EFFORT_IN = re.compile(r"reasoning_effort\s+(?:not\s+)?in\s*[\[(]([^\])]*)[\])]")
@@ -627,26 +628,24 @@ _ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 
 def template_levels(template, model: str = "") -> tuple[list[str], str | None]:
-    """Denkstufen, die das Modell selbst vorgibt (aus seiner Chat-Vorlage), und seine Voreinstellung – nennt die
-    Vorlage keine, die von gpt-oss (low/medium/high). Ohne Stufen: ([], None)."""
+    """Denkstufen, die das Modell selbst vorgibt, und seine Voreinstellung – nur Werte, die seine Chat-Vorlage
+    ausdrücklich behandelt (Vergleiche, Listen, Voreinstellung); gpt-oss: seine dokumentierten low/medium/high.
+    Nichts ergänzt: nennt die Vorlage keine zwei Stufen, gibt es keine ([], None) – dann nur an/aus."""
     text = template if isinstance(template, str) else ""
-    if "reasoning_effort" not in text and not supports_effort(model):
-        return [], None
     found: list[str] = []
     for m in _EFFORT_CMP.finditer(text):
         found.append(m.group(1) or m.group(2))
     for m in _EFFORT_IN.finditer(text):
         found += re.findall(r"['\"]([\w-]{2,16})['\"]", m.group(1))
-    default = next((m.group(1) for m in _EFFORT_DEFAULT.finditer(text)), None)
-    levels = list(dict.fromkeys(x.lower() for x in found if x.lower() not in ("off", "none", "auto")))
-    if default and default.lower() not in levels and levels:
-        levels.append(default.lower())
-    if len(levels) < 3:  # Vorlagen prüfen oft nur einzelne Werte (der Rest im else-Zweig) – dann die üblichen dazu
-        levels = list(dict.fromkeys([*EFFORT_LEVELS, *levels]))
+    default = next((m.group(1).lower() for m in _EFFORT_DEFAULT.finditer(text)), None)
+    levels = list(dict.fromkeys(x.lower() for x in [*found, *([default] if default else [])]
+                                if x.lower() not in ("off", "none", "auto", "disabled")))
+    if len(levels) < 2 and supports_effort(model):
+        levels, default = list(EFFORT_LEVELS), default if default in EFFORT_LEVELS else "medium"
+    if len(levels) < 2:
+        return [], None
     levels.sort(key=lambda x: _ORDER.index(x) if x in _ORDER else len(_ORDER))
-    default = default.lower() if default and default.lower() in levels else \
-        ("medium" if "medium" in levels else levels[len(levels) // 2])
-    return levels, default
+    return levels, default if default in levels else None
 
 
 def supports_effort(model: str) -> bool:

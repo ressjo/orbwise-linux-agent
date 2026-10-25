@@ -4,6 +4,7 @@
 import asyncio
 import io
 import json
+import os
 import shlex
 import socket
 import tarfile
@@ -546,3 +547,44 @@ def test_status_api_reports_update_and_rocm(setup, monkeypatch):
                           "mismatch": False, "guide": llamacpp.ROCM_GUIDE}
     (root / "manifest.json").write_text(json.dumps({"tag": "b7001", "flavor": "rocm"}))
     assert client.get("/api/llamacpp?check=1").json()["update"] is False
+
+
+def test_flavor_switch_downloads_a_missing_build_first(setup, monkeypatch):
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
+    monkeypatch.setattr(mdl, "detect_gpu", lambda: dict(AMD))
+    monkeypatch.setattr(llamacpp, "rocm_version", lambda base=None: "7.2.4")
+    root = llamacpp.root(setup)
+    rocm = root / "b7001-rocm"
+    rocm.mkdir(parents=True)
+    (rocm / "llama-server").write_text(WORKS)
+    (root / "current").symlink_to("b7001-rocm")
+    (root / "manifest.json").write_text(json.dumps({"tag": "b7001", "flavor": "rocm", "dir": "b7001-rocm",
+                                                    "rocm_build": "7.2"}))
+    fetched = []
+
+    def fetch(cfg, gpu, flavor, out=print, **kw):
+        fetched.append(flavor)
+        target = llamacpp.flavor_dir(cfg, flavor)
+        target.mkdir(parents=True)
+        (target / "llama-server").write_text(WORKS)
+        (target / "asset.txt").write_text("llama-b7001-bin-ubuntu-vulkan-x64.tar.gz")
+        return target
+    monkeypatch.setattr(llamacpp, "fetch_flavor", fetch)
+    from orbwise.server import create_app
+    with TestClient(create_app(setup), base_url="http://localhost:8765") as client:
+        st = client.get("/api/llamacpp").json()
+        assert st["flavors"] == [{"flavor": "rocm", "ready": True}, {"flavor": "vulkan", "ready": False}]
+        with client.websocket_connect("ws://localhost:8765/ws", headers={"Origin": "http://localhost:8765"}) as ws:
+            ws.receive_json()
+            r = client.post("/api/llamacpp/flavor", json={"flavor": "vulkan"}).json()
+            assert r["job"] == "llama.cpp"
+            ev = _until_done(ws, "llama.cpp")
+        assert ev.get("done") and ev["flavor"] == "vulkan" and fetched == ["vulkan"]
+        m = llamacpp.manifest(setup)
+        assert m["flavor"] == "vulkan" and "rocm_build" not in m and os.readlink(root / "current") == "b7001-vulkan"
+        # zurück auf ROCm: liegt schon da – sofort, ohne Download
+        r = client.post("/api/llamacpp/flavor", json={"flavor": "rocm"}).json()
+        assert "job" not in r and r["flavor"] == "rocm" and fetched == ["vulkan"]
+        assert llamacpp.manifest(setup)["preferred_flavor"] == "rocm"
+        assert client.post("/api/llamacpp/flavor", json={"flavor": "metal"}).status_code == 400

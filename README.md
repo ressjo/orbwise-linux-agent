@@ -334,6 +334,8 @@ have show up under **On disk · ~/models** – one click turns them into a model
 top of the model page shows when a newer build exists (**Update to b…**, checked at most every 3 hours); the button
 (or `orbwise model llamacpp --update`) fetches it, and a loaded model restarts with it right away. If a release has
 ROCm builds for several ROCm versions, Orbwise picks the one matching your installed ROCm (`/opt/rocm/.info/version`).
+The **ROCm | Vulkan** switch next to it (CUDA | Vulkan on NVIDIA) moves all llama.cpp models to the other build of
+the same version – downloaded first if it is not there yet – and restarts a loaded model with it.
 
 **ROCm** is shown next to it (installed version, and a link to AMD's install guide when a newer one is out) but not
 updated by Orbwise – it is a system package with kernel drivers that needs a reboot, and a broken update leaves the
@@ -497,10 +499,10 @@ llama-server, **don't** pass `--reasoning-budget 0`, which disables reasoning se
 
 The menu follows what the loaded model can do. Orbwise reads it from the model's chat template (llama-server
 `/props`) or Ollama's capabilities:
-- **The model's own levels** (`reasoning_effort` in the template, e.g. gpt-oss): **Off** plus exactly the levels the
-  template names (e.g. Low / Medium / High; the model's default is marked). The level goes to the model as
-  `reasoning_effort` – Orbwise adds no token budgets or "think briefly" hints of its own. If the levels cannot be
-  read, the menu shows on/off.
+- **The model's own levels:** **Off** plus exactly the levels the chat template itself handles (values it compares
+  `reasoning_effort` with or lists, at least two; the model's default is marked) – for gpt-oss its documented
+  low/medium/high. Nothing is added: a template that only mentions `reasoning_effort` without naming levels counts as
+  on/off. The level goes to the model as `reasoning_effort`; Orbwise adds no token budgets or "think briefly" hints.
 - **Only on/off** (Qwen 3 and most others) or unknown: **Off / On** – no invented levels.
 - **No thinking at all**: the button is greyed out.
 Only in a small context window (< 16k) is the reasoning capped so the answer still fits; if it runs longer, the step

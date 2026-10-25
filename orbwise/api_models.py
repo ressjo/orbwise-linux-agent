@@ -285,9 +285,13 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
         from . import llamacpp
         from . import models as mdl
         m = llamacpp.manifest(cfg)
+        gpu = await asyncio.to_thread(mdl.detect_gpu)
+        flavors = [f for f in llamacpp.flavors_for(gpu) if f != "cpu"]
         out = {"installed": llamacpp.installed(cfg), "tag": m.get("tag"), "flavor": m.get("flavor"),
-               "updating": "llama.cpp" in pulls}
-        gpu = await asyncio.to_thread(mdl.detect_gpu) if check else {}
+               "updating": "llama.cpp" in pulls,
+               # Schalter ROCm/Vulkan bzw. CUDA/Vulkan – ready: schon geladen (sonst lädt das Umschalten ihn erst)
+               "flavors": [{"flavor": f, "ready": f == m.get("flavor") or llamacpp.flavor_ready(cfg, f)}
+                           for f in flavors] if len(flavors) > 1 else []}
         latest = await asyncio.to_thread(llamacpp.latest_tag, gpu, None, force) if check else None
         if check:
             out["latest"] = latest
@@ -633,11 +637,36 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
 
     @app.post("/api/llamacpp/flavor")
     async def llamacpp_flavor(request: Request):
-        """Gemessenen anderen Build (z. B. Vulkan statt ROCm) für alle llama.cpp-Modelle übernehmen."""
+        """Anderen Build (z. B. Vulkan statt ROCm) für alle llama.cpp-Modelle übernehmen – fehlt er noch, wird er
+        derselben Version zuerst geladen (Hintergrund-Aufgabe „llama.cpp“); ein geladenes Modell startet neu."""
         from . import llamacpp
+        from . import models as mdl
         flavor = str((await request.json()).get("flavor") or "")
         if flavor not in llamacpp.FLAVORS:
             raise HTTPException(400, T("Unbekannte Variante", "Unknown variant"))
+        if not llamacpp.installed(cfg):
+            raise HTTPException(400, T("llama.cpp ist noch nicht eingerichtet.", "llama.cpp is not set up yet."))
+        if not llamacpp.flavor_ready(cfg, flavor) and flavor != llamacpp.manifest(cfg).get("flavor"):
+            async def job() -> dict:
+                gpu = await asyncio.to_thread(mdl.detect_gpu)
+                loop = asyncio.get_running_loop()
+
+                def out(line: str) -> None:
+                    asyncio.run_coroutine_threadsafe(pull_event("llama.cpp", status=line.strip()), loop)
+                async with llamacpp_lock:
+                    try:
+                        await asyncio.to_thread(llamacpp.fetch_flavor, cfg, gpu, flavor, out)
+                    except (httpx.HTTPError, OSError, zipfile.BadZipFile, tarfile.TarError) as e:
+                        raise LLMError(T(f"{flavor}-Build konnte nicht geladen werden: {e}",
+                                         f"Could not download the {flavor} build: {e}")) from e
+                    except ValueError as e:
+                        raise LLMError(str(e)) from e
+                    m = await asyncio.to_thread(llamacpp.use_flavor, cfg, flavor)
+                restart = reload_own_model()
+                await hub.broadcast({"type": "models_changed"})
+                return {"kind": "llamacpp", "version": m.get("tag"), "flavor": flavor, "changed": True,
+                        "restarted": restart}
+            return {"ok": True, "job": start_job("llama.cpp", job), "flavor": flavor}
         try:
             m = await asyncio.to_thread(llamacpp.use_flavor, cfg, flavor)
         except ValueError as e:

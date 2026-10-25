@@ -182,7 +182,7 @@ def test_api_tune_and_switch_build(cfg, tmp_path, monkeypatch):
         assert got["other"]["gain_pct"] == 12
         assert {p["name"]: p for p in client.get("/api/models").json()["profiles"]}[name]["tuning"]["ubatch"] == 1024
         assert client.post("/api/llamacpp/flavor", json={"flavor": "metal"}).status_code == 400
-        assert client.post("/api/llamacpp/flavor", json={"flavor": "vulkan"}).status_code == 400  # nicht geladen
+        # (fehlt der Build, lädt der Schalter ihn erst – siehe test_flavor_switch_downloads_a_missing_build_first)
         own_build(cfg, "vulkan")
         r = client.post("/api/llamacpp/flavor", json={"flavor": "vulkan"}).json()
         assert r["flavor"] == "vulkan" and not r["restart"]  # aktiv ist das Ollama-Modell

@@ -11,7 +11,8 @@ from orbwise.llm import OllamaLLM, OpenAICompatLLM, template_levels, template_th
 
 
 def test_template_decides_the_caps():
-    assert template_thinking("{% if reasoning_effort %}…") == "levels"  # gpt-oss
+    assert template_thinking("{% if reasoning_effort %}…") == "toggle"  # erwähnt, aber keine Stufen genannt
+    assert template_thinking("{% if reasoning_effort == 'low' %}…{% elif reasoning_effort == 'high' %}") == "levels"
     assert template_thinking("{%- if enable_thinking is false %}<think>\n\n</think>") == "toggle"  # Qwen3
     assert template_thinking("{{ message.reasoning_content }}") == "toggle"
     assert template_thinking("<|start_header_id|>{{ role }}") == "none"  # Llama 3
@@ -20,11 +21,14 @@ def test_template_decides_the_caps():
 
 def test_levels_come_from_the_model():
     gpt_oss = '{%- if not reasoning_effort is defined %}{%- set reasoning_effort = "medium" %}{%- endif %}'
-    assert template_levels(gpt_oss) == (["low", "medium", "high"], "medium")
+    assert template_levels(gpt_oss) == ([], None)  # nennt nur eine Voreinstellung – keine Stufen erfinden
+    assert template_levels(gpt_oss, "gpt-oss-20b") == (["low", "medium", "high"], "medium")  # dokumentiert
     own = "{% if reasoning_effort in ['minimal', 'low', 'medium', 'high'] %}{{ reasoning_effort | default('low') }}"
     assert template_levels(own) == (["minimal", "low", "medium", "high"], "low")
+    two = "{% if reasoning_effort == 'high' %}lang{% elif reasoning_effort == 'low' %}kurz{% endif %}"
+    assert template_levels(two) == (["low", "high"], None)  # genau die zwei – nichts ergänzt
+    assert template_levels("{% if reasoning_effort == 'max' %}") == ([], None)  # eine Stufe ist keine Auswahl
     assert template_levels("{% if enable_thinking %}<think>") == ([], None)  # nur an/aus – keine Stufen
-    assert template_levels("", "gpt-oss-20b") == (["low", "medium", "high"], "medium")
 
 
 def test_ollama_caps_from_show():
