@@ -22,7 +22,6 @@ def test_template_decides_the_caps():
 def test_levels_come_from_the_model():
     gpt_oss = '{%- if not reasoning_effort is defined %}{%- set reasoning_effort = "medium" %}{%- endif %}'
     assert template_levels(gpt_oss) == ([], None)  # nennt nur eine Voreinstellung – keine Stufen erfinden
-    assert template_levels(gpt_oss, "gpt-oss-20b") == (["low", "medium", "high"], "medium")  # dokumentiert
     own = "{% if reasoning_effort in ['minimal', 'low', 'medium', 'high'] %}{{ reasoning_effort | default('low') }}"
     assert template_levels(own) == (["minimal", "low", "medium", "high"], "low")
     two = "{% if reasoning_effort == 'high' %}lang{% elif reasoning_effort == 'low' %}kurz{% endif %}"
@@ -32,12 +31,15 @@ def test_levels_come_from_the_model():
 
 
 def test_ollama_caps_from_show():
-    def client(caps, model="qwen3:8b"):
+    def client(caps, model="qwen3:8b", template=""):
         def handler(req):
-            return httpx.Response(200, json={} if caps is None else {"capabilities": caps})
+            return httpx.Response(200, json={} if caps is None else {"capabilities": caps, "template": template})
         return OllamaLLM(LLMConfig(model=model), transport=httpx.MockTransport(handler))
     assert run(client(["completion", "tools", "thinking"]).thinking_caps()) == "toggle"
-    assert run(client(["completion", "thinking"], "gpt-oss:20b").thinking_caps()) == "levels"
+    # auch gpt-oss: Stufen nur, wenn die Vorlage welche nennt – keine festen von Orbwise
+    assert run(client(["completion", "thinking"], "gpt-oss:20b").thinking_caps()) == "toggle"
+    listed = client(["thinking"], "x", "{{ if eq .ReasoningEffort \"low\" }}{% if reasoning_effort in ['low', 'high'] %}")
+    assert run(listed.thinking_caps()) == "levels" and run(listed.thinking_levels()) == (["low", "high"], None)
     assert run(client(["completion", "tools"]).thinking_caps()) == "none"
     assert run(client(None).thinking_caps()) is None  # altes Ollama ohne capabilities
 
@@ -50,7 +52,9 @@ def test_llama_server_caps_from_props():
         p = ProfileConfig(backend="openai", base_url="http://llm/v1", model=model)
         return OpenAICompatLLM(p, transport=httpx.MockTransport(handler))
     assert run(client({"chat_template": "{% if enable_thinking %}"}).thinking_caps()) == "toggle"
-    assert run(client({"chat_template": "x"}, model="gpt-oss-120b").thinking_caps()) == "levels"
+    assert run(client({"chat_template": "x"}, model="gpt-oss-120b").thinking_caps()) == "none"  # kein Name-Raten
+    levels = "{%- if reasoning_effort == 'low' %}a{%- elif reasoning_effort == 'xhigh' %}b{% endif %}"
+    assert run(client({"chat_template": levels}).thinking_levels()) == (["low", "xhigh"], None)
     assert run(client({}).thinking_caps()) is None
 
 

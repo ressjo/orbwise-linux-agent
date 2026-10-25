@@ -31,16 +31,8 @@
   // Denkstufe: off | low | medium | high (früher gespeichert als true/false)
   // Denken: "off", "on" (Modelle ohne Stufen) oder eine Stufe, die das Modell selbst vorgibt (z. B. low/medium/high)
   function thinkLevel(v) { return v === true ? "on" : typeof v === "string" && /^[a-z][a-z-]{1,15}$/.test(v) ? v : "off"; }
-  // Namen für bekannte Stufen der Modelle – unbekannte zeigen den Namen, den das Modell nennt
-  const THINK_NAMES = {
-    minimal: [L("Minimal", "Minimal"), L("Kaum Überlegen – fast so schnell wie ohne.", "Barely any reasoning – almost as fast as off.")],
-    low: [L("Niedrig", "Low"), L("Das Modell überlegt knapp.", "The model reasons briefly.")],
-    medium: [L("Mittel", "Medium"), L("Ausgewogen zwischen Tempo und Gründlichkeit.", "Balanced between speed and depth.")],
-    high: [L("Hoch", "High"), L("Das Modell überlegt ausführlich – langsamer.", "The model reasons at length – slower.")],
-    xhigh: [L("Sehr hoch", "Extra high"), L("Noch ausführlicher – deutlich langsamer.", "Even longer reasoning – much slower.")],
-    max: [L("Maximal", "Max"), L("So lange wie das Modell kann – am langsamsten.", "As long as the model can – slowest.")],
-  };
-  function thinkName(k) { return (THINK_NAMES[k] || [k.charAt(0).toUpperCase() + k.slice(1)])[0]; }
+  // Stufen heißen so, wie das Modell sie nennt (z. B. "low", "xhigh") – keine eigenen Namen oder Stufen
+  function thinkName(k) { return k; }
   const AUTO_LABEL = { off: L("Auto aus", "Auto off"), read: L("Lesen", "Read"), files: L("Dateien", "Files"), auto: "Auto" };
   const S = {
     previews: {},  // Diff-Vorschau je Werkzeug-Aufruf (für die Freigabe-Karte)
@@ -2158,8 +2150,7 @@
         b.type = "button"; b.className = "lvl"; b.dataset.think = k;
         if (box === thinkMenu) {
           b.setAttribute("role", "menuitemradio");
-          const desc = (THINK_NAMES[k] || [])[1] || L(`Stufe „${k}“ des Modells.`, `The model's "${k}" level.`);
-          b.innerHTML = `<b>${escapeHtml(thinkName(k))} <code>${escapeHtml(k)}</code></b><small>${escapeHtml(desc)}${k === S.thinkDefault ? L(" Voreinstellung des Modells.", " Model default.") : ""}</small>`;
+          b.innerHTML = `<b>${escapeHtml(k)}</b><small>${k === S.thinkDefault ? L("Stufe des Modells – seine Voreinstellung.", "The model's level – its default.") : L("Stufe des Modells.", "The model's level.")}</small>`;
         } else {
           b.textContent = thinkName(k);
         }

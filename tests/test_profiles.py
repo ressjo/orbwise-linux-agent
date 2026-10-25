@@ -394,9 +394,10 @@ def test_think_effort_reaches_the_server(cfg):
     assert bodies[1]["chat_template_kwargs"] == {"enable_thinking": False}
 
     from orbwise.llm import OllamaLLM
-    for model, expect in (("gpt-oss:20b", "low"), ("qwen3:8b", True)):
-        o = OllamaLLM(LLMConfig(model=model))
-        assert o._payload([], None, True, think=True, effort="low")["think"] == expect  # Stufen nur bei gpt-oss
+    o = OllamaLLM(LLMConfig(model="any"))
+    # die Stufe kommt nur aus der Vorlage des Modells (Agent._fit_think) – dann geht sie so an Ollama
+    assert o._payload([], None, True, think=True, effort="low")["think"] == "low"
+    assert o._payload([], None, True, think=True)["think"] is True
 
 
 def test_inline_think_tags_become_reasoning(cfg, memory):

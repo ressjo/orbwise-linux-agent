@@ -137,7 +137,7 @@ class OllamaLLM:
     def _payload(self, messages: list[dict], tools: list[dict] | None, stream: bool,
                  think: bool | None = None, max_tokens: int | None = None, effort: str | None = None) -> dict:
         think = self.cfg.think if think is None else think
-        if think and effort and supports_effort(self.cfg.model):  # gpt-oss: echte Stufen low/medium/high
+        if think and effort:  # Stufe des Modells (nur gesetzt, wenn seine Vorlage Stufen nennt)
             think = effort
         payload: dict[str, Any] = {
             "model": self.cfg.model,
@@ -280,23 +280,27 @@ class OllamaLLM:
             return False
         return "vision" in (show.get("capabilities") or [])
 
-    async def thinking_caps(self) -> str | None:
-        """Wie kann das Modell denken? "levels" (echte Stufen), "toggle" (nur an/aus), "none" – None = unbekannt.
-        Ollama: /api/show → capabilities enthält "thinking"; Stufen kennt Ollama bisher nur bei gpt-oss."""
+    async def _show(self) -> dict:
         try:
-            show = (await self._client.post("/api/show", json={"model": self.cfg.model}, timeout=10)).json()
+            data = (await self._client.post("/api/show", json={"model": self.cfg.model}, timeout=10)).json()
         except (httpx.HTTPError, ValueError):
-            return None
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    async def thinking_caps(self) -> str | None:
+        """Wie kann das Modell denken? "levels" (Stufen aus seiner Vorlage), "toggle" (nur an/aus), "none" – None =
+        unbekannt. Ollama: /api/show → capabilities enthält "thinking"; Stufen nur, wenn die Vorlage welche nennt."""
+        show = await self._show()
         caps = show.get("capabilities")
         if not isinstance(caps, list):
             return None
         if "thinking" not in caps:
             return "none"
-        return "levels" if supports_effort(self.cfg.model) else "toggle"
+        return "levels" if template_levels(show.get("template"))[0] else "toggle"
 
     async def thinking_levels(self) -> tuple[list[str], str | None]:
-        """Ollama kennt Stufen bisher nur bei gpt-oss (low/medium/high)."""
-        return template_levels("", self.cfg.model)
+        """Nur die Stufen, die die Vorlage des Modells selbst nennt."""
+        return template_levels((await self._show()).get("template"))
 
     async def unload_all(self) -> list[str]:
         """Alle geladenen Ollama-Modelle aus dem (Grafik-)Speicher entfernen."""
@@ -543,13 +547,11 @@ class OpenAICompatLLM:
     async def thinking_caps(self) -> str | None:
         """Wie kann das Modell denken? Aus der Chat-Vorlage des llama-servers (GET /props → chat_template):
         reasoning_effort → "levels", enable_thinking/<think> → "toggle", sonst "none"; ohne Vorlage None."""
-        if supports_effort(self.profile.model):
-            return "levels"
         return template_thinking((await self.server_props()).get("chat_template"))
 
     async def thinking_levels(self) -> tuple[list[str], str | None]:
         """Die Denkstufen, die das Modell selbst anbietet (aus der Chat-Vorlage), und seine Voreinstellung."""
-        return template_levels((await self.server_props()).get("chat_template"), self.profile.model)
+        return template_levels((await self.server_props()).get("chat_template"))
 
     async def thinking_evidence(self) -> list[str]:
         """Zeilen der Chat-Vorlage zu reasoning_effort – Beleg für die angebotenen Stufen."""
@@ -622,7 +624,6 @@ def template_thinking(template) -> str | None:
     return "none"
 
 
-EFFORT_LEVELS = ["low", "medium", "high"]  # die dokumentierten Stufen von gpt-oss (dessen Vorlage nennt sie nicht)
 _EFFORT_CMP = re.compile(r"reasoning_effort\s*(?:==|!=)\s*['\"]([\w-]{2,16})['\"]|['\"]([\w-]{2,16})['\"]\s*(?:==|!=)\s*"
                          r"reasoning_effort")
 _EFFORT_IN = re.compile(r"reasoning_effort\s+(?:not\s+)?in\s*[\[(]([^\])]*)[\])]")
@@ -631,10 +632,10 @@ _EFFORT_DEFAULT = re.compile(r"(?:set\s+reasoning_effort\s*=|reasoning_effort\s*
 _ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 
-def template_levels(template, model: str = "") -> tuple[list[str], str | None]:
+def template_levels(template) -> tuple[list[str], str | None]:
     """Denkstufen, die das Modell selbst vorgibt, und seine Voreinstellung – nur Werte, die seine Chat-Vorlage
-    ausdrücklich behandelt (Vergleiche, Listen, Voreinstellung); gpt-oss: seine dokumentierten low/medium/high.
-    Nichts ergänzt: nennt die Vorlage keine zwei Stufen, gibt es keine ([], None) – dann nur an/aus."""
+    ausdrücklich behandelt (Vergleiche, Listen, Voreinstellung). Nichts ergänzt, keine festen Stufen von Orbwise:
+    nennt die Vorlage keine zwei Stufen, gibt es keine ([], None) – dann nur an/aus."""
     text = template if isinstance(template, str) else ""
     found: list[str] = []
     for m in _EFFORT_CMP.finditer(text):
@@ -644,8 +645,6 @@ def template_levels(template, model: str = "") -> tuple[list[str], str | None]:
     default = next((m.group(1).lower() for m in _EFFORT_DEFAULT.finditer(text)), None)
     levels = list(dict.fromkeys(x.lower() for x in [*found, *([default] if default else [])]
                                 if x.lower() not in ("off", "none", "auto", "disabled")))
-    if len(levels) < 2 and supports_effort(model):
-        levels, default = list(EFFORT_LEVELS), default if default in EFFORT_LEVELS else "medium"
     if len(levels) < 2:
         return [], None
     levels.sort(key=lambda x: _ORDER.index(x) if x in _ORDER else len(_ORDER))
@@ -658,11 +657,6 @@ def template_evidence(template, limit: int = 6) -> list[str]:
         return []
     lines = [ln.strip() for ln in template.splitlines() if "reasoning_effort" in ln]
     return [ln if len(ln) <= 160 else ln[:157] + "…" for ln in lines[:limit]]
-
-
-def supports_effort(model: str) -> bool:
-    """Kennt das Modell echte Denkstufen (low/medium/high)? Bisher gpt-oss; andere können nur an/aus."""
-    return "gpt-oss" in (model or "").lower()
 
 
 _THINK_RE = re.compile(r"<think>.*?</think>\s*", re.S)
@@ -694,7 +688,7 @@ class FakeLLM:
         self.thought_repeat = 1  # Tests: wie lang die Denkkette wird (Denk-Budget)
         # Denkfähigkeit (levels | toggle | none) – für die UI-Demo per $ORBWISE_FAKE_THINK umstellbar
         self.think_caps = os.environ.get("ORBWISE_FAKE_THINK") or "levels"
-        self.think_levels: tuple[list[str], str | None] = (list(EFFORT_LEVELS), "medium")  # Stufen des Fake-Modells
+        self.think_levels: tuple[list[str], str | None] = (["low", "medium", "high"], "medium")  # Stufen des Fake-Modells
 
     async def close(self) -> None:
         pass
