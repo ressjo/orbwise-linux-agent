@@ -26,12 +26,14 @@ class Fingerprint:
     ends: list[int] = field(default_factory=list)  # geschätzte Token bis zum Ende jeder Nachricht (inkl. Werkzeuge)
     roles: list[str] = field(default_factory=list)
     empty_tail: bool = False  # Vorwärmen: leere Nutzernachricht am Ende
+    mode: tuple = (None, None)  # gesendeter Denkmodus (think, effort) – die Vorlage rendert damit anders
 
 
-def fingerprint(owner: tuple, messages: list[dict], tools: list[dict] | None, ratio: float = 1.0) -> Fingerprint:
+def fingerprint(owner: tuple, messages: list[dict], tools: list[dict] | None, ratio: float = 1.0,
+                mode: tuple = (None, None)) -> Fingerprint:
     names = tuple(sorted(t.get("function", {}).get("name", "") for t in tools or []))
     total = est_tokens(json.dumps(tools, ensure_ascii=False)) if tools else 0
-    fp = Fingerprint(owner, names)
+    fp = Fingerprint(owner, names, mode=tuple(mode))
     for m in messages:
         fp.hashes.append(hashlib.sha1(json.dumps(m, sort_keys=True, ensure_ascii=False, default=str).encode())
                          .hexdigest())
@@ -43,8 +45,8 @@ def fingerprint(owner: tuple, messages: list[dict], tools: list[dict] | None, ra
 
 
 def compare(new: Fingerprint, old: Fingerprint | None) -> dict:
-    """{reason, common (geschätzte gleiche Token am Anfang), …}. reason: first | model | chat | compact | tools |
-    system | cleared | edited | appended."""
+    """{reason, common (geschätzte gleiche Token am Anfang), …}. reason: first | model | chat | compact | think |
+    tools | system | cleared | edited | appended."""
     if old is None:
         return {"reason": "first", "common": 0}
     if new.owner[0] != old.owner[0]:
@@ -53,6 +55,8 @@ def compare(new: Fingerprint, old: Fingerprint | None) -> dict:
         return {"reason": "chat", "common": 0}
     if new.owner[2] != old.owner[2]:
         return {"reason": "compact", "common": 0}
+    if new.mode != old.mode:  # anderer Denkmodus: die Chat-Vorlage rendert schon den Anfang anders
+        return {"reason": "think", "common": 0}
     if new.tools != old.tools:
         return {"reason": "tools", "common": 0, "added": sorted(set(new.tools) - set(old.tools)),
                 "removed": sorted(set(old.tools) - set(new.tools))}

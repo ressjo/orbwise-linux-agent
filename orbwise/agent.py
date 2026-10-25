@@ -399,6 +399,16 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         elif caps == "toggle":
             self._think_level = None
 
+    def _think_kwargs(self, no_think: bool = False) -> dict:
+        """think/effort für den Aufruf – Vorwärmen und Frage müssen gleich senden: die Chat-Vorlage rendert je nach
+        Denkmodus schon den Anfang anders, sonst läge eine Variante im Cache, die die Frage nicht nutzt."""
+        if no_think:
+            return {"think": False}
+        kwargs: dict = {} if self._think is None else {"think": self._think}
+        if self._think and self._think_level:
+            kwargs["effort"] = self._think_level
+        return kwargs
+
     def summary_budget(self) -> int:
         """Höchstlänge der Zusammenfassung bei einer Komprimierung (klein ≈ 8 %, groß ≈ 10 % des Fensters)."""
         return self.plan().summary_max
@@ -441,7 +451,8 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         """chat_stream mit Zusatzoptionen (think, max_tokens, tool_choice) – nur die, die das LLM-Objekt kennt.
         Merkt sich nebenbei, ob und wo sich der Prompt gegenüber dem vorigen Aufruf geändert hat (self._reread)."""
         from . import reread
-        fp = reread.fingerprint(self._cache_key(), messages, tools, self.token_ratio())
+        fp = reread.fingerprint(self._cache_key(), messages, tools, self.token_ratio(),
+                                mode=(opts.get("think"), opts.get("effort")))
         self._reread = reread.compare(fp, self._prompt_prev)
         self._prompt_prev = fp
         fn = self.llm.chat_stream
@@ -750,7 +761,9 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
                         result = ev["message"]
                         stats = ev.get("stats") or {}
                         self._learn_prefill(stats)
-                        self._cache_owner = self._cache_key()  # der Server hat jetzt diesen Chat im Cache
+                        # der Server hat jetzt diesen Chat im Cache – nach der Notbremse ohne Denken aber in der anderen
+                        # Variante als die nächste Frage (mit Denken) → dann vorwärmen lassen
+                        self._cache_owner = self._cache_key() if cut is None else None
                         current = ""
                         await phase("done", seconds=round(time.monotonic() - started, 1), reread=self._reread_info(stats),
                                     calls=[c.get("function", {}).get("name", "") for c in result.get("tool_calls") or []],
@@ -798,12 +811,7 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
                     messages.append({"role": "user", "content": prompts.text(self.cfg, "final_nudge")})
                 if tail:
                     messages.append({"role": "user", "content": tail})
-                if no_think:
-                    kwargs = {"think": False}
-                else:
-                    kwargs = {} if self._think is None else {"think": self._think}
-                    if self._think and self._think_level:
-                        kwargs["effort"] = self._think_level
+                kwargs = self._think_kwargs(no_think)
                 # auch die Zwischenbilanz mit derselben Werkzeugliste – ohne sie stünde vorn im Prompt etwas anderes
                 # und der ganze Chat müsste neu eingelesen werden (und bei der nächsten Frage gleich noch einmal)
                 async for ev in self._call_llm(messages, self.schemas, **kwargs):

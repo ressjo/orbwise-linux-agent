@@ -86,9 +86,11 @@ class SpeedMixin:
         """Läuft eine Anfrage? (Vorwärmen zählt nicht – es blockiert nichts, die nächste Frage nutzt es.)"""
         return self.lock.locked() and not self._prewarming
 
-    async def prewarm(self, emit: Emit | None = None) -> bool:
+    async def prewarm(self, emit: Emit | None = None, think=None) -> bool:
         """Den Prompt-Anfang des offenen Chats im Leerlauf einlesen lassen (nach Telegram/Routinen, Chatwechsel,
-        Start oder sobald getippt wird) – die nächste Frage liest dann nur noch ihren neuen Teil ein."""
+        Start oder sobald getippt wird) – die nächste Frage liest dann nur noch ihren neuen Teil ein.
+        think: Denkmodus der nächsten Frage (Denken-Knopf) – mit anderem Modus rendert die Vorlage einen anderen
+        Prompt, das Vorgewärmte wäre nutzlos."""
         if self.lock.locked() or getattr(self.llm, "switching", None) or not self.cache_cold() \
                 or getattr(self.llm, "gpu_borrowed", None) \
                 or getattr(self.llm, "unloaded", False):  # Bild-Modus hat den Grafikspeicher bzw. von Hand entladen
@@ -99,15 +101,17 @@ class SpeedMixin:
         async with self.lock:
             self._prewarming = True
             try:
-                return await self._prewarm_locked(emit)
+                return await self._prewarm_locked(emit, think)
             finally:
                 self._prewarming = False
 
-    async def _prewarm_locked(self, emit: Emit | None = None) -> bool:
+    async def _prewarm_locked(self, emit: Emit | None = None, think=None) -> bool:
         if not self.cache_cold():
             return False
         key = self._cache_key()  # vorher merken – der Nutzer könnte währenddessen den Chat wechseln
         await self._check_vision()
+        self._set_think(think)
+        await self._fit_think()
         self.choose_tools(set())
         messages = self.build_messages(display=False)
         if messages[-1]["role"] != "user":
@@ -125,7 +129,7 @@ class SpeedMixin:
             await emit(phase)
         stats: dict = {}
         try:
-            async for ev in self._call_llm(messages, self.schemas, think=False, max_tokens=1):
+            async for ev in self._call_llm(messages, self.schemas, max_tokens=1, **self._think_kwargs()):
                 if ev["type"] == "done":
                     stats = ev.get("stats") or {}
         except Exception as e:  # noqa: BLE001 – Vorwärmen ist nur eine Beschleunigung

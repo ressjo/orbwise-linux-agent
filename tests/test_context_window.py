@@ -310,6 +310,46 @@ def test_prewarm_reads_the_chat_after_telegram(cfg, llm, memory):
     assert llm.calls[-1][:len(pre) - 1] == pre[:-1]  # die nächste Frage nutzt genau das Vorgewärmte
 
 
+def test_prewarm_uses_the_thinking_mode_of_the_next_question(cfg, llm, memory):
+    """Die Chat-Vorlage rendert mit anderem Denkmodus schon den Anfang anders – früher wurde immer ohne Denken
+    vorgewärmt, und die Frage mit Denken las trotzdem alles neu ein."""
+    agent = Agent(cfg, llm, memory)
+    run(agent.run("Hallo", _noop, _noop, think="high"))
+    agent._cache_owner = None  # z. B. nach Telegram
+    assert run(agent.prewarm(think="high"))
+    pre = llm.opts[-1]
+    run(agent.run("Und weiter?", _noop, _noop, think="high"))
+    assert pre["max_tokens"] == 1 and (pre["think"], pre["effort"]) == (True, "high")
+    assert (llm.opts[-1]["think"], llm.opts[-1]["effort"]) == (True, "high")
+    assert agent._reread["reason"] == "appended"  # die Frage baut genau auf dem Vorgewärmten auf
+    agent._cache_owner = None
+    assert run(agent.prewarm())  # ohne Denken-Knopf: Einstellung des Profils – nichts mitschicken
+    assert llm.opts[-1]["think"] is None and llm.opts[-1]["effort"] is None
+
+
+def test_think_toggle_makes_the_cache_cold_and_prewarms(cfg, monkeypatch, tmp_path):
+    monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "run"))
+    app = server.create_app(cfg)
+    hub = app.state.hub
+    calls = []
+    with TestClient(app, base_url="http://localhost:8765") as client:
+        hub.prewarm_soon = lambda: calls.append(hub.think)
+        with client.websocket_connect("ws://localhost:8765/ws", headers={"Origin": "http://localhost:8765"}) as ws:
+            ws.receive_json()  # hello
+            hub.agent._cache_owner = ("x",)
+            ws.send_json({"type": "think", "enabled": True, "level": "high"})
+            ws.send_json({"type": "think", "enabled": True, "level": "high"})  # unverändert – nichts zu tun
+            synced = 0
+            for _ in range(40):
+                synced += ws.receive_json()["type"] == "settings_sync"
+                if synced == 2:
+                    break
+    # (None: Vorwärmen beim Verbinden der Oberfläche) – nur der echte Wechsel wärmt neu vor
+    assert hub.think == "high" and hub.agent._cache_owner is None and calls == [None, "high"]
+
+
 def test_chat_switch_during_prewarm_warms_the_new_chat_afterwards(cfg, memory):
     """Läuft noch das Vorwärmen des vorigen Chats, wird der neue danach eingelesen (statt erst bei der Frage)."""
     from orbwise.llm import FakeLLM

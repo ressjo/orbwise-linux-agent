@@ -36,6 +36,9 @@ def test_reasons():
     assert compare(fp(CHAT, owner=("m", "c2", 0)), old)["reason"] == "chat"
     assert compare(fp(CHAT, owner=("m", "c1", 1)), old)["reason"] == "compact"
     assert compare(fp(CHAT, owner=("other", "c1", 0)), old)["reason"] == "model"
+    thinking = fingerprint(("m", "c1", 0), CHAT, TOOLS, mode=(True, "high"))
+    assert compare(thinking, old)["reason"] == "think"  # die Vorlage rendert mit Denken einen anderen Anfang
+    assert compare(fingerprint(("m", "c1", 0), CHAT, TOOLS, mode=(True, "high")), thinking)["reason"] == "appended"
     # Vorwärmen endet mit einer leeren Nutzernachricht – die echte Frage steht dann an ihrer Stelle
     warm = fp([*CHAT, {"role": "user", "content": ""}])
     assert compare(fp([*CHAT, {"role": "user", "content": "Und jetzt?"}]), warm)["reason"] == "appended"

@@ -135,7 +135,7 @@ class Hub:
         try:
             while True:
                 self._prewarm_again = False
-                await self.agent.prewarm(self.broadcast)
+                await self.agent.prewarm(self.broadcast, think=self.think)
                 if not self._prewarm_again:
                     return
         except Exception as e:  # noqa: BLE001 – Vorwärmen ist nur eine Beschleunigung
@@ -1799,7 +1799,11 @@ def create_app(cfg: Config) -> FastAPI:
                 elif t == "think":
                     level = str(data.get("level") or "")
                     # Stufe (low/medium/high) bei Modellen mit Stufen, sonst nur an/aus
-                    hub.think = (level if level in ("low", "medium", "high") else True) if data.get("enabled") else False
+                    think = (level if level in ("low", "medium", "high") else True) if data.get("enabled") else False
+                    if think != hub.think:  # die Vorlage rendert den Prompt mit anderem Denkmodus anders → neu vorwärmen
+                        hub.think = think
+                        agent._cache_owner = None
+                        hub.prewarm_soon()
                     await hub.broadcast({"type": "settings_sync", **settings_info()})
                 elif t == "prewarm":  # die Oberfläche merkt: gleich kommt eine Frage (Tippen, Sprechen)
                     hub.prewarm_soon()

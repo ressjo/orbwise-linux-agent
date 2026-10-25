@@ -1289,6 +1289,7 @@
     model: () => L("anderes Modell", "different model"),
     chat: () => L("anderer Chat", "different chat"),
     compact: () => L("nach dem Zusammenfassen", "after summarising"),
+    think: () => L("Denkmodus gewechselt (die Vorlage baut den Prompt anders)", "thinking mode changed (the template builds a different prompt)"),
     tools: (r) => L("Werkzeugliste geändert", "tool list changed") + (r.added && r.added.length ? ` (+${r.added.slice(0, 4).join(", ")}${r.added.length > 4 ? " …" : ""})` : ""),
     system: () => L("Systemteil geändert", "system part changed"),
     cleared: () => L("alte Ergebnisse ausgeblendet", "old results hidden"),

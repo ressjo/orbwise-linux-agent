@@ -409,7 +409,9 @@ Telegram message or chat switch.
 
 As soon as you start typing or speaking, Orbwise has the server read the open chat in the background if something
 else is in its cache (also after a chat switch, when the UI opens, after Telegram, routines and daily summaries) –
-when you send, only your question is new. The start line in `~/.local/state/orbwise-llm.log`
+when you send, only your question is new. It warms up with the thinking mode you have selected: chat templates
+build a different prompt with thinking on or off, so toggling the thinking button can make the model read the whole
+chat again – Orbwise warms up the new variant right away. The start line in `~/.local/state/orbwise-llm.log`
 shows the full command; restored checkpoints appear in the same log.
 
 - **llama-server:** start it with **one slot** (`-np 1` – Orbwise's profiles do that); with several slots requests

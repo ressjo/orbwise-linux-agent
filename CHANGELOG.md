@@ -190,6 +190,11 @@ All notable changes to this project are documented here. The format follows
   the open chat stays untouched.
 
 ### Fixed
+- **Prewarming while typing was wasted with thinking on:** it always warmed up the prompt *without* thinking, but chat
+  templates render a different prompt start with thinking enabled – the question afterwards read everything again
+  (a new chat: ~14k tokens of system prompt and tools). Prewarming now uses the thinking mode (and level) of the next
+  question; toggling the thinking button warms up the new variant, and the activity names "thinking mode changed"
+  as the reason instead of "server".
 - **Long chats fell out of the model server's cache:** the RAM prompt cache (`--cache-ram`) was capped at 4 GB, and
   llama-server does not store a chat state larger than that – after a daily summary, a Telegram message or a chat
   switch a 40–60k-token chat on a 27B model was read in full again. The cache is now sized for about two full chats
