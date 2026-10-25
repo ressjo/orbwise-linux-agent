@@ -99,7 +99,7 @@ def test_api_reports_caps(cfg, monkeypatch):
     monkeypatch.setenv("ORBWISE_FAKE_THINK", "toggle")
     from orbwise.server import create_app
     client = TestClient(create_app(cfg), base_url="http://localhost:8765")
-    assert client.get("/api/think").json() == {"caps": "toggle", "levels": [], "default": None}
+    assert client.get("/api/think").json() == {"caps": "toggle", "levels": [], "default": None, "evidence": []}
 
 
 def test_api_reports_the_models_own_levels(cfg, monkeypatch):
@@ -109,4 +109,11 @@ def test_api_reports_the_models_own_levels(cfg, monkeypatch):
     from orbwise.server import create_app
     client = TestClient(create_app(cfg), base_url="http://localhost:8765")
     assert client.get("/api/think").json() == {"caps": "levels", "levels": ["low", "medium", "high"],
-                                               "default": "medium"}
+                                               "default": "medium", "evidence": []}
+
+
+def test_template_evidence_shows_where_levels_come_from():
+    from orbwise.llm import template_evidence
+    t = "a\n{%- if reasoning_effort == 'high' %}\nb\n{%- elif reasoning_effort == 'low' %}\n" + "x" * 300
+    assert template_evidence(t) == ["{%- if reasoning_effort == 'high' %}", "{%- elif reasoning_effort == 'low' %}"]
+    assert template_evidence(None) == []

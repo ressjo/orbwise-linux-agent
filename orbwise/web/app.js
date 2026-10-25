@@ -2130,8 +2130,8 @@
   async function loadThinkCaps() {
     try {
       const r = await getJSON("/api/think");
-      S.thinkCaps = r.caps; S.thinkLevels = r.levels || []; S.thinkDefault = r.default || null;
-    } catch { S.thinkCaps = null; S.thinkLevels = []; S.thinkDefault = null; }
+      S.thinkCaps = r.caps; S.thinkLevels = r.levels || []; S.thinkDefault = r.default || null; S.thinkEvidence = r.evidence || [];
+    } catch { S.thinkCaps = null; S.thinkLevels = []; S.thinkDefault = null; S.thinkEvidence = []; }
     buildThinkLevels();
     refresh();
   }
@@ -2141,8 +2141,15 @@
     return levels.includes(S.think) ? S.think : levels.includes(S.thinkDefault) ? S.thinkDefault : levels[0];
   }
   function buildThinkLevels() {
-    document.querySelectorAll("[data-think].lvl").forEach((b) => b.remove());
+    document.querySelectorAll("[data-think].lvl, .think-source").forEach((b) => b.remove());
     const levels = thinkLevels();
+    if (levels.length) {  // Herkunft zeigen: die Stufen stehen so in der Chat-Vorlage des Modells
+      const src = document.createElement("div");
+      src.className = "think-source";
+      src.textContent = L(`Stufen aus der Chat-Vorlage des Modells: ${levels.join(", ")}`, `Levels from the model's chat template: ${levels.join(", ")}`);
+      src.title = (S.thinkEvidence || []).join("\n") || L("Dokumentierte Stufen des Modells", "The model's documented levels");
+      thinkMenu.appendChild(src);
+    }
     for (const box of [thinkMenu, $("set-think")]) {
       if (!box) continue;
       let after = box.querySelector('[data-think="on"]');
@@ -2152,7 +2159,7 @@
         if (box === thinkMenu) {
           b.setAttribute("role", "menuitemradio");
           const desc = (THINK_NAMES[k] || [])[1] || L(`Stufe „${k}“ des Modells.`, `The model's "${k}" level.`);
-          b.innerHTML = `<b>${escapeHtml(thinkName(k))}</b><small>${escapeHtml(desc)}${k === S.thinkDefault ? L(" Voreinstellung des Modells.", " Model default.") : ""}</small>`;
+          b.innerHTML = `<b>${escapeHtml(thinkName(k))} <code>${escapeHtml(k)}</code></b><small>${escapeHtml(desc)}${k === S.thinkDefault ? L(" Voreinstellung des Modells.", " Model default.") : ""}</small>`;
         } else {
           b.textContent = thinkName(k);
         }

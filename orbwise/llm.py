@@ -551,6 +551,10 @@ class OpenAICompatLLM:
         """Die Denkstufen, die das Modell selbst anbietet (aus der Chat-Vorlage), und seine Voreinstellung."""
         return template_levels((await self.server_props()).get("chat_template"), self.profile.model)
 
+    async def thinking_evidence(self) -> list[str]:
+        """Zeilen der Chat-Vorlage zu reasoning_effort – Beleg für die angebotenen Stufen."""
+        return template_evidence((await self.server_props()).get("chat_template"))
+
     async def server_context(self) -> int | None:
         """Tatsächliche Kontextgröße des llama-servers (GET /props), sonst None."""
         data = await self.server_props()
@@ -646,6 +650,14 @@ def template_levels(template, model: str = "") -> tuple[list[str], str | None]:
         return [], None
     levels.sort(key=lambda x: _ORDER.index(x) if x in _ORDER else len(_ORDER))
     return levels, default if default in levels else None
+
+
+def template_evidence(template, limit: int = 6) -> list[str]:
+    """Die Zeilen der Chat-Vorlage, die reasoning_effort erwähnen (gekürzt) – damit man sieht, woher Stufen kommen."""
+    if not isinstance(template, str):
+        return []
+    lines = [ln.strip() for ln in template.splitlines() if "reasoning_effort" in ln]
+    return [ln if len(ln) <= 160 else ln[:157] + "…" for ln in lines[:limit]]
 
 
 def supports_effort(model: str) -> bool:

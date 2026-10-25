@@ -512,6 +512,15 @@ class LLMRouter:
             self._levels_cache = cache
         return cache[key]
 
+    async def thinking_evidence(self) -> list[str]:
+        fn = getattr(self.client, "thinking_evidence", None)
+        if self.unloaded or fn is None:
+            return []
+        try:
+            return await fn()
+        except Exception:  # noqa: BLE001
+            return []
+
     async def thinking_caps(self) -> str | None:
         """Wie kann das aktive Modell denken? levels | toggle | none, None = unbekannt (je Profil gemerkt)."""
         if self.unloaded:

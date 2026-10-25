@@ -1442,7 +1442,8 @@ def create_app(cfg: Config) -> FastAPI:
             else ([], None)
         if caps == "levels" and not levels:
             caps = "toggle"  # Stufen nicht lesbar – dann nur an/aus statt erfundener Stufen
-        return {"caps": caps, "levels": levels, "default": default}
+        evidence = await llm.thinking_evidence() if caps == "levels" and hasattr(llm, "thinking_evidence") else []
+        return {"caps": caps, "levels": levels, "default": default, "evidence": evidence}
 
     def mode_info() -> dict:
         conv = memory.active
