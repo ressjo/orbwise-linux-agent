@@ -279,21 +279,42 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
         return {"ok": True, "tag": tag}
 
     @app.get("/api/llamacpp")
-    async def llamacpp_status():
+    async def llamacpp_status(check: bool = False, force: bool = False):
+        """Installierter Build; mit check: auch die neueste Version (llama.cpp und ROCm, je 3 h gemerkt).
+        ROCm wird nur angezeigt – es ist ein Systempaket mit Treibern, das aktualisiert der Nutzer selbst."""
         from . import llamacpp
+        from . import models as mdl
         m = llamacpp.manifest(cfg)
-        return {"installed": llamacpp.installed(cfg), "tag": m.get("tag"), "flavor": m.get("flavor"),
-                "updating": "llama.cpp" in pulls}
+        out = {"installed": llamacpp.installed(cfg), "tag": m.get("tag"), "flavor": m.get("flavor"),
+               "updating": "llama.cpp" in pulls}
+        gpu = await asyncio.to_thread(mdl.detect_gpu) if check else {}
+        latest = await asyncio.to_thread(llamacpp.latest_tag, gpu, None, force) if check else None
+        if check:
+            out["latest"] = latest
+            out["update"] = bool(latest and latest != m.get("tag") and _build_no(latest) > _build_no(m.get("tag")))
+        if gpu.get("vendor") == "amd" or llamacpp.rocm_version():
+            rocm_latest = await asyncio.to_thread(llamacpp.latest_rocm, None, force) if check else None
+            out["rocm"] = llamacpp.rocm_status(cfg, rocm_latest)
+        return out
+
+    def _build_no(tag) -> int:
+        m = re.search(r"\d+", str(tag or ""))
+        return int(m.group(0)) if m else 0
 
     @app.post("/api/llamacpp/update")
     async def llamacpp_update():
-        """Neuesten llama.cpp-Build laden – laufende Modelle nutzen ihn ab dem nächsten Start."""
+        """Neuesten llama.cpp-Build laden; ein geladenes eigenes Modell startet danach gleich mit ihm neu."""
+        from . import llamacpp
         from . import models as mdl
 
         async def job() -> dict:
+            before = llamacpp.manifest(cfg).get("dir")
             gpu = await asyncio.to_thread(mdl.detect_gpu)
             m = await ensure_llamacpp("llama.cpp", gpu, update=True)
-            return {"kind": "llamacpp", "version": m.get("tag"), "flavor": m.get("flavor")}
+            changed = m.get("dir") != before
+            restart = changed and reload_own_model()
+            return {"kind": "llamacpp", "version": m.get("tag"), "flavor": m.get("flavor"), "changed": changed,
+                    "restarted": restart}
         start_job("llama.cpp", job)
         return {"ok": True}
 
@@ -621,21 +642,29 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
             m = await asyncio.to_thread(llamacpp.use_flavor, cfg, flavor)
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
-        restart = isinstance(llm, LLMRouter) and not llm.unloaded and own_llamacpp(llm.active)
-        if restart:  # das geladene Modell gleich mit dem neuen Build neu starten (im Hintergrund)
-            async def reload() -> None:
-                async with agent.lock:
-                    await llm.unload()
-                    try:
-                        await llm.ensure_loaded()
-                    except LLMError as e:
-                        await hub.broadcast({"type": "model_error", "name": llm.active, "text": str(e)})
-                agent._cache_owner = None
-                await idle_if_free()
-                hub.prewarm_soon()
-            background.append(asyncio.create_task(reload()))
+        restart = reload_own_model()
         await hub.broadcast({"type": "models_changed"})
         return {"ok": True, "flavor": m.get("flavor"), "tag": m.get("tag"), "restart": restart}
+
+    def reload_own_model() -> bool:
+        """Läuft gerade ein Modell auf Orbwise' eigenem llama.cpp: im Hintergrund mit dem neuen Build neu starten
+        (wartet auf eine laufende Antwort). → ob neu gestartet wird."""
+        if not (isinstance(llm, LLMRouter) and not llm.unloaded and own_llamacpp(llm.active)):
+            return False
+
+        async def reload() -> None:
+            async with agent.lock:
+                await llm.unload()
+                try:
+                    await llm.ensure_loaded()
+                except LLMError as e:
+                    await hub.broadcast({"type": "model_error", "name": llm.active, "text": str(e)})
+            agent._cache_owner = None
+            await idle_if_free()
+            hub.prewarm_soon()
+            await hub.broadcast({"type": "models_changed"})
+        background.append(asyncio.create_task(reload()))
+        return True
 
     def own_llamacpp(name: str) -> bool:
         from . import llamacpp_tune

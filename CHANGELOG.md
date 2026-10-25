@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **llama.cpp updates on the model page:** the llama.cpp line shows when a newer build exists ("Update to b…",
+  checked at most every 3 hours, offline the last known state), a loaded model restarts with the new build right
+  away, and the ROCm build matching the installed ROCm version is chosen when a release has several. The installed
+  ROCm version is shown next to it with a link to AMD's guide when a newer one is out – Orbwise does not update ROCm
+  itself (system package with drivers). `orbwise doctor` shows ROCm and warns when the build targets another major.
 - **Thinking levels come from the model:** models with their own levels (`reasoning_effort` in the chat template)
   show exactly those levels in the Think menu and settings, with the model's default marked; models with only on/off
   (or unknown) show Off / On. Orbwise's own level budgets (~500 / ~2,000 tokens with a cut-off and a second pass

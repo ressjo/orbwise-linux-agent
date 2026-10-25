@@ -2842,23 +2842,53 @@
       box.title = L("Grafikspeicher: belegt / gesamt", "Video memory: used / total");
     }
   }
-  async function renderLlamacppChip() {
+  async function renderLlamacppChip(force) {
     const box = $("mp-runtime");
     let st;
     try { st = await getJSON("/api/llamacpp"); } catch { box.textContent = ""; return; }
-    box.innerHTML = `<span></span><button type="button" class="mm-link"></button>`;
-    box.querySelector("span").textContent = st.installed ? `llama.cpp ${st.tag || ""}` + (st.flavor ? ` · ${st.flavor}` : "")
+    drawRuntime(box, st, false);
+    try { drawRuntime(box, await getJSON("/api/llamacpp?check=1" + (force ? "&force=1" : "")), true); } catch { /* offline */ }
+  }
+  // llama.cpp-Build (aktualisierbar) und ROCm (nur Anzeige – Systempaket mit Treibern, das aktualisierst du selbst)
+  function drawRuntime(box, st, checked) {
+    box.innerHTML = `<span class="rt-ver"></span><button type="button" class="mm-link rt-btn"></button><span class="rt-rocm"></span>`;
+    box.querySelector(".rt-ver").textContent = st.installed ? `llama.cpp ${st.tag || ""}` + (st.flavor ? ` · ${st.flavor}` : "")
       : L("llama.cpp nicht installiert", "llama.cpp not installed");
     box.title = L("Startet Modelle von Hugging Face und aus ~/models. Neue Modelltypen brauchen oft einen neuen Build.",
                   "Runs models from Hugging Face and ~/models. New model types often need a newer build.");
-    const btn = box.querySelector("button");
-    btn.textContent = st.updating ? L("Wird geladen …", "Downloading …") : st.installed ? L("Aktualisieren", "Update") : L("Installieren", "Install");
-    btn.disabled = st.updating;
+    const btn = box.querySelector(".rt-btn");
+    const upToDate = checked && st.installed && st.latest && !st.update;
+    btn.textContent = st.updating ? L("Wird geladen …", "Downloading …")
+      : !st.installed ? L("Installieren", "Install")
+      : st.update ? L(`Update auf ${st.latest}`, `Update to ${st.latest}`)
+      : upToDate ? L("✓ aktuell", "✓ up to date") : L("Aktualisieren", "Update");
+    btn.classList.toggle("rt-new", !!st.update);
+    btn.disabled = !!st.updating;
+    btn.title = upToDate ? L("Neueste Version – klicken, um erneut nachzusehen.", "Latest version – click to check again.") : "";
     btn.onclick = async () => {
+      if (upToDate) { btn.disabled = true; await renderLlamacppChip(true); return; }
       btn.disabled = true;
       btn.textContent = L("Wird geladen …", "Downloading …");
       try { await api("POST", "/api/llamacpp/update"); renderPulls(); } catch { btn.disabled = false; }
     };
+    const r = st.rocm, rb = box.querySelector(".rt-rocm");
+    if (!r || !r.installed) { rb.remove(); return; }
+    rb.innerHTML = `<span></span>`;
+    rb.firstChild.textContent = `ROCm ${r.installed}`;
+    rb.title = L("ROCm ist ein Systempaket mit Treibern – Orbwise aktualisiert es nicht selbst. Nach einem ROCm-Update hier llama.cpp aktualisieren, dann passt der Build wieder.",
+                 "ROCm is a system package with drivers – Orbwise does not update it itself. After a ROCm update, update llama.cpp here so the build matches again.");
+    if (r.mismatch) {
+      const w = document.createElement("span");
+      w.className = "rt-warn";
+      w.textContent = L(` · Build für ROCm ${r.build}`, ` · build for ROCm ${r.build}`);
+      rb.appendChild(w);
+    }
+    if (r.newer && r.latest) {
+      const a = document.createElement("a");
+      a.className = "mm-link"; a.href = r.guide; a.target = "_blank"; a.rel = "noopener";
+      a.textContent = L(`neu: ${r.latest} – Anleitung`, `new: ${r.latest} – guide`);
+      rb.appendChild(a);
+    }
   }
 
   // laufende Downloads stehen über beiden Reitern
@@ -3726,8 +3756,10 @@
     if (ev.cancelled) { toast(L(`Download von ${ev.tag} abgebrochen`, `Download of ${ev.tag} cancelled`)); return; }
     if (ev.error) { toast(L(`✘ ${ev.tag}: `, `✘ ${ev.tag}: `) + ev.error); return; }
     if (ev.done && ev.kind === "llamacpp") {
-      toast(L(`✔ llama.cpp ${ev.version || ""} bereit – gilt ab dem nächsten Modellstart.`,
-              `✔ llama.cpp ${ev.version || ""} ready – used from the next model start.`));
+      const v = ev.version || "";
+      toast(ev.changed === false ? L(`llama.cpp ${v} ist aktuell.`, `llama.cpp ${v} is up to date.`)
+        : ev.restarted ? L(`✔ llama.cpp ${v} bereit – das Modell startet damit neu.`, `✔ llama.cpp ${v} ready – the model restarts with it.`)
+        : L(`✔ llama.cpp ${v} bereit – gilt ab dem nächsten Modellstart.`, `✔ llama.cpp ${v} ready – used from the next model start.`));
       refreshModelViews();
       return;
     }

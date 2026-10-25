@@ -1172,6 +1172,9 @@ details.card[open] > summary .caret { transform: rotate(180deg); }
 .mp-gpu .mg-val { font-family: var(--mono); font-size: var(--fs-sm); white-space: nowrap; }
 .mp-runtime { display: flex; align-items: center; gap: 8px; white-space: nowrap; padding-left: 14px; border-left: 1px solid var(--border); }
 .mp-runtime:empty { display: none; }
+.mp-runtime .rt-rocm { display: flex; align-items: center; gap: 6px; padding-left: 10px; border-left: 1px solid var(--border); color: var(--muted); }
+.mp-runtime .rt-warn { color: var(--warn); }
+.mp-runtime .rt-new { font-weight: 600; }
 .mp-bar-row { padding: 0 22px 12px; }
 .mp-pulls { display: grid; gap: 6px; padding: 0 22px 12px; }
 .mp { flex: 1; min-height: 0; display: grid; grid-template-columns: 330px minmax(0, 1fr); border-top: 1px solid var(--border); }

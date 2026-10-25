@@ -81,6 +81,11 @@ def cmd_doctor(args) -> None:
         line(not why, f"llama.cpp {m.get('tag', '?')} ({m.get('flavor', '?')})" + (f" – {why}" if why else "")
              + f" · {T('Modelle in', 'models in')} {llamacpp._short(llamacpp.models_dir(cfg))}",
              "orbwise model llamacpp --update")
+    rocm = llamacpp.rocm_status(cfg)
+    if rocm["installed"]:  # nur Anzeige – ROCm ist ein Systempaket, das aktualisiert der Nutzer selbst
+        line(not rocm["mismatch"], f"ROCm {rocm['installed']}"
+             + (T(f" – llama.cpp-Build ist für ROCm {rocm['build']}", f" – llama.cpp build is for ROCm {rocm['build']}")
+                if rocm["mismatch"] else ""), "orbwise model llamacpp --update")
     for name, p in router.profiles.items():
         mark = T(" (aktiv)", " (active)") if name == router.active else ""
         print(f"  {T('Profil', 'Profile')} {name}{mark}: {p.backend} · {p.model} · {p.base_url}")

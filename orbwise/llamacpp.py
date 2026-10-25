@@ -22,6 +22,7 @@ import socket
 import stat
 import subprocess
 import tarfile
+import time
 import zipfile
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -131,14 +132,51 @@ def pick_release(releases, gpu: dict) -> tuple[dict | None, list[str]]:
     return None, seen
 
 
-def pick_assets(assets: list[dict], gpu: dict, preferred: str | None = None) -> list[tuple[str, dict]]:
-    """(Variante, Asset) in der Reihenfolge, in der sie probiert werden."""
+def pick_assets(assets: list[dict], gpu: dict, preferred: str | None = None,
+                rocm: str | None = None) -> list[tuple[str, dict]]:
+    """(Variante, Asset) in der Reihenfolge, in der sie probiert werden. Gibt es mehrere ROCm-Builds (je ROCm-Version
+    einer), zuerst der zur installierten ROCm-Version (`rocm`, z. B. "7.2.4") passende."""
     out = []
     for flavor in flavors_for(gpu, preferred):
-        asset = next((a for a in assets if FLAVORS[flavor].search(a.get("name", ""))), None)
-        if asset:
-            out.append((flavor, asset))
+        found = [a for a in assets if FLAVORS[flavor].search(a.get("name", ""))]
+        if flavor == "rocm" and len(found) > 1:
+            found.sort(key=lambda a: _rocm_match(asset_rocm(a.get("name", "")), rocm), reverse=True)
+        if found:
+            out.append((flavor, found[0]))
     return out
+
+
+def asset_rocm(name: str) -> str | None:
+    """ROCm-Version, mit der ein Build gebaut wurde (…-rocm-7.2-x64… → "7.2"), sonst None."""
+    m = re.search(r"(?:rocm|hip)[-_]?(\d+(?:\.\d+)*)", name, re.I)
+    return m.group(1) if m else None
+
+
+def _version(text: str | None) -> tuple[int, ...]:
+    return tuple(int(x) for x in re.findall(r"\d+", text or "")[:3])
+
+
+def _rocm_match(build: str | None, system: str | None) -> tuple:
+    """Rangfolge eines ROCm-Builds zur System-Version: gleiche Haupt- und Nebenversion > gleiche Hauptversion (die
+    nicht neuer ist als das System) > Rest; innerhalb davon der neueste."""
+    b, sv = _version(build), _version(system)
+    if not b or not sv:
+        return (0, b)
+    same_major = b[0] == sv[0]
+    return (2 if b[:2] == sv[:2] else 1 if same_major and b <= sv else 0, b)
+
+
+def rocm_version(base: str | None = None) -> str | None:
+    """Installierte ROCm-Version (aus <ROCm>/.info/version, z. B. "7.2.4") – None ohne ROCm."""
+    for root_dir in filter(None, (base, os.environ.get("ROCM_PATH"), "/opt/rocm")):
+        try:
+            raw = (Path(root_dir) / ".info" / "version").read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        m = re.match(r"\d+(?:\.\d+)*", raw)
+        if m:
+            return m.group(0)
+    return None
 
 
 def _extract(archive: Path, target: Path) -> None:
@@ -325,6 +363,7 @@ def install(cfg, gpu: dict, out: Out = print, update: bool = False, client: http
         r = client.get(release_api or RELEASE_API)
         r.raise_for_status()
         rel, seen = pick_release(r.json(), gpu)
+        rocm = rocm_version()
         if rel is None:
             out(T(f"✘ Kein passender Linux-Build von llama.cpp gefunden (geprüft: {', '.join(seen[:5]) or 'nichts'}) – "
                   "später erneut versuchen: orbwise model llamacpp --update",
@@ -338,7 +377,7 @@ def install(cfg, gpu: dict, out: Out = print, update: bool = False, client: http
             return old
         assets = rel.get("assets") or []
         preferred = old.get("preferred_flavor")
-        choices = pick_assets(assets, gpu, preferred)
+        choices = pick_assets(assets, gpu, preferred, rocm)
         for flavor, asset in choices:
             target = base / f"{tag}-{flavor}"
             why = _fetch_build(base, assets, flavor, asset, tag, client, out, run)
@@ -351,6 +390,8 @@ def install(cfg, gpu: dict, out: Out = print, update: bool = False, client: http
                     "previous": old.get("dir") if old.get("dir") != target.name else old.get("previous")}
             if preferred:
                 data["preferred_flavor"] = preferred
+            if flavor == "rocm" and asset_rocm(asset["name"]):
+                data["rocm_build"] = asset_rocm(asset["name"])
             (base / "manifest.json").write_text(json.dumps(data, indent=1), encoding="utf-8")
             keep = {data["dir"], data.get("previous")}
             for d in base.iterdir():  # alte Builds weg (der vorige bleibt als Rückfall)
@@ -362,6 +403,61 @@ def install(cfg, gpu: dict, out: Out = print, update: bool = False, client: http
     finally:
         if own:
             client.close()
+
+
+ROCM_RELEASE_API = "https://api.github.com/repos/ROCm/ROCm/releases/latest"
+ROCM_GUIDE = "https://rocm.docs.amd.com/projects/install-on-linux/en/latest/"
+_CHECKS: dict[str, tuple[float, str | None]] = {}
+CHECK_TTL = 3 * 3600  # GitHub ohne Anmeldung erlaubt 60 Abfragen pro Stunde – höchstens alle 3 h nachsehen
+
+
+def _cached(key: str, fetch: Callable[[], str | None], force: bool = False) -> str | None:
+    hit = _CHECKS.get(key)
+    if hit and not force and time.monotonic() - hit[0] < CHECK_TTL:
+        return hit[1]
+    try:
+        value = fetch()
+    except (httpx.HTTPError, ValueError, KeyError, TypeError):
+        return hit[1] if hit else None  # offline: der letzte bekannte Stand
+    _CHECKS[key] = (time.monotonic(), value)
+    return value
+
+
+def _get_json(url: str, client: httpx.Client | None):
+    c = client or httpx.Client(follow_redirects=True, timeout=15, headers={"User-Agent": "orbwise"})
+    try:
+        r = c.get(url)
+        r.raise_for_status()
+        return r.json()
+    finally:
+        if client is None:
+            c.close()
+
+
+def latest_tag(gpu: dict, client: httpx.Client | None = None, force: bool = False) -> str | None:
+    """Neueste llama.cpp-Version mit einem Build für diese GPU (gemerkt) – None, wenn nicht erreichbar."""
+    def fetch() -> str | None:
+        rel, _seen = pick_release(_get_json(RELEASE_API, client), gpu)
+        return str(rel.get("tag_name")) if rel else None
+    return _cached(f"llamacpp:{gpu.get('vendor')}", fetch, force)
+
+
+def latest_rocm(client: httpx.Client | None = None, force: bool = False) -> str | None:
+    """Neueste ROCm-Version laut AMDs Releases auf GitHub (rocm-7.2.4 → "7.2.4") – nur zur Anzeige."""
+    def fetch() -> str | None:
+        m = re.search(r"\d+(?:\.\d+)*", str(_get_json(ROCM_RELEASE_API, client).get("tag_name") or ""))
+        return m.group(0) if m else None
+    return _cached("rocm", fetch, force)
+
+
+def rocm_status(cfg, latest: str | None = None) -> dict:
+    """Installiertes ROCm, womit der llama.cpp-Build gebaut ist und ob die Hauptversionen zusammenpassen."""
+    system, m = rocm_version(), manifest(cfg)
+    build = m.get("rocm_build") if m.get("flavor") == "rocm" else None
+    out = {"installed": system, "build": build, "latest": latest, "guide": ROCM_GUIDE,
+           "newer": bool(system and latest and _version(latest) > _version(system))}
+    out["mismatch"] = bool(system and build and _version(system)[:1] != _version(build)[:1])
+    return out
 
 
 def _fetch_build(base: Path, assets: list[dict], flavor: str, asset: dict, tag: str, client: httpx.Client, out: Out,

@@ -467,3 +467,82 @@ def test_managed_server_starts_with_cache_flags(tmp_path, monkeypatch):
         assert f"{fake_server} {port} --ctx-checkpoints 32" in log and seen
     finally:
         asyncio.run(server.stop())
+
+
+# ---------------------------------------------------------------- Updates: neuere Version, ROCm passend wählen
+def test_rocm_build_matching_the_installed_rocm(tmp_path, monkeypatch):
+    assets = [{"name": "llama-b1-bin-ubuntu-rocm-6.4-x64.tar.gz"}, {"name": "llama-b1-bin-ubuntu-rocm-7.2-x64.tar.gz"},
+              {"name": "llama-b1-bin-ubuntu-rocm-10.1-x64.tar.gz"}, {"name": "llama-b1-bin-ubuntu-vulkan-x64.tar.gz"}]
+    pick = lambda rocm: llamacpp.pick_assets(assets, AMD, rocm=rocm)[0][1]["name"]  # noqa: E731
+    assert "rocm-7.2" in pick("7.2.4")  # gleiche Haupt- und Nebenversion
+    assert "rocm-10.1" in pick("10.1.0")
+    assert "rocm-6.4" in pick("6.4.3")
+    assert "rocm-7.2" in pick("7.3.0")  # gleiche Hauptversion, nicht neuer als das System
+    assert [f for f, _ in llamacpp.pick_assets(assets, AMD, rocm="7.2.4")] == ["rocm", "vulkan"]
+    assert llamacpp.asset_rocm("llama-b1-bin-ubuntu-rocm-7.2-x64.tar.gz") == "7.2"
+    assert llamacpp.asset_rocm("llama-b1-bin-ubuntu-vulkan-x64.tar.gz") is None
+    rocm = tmp_path / "rocm"
+    (rocm / ".info").mkdir(parents=True)
+    (rocm / ".info" / "version").write_text("7.2.4-71\n")
+    assert llamacpp.rocm_version(str(rocm)) == "7.2.4"
+    monkeypatch.setenv("ROCM_PATH", str(tmp_path / "keins"))
+    assert llamacpp.rocm_version(str(tmp_path / "fehlt")) in (None, llamacpp.rocm_version())  # /opt/rocm je Rechner
+
+
+def test_rocm_status_only_reports(setup, monkeypatch):
+    monkeypatch.setattr(llamacpp, "rocm_version", lambda base=None: "7.2.4")
+    root = llamacpp.root(setup)
+    root.mkdir(parents=True)
+    (root / "manifest.json").write_text(json.dumps({"tag": "b1", "flavor": "rocm", "rocm_build": "10.1"}))
+    st = llamacpp.rocm_status(setup, "10.1.0")
+    assert st["installed"] == "7.2.4" and st["newer"] and st["mismatch"] and st["guide"].startswith("https://rocm.docs")
+    (root / "manifest.json").write_text(json.dumps({"tag": "b1", "flavor": "rocm", "rocm_build": "7.2"}))
+    assert not llamacpp.rocm_status(setup, "7.2.4")["newer"] and not llamacpp.rocm_status(setup, None)["mismatch"]
+
+
+def test_latest_versions_are_checked_and_remembered(monkeypatch):
+    import httpx
+    calls = []
+
+    def handler(req):
+        calls.append(req.url.path)
+        if req.url.path == "/repos/ROCm/ROCm/releases/latest":
+            return httpx.Response(200, json={"tag_name": "rocm-10.1.0"})
+        return httpx.Response(200, json=[
+            {"tag_name": "v0.6.0", "assets": [{"name": "nightly-tag.txt"}]},
+            {"tag_name": "b7001", "assets": [{"name": "llama-b7001-bin-ubuntu-vulkan-x64.tar.gz"}]}])
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(llamacpp, "_CHECKS", {})
+    assert llamacpp.latest_tag(AMD, client) == "b7001" and llamacpp.latest_rocm(client) == "10.1.0"
+    assert llamacpp.latest_tag(AMD, client) == "b7001" and len(calls) == 2  # gemerkt – GitHub nicht erneut fragen
+    llamacpp.latest_tag(AMD, client, force=True)
+    assert len(calls) == 3
+
+    def offline(req):
+        raise httpx.ConnectError("offline")
+    down = httpx.Client(transport=httpx.MockTransport(offline))
+    assert llamacpp.latest_tag(AMD, down, force=True) == "b7001"  # offline: letzter bekannter Stand
+    monkeypatch.setattr(llamacpp, "_CHECKS", {})
+    assert llamacpp.latest_rocm(down) is None
+
+
+def test_status_api_reports_update_and_rocm(setup, monkeypatch):
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
+    monkeypatch.setattr(mdl, "detect_gpu", lambda: dict(AMD))
+    monkeypatch.setattr(llamacpp, "latest_tag", lambda gpu, client=None, force=False: "b7001")
+    monkeypatch.setattr(llamacpp, "latest_rocm", lambda client=None, force=False: "10.1.0")
+    monkeypatch.setattr(llamacpp, "rocm_version", lambda base=None: "7.2.4")
+    root = llamacpp.root(setup)
+    root.mkdir(parents=True)
+    (root / "manifest.json").write_text(json.dumps({"tag": "b6900", "flavor": "rocm", "rocm_build": "7.2"}))
+    from orbwise.server import create_app
+    client = TestClient(create_app(setup), base_url="http://localhost:8765")
+    plain = client.get("/api/llamacpp").json()
+    assert "latest" not in plain and plain["rocm"]["installed"] == "7.2.4"  # ohne check: kein Netz
+    st = client.get("/api/llamacpp?check=1").json()
+    assert st["latest"] == "b7001" and st["update"] is True
+    assert st["rocm"] == {"installed": "7.2.4", "build": "7.2", "latest": "10.1.0", "newer": True,
+                          "mismatch": False, "guide": llamacpp.ROCM_GUIDE}
+    (root / "manifest.json").write_text(json.dumps({"tag": "b7001", "flavor": "rocm"}))
+    assert client.get("/api/llamacpp?check=1").json()["update"] is False

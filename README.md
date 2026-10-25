@@ -330,9 +330,15 @@ completely is marked **Recommended**. Orbwise then
 
 Pick it in the model list like any other model; the context size can be changed there too. GGUF files you already
 have show up under **On disk · ~/models** – one click turns them into a model without downloading (pasting a path to a
-`.gguf` into the search field works too). New model types often need a newer llama.cpp: **Update** next to the
-llama.cpp line (or `orbwise model llamacpp --update`) fetches the latest build; running models switch on their next
-start. Deleting a model (**⋯ → Delete**) removes files Orbwise downloaded; files you put into `~/models` yourself stay.
+`.gguf` into the search field works too). New model types often need a newer llama.cpp: the llama.cpp line at the
+top of the model page shows when a newer build exists (**Update to b…**, checked at most every 3 hours); the button
+(or `orbwise model llamacpp --update`) fetches it, and a loaded model restarts with it right away. If a release has
+ROCm builds for several ROCm versions, Orbwise picks the one matching your installed ROCm (`/opt/rocm/.info/version`).
+
+**ROCm** is shown next to it (installed version, and a link to AMD's install guide when a newer one is out) but not
+updated by Orbwise – it is a system package with kernel drivers that needs a reboot, and a broken update leaves the
+GPU unusable. Update it yourself following the guide, then press **Update** on the llama.cpp line so the build
+matches; `orbwise doctor` warns when the build was made for a different ROCm major version. Deleting a model (**⋯ → Delete**) removes files Orbwise downloaded; files you put into `~/models` yourself stay.
 Gated repositories need a Hugging Face token in `HF_TOKEN`. Ollama is still used for the memory embeddings and the
 Ollama presets above.
 
