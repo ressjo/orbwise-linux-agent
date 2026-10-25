@@ -232,6 +232,12 @@ def _segment_is_safe(cmd: str, args: list[str]) -> bool:
                        for a in args)
     if cmd == "sed":
         return not any(a.startswith("-i") or a.startswith("--in-place") for a in args)
+    if cmd in AWKS:  # awk ist nur gefährlich mit system(), Pipes zu Befehlen, Ausgabe in Dateien oder Programmdateien
+        if any(a in ("-f", "--file", "-i", "--include") or a.startswith(("--file=", "--include=", "-f", "-i"))
+               for a in args if a.startswith("-")):
+            return False
+        program = next(iter(_operands(cmd, args, programs=True)), "")
+        return not _AWK_RISK.search(program)
     if cmd == "top":
         return "-b" in args or any(a.startswith("-b") for a in args)
     if cmd == "ping":
@@ -361,6 +367,46 @@ def _reads_secret(targets: list[str], cwd: str, recursive: bool) -> bool:
     return False
 
 
+AWKS = {"awk", "gawk", "mawk", "nawk"}
+_AWK_RISK = re.compile(r"\bsystem\s*\(|\bgetline\b|\||\b(print|printf)\b[^;{}]*>")
+# Optionen mit Wert: der Wert ist kein Datei-Argument
+_VALUE_OPTS = {
+    "awk": {"-F", "-v", "-f", "--field-separator", "--assign", "--file"},
+    "grep": {"-e", "-f", "-m", "-A", "-B", "-C", "--regexp", "--file", "--max-count", "--after-context",
+             "--before-context", "--context", "--label", "--color", "--colour", "-d", "-D"},
+    "rg": {"-e", "-f", "-m", "-A", "-B", "-C", "-g", "-t", "-T", "--regexp", "--file", "--max-count", "--glob",
+           "--type", "--type-not", "-M", "--max-columns", "--max-depth", "-j", "--threads"},
+    "sed": {"-e", "-f", "--expression", "--file", "-l", "--line-length"},
+}
+_PATTERN_OPTS = {"-e", "-f", "--regexp", "--file", "--expression"}
+
+
+def _operands(name: str, args: list[str], programs: bool = False) -> list[str]:
+    """Freie Argumente ohne Optionswerte. Bei awk/grep/rg/sed ist das erste davon Programm bzw. Suchmuster – außer es
+    kommt über -e/-f. programs=True: nur dieses Programm/Muster (leer, wenn es per -e/-f kommt), sonst die Dateien."""
+    kind = "awk" if name in AWKS else "grep" if name in ("grep", "egrep", "fgrep") else name
+    value_opts = _VALUE_OPTS.get(kind, set())
+    free, from_opt, skip = [], False, False
+    for a in args:
+        if skip:
+            skip = False
+            continue
+        if a.startswith("-") and a != "-":
+            opt = a.split("=", 1)[0]
+            short = a[:2] if not a.startswith("--") else opt
+            if opt in _PATTERN_OPTS or (short in ("-e", "-f") and kind in ("grep", "rg", "sed", "awk")):
+                from_opt = from_opt or not (kind == "awk" and short == "-e")
+            if (opt in value_opts and "=" not in a) or (not a.startswith("--") and len(a) == 2 and a in value_opts):
+                skip = True
+            continue
+        free.append(a)
+    if kind not in ("awk", "grep", "rg", "sed"):
+        return [] if programs else free
+    if from_opt:
+        return [] if programs else free
+    return free[:1] if programs else free[1:]
+
+
 def _prints_secrets(name: str, args: list[str], cwd: str) -> bool:
     if name == "printenv":
         return True
@@ -376,12 +422,12 @@ def _prints_secrets(name: str, args: list[str], cwd: str) -> bool:
             for a in args))
     if name not in READERS:
         return False
-    targets = [a for a in args if not a.startswith("-") and a not in REDIRECTS and a != "<"]
+    targets = [a for a in _operands(name, args) if a not in REDIRECTS and a != "<"]
     recursive = name == "rg" or (name in ("grep", "egrep", "fgrep") and any(
         a in RECURSIVE_FLAGS or (a.startswith("-") and not a.startswith("--") and set(a[1:]) & {"r", "R"})
         for a in args))
-    if recursive and len(targets) <= 1:
-        targets = [*targets, "."]  # ohne Pfad durchsuchen grep -r und rg das aktuelle Verzeichnis
+    if recursive and not targets:
+        targets = ["."]  # ohne Pfad durchsuchen grep -r und rg das aktuelle Verzeichnis
     return _reads_secret(targets, cwd, recursive)
 
 

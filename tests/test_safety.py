@@ -155,3 +155,36 @@ def test_shell_does_not_go_around_service_tools(cfg):
     assert "paperless_search" in spec.assess(ctx, {"command": "curl localhost:8000"})[1]
     assert spec.assess(ctx, {"command": "curl https://example.org"})[0] != BLOCKED
     assert spec.assess(ctx, {"command": "curl localhost:8080/health"})[0] != BLOCKED  # anderer Port
+
+
+USER_DIAGNOSE = ('journalctl -k --since "24 hours ago" --no-pager | grep -icE "pin failed|Not enough memory for '
+                 'command submission"; echo "--- heute 13:20-13:25 Kernfehler:"; journalctl -k --since '
+                 '"2026-10-25 13:15" --until "2026-10-25 13:30" --no-pager | grep -iE "error|fail" | head -5; '
+                 'echo "--- GPU-Prozesse:"; ps aux | grep -E "ollama|llama-server" | grep -v grep | '
+                 "awk '{print $2, $11, $12, $13}' | head -5")
+
+
+@pytest.mark.parametrize("cmd", [
+    USER_DIAGNOSE, "ps aux | awk '{print $1}'", "grep -E 'a|b$' /var/log/pacman.log", "awk -F: '{print $1}' /etc/fstab",
+    "df -h | awk '$5+0 > 80 {print $6}'", "grep -e '{x}' -m 3 /var/log/pacman.log", "sed -n '1,5p' /etc/hostname",
+])
+def test_awk_and_patterns_are_read_only(cmd):
+    """Programm bzw. Suchmuster ist keine Datei (früher: „liest Zugangsdaten“ wegen $2), reines awk-print liest nur."""
+    assert classify_command(cmd) == (SAFE, "nur lesender Befehl")
+
+
+@pytest.mark.parametrize("cmd", [
+    "awk 'BEGIN{system(\"rm -rf ~\")}'", "awk '{print > \"/tmp/x\"}' /etc/hostname",
+    "awk '{ \"date\" | getline d; print d }' /etc/hostname", "awk -f skript.awk /etc/hostname",
+    "gawk -i inplace '{print}' datei", "awk '{print | \"sh\"}' /etc/hostname",
+])
+def test_awk_that_can_change_things_asks(cmd):
+    assert classify_command(cmd)[0] == CONFIRM
+
+
+@pytest.mark.parametrize("cmd", [
+    "awk '{print}' ~/.ssh/id_ed25519", "grep -r token ~/.ssh", "grep -e x ~/.ssh/id_ed25519",
+    "sed -n p ~/.ssh/id_ed25519",
+])
+def test_secrets_are_still_recognised(cmd):
+    assert "Zugangsdaten" in classify_command(cmd)[1]

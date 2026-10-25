@@ -222,6 +222,10 @@ All notable changes to this project are documented here. The format follows
   the open chat stays untouched.
 
 ### Fixed
+- **Read-only shell commands with awk asked for confirmation:** an awk program like `'{print $2}'` was checked as
+  if it were a file name (and flagged as "reads credentials"), and awk had no read-only rule. Programs and search
+  patterns of awk, grep, rg and sed are no longer treated as files, and awk without `system()`, pipes, output
+  redirection, `getline` or program files counts as read-only.
 - **Prewarming while typing was wasted with thinking on:** it always warmed up the prompt *without* thinking, but chat
   templates render a different prompt start with thinking enabled – the question afterwards read everything again
   (a new chat: ~14k tokens of system prompt and tools). Prewarming now uses the thinking mode (and level) of the next
