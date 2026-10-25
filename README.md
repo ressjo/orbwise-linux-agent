@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <b>A local AI voice assistant for Linux</b> – voice, memory and real control over your PC, with the model running on your own machine.
+  <b>A local AI assistant for Linux that remembers, writes code and runs your PC – on your own hardware.</b>
 </p>
 
 <p align="center">
@@ -16,76 +16,61 @@
   <img alt="Languages: German, English" src="https://img.shields.io/badge/language-de%20%7C%20en-2b6f73">
 </p>
 
-
-A voice assistant that runs **entirely on your own Linux PC**: a calm web interface (light or dark), voice input
-via wake word ("Hey Jarvis") or push-to-talk, spoken answers, a local LLM (Ollama or llama.cpp), **persistent
-memory in plain Markdown files** and real control over your system – updates, packages, files, NAS, apps,
-services, network, smart home, documents, notes and calendar.
-
-German and English are supported (`language: de|en`). Out of the box the assistant introduces itself as
-**"Jarvis"** and listens for "Hey Jarvis" – that is just its default persona; give it any name with
-`assistant_name` in the config.
-
-![Orbwise: start screen with the orb, greeting and suggestions](docs/screenshot.png)
+Orbwise is a web app on `localhost` with a voice, a long memory and real hands on your system. The model runs on
+your machine through llama.cpp or Ollama; speech recognition and speech output run locally too. Out of the box it
+calls itself "Jarvis" and listens for "Hey Jarvis" – rename it with `assistant_name`. German and English are
+supported.
 
 ![A conversation: answer in a serif reading font, a running web search on the small orb, activity panel with live telemetry](docs/screenshot-chat.png)
 
+## What makes it different
+
+**It remembers – without running out of context.** Every conversation lands in a plain Markdown journal, one file
+per day, plus daily summaries and a `facts.md` you can edit by hand. A local search index (full text + embeddings)
+brings old details back when they matter: "what did we do with the NAS last Tuesday?" works weeks later. Long chats
+are compacted the way Claude Code does it, so the prompt stays small and the prompt cache stays warm.
+→ [Memory](#memory--without-context-window-problems)
+
+**A coding agent with a sandbox and GitHub.** Switch to *Coding*, pick a project and the agent works like OpenCode:
+reads before it edits, makes small exact changes, runs the tests, can be undone per answer. Turn on the sandbox and
+it works in a container on its own copy and branch – your project folder stays untouched until you apply the changes
+or push the branch. Clone your repositories and push with your `gh` login or a token.
+→ [Coding mode](#coding-mode)
+
+**Local, voice included.** A model page in the style of LM Studio downloads GGUF models from Hugging Face, picks
+the right llama.cpp build for your GPU (ROCm, CUDA or Vulkan) and measures which settings read prompts fastest.
+Whisper listens, Pocket TTS answers sentence by sentence. Nothing leaves the PC unless you use web search or a
+service you configured. → [Models](#models--profiles) · [Voice](#voice--jarvis-effect)
+
+**It asks before it changes things.** Every command that changes the system appears as a card with the exact command
+or diff – confirm by click, key or voice. Read-only commands run directly, destructive ones never; content from mails,
+web pages or the screen can't trigger actions on its own. → [Security](#security)
+
 ![Confirmation card in the chat before a system update](docs/screenshot-confirm.png)
-<sub>Screenshots in demo mode (`ORBWISE_FAKE_LLM=1`, no real model attached) – regenerate them with
-`node scripts/screenshots.mjs`.</sub>
 
-```
-Browser (localhost:8765)                          Python backend (FastAPI, 127.0.0.1 only)
- ├─ orb (canvas: rings, state, context) ◄──WS──►  Agent ── tool loop ──► tools (confirm dangerous ones)
- ├─ chat · activity · history · memory             │
- ├─ microphone → 16 kHz PCM             ──WS──►   wake word (openWakeWord) → VAD → Whisper
- └─ playback + level → orb              ◄──────   Pocket TTS (sentence by sentence)
-                                                   │
-                         Ollama / llama-server (LLM + bge-m3)   ~/.local/share/orbwise/memory/
-```
+## Skills
 
-> Orbwise is an independent hobby project. Its default persona "Jarvis" is a nod to the film assistant; the project
-> is not affiliated with or endorsed by Marvel or Disney and does not ship the film voice or any other copyrighted
-> material.
->
-> ⚠ Orbwise can run commands on your computer (with root, if you allow it). Use it at your own risk, **without any
-> warranty or liability** – see the **[Disclaimer](#disclaimer)**.
->
-> 🤖 **Built with AI.** Most of Orbwise's code, tests and documentation were written with an AI coding assistant
-> (Claude Code) and reviewed, tested and used by a human. It may still contain mistakes – please read what you
-> approve, and report bugs or send fixes via issues and pull requests.
+What Orbwise can do for you – each line links to the details.
 
-## Features
-
-| Area | What Orbwise can do |
+| | |
 |---|---|
-| **Voice** | "Hey Jarvis" wake word, microphone button or **hold the space bar** (push-to-talk). Answers are spoken sentence by sentence while the model is still writing; interrupt at any time. Commands are not read out – only "Shall I run the following command?" |
-| **System** | Full system update (Arch: `pacman -Syu` + AUR via yay/paru, Debian/Ubuntu: `apt`), list/search/install/remove packages, system info, shutdown/reboot/suspend/lock |
-| **System & network** | Top processes and killing them, systemd services (status, start/stop/restart, logs), IP/gateway/DNS/Wi-Fi, ping, open ports, port checks, disk usage and clean-up |
-| **Files** | Find files by name (plocate/fd) or content (ripgrep), list folders, read/write text files, open files and URLs – also on a mounted **NAS** |
-| **Apps & web** | Start installed applications, open websites (with your own shortcuts), web search (official **Brave Search API**, your own SearXNG, or scraping via ddgs), read web pages |
-| **Shell** | Any bash command – read-only ones run directly, changing ones only after confirmation, destructive ones never |
-| **Everyday** | Weather (Open-Meteo), reminders and timers, **dates worked out instead of guessed** (weekdays, "next Tuesday", "in 3 weeks", calendar weeks, days between dates, German public holidays – `holiday_region` for your state; reminders, calendar, memory and routines understand such phrases directly), a **morning briefing** with the items you choose (incl. news and your Paperless inbox) |
-| **Routines** | Tasks Orbwise does on its own at set times – "every weekday at 8, search Linux news" – each with its own chat |
-| **Home Assistant** | Find devices by name/room/type, read sensors, switch/dim lights, heating, covers, scenes – locks, alarms and gates only after confirmation |
-| **Image mode** | Third tab next to Tools and Coding: **generate and edit images locally with Qwen-Image-2.1** (stable-diffusion.cpp) – format, steps, count, seed, negative prompt, gallery with variation/reuse/edit/send to phone; also "draw me …" in the tools mode and `/bild …` via Telegram. On small cards the language model steps aside while painting and comes back by itself |
-| **Docker (Portainer)** | List containers and stacks, **check for newer images without downloading**, update a container or a whole stack to the newest image, start/stop/restart/remove, read logs, **install new apps** from a docker-compose file – changes after confirmation |
-| **SSH (NAS, servers)** | Run Linux commands on other machines like on the PC – user name and password are **asked in the dashboard for every new connection** (never stored, never shown to the model); read-only commands run directly, everything else after confirmation, `sudo` there asks again |
-| **Paperless-ngx** | Search documents, **ask questions about their content**, open them as PDF, suggest and apply correspondent, type, tags, title and date (after confirmation), upload local files or files sent from the phone |
-| **E-mail** | **Proton Mail** (via the Proton Mail Bridge) or any IMAP mailbox: unread mails, search, read, ask about a mail, list folders, archive/move/label/trash, PDF attachments → Paperless (changes after confirmation); optional **writing and replying** (SMTP) – To, Cc, subject and text are editable in the confirmation card before anything is sent |
-| **Tools & Coding mode** | Switch top left: **Tools** (assistant – all tools, web, Paperless, mail, smart home, voice) or **Coding** – a coding agent that works like **OpenCode 2**: `read` (line numbers, folders, PDFs), `edit` (exact replace that forgives curly quotes and indentation, shows a diff), `write`, `grep` (ripgrep, matching lines), `glob`, `shell` (workdir, background jobs for dev servers and builds), `websearch` (Brave API) and `webfetch` (Markdown), **subagents** (`explore` searches read-only in its own context, `general` takes a sub-task), **questions** with answer buttons, **AGENTS.md** of the project in the prompt, **diffs** in confirmations and **Undo** per answer. Each mode has its own chat history; a coding chat has a **project folder** (shell starts there, relative paths refer to it, and from the auto level *Read + edit files* changes inside it run without asking; the chip shows `owner/repo` and the branch), an optional **sandbox** (container on a working copy, like Claude on the web) and **GitHub** clone/push. Pick a model while in a mode and Orbwise remembers it for that mode (e.g. a coder model) – switching then reloads it. Details: [Coding mode](#coding-mode) |
-| **Plan mode** | **Plan** button: Jarvis thinks it through, only looks things up (read-only) and presents a step-by-step plan – **Run**, **Change** (say what should be different) or **Discard**; also by voice ("yes") and via Telegram (`/plan …`) |
-| **Auto mode** | Drop-down button next to *Think*: **Off** – every shell command asks · **Read only** (default) – recognised read-only commands (`ls`, `df`, `docker ps`, `git status`, `nmcli device status`, `apt list --installed`, `journalctl` …) run without asking · **Read + edit files** – also create, write, copy and move files in your own home (`write_file`, `mkdir`, `touch`, `cp`, `mv`, `tee`, `>`), never with root, never deleting, never hidden files (shell start files, autostart, `~/.ssh`, `~/.config` …), launchers (`.desktop`, `~/bin`) or credentials · **Auto** – everything without root runs without asking (`python …`, `cd … && make`, `git commit`, `pip install --user`, `systemctl --user restart` …, plus `write_file`); still asking: deleting (`rm`, `find -delete`, `git clean` …), sudo, shutting down, sending over the network (`git push`, `ssh`, uploads), start-up files/autostart/`~/.ssh`/Orbwise's own config and credentials. Note: a script or `python -c` can do anything you may do – Auto only catches what is visible in the command. Plan mode and untrusted content (mail, screen) still ask. If Orbwise itself runs as **root**, "without root" cannot be checked – *Read + edit files* and *Auto* then approve nothing (`orbwise doctor` warns). The mode (like *Think*) is kept by the server: every open window, Telegram and routines use the same setting. The rules live in code, so they cost no prompt context |
-| **Images and PDFs in the chat** | Attach images or PDFs (paperclip, Ctrl+V or drag and drop) – vision models get images directly, others via the local vision model; PDFs are read locally. Details: [Screen & images](#screen--images) |
-| **Screen & images** | "What's that error message?", "What does this window say?", "Help me with this dialog" – Orbwise takes a screenshot and asks a **local vision model** (e.g. Qwen2.5-VL); also for image files and photos sent from the phone. Nothing leaves your PC |
-| **Telegram** | Chat with Orbwise from your phone (text or voice messages, own chat in the sidebar), reminders also arrive on the phone, confirmations via ✅/❌ buttons, **files in both directions** (PDFs/photos → PC or Paperless, local files and Paperless documents → phone), `/stop` cancels what is running |
-| **Obsidian** | Search, read and ask questions about notes in your vault, create/append/update notes, open them in Obsidian |
-| **Trilium** | Search and read notes, create notes in the inbox, append to and update notes |
-| **Calendar** | iCloud or any CalDAV server: list events, find free time, create/change/delete events |
-| **Memory** | Remembers everything permanently (see below), `remember` / `recall` / `forget`, **chat history** with search, pinning, rename, Markdown export and delete; the search index repairs itself if it gets damaged |
-| **Dashboard** | Calm, warm design in **light, dark or system** (Settings → General → Appearance), petrol accent, a serif reading font (Newsreader) for headings and answers and Inter for the controls – both bundled, nothing is loaded from the internet. The **orb** is three fine rings around a dot: it breathes when idle, follows your voice when listening or speaking, circles while thinking, shows running tools as small dots and the **context** as a thin outer arc. Collapsible sidebar with chats, the orb with greeting and suggestions on an empty chat that docks small at the side once you talk, a live line in each answer showing what the model is doing (reading the prompt, thinking, writing a call) and a small time/token summary afterwards, an activity panel with live telemetry (tokens/s, context, GPU, VRAM, RAM, power, Brave search) and every step grouped under the question that caused it (readable names, duration, click for the raw call), Models, Planner, Memory and Settings as large windows, Orbwise's own dialogs instead of browser pop-ups; works on the phone too |
-| **Models & voices** | **Models page** (sidebar, like LM Studio): all models with engine, quantization, size and VRAM fit; load with one click (quick switch on the model chip at the top); per model context window (Tools/Coding), KV cache, sampling, context test and llama-server log; add models from Hugging Face, `~/models` or presets with download progress and cancel; delete models · **Settings → Voice:** natural **Pocket TTS** voices on the CPU, each with the language it speaks (which is also the language of the answers), "Jarvis" voice effect · **Think** button for reasoning models |
-| **Safety** | Confirmation for everything that changes the system, blocklist for destructive commands, root only via a one-time password prompt, keys and passwords are never read or sent, local-only server – see [Security](#security) |
+| **System** | Updates (pacman/yay/paru, apt), packages, services and logs, processes, network, disk clean-up, shutdown – any shell command, with confirmation where it matters |
+| **Files & NAS** | Find files by name or content, read and write them, open them in the right app – also on a mounted NAS |
+| **Web** | Search (Brave Search API, SearXNG or ddgs), read pages, open websites → [Web search](#web-search) |
+| **Servers** | Docker via Portainer (check and pull new images, update stacks) and SSH to other machines → [Docker](#docker-via-portainer) · [SSH](#ssh-nas-servers) |
+| **Smart home** | Lights, heating, covers and sensors through Home Assistant → [Home Assistant](#home-assistant) |
+| **Documents** | Paperless-ngx: search, ask about contents, tag and file → [Paperless](#paperless-ngx) |
+| **Mail** | Proton Mail Bridge or any IMAP mailbox: read, sort, file attachments, optionally reply → [E-mail](#e-mail-proton-mail-bridge-or-any-imap-mailbox) |
+| **Notes & calendar** | Obsidian, Trilium, iCloud/CalDAV calendars, reminders → [Obsidian](#obsidian-notes) · [Calendar](#calendar-icloud--caldav) |
+| **Routines** | Tasks at set times ("every weekday at 8, search Linux news") and a morning briefing → [Routines](#routines) |
+| **Images** | Generate and edit images locally with Qwen-Image; explain screenshots and photos with a local vision model → [Image mode](#image-mode-qwen-image-21) · [Screen](#screen--images) |
+| **Phone** | Telegram bot: text and voice messages, confirmations, files in both directions → [Telegram](#telegram-phone) |
+| **Planning** | Plan mode: looks things up read-only and presents a plan to run, change or discard → [Plan mode](#plan-mode) |
+
+> Orbwise is an independent hobby project; the "Jarvis" persona is a nod to the film assistant, not affiliated with
+> Marvel or Disney. It can run commands on your computer – use it at your own risk, see the
+> [Disclaimer](#disclaimer). Most of the code was written with an AI coding assistant (Claude Code) and reviewed,
+> tested and used by a human; bug reports and fixes are welcome.
 
 ## Requirements
 
@@ -1013,6 +998,25 @@ Orbwise can run commands on your system, so:
 
 See [SECURITY.md](SECURITY.md) for details and how to report vulnerabilities.
 
+### Auto mode
+
+The drop-down next to *Think* decides what runs without asking. The rules live in code (no prompt context), and the
+server keeps the setting for every open window, Telegram and routines.
+
+- **Off** – every shell command asks.
+- **Read only** (default) – recognised read-only commands (`ls`, `df`, `docker ps`, `git status`, `journalctl` …) run
+  directly.
+- **Read + edit files** – also create, write, copy and move files in your home (`write_file`, `mkdir`, `cp`, `mv`,
+  `tee`, `>`); never with root, never deleting, never hidden files (shell start files, autostart, `~/.ssh`,
+  `~/.config` …), launchers or credentials. In coding mode, changes inside the project folder run directly.
+- **Auto** – everything without root runs directly (`make`, `git commit`, `pip install --user` …). Still asking:
+  deleting, `sudo`, shutting down, sending over the network (`git push`, `ssh`, uploads), start-up files and
+  credentials.
+
+A script or `python -c` can do anything you may do – Auto only sees what is visible in the command. Plan mode and
+untrusted content (mail, screen) still ask. If Orbwise runs as **root**, the upper two levels approve nothing
+(`orbwise doctor` warns).
+
 ## AMD GPUs
 
 - Check with `ollama ps` during a request – it should say `100% GPU`.
@@ -1102,6 +1106,19 @@ orbwise init-config            # create the example configuration
 | Every question takes long before the answer starts | The model server re-reads the prompt – see [prompt cache tips](#prompt-cache-tips) |
 
 ## Development
+
+```
+Browser (localhost:8765)                          Python backend (FastAPI, 127.0.0.1 only)
+ ├─ orb (canvas: rings, state, context) ◄──WS──►  Agent ── tool loop ──► tools (confirm dangerous ones)
+ ├─ chat · activity · history · memory             │
+ ├─ microphone → 16 kHz PCM             ──WS──►   wake word (openWakeWord) → VAD → Whisper
+ └─ playback + level → orb              ◄──────   Pocket TTS (sentence by sentence)
+                                                   │
+                         Ollama / llama-server (LLM + bge-m3)   ~/.local/share/orbwise/memory/
+```
+
+Screenshots are made in demo mode (`ORBWISE_FAKE_LLM=1`, no real model) – regenerate them with
+`node scripts/screenshots.mjs`.
 
 ```bash
 uv sync --extra voice --extra dev
