@@ -63,6 +63,10 @@ def _podman_hint(msg: str) -> str:
     if "subuid" in low or "subgid" in low or "newuidmap" in low or "uid mapping" in low:
         return ("Für deinen Benutzer fehlen UID-Bereiche: sudo usermod --add-subuids 100000-165535 "
                 "--add-subgids 100000-165535 $USER && podman system migrate")
+    if any(w in low for w in ("overlay", "graph driver", "mount_program", "storage driver")):
+        return ("Podman-Speicher (z. B. auf btrfs): fuse-overlayfs installieren, in ~/.config/containers/storage.conf "
+                '[storage] driver = "overlay" und [storage.options.overlay] mount_program = "/usr/bin/fuse-overlayfs" '
+                "setzen, dann podman system reset.")
     if "xdg_runtime_dir" in low or "/run/user" in low:
         return "XDG_RUNTIME_DIR fehlt – Orbwise in der Desktop-Sitzung starten oder loginctl enable-linger $USER."
     return "Im Terminal `podman info` ausführen, um den Grund zu sehen."

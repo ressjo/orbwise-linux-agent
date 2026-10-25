@@ -128,6 +128,7 @@ def test_engine_reports_why_podman_failed_before_docker(monkeypatch):
             engine = "auto"
     binary, error = sandbox.engine(C)
     assert binary is None and error.startswith("podman:") and "usermod --add-subuids" in error and "docker:" in error
+    assert "fuse-overlayfs" in sandbox._podman_hint('kernel does not support overlay fs: "/home/jo/.local/share/x"')
     sandbox._engine_cache.clear()
 
 def test_run_and_exec_arguments(cfg):

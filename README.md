@@ -906,7 +906,8 @@ writing outside the copy, and pushing to GitHub; the leak guard keeps watching w
 - The default image `orbwise-sandbox:1` (Debian with git, Python, Node, build tools, ripgrep) is built on first use;
   `sandbox.image` takes any other image (e.g. `python:3.12`). Install Podman with `sudo apt install podman`.
   If Podman is installed but not usable, the error says why (e.g. missing `subuid` ranges, with the fix) instead of
-  Docker's “cannot connect to the Docker daemon”.
+  Docker's “cannot connect to the Docker daemon”. On btrfs Podman may need `fuse-overlayfs` (`mount_program` in
+  `~/.config/containers/storage.conf`) – that only changes how image layers are stored, not the isolation.
 
 #### GitHub
 
