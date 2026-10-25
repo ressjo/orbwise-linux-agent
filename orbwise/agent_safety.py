@@ -30,7 +30,10 @@ TAINT_SOURCES = {"mail_list", "mail_search", "mail_read", "mail_ask", "daily_bri
 # Auto-Modus „Auto“ gibt diese ohne Root frei (shell/write/edit: die Coding-Werkzeuge nach OpenCode)
 AUTO_TOOLS = ("run_shell", "ssh_run", "write_file", "edit_file", "shell", "write", "edit")
 SHELL_TOOLS = ("run_shell", "ssh_run", "shell")
-SANDBOX_TOOLS = ("shell", "write", "edit")  # laufen in der Sandbox ohne Rückfrage (außer Auto „Aus“)
+# Sandbox (außer Auto „Aus“): diese Gruppen laufen ohne Rückfrage – Dateien nur in der Arbeitskopie, Lesen außerhalb
+# der Kopie (SANDBOX_READS) fragt
+SANDBOX_GROUPS = {"code", "todo_tools", "memory_tools"}
+SANDBOX_READS = ("read", "grep", "glob")
 ALWAYS_ASK = {"github_push", "github_clone"}  # fragen immer – auch im Auto-Modus „Auto“ und in der Sandbox
 FILE_TOOLS = ("write_file", "edit_file", "write", "edit")
 
@@ -109,14 +112,18 @@ class SafetyMixin:
         project = self.project_dir() if hasattr(self, "project_dir") else None
         risk, reason = spec.assess(ctx, args)
         sb = self.sandbox_state() if hasattr(self, "sandbox_state") else None
-        if sb and risk == CONFIRM and name in SANDBOX_TOOLS and self.auto_mode != "off" and not self._plan \
-                and self._in_sandbox(name, args, cwd, sb):
-            # Container + Arbeitskopie: Bauen, Testen, Installieren darf ohne Rückfrage laufen (wie Claude im Web).
-            # Nach fremden Inhalten (Webseite …) fragt die Shell mit Netz trotzdem – siehe unten.
-            risk, reason = SAFE, prompts.text(self.cfg, "auto_sandbox")
-            if getattr(self, "_tainted", False) and name == "shell" and sb.get("network", True):
-                risk, reason = CONFIRM, prompts.text(self.cfg, "tainted_confirm")
-            leak = self._leak(name, args)
+        if sb and self.auto_mode != "off" and not self._plan and spec.group in SANDBOX_GROUPS:
+            # Container + Arbeitskopie: Bauen, Testen, Installieren (auch sudo – root im Container ist nicht root auf
+            # dem Rechner) läuft ohne Rückfrage, auch nach fremden Inhalten. Damit dann nichts Privates hinausgeht,
+            # fragt Lesen außerhalb der Arbeitskopie; der Datenabfluss-Wächter bleibt.
+            if risk == CONFIRM and (name == "shell" or (name in ("write", "edit")
+                                                        and self._in_sandbox(name, args, cwd, sb))):
+                risk, reason = SAFE, prompts.text(self.cfg, "auto_sandbox")
+            elif risk == SAFE and name in SANDBOX_READS and not self._reads_in_copy(args, cwd, sb):
+                risk, reason = CONFIRM, prompts.text(self.cfg, "sandbox_outside_read")
+            elif risk == SAFE and name == "shell":
+                reason = prompts.text(self.cfg, "auto_sandbox")
+            leak = self._leak(name, args) if risk != BLOCKED else None
             if leak:
                 risk, reason = CONFIRM, leak
             return risk, reason
@@ -145,6 +152,13 @@ class SafetyMixin:
         if name in ALWAYS_ASK and risk == SAFE:
             risk = CONFIRM
         return risk, reason
+
+    @staticmethod
+    def _reads_in_copy(args: dict, cwd: str | None, sb: dict) -> bool:
+        """Liest read/grep/glob nur in der Arbeitskopie? Ohne Pfad: der Projektordner (= die Kopie)."""
+        from .tools.filepolicy import in_project
+        path = str(args.get("path") or "")
+        return not path or bool(in_project(path, sb["path"], cwd))
 
     @staticmethod
     def _in_sandbox(name: str, args: dict, cwd: str | None, sb: dict) -> bool:
@@ -180,7 +194,8 @@ class SafetyMixin:
         args = coerce_args(spec, fn.get("arguments"))
         if missing_args(spec, args):
             return False
-        ctx = ToolContext(cfg=self.cfg, memory=self.memory, cwd=self.project_dir(), output_chars=self.output_chars())
+        ctx = ToolContext(cfg=self.cfg, memory=self.memory, cwd=self.project_dir(), output_chars=self.output_chars(),
+                          sandbox=self.sandbox_state() if hasattr(self, "sandbox_state") else None)
         try:
             return self._final_risk(name, spec, args, ctx)[0] == SAFE
         except Exception:  # noqa: BLE001 – im Zweifel der Reihe nach

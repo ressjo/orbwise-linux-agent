@@ -1186,10 +1186,15 @@ def create_app(cfg: Config) -> FastAPI:
         sb = agent.sandbox_state()
         out = {"enabled": bool(sb), **sbx.status(cfg, sb)}
         if sb:
-            out.update(network=sb.get("network", True), branch=sb.get("branch", ""), path=sb["path"],
-                       project=sb.get("project", ""), changes=len(workspace.changes(sb)))
+            out.update(network=sb.get("network", True), path=sb["path"], project=sb.get("project", ""),
+                       branch=workspace.head_label(sb["path"]) or sb.get("branch", ""),
+                       changes=len(workspace.changes(sb)))
             from . import github
-            out["github"] = github.remote_repo(sb["path"])
+            out["github"] = github.repo_of(github.sandbox_origin(sb))
+            if sb.get("network", True) and cfg.host not in ("127.0.0.1", "localhost", "::1"):
+                out["warning"] = T(f"Orbwise lauscht auf {cfg.host} – mit Netz erreicht der Container die Orbwise-API.",
+                                   f"Orbwise listens on {cfg.host} – with network on, the container can reach the "
+                                   "Orbwise API.")
         return out
 
     async def sandbox_progress(text: str) -> None:
@@ -1221,7 +1226,12 @@ def create_app(cfg: Config) -> FastAPI:
         if not path:
             return {"path": "", "repo": None, "branch": None, "sandbox": False}
 
+        sb = agent.sandbox_state()
+
         def read() -> tuple:
+            if sb:  # Arbeitskopie: kein git in ihrem .git (siehe github.push_from_copy)
+                from . import workspace
+                return github.repo_of(github.sandbox_origin(sb)), workspace.head_label(sb["path"])
             repo = github.remote_repo(path)
             try:
                 branch = github.current_branch(path)
@@ -1231,7 +1241,7 @@ def create_app(cfg: Config) -> FastAPI:
                 branch = None
             return repo, branch
         repo, branch = await asyncio.to_thread(read)
-        return {"path": path, "repo": repo, "branch": branch or None, "sandbox": bool(agent.sandbox_state())}
+        return {"path": path, "repo": repo, "branch": branch or None, "sandbox": bool(sb)}
 
     @app.get("/api/sandbox")
     async def sandbox_get():
@@ -1335,7 +1345,10 @@ def create_app(cfg: Config) -> FastAPI:
         path = agent.project_dir()
         if not path:
             raise HTTPException(409, T("Kein Projektordner gewählt.", "No project folder chosen."))
+        sb = agent.sandbox_state()
         try:
+            if sb:
+                return await asyncio.to_thread(github.push_from_copy, cfg, sb["path"], github.sandbox_origin(sb))
             return await asyncio.to_thread(github.push, cfg, path)
         except (github.GitHubError, OSError) as e:
             raise HTTPException(400, str(e)) from e

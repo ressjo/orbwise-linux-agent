@@ -885,7 +885,10 @@ Click **Sandbox** next to the project chip. Orbwise then makes a **working copy*
 (`~/.local/share/orbwise/workspaces/…`, a local `git clone` plus your uncommitted changes, on a new branch
 `orbwise/<topic>-<id>`) and runs the agent's shell commands in a **container** – Podman preferred (rootless: you are
 root in the container, `apt` works, files stay yours), otherwise Docker. The agent may build, test and install
-freely there: `shell`, `edit` and `write` in the copy run **without asking** (except with auto mode *Off*).
+freely there: everything inside the sandbox runs **without asking** (except with auto mode *Off*) – shell commands
+including `sudo`/`apt` (root in the container is not root on your machine), edits in the copy, web search, also after
+reading a web page. Still asked: reading files **outside** the copy (so nothing private ends up in the container),
+writing outside the copy, and pushing to GitHub; the leak guard keeps watching what goes out.
 
 - Your project folder stays untouched until you choose **Apply to project** (copies the changed files; files you
   changed in the project yourself meanwhile are reported as conflicts and only overwritten if you confirm).
@@ -893,6 +896,13 @@ freely there: `shell`, `edit` and `write` in the copy run **without asking** (ex
   **End sandbox** deletes container and copy.
 - No credentials go into the container (no token, no `~/.ssh`, no Docker socket); memory, CPU and processes are
   limited; the container stops after 30 minutes without commands and starts again with the next one.
+- **How tight is it?** Capabilities dropped, `no-new-privileges`, only the working copy is mounted. Orbwise never runs
+  git on the host inside the copy's `.git` (hooks or `core.fsmonitor` written by the agent would run outside the
+  container): commits happen in the container, a push fetches the branch into a fresh repository and pushes it to the
+  remote remembered when the copy was made. Host writes into the copy never follow a symlink out of it. With network
+  on, the container reaches the internet and your LAN (not services on your machine's `127.0.0.1`, such as Orbwise
+  itself – `orbwise doctor` warns if Orbwise listens on another address). Prefer rootless Podman over Docker: a
+  kernel exploit – which no container fully rules out – then only gets your own user.
 - The default image `orbwise-sandbox:1` (Debian with git, Python, Node, build tools, ripgrep) is built on first use;
   `sandbox.image` takes any other image (e.g. `python:3.12`). Install Podman with `sudo apt install podman`.
 

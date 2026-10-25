@@ -34,9 +34,14 @@ def path_for(chat_id: str, project: str) -> Path:
     return base_dir() / re.sub(r"[^\w-]", "", chat_id)[:40] / (Path(project).name or "projekt")
 
 
+# Die Arbeitskopie kann der Container beschreiben – auch ihr .git. Auf dem Host laufen darin deshalb weder Hooks
+# noch core.fsmonitor (beides würde Code des Agenten außerhalb des Containers starten).
+SAFE_GIT = ("-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false")
+
+
 def _git(cwd: str, *args: str, check: bool = True) -> str:
-    r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=300,
-                       env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C"})
+    r = subprocess.run(["git", *SAFE_GIT, *args], cwd=cwd, capture_output=True, text=True, timeout=300,
+                       env={**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_CONFIG_NOSYSTEM": "1", "LC_ALL": "C"})
     if check and r.returncode != 0:
         raise WorkspaceError((r.stderr or r.stdout).strip()[-400:])
     return r.stdout
@@ -98,12 +103,12 @@ def create(chat_id: str, project: str, title: str = "", identity: dict | None = 
         raise WorkspaceError(f"Projektordner {project} gibt es nicht.")
     ws = path_for(chat_id, str(src))
     branch = ""
+    origin = _git(str(src), "remote", "get-url", "origin", check=False).strip() if is_git(str(src)) else ""
     if not ws.exists():
         ws.parent.mkdir(parents=True, exist_ok=True)
         try:
             if is_git(str(src)):
                 _git(str(ws.parent), "clone", "--quiet", "--local", "--no-hardlinks", str(src), str(ws))
-                origin = _git(str(src), "remote", "get-url", "origin", check=False).strip()
                 if origin:
                     _git(str(ws), "remote", "set-url", "origin", origin)
                 else:
@@ -123,10 +128,40 @@ def create(chat_id: str, project: str, title: str = "", identity: dict | None = 
         except Exception:
             shutil.rmtree(ws, ignore_errors=True)
             raise
-    elif (ws / ".git").exists():
-        branch = _git(str(ws), "rev-parse", "--abbrev-ref", "HEAD", check=False).strip()
-    return {"path": str(ws), "project": str(src), "branch": branch,
+    else:
+        branch = head_branch(str(ws)) or ""
+    return {"path": str(ws), "project": str(src), "branch": branch, "origin": origin,
             "base_ws": snapshot.capture(str(ws)), "base_project": snapshot.capture(str(src))}
+
+
+def _git_dir(ws: str) -> Path | None:
+    """Das .git der Arbeitskopie – nur ein echter Ordner (kein Symlink, keine „gitdir:“-Datei, die woandershin zeigt)."""
+    gd = Path(ws) / ".git"
+    return gd if gd.is_dir() and not gd.is_symlink() else None
+
+
+def head(ws: str) -> str | None:
+    """Inhalt von .git/HEAD als Text – ohne git aufzurufen (dessen Konfiguration kommt aus dem Container)."""
+    gd = _git_dir(ws)
+    f = gd / "HEAD" if gd else None
+    if not f or f.is_symlink() or not f.is_file():
+        return None
+    try:
+        return f.read_text(encoding="utf-8", errors="replace")[:300].strip()
+    except OSError:
+        return None
+
+
+def head_branch(ws: str) -> str | None:
+    """Ausgecheckter Branch der Arbeitskopie (None: keiner/detached)."""
+    m = re.fullmatch(r"ref: refs/heads/(\S+)", head(ws) or "")
+    return m.group(1) if m else None
+
+
+def head_label(ws: str) -> str | None:
+    """Branch oder – detached – der kurze Commit-Hash (für die Anzeige)."""
+    text = head(ws) or ""
+    return head_branch(ws) or (text[:7] if re.fullmatch(r"[0-9a-f]{40,64}", text) else None)
 
 
 def changes(state: dict) -> list[dict]:

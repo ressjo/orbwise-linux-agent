@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **Sandbox in auto mode:** everything inside the sandbox runs without asking – also `sudo`/`apt` (root in the
+  container only) and shell commands after reading a web page. In return, reading files outside the working copy asks
+  (nothing private gets into the container); writing outside the copy and GitHub pushes still ask.
 - **Fewer tools by default:** 15 thin wrappers around single commands are off by default – `top_processes`,
   `kill_process`, `service_status`/`_control`/`_logs`, `network_info`, `ping_host`, `open_ports`, `check_port`,
   `disk_usage`, `list_directory`, `search_file_contents`, `ssh_connect`, `ssh_disconnect`, `list_installed_apps`. The
@@ -231,6 +234,13 @@ All notable changes to this project are documented here. The format follows
   the open chat stays untouched.
 
 ### Fixed
+- **Sandbox escape via git:** Orbwise ran git on the host inside the working copy's `.git`, which the container can
+  write – a hook or `core.fsmonitor` placed by the agent would have run on the host (with the GitHub token in the
+  environment during a push), and a rewritten `origin` would have received the token. Commits now run in the
+  container, pushes go through a fresh repository to the remote remembered when the copy was made, branch and repo
+  are read without git. Host writes into the copy no longer follow a symlink swapped in by the container.
+- Auto mode no longer asks for `ps -o user` / `ps -C name` (option values were taken for the BSD `e` modifier) and
+  for reading `/etc/passwd` (world-readable, no passwords).
 - **Read-only shell commands with awk asked for confirmation:** an awk program like `'{print $2}'` was checked as
   if it were a file name (and flagged as "reads credentials"), and awk had no read-only rule. Programs and search
   patterns of awk, grep, rg and sed are no longer treated as files, and awk without `system()`, pipes, output

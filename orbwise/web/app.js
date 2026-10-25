@@ -5153,6 +5153,7 @@
     net.querySelector("b").textContent = st.network ? L("Netz: an", "Network: on") : L("Netz: aus", "Network: off");
     net.querySelector("small").textContent = st.network ? L("Zum Abschalten klicken (Container startet neu).", "Click to switch off (container restarts).")
       : L("Kein Internet im Container – zum Einschalten klicken.", "No internet in the container – click to switch on.");
+    if (st.warning) net.querySelector("small").textContent += " ⚠ " + st.warning;
     const ch = sandboxMenu.querySelector('[data-sb="changes"]');
     ch.querySelector("b").textContent = L(`Änderungen ansehen (${st.changes})`, `View changes (${st.changes})`);
     ch.querySelector("small").textContent = L("Was sich in der Arbeitskopie geändert hat, mit Diff.", "What changed in the working copy, with diffs.");

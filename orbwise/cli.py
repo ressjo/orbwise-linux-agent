@@ -278,6 +278,12 @@ def cmd_doctor(args) -> None:
     line(bool(binary), T(f"Sandbox: {os.path.basename(binary)} · Image {sbx.image(cfg)}",
                          f"Sandbox: {os.path.basename(binary)} · image {sbx.image(cfg)}") if binary
          else T("Sandbox: keine Container-Engine", "Sandbox: no container engine"), sb_error)
+    if binary and not sbx.is_podman(binary):
+        print("  ℹ " + T("Docker läuft als root – rootless Podman trennt die Sandbox stärker vom System",
+                         "Docker runs as root – rootless Podman isolates the sandbox better"))
+    if cfg.host not in ("127.0.0.1", "localhost", "::1"):
+        print("  ⚠ " + T(f"Orbwise lauscht auf {cfg.host}: eine Sandbox mit Netz erreicht die Orbwise-API",
+                         f"Orbwise listens on {cfg.host}: a sandbox with network on can reach the Orbwise API"))
     tok, source = github.token_info(cfg)
     if not tok:
         print("  – " + T("GitHub nicht verbunden (gh auth login oder github.token)",

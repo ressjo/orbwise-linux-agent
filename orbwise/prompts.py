@@ -233,6 +233,8 @@ TEXTS = {
         "auto_files": "ändert nur Dateien in deinem Home (Auto: Dateien bearbeiten)",
         "auto_project": "ändert eine Datei im Projektordner (Auto: Dateien bearbeiten)",
         "auto_sandbox": "läuft in der Sandbox (Container, Arbeitskopie)",
+        "sandbox_outside_read": "liest außerhalb der Arbeitskopie – in der Sandbox fragt das, damit nichts Privates in "
+                                "den Container gelangt",
         "auto_full": "ohne Root-Rechte (Auto)",
         "auto_root": "Orbwise läuft als root – Auto gibt darum nichts frei",
         "tainted_confirm": "Nach dem Lesen einer E-Mail, Webseite, eines PDFs oder Bildschirm-/Bildinhalts fragt alles nach, "
@@ -277,6 +279,8 @@ TEXTS = {
         "auto_files": "only changes files in your home folder (Auto: edit files)",
         "auto_project": "changes a file in the project folder (Auto: edit files)",
         "auto_sandbox": "runs in the sandbox (container, working copy)",
+        "sandbox_outside_read": "reads outside the working copy – the sandbox asks so nothing private gets into the "
+                                "container",
         "auto_full": "without root privileges (Auto)",
         "auto_root": "Orbwise runs as root – so Auto approves nothing",
         "tainted_confirm": "After reading an e-mail, web page, PDF or screen/image content, everything that changes or "

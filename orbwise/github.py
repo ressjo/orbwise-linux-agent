@@ -12,6 +12,7 @@ import re
 import shutil
 import stat
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -141,14 +142,29 @@ def repo_url(full_name: str) -> str:
     return f"https://github.com/{full_name}.git"
 
 
+def repo_of(url: str) -> str | None:
+    """owner/name aus einer github.com-URL."""
+    m = _REMOTE.search(url.strip())
+    return m.group("repo") if m else None
+
+
 def remote_repo(path: str) -> str | None:
     """owner/name, wenn origin auf github.com zeigt."""
     try:
-        url = git(["remote", "get-url", "origin"], cwd=path).strip()
+        return repo_of(git(["remote", "get-url", "origin"], cwd=path))
     except (GitHubError, OSError, subprocess.SubprocessError):
         return None
-    m = _REMOTE.search(url)
-    return m.group("repo") if m else None
+
+
+def sandbox_origin(sb: dict) -> str:
+    """Remote einer Sandbox-Arbeitskopie: gemerkt beim Anlegen, sonst aus dem Original-Projekt – nie aus dem .git der
+    Kopie (das kann der Container umschreiben, z. B. auf einen fremden Server, der dann das Token bekäme)."""
+    if sb.get("origin") is not None:
+        return str(sb["origin"])
+    try:
+        return git(["remote", "get-url", "origin"], cwd=sb.get("project") or None).strip()
+    except (GitHubError, OSError, subprocess.SubprocessError):
+        return ""
 
 
 def clone_dir(cfg: Any) -> Path:
@@ -190,6 +206,32 @@ def push(cfg: Any, path: str, branch: str = "") -> dict:
         raise GitHubError("Kein Branch ausgecheckt (detached HEAD).")
     repo = remote_repo(path)
     git(["push", "-u", "origin", f"{branch}:{branch}"], cwd=path, tok=token(cfg), timeout=300)
+    return _links(branch, repo)
+
+
+def push_from_copy(cfg: Any, ws: str, origin: str, branch: str = "") -> dict:
+    """Push aus der Sandbox-Arbeitskopie, ohne git in deren .git laufen zu lassen: Hooks, core.fsmonitor oder ein
+    umgebogenes Remote dort stammen womöglich vom Agenten im Container. Der Branch wird in ein frisches Repo geholt
+    (nur Objekte) und von dort zur gemerkten URL gepusht."""
+    from . import workspace
+    branch = branch.strip() or workspace.head_branch(ws) or ""
+    if not branch:
+        raise GitHubError("Kein Branch ausgecheckt (detached HEAD).")
+    if not origin:
+        raise GitHubError("Das Projekt hat kein Remote „origin“.")
+    git(["check-ref-format", "--branch", branch])
+    gd = workspace._git_dir(ws)
+    if gd is None:
+        raise GitHubError("Die Arbeitskopie ist kein Git-Repo.")
+    ref = f"refs/heads/{branch}"
+    with tempfile.TemporaryDirectory(prefix="orbwise-push-") as tmp:
+        git(["init", "-q", "--bare", tmp])
+        git([*workspace.SAFE_GIT, "fetch", "-q", "--no-tags", str(gd), f"+{ref}:{ref}"], cwd=tmp)
+        git([*workspace.SAFE_GIT, "push", origin, f"{ref}:{ref}"], cwd=tmp, tok=token(cfg), timeout=300)
+    return _links(branch, repo_of(origin))
+
+
+def _links(branch: str, repo: str | None) -> dict:
     out = {"branch": branch, "repo": repo}
     if repo:
         out["url"] = f"https://github.com/{repo}/tree/{branch}"

@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import difflib
+import errno
 import fnmatch
 import json
 import os
@@ -364,11 +365,39 @@ def edit_preview(ctx: ToolContext, args: dict) -> str:
 
 def _write_file(ctx: ToolContext, p: Path, before: str | None, after: str) -> str:
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_bytes(after.encode("utf-8"))
+    if ctx.sandbox:
+        error = _write_in_copy(ctx.sandbox["path"], p, after.encode("utf-8"))
+        if error:
+            return error
+    else:
+        p.write_bytes(after.encode("utf-8"))
     _remember_read(ctx, p)
     diff, added, removed = diff_text((before or "").replace("\r\n", "\n"), after.replace("\r\n", "\n"), _rel(ctx, p))
     head = f"{'Geändert' if before is not None else 'Angelegt'}: {_rel(ctx, p)} (+{added} −{removed})"
     return head + ("\n" + diff if diff else "")
+
+
+def _write_in_copy(ws: str, p: Path, data: bytes) -> str | None:
+    """Sandbox: Der Container könnte eine Datei der Arbeitskopie zwischen Freigabe und Schreiben gegen einen Symlink
+    auf eine Datei des Rechners tauschen – darum direkt vor dem Schreiben erneut prüfen und keinem Link am Ziel folgen.
+    (Freigegebene Dateien außerhalb der Kopie werden normal geschrieben.)"""
+    root = Path(os.path.abspath(ws))
+    if not Path(os.path.abspath(p)).is_relative_to(root):
+        p.write_bytes(data)
+        return None
+    if p.is_symlink() and p.resolve().is_relative_to(root.resolve()):
+        p = p.resolve()  # Link innerhalb der Kopie: auf sein Ziel schreiben
+    if not p.parent.resolve().is_relative_to(root.resolve()):
+        return f"Nicht geschrieben: {p} zeigt aus der Arbeitskopie hinaus (Symlink)."
+    try:
+        fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o666)
+    except OSError as e:
+        if e.errno == errno.ELOOP:
+            return f"Nicht geschrieben: {p} ist ein Symlink (zeigt womöglich aus der Arbeitskopie hinaus)."
+        raise
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+    return None
 
 
 @tool("Ändert eine Datei durch Ersetzen von exaktem Text. Ausschnitte aus read ohne das Zeilen-Präfix „12: “ und "
