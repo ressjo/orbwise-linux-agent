@@ -215,16 +215,24 @@
     else if (Date.now() < S.errorUntil) s = "error";
     const loadingModel = S.modelSwitching || S.startupModel;
     if (loadingModel && S.connected) s = "thinking";
+    // Vorwärmen (Chat einlesen) läuft im Hintergrund – sonst stünde „Bereit“, obwohl das Modell beschäftigt ist
+    const warming = !loadingModel && s === "idle" && S.prewarm && Date.now() - S.prewarm.at < 600000;
+    if (warming) s = "thinking";
     orb.setState(s);
     const label = $("state-label");
-    label.textContent = loadingModel && S.connected ? L("LADE MODELL", "LOADING MODEL") : (LABELS[s] || s.toUpperCase());
+    label.textContent = loadingModel && S.connected ? L("LADE MODELL", "LOADING MODEL")
+      : warming ? L("LESE CHAT EIN", "READING CHAT") : (LABELS[s] || s.toUpperCase());
     label.style.color = { listening: "var(--success)", executing: "var(--warn)", confirm: "var(--warn)", error: "var(--danger)",
                           offline: "var(--muted)", thinking: "var(--reason)" }[s] || "";
     let sub = S.substate || (S.startupModel && !S.modelSwitching ? S.startupModel : "");
     if (S.recording) sub = S.recordingMode === "ptt" ? L("Loslassen zum Senden", "Release to send") : L("Sprich jetzt …", "Speak now …");
     else if (S.transcribing) sub = L("Transkribiere …", "Transcribing …");
     else if (s === "idle" && S.wake) sub = L("Sag „Hey Jarvis“", "Say “Hey Jarvis”");
-    const working = (s === "thinking" || s === "executing") && !loadingModel;
+    if (warming && !sub) {
+      sub = S.prewarm.tokens ? L(`${num(S.prewarm.tokens)} Token`, `${num(S.prewarm.tokens)} tokens`) : "";
+      if (S.prewarm.eta) sub += (sub ? " · " : "") + L(`höchstens ~${Math.ceil(S.prewarm.eta)} s`, `at most ~${Math.ceil(S.prewarm.eta)} s`);
+    }
+    const working = (s === "thinking" || s === "executing") && !loadingModel && !warming;
     if (working && !sub) sub = saying();
     else if (!working && Say.timer) stopSaying();
     $("substate-label").textContent = sub || "";
@@ -276,7 +284,7 @@
       renderBoot();
     };
     ws.onclose = () => {
-      S.connected = false;
+      S.connected = false; S.prewarm = null;
       S.recording = false;
       S.transcribing = false;
       updateMicStreaming();
@@ -1465,7 +1473,12 @@
     const compress = ev.phase === "compress" || ev.compress;
     const msgEl = ev.msg && compress && chat.querySelector(`.msg[data-msg="${ev.msg}"]`);
     if (msgEl) return afterPhase(msgEl, ev);
-    if (ev.phase === "prewarm" || ev.prewarm) { prewarmNote(ev); return; }
+    if (ev.phase === "prewarm" || ev.prewarm) {  // Chat im Hintergrund einlesen: Aktivität und Orb zeigen es
+      prewarmNote(ev);
+      S.prewarm = ev.phase === "done" ? null : { tokens: ev.tokens, eta: ev.eta_s, at: Date.now() };
+      refresh();
+      return;
+    }
     let el = acts["m-" + ev.id];
     if (!el) {
       if (ev.phase === "done") return;
