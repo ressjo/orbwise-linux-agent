@@ -42,6 +42,7 @@ class Memory:
         self.conversation = self.chats.open_active()  # Chat, in dem der Agent gerade arbeitet
         self._outer: list[Conversation] = []  # während in_chat: die darunterliegenden Chats (unten = Nutzer-Chat)
         self.last_activity = time.time()
+        self.summary_ran = False
         self._rebuilding = False
 
     def close(self) -> None:
@@ -271,8 +272,10 @@ class Memory:
     async def summarize_pending(self) -> list[str]:
         idle = time.time() - self.last_activity > self.cfg.summarize_idle_minutes * 60
         done = []
+        self.summary_ran = False  # hat das Modell gerechnet (auch ohne Ergebnis)? Dann liegt der Chat nicht mehr im Cache
         for day in self.days_needing_summary(include_today=idle):
             fp = digest(self.journal.read(day, raw=True) or "")
+            self.summary_ran = True
             try:
                 summary = await self.summarize_day(day)
             except Exception as e:  # noqa: BLE001

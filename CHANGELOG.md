@@ -190,6 +190,11 @@ All notable changes to this project are documented here. The format follows
   the open chat stays untouched.
 
 ### Fixed
+- **Long chats fell out of the model server's cache:** the RAM prompt cache (`--cache-ram`) was capped at 4 GB, and
+  llama-server does not store a chat state larger than that – after a daily summary, a Telegram message or a chat
+  switch a 40–60k-token chat on a 27B model was read in full again. The cache is now sized for about two full chats
+  of the loaded model (at most 25 % of RAM, never less than before). After daily summaries the open chat is read in
+  again even if a summary failed or came out empty.
 - **Daily summaries no longer repeat:** whether a day needs a (new) summary now depends on the journal's content,
   not its file time. A journal with a file time in the future (backup, sync) made Orbwise summarise the same day
   every 5 minutes, each time pushing the chat out of the prompt cache.

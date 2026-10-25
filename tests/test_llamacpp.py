@@ -400,12 +400,13 @@ def test_cache_flags_only_what_the_server_knows(tmp_path, monkeypatch):
         calls.append(cmd)
         return subprocess.CompletedProcess(cmd, 0, stdout=full_help, stderr="")
     cmd = f"{binary} -m ~/models/q.gguf -np 1"
-    assert llamacpp.cache_flags(cmd, run=run, mem_mib=31 * 1024) == "--ctx-checkpoints 32 --cache-ram 4096 --cache-idle-slots"
+    # Modell nicht lesbar: llama.cpp-Standard 8 GB, höchstens ein Viertel des Arbeitsspeichers
+    assert llamacpp.cache_flags(cmd, run=run, mem_mib=31 * 1024) == "--ctx-checkpoints 32 --cache-ram 7936 --cache-idle-slots"
     assert calls == [[str(binary), "--help"]]
-    assert "--cache-ram 1228" in llamacpp.cache_flags(cmd, run=run, mem_mib=8 * 1024)  # 15 % von 8 GB
+    assert "--cache-ram 2048" in llamacpp.cache_flags(cmd, run=run, mem_mib=8 * 1024)  # 25 % von 8 GB
     assert len(calls) == 1  # Hilfetext nur einmal je Programm
-    own = llamacpp.cache_flags(cmd + " --ctx-checkpoints 8", run=run, mem_mib=31 * 1024)
-    assert "--ctx-checkpoints" not in own and "--cache-ram 4096" in own  # vom Nutzer gesetzt – bleibt
+    own = llamacpp.cache_flags(cmd + " --ctx-checkpoints 8 --cache-ram 1000", run=run, mem_mib=31 * 1024)
+    assert own == "--cache-idle-slots"  # vom Nutzer gesetzt – bleibt
     assert llamacpp.cache_flags("python3 serve.py", run=run) == ""  # kein llama-server
     old = tmp_path / "alt" / "llama-server"
     old.parent.mkdir()
@@ -415,6 +416,30 @@ def test_cache_flags_only_what_the_server_knows(tmp_path, monkeypatch):
     def broken(c, **kw):
         raise OSError("libvulkan fehlt")
     assert llamacpp.cache_flags(f"{tmp_path}/kaputt/llama-server -m x", run=broken) == ""
+
+
+def test_cache_ram_fits_two_full_chats_of_the_model(tmp_path):
+    """Ein Zustand, der größer als --cache-ram ist, legt llama-server gar nicht erst ab – der Cache muss einen langen
+    Chat des Modells fassen, sonst fällt er nach jeder Zusammenfassung oder Telegram-Nachricht ganz heraus."""
+    from test_llm_memory import write_gguf
+    model = tmp_path / "hybrid.gguf"
+    # 64 Schichten, jede 4. mit Attention (Hybrid wie Qwen 3.6): 16 × 4 × 512 × 2 B = 64 KiB je Token
+    write_gguf(model, {"qwen35.block_count": 64, "qwen35.attention.head_count": 24,
+                       "qwen35.attention.head_count_kv": 4, "qwen35.attention.key_length": 256,
+                       "qwen35.attention.value_length": 256, "qwen35.full_attention_interval": 4,
+                       "qwen35.context_length": 262144})
+    cmd = f"llama-server -m {model} -c 65536 -np 1"
+    two_chats = int(2 * 65536 * 65536 * 1.2 / 2**20)  # 2 Chats à 64k Token à 64 KiB, mit Zuschlag
+    assert llamacpp.cache_ram_mib(cmd, ram=64 * 1024) == two_chats == 9830
+    assert llamacpp.cache_ram_mib(cmd + " -ctk q8_0 -ctv q8_0", ram=64 * 1024) < two_chats  # kleinerer KV-Cache
+    assert llamacpp.cache_ram_mib(cmd, ram=16 * 1024) == 4096  # höchstens ein Viertel des Arbeitsspeichers
+    assert llamacpp.cache_ram_mib(cmd, ram=8 * 1024) == 2048
+    tiny = cmd.replace("-c 65536", "--ctx-size=4096")
+    assert llamacpp.cache_ram_mib(tiny, ram=64 * 1024) == 4096  # nie weniger als früher
+    full = int(2 * 65536 * 262144 * 1.2 / 2**20)  # -c 0 = Kontext aus dem Modell (256k)
+    assert llamacpp.cache_ram_mib(f"llama-server -m {model} -c 0", ram=256 * 1024) == full
+    assert llamacpp.cache_ram_mib("llama-server -m /fehlt.gguf", ram=64 * 1024) == 8192
+    assert llamacpp.cache_ram_mib("llama-server", ram=0) == 8192
 
 
 def test_managed_server_starts_with_cache_flags(tmp_path, monkeypatch):

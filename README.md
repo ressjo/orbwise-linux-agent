@@ -401,9 +401,15 @@ a chat only the new part should be read.
 
 **Hybrid models** (attention plus recurrent layers, e.g. Qwen 3.5) can only reuse an earlier prompt by restoring a
 saved checkpoint. Orbwise therefore starts its llama-server with `--ctx-checkpoints 32`, a prompt cache
-in RAM (`--cache-ram`, 15 % of your RAM, at most 4 GB) and `--cache-idle-slots` – only the options your llama-server
-knows (checked with `--help`) and only those you did not set yourself. After hiding old results, a summary, a
-Telegram message or a chat switch, far less has to be read again. The start line in `~/.local/state/orbwise-llm.log`
+in RAM (`--cache-ram`) and `--cache-idle-slots` – only the options your llama-server knows (checked with `--help`)
+and only those you did not set yourself. The RAM cache is sized for about two full chats of the loaded model (KV
+size per token from the GGUF file × context window), at most a quarter of your RAM: llama-server does not keep a
+chat at all if its state is larger than the limit, so a long chat would otherwise be read again after every summary,
+Telegram message or chat switch.
+
+As soon as you start typing or speaking, Orbwise has the server read the open chat in the background if something
+else is in its cache (also after a chat switch, when the UI opens, after Telegram, routines and daily summaries) –
+when you send, only your question is new. The start line in `~/.local/state/orbwise-llm.log`
 shows the full command; restored checkpoints appear in the same log.
 
 - **llama-server:** start it with **one slot** (`-np 1` – Orbwise's profiles do that); with several slots requests

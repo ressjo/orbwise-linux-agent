@@ -137,8 +137,8 @@ def test_each_day_is_summarised_once_even_with_a_future_file_time(memory):
     memory.journal.append("Du", "Mach ein Systemupdate", datetime(2026, 9, 20, 10, 0, 0))
     future = time.time() + 86400
     os.utime(memory.journal.path("2026-09-20"), (future, future))
-    assert run(memory.summarize_pending()) == ["2026-09-20"]
-    assert run(memory.summarize_pending()) == []
+    assert run(memory.summarize_pending()) == ["2026-09-20"] and memory.summary_ran
+    assert run(memory.summarize_pending()) == [] and not memory.summary_ran  # Modell nicht benutzt – Cache bleibt
     # neuer Inhalt (z. B. nach dem Löschen eines Chats umgeschrieben) → einmal neu
     memory.journal.append("Du", "Noch eine Frage", datetime(2026, 9, 20, 11, 0, 0))
     assert run(memory.summarize_pending()) == ["2026-09-20"]
@@ -149,6 +149,7 @@ def test_empty_day_and_old_summaries_do_not_loop(memory):
     p = memory.journal.path("2026-09-21")
     p.write_text("")  # leerer Tag: wird vermerkt, aber nicht als erstellt gemeldet – und nicht endlos wiederholt
     assert run(memory.summarize_pending()) == []
+    assert memory.summary_ran  # versucht – der Server soll den offenen Chat danach wieder einlesen
     assert "2026-09-21" not in memory.days_needing_summary(include_today=True)
     # Zusammenfassung aus einer älteren Version (ohne Vermerk) gilt als aktuell
     memory.journal.append("Du", "Alt", datetime(2026, 9, 19, 9, 0, 0))

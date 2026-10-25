@@ -238,10 +238,41 @@ def _mem_mib() -> int:
     return 0
 
 
+def _arg(command: str, *flags: str) -> str:
+    """Wert der letzten Angabe einer Option im Startbefehl (auch „--opt=wert“ und in Anführungszeichen)."""
+    names = "|".join(re.escape(f) for f in flags)
+    found = re.findall(rf"(?:^|\s)(?:{names})(?:\s+|=)(\"[^\"]+\"|'[^']+'|\S+)", command)
+    return found[-1].strip("\"'") if found else ""
+
+
+def cache_ram_mib(command: str, env: dict | None = None, ram: int = 0) -> int:
+    """Größe des Prompt-Caches im RAM: Platz für etwa zwei volle Chats (KV je Token aus der GGUF-Datei × Kontext,
+    mit Zuschlag für rekurrenten Zustand und Checkpoints). llama-server legt einen Zustand, der größer als die Grenze
+    ist, gar nicht erst ab – ein langer Chat fiele sonst nach jeder fremden Anfrage (Zusammenfassung, Telegram,
+    anderer Chat) ganz heraus. Höchstens 25 % des Arbeitsspeichers, nie weniger als früher (4 GB bzw. 15 %); ohne
+    lesbares Modell der llama.cpp-Standard (8 GB)."""
+    from .llm_memory import cache_bytes, gguf_metadata, kv_per_token_from_info
+    floor = min(4096, int(ram * 0.15)) if ram else 4096
+    cap = int(ram * 0.25) if ram else 8192
+    want = 8192
+    model = os.path.expanduser(_arg(command, "-m", "--model"))
+    try:
+        meta = gguf_metadata(model) if model else {}
+    except (OSError, ValueError, Exception):  # noqa: BLE001 – ungewöhnliche Datei: Standardgröße
+        meta = {}
+    per_token = kv_per_token_from_info(meta, cache_bytes(command, env or {})) if meta else None
+    ctx = _arg(command, "-c", "--ctx-size")
+    n_ctx = int(ctx) if ctx.isdigit() else 0
+    n_ctx = n_ctx or next((v for k, v in meta.items() if k.endswith(".context_length")), 0)
+    if per_token and n_ctx:
+        want = int(2 * per_token * n_ctx * 1.2 / 2**20)
+    return max(floor, min(want, cap))
+
+
 def cache_flags(command: str, env: dict | None = None, run: Runner = subprocess.run, mem_mib: int | None = None) -> str:
     """Zusätzliche Argumente für einen direkt gestarteten llama-server: mehr Checkpoints (Hybrid-Modelle können einen
-    früheren Prompt nur darüber weiterverwenden), ein Prompt-Cache im RAM (höchstens 4 GB bzw. 15 % des
-    Arbeitsspeichers) und das Sichern ruhender Slots. Nur Optionen, die der vorhandene llama-server kennt, und nur,
+    früheren Prompt nur darüber weiterverwenden), ein Prompt-Cache im RAM (bemessen nach Modell und Kontext, siehe
+    cache_ram_mib) und das Sichern ruhender Slots. Nur Optionen, die der vorhandene llama-server kennt, und nur,
     wenn der Befehl sie nicht schon selbst setzt – sonst leer."""
     direct = re.match(r"\s*(?:\S+=\S*\s+)*(\S*llama-server)(\s|$)", command)
     if not direct:
@@ -254,7 +285,7 @@ def cache_flags(command: str, env: dict | None = None, run: Runner = subprocess.
         return ""
     ram = mem_mib if mem_mib is not None else _mem_mib()
     wanted = [("--ctx-checkpoints", str(CACHE_CHECKPOINTS)),
-              ("--cache-ram", str(min(4096, int(ram * 0.15)) if ram else 4096)),
+              ("--cache-ram", str(cache_ram_mib(command, env, ram))),
               ("--cache-idle-slots", "")]
     parts = []
     for flag, value in wanted:

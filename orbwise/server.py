@@ -862,11 +862,13 @@ def create_app(cfg: Config) -> FastAPI:
                     done = await memory.summarize_pending()
                     if done:
                         log.info("Tageszusammenfassungen erstellt: %s", ", ".join(done))
-                        agent._cache_owner = None  # der Server hatte dafür andere Texte im Cache
-                        if hub.clients:
-                            hub.prewarm_soon()
                 except Exception as e:  # noqa: BLE001
                     log.warning("Zusammenfassungen fehlgeschlagen: %s", e)
+                if getattr(memory, "summary_ran", False):  # auch ohne Ergebnis: der Server hatte andere Texte im Cache
+                    memory.summary_ran = False
+                    agent._cache_owner = None
+                    if hub.clients:
+                        hub.prewarm_soon()
             await asyncio.sleep(300)
 
     app = FastAPI(title="Orbwise", lifespan=lifespan)
