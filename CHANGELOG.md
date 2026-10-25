@@ -24,6 +24,10 @@ All notable changes to this project are documented here. The format follows
   cap in small context windows (< 16k) stays.
 
 ### Removed
+- **Separate vision model:** screen and image questions (`look_at_screen`, `look_at_image`) are now answered by the
+  loaded model when it can see images (llama.cpp with `mmproj`, Ollama with vision); without image support the tools
+  are not offered. `vision.backend`, `base_url`, `model`, `api_key` and `keep_alive` are ignored; `vision.enabled`,
+  `timeout` and `screenshot_command` stay.
 - **Learning from experience:** lessons, the idle reflection and the thumbs up/down under answers are gone – with
   local models they rarely helped, and reflecting while idle pushed the chat out of the prompt cache (the next
   question re-read everything). Stored lessons (`lessons.json`) are deleted on the first start; old

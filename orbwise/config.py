@@ -397,25 +397,13 @@ class TelegramConfig(BaseModel):
 
 
 class VisionConfig(BaseModel):
-    # Bildschirm und Bilder verstehen („Was ist das für eine Fehlermeldung?“) – mit einem lokalen Vision-Modell.
-    # Das Hauptmodell muss dafür keine Bilder können: Orbwise fragt das Vision-Modell und gibt die Antwort weiter.
+    # Bildschirm und Bilder verstehen („Was ist das für eine Fehlermeldung?“) – mit dem geladenen Modell, wenn es Bilder
+    # sehen kann (llama-server mit Bildmodul/mmproj, Ollama-Modell mit „vision“). Ein zweites Bildmodell gibt es nicht
+    # mehr; alte Schlüssel (backend, base_url, model, api_key, keep_alive) werden ignoriert.
     enabled: bool = True
-    backend: str = "ollama"        # ollama | openai (OpenAI-kompatibler Server mit Bildunterstützung)
-    base_url: str = ""             # leer = Ollama-Adresse aus dem llm-Block
-    model: str = "qwen2.5vl:7b"    # wenig VRAM: qwen2.5vl:3b oder gemma3:4b
-    api_key: str = ""
-    keep_alive: str = "2m"         # Vision-Modell danach wieder aus dem Grafikspeicher
     timeout: float = 180.0
     # Eigener Screenshot-Befehl, {file} = Zieldatei (leer = automatisch: grim, spectacle, gnome-screenshot, …)
     screenshot_command: str = ""
-
-    @field_validator("backend")
-    @classmethod
-    def _backend(cls, v: str) -> str:
-        v = v.strip().lower()
-        if v not in ("ollama", "openai"):
-            raise ValueError("vision.backend muss 'ollama' oder 'openai' sein")
-        return v
 
 
 class BriefingConfig(BaseModel):

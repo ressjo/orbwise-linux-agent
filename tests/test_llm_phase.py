@@ -84,12 +84,10 @@ def test_compacting_is_shown(cfg, llm, memory):
     assert any(e.get("prewarm") for e in rows)  # danach gleich vorgewärmt – die nächste Frage wartet nicht
 
 
-def test_prompt_phase_reports_reload_after_vision_and_cached_part(cfg, llm, memory):
+def test_prompt_phase_reports_only_the_new_part(cfg, llm, memory):
     agent = Agent(cfg, llm, memory)
     agent.llm = SimpleNamespace(profile=SimpleNamespace(backend="ollama"), active="local")
     agent.last_context = {"used": 5000}
     agent._last_prompt["local"], agent._prefill_tps["local"] = 4000, 500.0
     info = agent._prompt_phase()
     assert info == {"phase": "prompt", "tokens": 5000, "new": 1000, "eta_s": 2.0}  # nur der neue Teil zählt
-    memory.conversation.add({"role": "tool", "content": "Bild", "tool_name": "look_at_screen"})
-    assert agent._prompt_phase()["phase"] == "loading"

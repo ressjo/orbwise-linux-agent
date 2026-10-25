@@ -72,7 +72,8 @@ def test_vision_model_gets_the_image(cfg, memory):
     assert agent.last_context["parts"]["history"] >= 800  # Bild zählt in der Kontext-Anzeige
 
 
-def test_text_model_uses_vision_tool(cfg, memory, tmp_path):
+def test_text_model_says_it_cannot_see_images(cfg, memory, tmp_path):
+    """Kein zweites Bildmodell mehr: ein Modell ohne Bildmodul sagt, dass es das Bild nicht sehen kann."""
     all_integrations(cfg, tmp_path)
     cfg.llm.num_ctx = 8192
     name = attachments.save(cfg, PNG)
@@ -80,8 +81,8 @@ def test_text_model_uses_vision_tool(cfg, memory, tmp_path):
     agent = Agent(cfg, llm, memory)
     run(agent.run("Was ist das?", _noop, _noop, images=[name]))
     user = [m for m in llm.sent[0] if m["role"] == "user"][-1]
-    assert "images" not in user and "look_at_image" in user["content"] and name in user["content"]
-    assert "look_at_image" in llm.tools[0]  # auch im kleinen Fenster dabei
+    assert "images" not in user and name in user["content"] and "keine Bilder sehen" in user["content"]
+    assert "look_at_image" not in llm.tools[0]  # ohne Bildunterstützung nicht angeboten
 
 
 def test_upload_api(cfg, monkeypatch):

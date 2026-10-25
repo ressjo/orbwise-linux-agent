@@ -63,7 +63,7 @@ What Orbwise can do for you – each line links to the details.
 | **Mail** | Proton Mail Bridge or any IMAP mailbox: read, sort, file attachments, optionally reply → [E-mail](#e-mail-proton-mail-bridge-or-any-imap-mailbox) |
 | **Notes & calendar** | Obsidian, Trilium, iCloud/CalDAV calendars, reminders → [Obsidian](#obsidian-notes) · [Calendar](#calendar-icloud--caldav) |
 | **Routines** | Tasks at set times ("every weekday at 8, search Linux news") and a morning briefing → [Routines](#routines) |
-| **Images** | Generate and edit images locally with Qwen-Image; explain screenshots and photos with a local vision model → [Image mode](#image-mode-qwen-image-21) · [Screen](#screen--images) |
+| **Images** | Generate and edit images locally with Qwen-Image; explain screenshots and photos with the loaded model (if it can see images) → [Image mode](#image-mode-qwen-image-21) · [Screen](#screen--images) |
 | **Phone** | Telegram bot: text and voice messages, confirmations, files in both directions → [Telegram](#telegram-phone) |
 | **Planning** | Plan mode: looks things up read-only and presents a plan to run, change or discard → [Plan mode](#plan-mode) |
 
@@ -412,8 +412,6 @@ shows the full command; restored checkpoints appear in the same log.
   matching blocks even after a change further up (e.g. when a tool group is added).
 - **Ollama:** `llm.keep_alive` (default `30m`) – after that Ollama unloads the model and the next question reads the
   whole chat again. Raise it if you often take longer breaks and the VRAM is not needed elsewhere.
-- **Vision model** (screen understanding): on a small GPU it can push the language model out of VRAM; the next step
-  then reads the chat again (the activity shows it). `vision.keep_alive: 2m` unloads it soon afterwards.
 
 ### Faster prompt reading (llama.cpp)
 
@@ -905,16 +903,14 @@ From the phone: `/plan clean up my disk` – the plan arrives with ✅ Run / ✏
 ### Screen & images
 
 Ask about whatever is on your screen: "What's that error message?", "What does it say in this window?", "In 5 seconds,
-look at my screen" (time to bring the window to the front). Orbwise takes a screenshot, hands it to a local vision
-model and answers with what it sees – error messages and commands quoted verbatim. The screenshot is deleted right
-afterwards. The same works for image files and for photos you send the bot from your phone ("what plant is this?").
+look at my screen" (time to bring the window to the front). Orbwise takes a screenshot, asks the loaded model about
+it in a short request of its own and answers with what it sees – error messages and commands quoted verbatim. The
+screenshot is deleted right afterwards. The same works for image files and for photos you send the bot from your phone
+("what plant is this?").
 
-```bash
-ollama pull qwen2.5vl:7b        # once (~6 GB); little VRAM: qwen2.5vl:3b or gemma3:4b → vision.model
-```
-
-Your main model does not need to understand images – Orbwise asks the vision model separately (`vision:` in the config,
-an OpenAI-compatible server works too). Screenshots use whatever your desktop has: `spectacle` (KDE),
+This needs a model that can see images: a llama.cpp model with its image module (`mmproj`, downloaded with the model
+on the model page) or an Ollama model with vision. Without one, Orbwise doesn't offer the screen tools and says so
+when you attach an image – there is no separate vision model any more. Screenshots use whatever your desktop has: `spectacle` (KDE),
 `gnome-screenshot` (GNOME), `grim` (Sway/Hyprland) or `maim`/`scrot` (X11); `orbwise doctor` shows what was found. As
 with e-mails, screen content is treated as untrusted: after looking at the screen, actions in that chat need
 confirmation, so a web page cannot slip instructions to Orbwise.
@@ -1054,7 +1050,6 @@ untrusted content (mail, screen) still ask. If Orbwise runs as **root**, the upp
 | `user_name`, `persona_extra` | How the assistant addresses you and extra personality instructions (its name: `assistant_name`) |
 | `host`, `allow_remote` | Keep `127.0.0.1`; other addresses only with `allow_remote: true` |
 | `mail.send_enabled` | Let Orbwise write and send mails (always through the editable confirmation card) |
-| `vision.model` | Vision model for screen and images, e.g. `qwen2.5vl:7b` (`ollama pull` it once) |
 | `telegram.token`, `telegram.chat_id` | Telegram bot, see [Telegram](#telegram-phone) |
 | `coding.*` | Coding mode: undo snapshots, subagent steps, background jobs, project instructions (`AGENTS.md`) – see [Coding mode](#coding-mode) |
 | `sandbox.*` | Container engine (`auto`/`podman`/`docker`), image, memory, CPUs, network default, idle stop |

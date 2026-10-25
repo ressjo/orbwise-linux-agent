@@ -168,13 +168,8 @@ telegram:                  # optional: chat from the phone, reminders on the pho
   chat_id: 0               # the bot tells you this after "/start"; only this chat is served
   # inbox_dir: ~/Downloads/Orbwise-Telegram   # files/photos you send the bot are saved here
 
-vision:                    # understand the screen and images ("what's that error message?") – runs locally
+vision:                    # screen and image questions – answered by the loaded model if it can see images (mmproj)
   enabled: true
-  model: qwen2.5vl:7b      # once: ollama pull qwen2.5vl:7b · little VRAM: qwen2.5vl:3b or gemma3:4b
-  # backend: ollama        # ollama | openai (OpenAI-compatible server with image support)
-  # base_url: ""           # empty = the Ollama address from the llm block
-  # api_key: ""            # only for an openai server with --api-key
-  # keep_alive: 2m         # unload the vision model again after this long
   # timeout: 180
   # screenshot_command: "" # empty = automatic (spectacle, gnome-screenshot, grim, maim, …); {file} = target file
 

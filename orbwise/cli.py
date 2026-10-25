@@ -337,13 +337,9 @@ def cmd_doctor(args) -> None:
         line(bool(cfg.telegram.chat_id), "Telegram chat_id",
              T("Orbwise starten, dem Bot „/start“ schreiben und telegram.chat_id eintragen",
                "start Orbwise, send the bot “/start” and set telegram.chat_id"))
-    if cfg.vision.enabled:
+    if cfg.vision.enabled:  # Bildschirmfragen beantwortet das geladene Modell (wenn es Bilder sieht)
         from .tools.vision import vision_status
-        vs = asyncio.run(vision_status(cfg))
-        if vs["available"] is not None:
-            line(vs["available"], T(f"Vision-Modell {cfg.vision.model} (Bildschirm verstehen)",
-                                    f"Vision model {cfg.vision.model} (understand the screen)"),
-                 f"ollama pull {cfg.vision.model}")
+        vs = vision_status(cfg)
         line(bool(vs["screenshot"]), T("Screenshot-Programm", "Screenshot program") +
              (f": {vs['screenshot'][0]}" if vs["screenshot"] else ""),
              T("z. B. spectacle (KDE), gnome-screenshot (GNOME), grim (Sway/Hyprland) oder maim (X11) installieren",

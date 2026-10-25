@@ -49,6 +49,7 @@ from .tools.registry import (
     tool_schemas,
 )
 from .tools.system import _os_name
+from .tools.vision import VISION_TOOLS
 
 log = logging.getLogger(__name__)
 
@@ -151,6 +152,7 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         self.auto_mode = "read"
         self.last_context: dict | None = None  # letzter Prompt-Aufbau (für die Kontext-Anzeige)
         self._vision = False  # sieht das aktive Modell angehängte Bilder selbst? (siehe _check_vision)
+        self._textonly_schemas: tuple[list[dict], int] | None = None
         self.tools = load_all_tools()
         self.groups_of = {name: spec.group for name, spec in self.tools.items()}
         # die Coding-Werkzeuge (Gruppe „code“, nach OpenCode) gibt es nur im Coding-Modus
@@ -183,12 +185,19 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         return str(path) if path and path.is_dir() else None
 
     def tool_allowed(self, name: str) -> bool:
+        if name in VISION_TOOLS and not self._vision:  # Bildschirm/Bilder nur, wenn das Modell Bilder sieht
+            return False
         group = self.groups_of.get(name, "")
         return group in CODING_GROUPS if self.mode == "coding" else group not in CODING_ONLY
 
     def _mode_schemas(self) -> tuple[list[dict], int]:
         if self.mode != "coding":
-            return self.all_schemas, self.all_schema_tokens
+            if self._vision:
+                return self.all_schemas, self.all_schema_tokens
+            if self._textonly_schemas is None:  # Modell ohne Bilder: Bildschirm-/Bild-Werkzeuge nicht anbieten
+                schemas = [s for s in self.all_schemas if s["function"]["name"] not in VISION_TOOLS]
+                self._textonly_schemas = (schemas, est_tokens(json.dumps(schemas, ensure_ascii=False)))
+            return self._textonly_schemas
         if self._coding_schemas is None:
             schemas = [s for s in tool_schemas(self.cfg) if self.tool_allowed(s["function"]["name"])]
             self._coding_schemas = (schemas, est_tokens(json.dumps(schemas, ensure_ascii=False)))
@@ -695,11 +704,6 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         phase = {"phase": "prompt", "tokens": tokens, "new": max(new, 0)}
         if self._prefill_tps.get(key):
             phase["eta_s"] = round(phase["new"] / self._prefill_tps[key], 1)
-        hist = self.memory.conversation.history
-        backend = getattr(getattr(self.llm, "profile", None), "backend", "")
-        if (backend == "ollama" and self.cfg.vision.backend == "ollama" and hist and hist[-1].get("role") == "tool"
-                and hist[-1].get("tool_name") in ("look_at_screen", "look_at_image")):
-            phase["phase"] = "loading"  # Ollama hat fürs Bild das Vision-Modell geladen – jetzt zurück
         return phase
 
     async def _step(self, emit: Emit, msg_id: str, final: bool = False) -> tuple[str, list]:
