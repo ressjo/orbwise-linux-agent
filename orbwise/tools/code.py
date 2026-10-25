@@ -707,9 +707,24 @@ def _shot_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
 
 def _browser_argv(binary: str, url: str, out: str, width: int, height: int, profile: str, root: bool) -> list[str]:
     # eigenes, leeres Profil – nie das des Nutzers; als root (Container) geht Chromium nur ohne eigene Sandbox
-    return [binary, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run",
+    # --disable-dev-shm-usage: in Containern ist /dev/shm oft nur 64 MB – sonst stürzt der Renderer ohne Bild ab
+    return [binary, "--headless=new", "--disable-gpu", "--disable-dev-shm-usage", "--hide-scrollbars", "--no-first-run",
             f"--user-data-dir={profile}", f"--window-size={width},{height}", "--virtual-time-budget=4000",
             f"--screenshot={out}", *(["--no-sandbox"] if root else []), url]
+
+
+def _no_server(url: str) -> str:
+    return (f"Unter {url} antwortet nichts – erst den Server starten (shell mit background=true, z. B. "
+            "python -m http.server 8000), oder für eine einzelne HTML-Datei einfach den Dateipfad angeben.")
+
+
+def _shot_error(url: str, log: str) -> str:
+    """Chromiums eigener Grund (letzte Fehlerzeilen) statt eines geratenen – plus der häufigste Fall."""
+    lines = [ln.strip() for ln in log.splitlines() if ln.strip() and ("ERROR" in ln or "error" in ln.lower())]
+    why = " | ".join(lines[-3:])[-500:] or log.strip()[-300:]
+    hint = (f" Läuft unter {url} wirklich ein Server (z. B. mit shell background=true gestartet)?"
+            if url.startswith("http") else f" Gibt es die Datei {url.removeprefix('file://')}?")
+    return "Chromium hat kein Bild geliefert." + hint + (f" Chromium meldet: {why}" if why else "")
 
 
 async def _shot_bytes(ctx: ToolContext, url: str, width: int, height: int) -> bytes:
@@ -723,8 +738,11 @@ async def _shot_bytes(ctx: ToolContext, url: str, width: int, height: int) -> by
                              width, height, "/tmp/orbwise-shot-profile", True)
         cmd = ("command -v chromium >/dev/null || command -v chromium-browser >/dev/null || "
                "{ echo NOBROWSER >&2; exit 3; }; rm -f /tmp/orbwise-shot.png; "
+               + (f"curl -s -o /dev/null --max-time 5 {shlex.quote(url)} || {{ echo NOSERVER >&2; exit 5; }}; "
+                  if url.startswith("http") else "")
                + " ".join(a if a.startswith("$(") else shlex.quote(a) for a in argv)
-               + " >/dev/null 2>&1; cat /tmp/orbwise-shot.png")
+               + " >/tmp/orbwise-shot.log 2>&1; [ -s /tmp/orbwise-shot.png ] && cat /tmp/orbwise-shot.png || "
+               "{ tail -c 1500 /tmp/orbwise-shot.log >&2; exit 4; }")
         p = await asyncio.create_subprocess_exec(*sandbox.exec_argv(binary, ctx.sandbox["name"], ctx.sandbox["path"],
                                                                     cmd, 90),
                                                  stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
@@ -732,7 +750,18 @@ async def _shot_bytes(ctx: ToolContext, url: str, width: int, height: int) -> by
         if p.returncode == 3 or b"NOBROWSER" in err:
             raise RuntimeError("Im Container fehlt Chromium – Sandbox beenden und neu starten (das neue Image bringt "
                                "ihn mit) oder im Container `apt-get install -y chromium` ausführen.")
+        if p.returncode == 5 or b"NOSERVER" in err:
+            raise RuntimeError(_no_server(url))
+        if p.returncode or not out:
+            raise RuntimeError(_shot_error(url, err.decode(errors="replace")))
         return out
+    if url.startswith("http"):
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=5, verify=False) as client:
+                await client.get(url)
+        except httpx.HTTPError:
+            raise RuntimeError(_no_server(url)) from None
     binary = next((b for b in (shutil.which(n) for n in BROWSERS) if b), None)
     if not binary:
         raise RuntimeError("Kein Chromium/Chrome gefunden – z. B. `sudo apt install chromium` (oder die Sandbox "
@@ -742,13 +771,15 @@ async def _shot_bytes(ctx: ToolContext, url: str, width: int, height: int) -> by
         p = await asyncio.create_subprocess_exec(*_browser_argv(binary, url, out, width, height,
                                                                 os.path.join(tmp, "profile"),
                                                                 hasattr(os, "geteuid") and os.geteuid() == 0),
-                                                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+                                                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE)
         try:
-            await asyncio.wait_for(p.wait(), 90)
+            _, err = await asyncio.wait_for(p.communicate(), 90)
         except asyncio.TimeoutError:
             p.kill()
             raise RuntimeError("Chromium hat nicht rechtzeitig fertig gerendert (90 s).") from None
-        return Path(out).read_bytes() if os.path.isfile(out) else b""
+        if not os.path.isfile(out) or not os.path.getsize(out):
+            raise RuntimeError(_shot_error(url, err.decode(errors="replace")))
+        return Path(out).read_bytes()
 
 
 @tool("Screenshot einer Seite (Dev-Server auf localhost, HTML-Datei) – der Nutzer sieht ihn im Chat; mit Bildmodell "
@@ -769,7 +800,7 @@ async def code_screenshot(
     except (RuntimeError, OSError, ValueError) as e:
         return f"Screenshot fehlgeschlagen: {e}"
     if not name or not name.endswith(".png"):
-        return f"Screenshot fehlgeschlagen: Chromium hat kein Bild geliefert (läuft {target}?)."
+        return f"Screenshot fehlgeschlagen: Chromium hat kein Bild geliefert ({target})."
     if ctx.agent is not None:
         ctx.agent._shots = [*getattr(ctx.agent, "_shots", []), name]
     if ctx.emit:

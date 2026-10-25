@@ -245,6 +245,10 @@ All notable changes to this project are documented here. The format follows
   the open chat stays untouched.
 
 ### Fixed
+- `screenshot` reported only “no image”, so the model guessed a reason (e.g. TUN from an earlier Docker attempt):
+  it now checks first whether a server answers at the URL (otherwise: start it with `background=true`, or pass the
+  HTML file path), passes on Chromium's own error, and avoids the common renderer crash in containers
+  (`--disable-dev-shm-usage`); a refused connection no longer yields a screenshot of Chrome's error page.
 - Sandbox with Podman installed showed Docker's “failed to connect to the docker API”: when Podman is not usable its
   reason now comes first, with a fix for common causes (missing subuid ranges, timeout on first start, missing
   `XDG_RUNTIME_DIR` when run as a service – now set automatically); `podman info` may take up to 60 s, failures are

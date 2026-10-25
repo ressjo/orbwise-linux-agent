@@ -35,13 +35,15 @@ def test_screenshot_on_the_host_lands_in_the_chat(cfg, memory, tmp_path, monkeyp
     browser = fake_browser(tmp_path / "bin")
     monkeypatch.setattr(code.shutil, "which", lambda n: str(browser) if n == "chromium" else None)
     events = []
-    out = run(code.code_screenshot(ctx_for(cfg, memory, tmp_path, events), url="http://localhost:5173", width=390))
-    assert "Screenshot von http://localhost:5173 (390×800)" in out and "keine Beschreibung" in out
+    (tmp_path / "start.html").write_text("<h1>x</h1>")
+    out = run(code.code_screenshot(ctx_for(cfg, memory, tmp_path, events), url="start.html", width=390))
+    assert f"Screenshot von file://{tmp_path}/start.html (390×800)" in out and "keine Beschreibung" in out
     shot = next(e for e in events if e["type"] == "tool_images")
     assert attachments.path_of(cfg, shot["images"][0]) is not None
     args = (tmp_path / "bin" / "args.txt").read_text()
     assert "--headless=new" in args and "--user-data-dir=" in args
     assert ("--no-sandbox" in args) == (os.geteuid() == 0)  # als root startet Chromium nur ohne eigene Sandbox
+    assert "--disable-dev-shm-usage" in args
     (tmp_path / "index.html").write_text("<h1>x</h1>")
     run(code.code_screenshot(ctx_for(cfg, memory, tmp_path, events), url="index.html"))
     assert f"file://{tmp_path}/index.html" in (tmp_path / "bin" / "args.txt").read_text()
@@ -49,8 +51,20 @@ def test_screenshot_on_the_host_lands_in_the_chat(cfg, memory, tmp_path, monkeyp
 
 def test_screenshot_without_a_browser_explains(cfg, memory, tmp_path, monkeypatch):
     monkeypatch.setattr(code.shutil, "which", lambda n: None)
-    out = run(code.code_screenshot(ctx_for(cfg, memory, tmp_path, []), url="http://localhost:3000"))
+    (tmp_path / "a.html").write_text("x")
+    out = run(code.code_screenshot(ctx_for(cfg, memory, tmp_path, []), url="a.html"))
     assert out.startswith("Screenshot fehlgeschlagen") and "apt install chromium" in out
+
+
+def test_screenshot_says_when_no_server_answers(cfg, memory, tmp_path, monkeypatch):
+    browser = fake_browser(tmp_path / "bin")
+    monkeypatch.setattr(code.shutil, "which", lambda n: str(browser) if n == "chromium" else None)
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]  # frei – dort lauscht niemand
+    out = run(code.code_screenshot(ctx_for(cfg, memory, tmp_path, []), url=f"http://localhost:{port}"))
+    assert "antwortet nichts" in out and "background=true" in out and not (tmp_path / "bin" / "args.txt").exists()
 
 
 def test_screenshot_in_the_sandbox_runs_in_the_container(cfg, memory, tmp_path, monkeypatch):
@@ -66,7 +80,8 @@ def test_screenshot_in_the_sandbox_runs_in_the_container(cfg, memory, tmp_path, 
     monkeypatch.setattr(sandbox, "ensure_running", running)
     events = []
     sb = {"name": "orbwise-x", "path": str(tmp_path)}
-    out = run(code.code_screenshot(ctx_for(cfg, memory, tmp_path, events, sb), url="http://localhost:8000"))
+    (tmp_path / "seite.html").write_text("<p>x</p>")
+    out = run(code.code_screenshot(ctx_for(cfg, memory, tmp_path, events, sb), url="seite.html"))
     assert "wird dem Nutzer im Chat gezeigt" in out and any(e["type"] == "tool_images" for e in events)
     assert "--no-sandbox" in (bindir / "args.txt").read_text()  # im Container als root
 
