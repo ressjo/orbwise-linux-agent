@@ -30,6 +30,9 @@ SECRET_WORDS = ("secret", "credential", "passw", "keyring", ".kdbx", "private_ke
 SECRET_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".kdbx", ".keystore", ".jks", ".ovpn")
 SYSTEM_SECRETS = ("/etc/shadow", "/etc/gshadow", "/etc/sudoers", "/etc/ssh", "/etc/NetworkManager/system-connections",
                   "/etc/wpa_supplicant", "/proc/self/environ")
+# Für alle lesbar und ohne Passwörter (die stehen in /etc/shadow) – trotz „passw“ im Namen
+PUBLIC_FILES = {Path(p) for p in ("/etc/passwd", "/etc/passwd-", "/etc/group", "/etc/group-", "/etc/pam.d/passwd",
+                                  "/usr/bin/passwd")}
 
 
 def _extra_dirs() -> list[Path]:
@@ -61,6 +64,8 @@ def is_secret_path(path: str | os.PathLike) -> bool:
     except (OSError, RuntimeError):
         pass
     for c in candidates:
+        if c in PUBLIC_FILES:
+            continue
         name = c.name.lower()
         if name in SECRET_NAMES or name.endswith(SECRET_SUFFIXES) or name.startswith((".env.", "id_rsa", "id_ed25519")):
             return True

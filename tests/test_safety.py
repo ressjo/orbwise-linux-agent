@@ -188,3 +188,35 @@ def test_awk_that_can_change_things_asks(cmd):
 ])
 def test_secrets_are_still_recognised(cmd):
     assert "Zugangsdaten" in classify_command(cmd)[1]
+
+
+USER_PROCESS_CHECK = ('ps -eo user,pid,comm,args | grep -iE "xmrig|minerd|miner|kdevtmpfsi|kinsing|cobalt|ldlinux" | '
+                      'grep -v grep; echo "--- tmp/shm:"; ps -eo pid,args | grep -E "/tmp/|/dev/shm/" | grep -v grep; '
+                      'echo "--- unübliche Benutzer:"; ps -eo user | sort -u | grep -vE "joshua|root|ollama|systemd|'
+                      'polkit|nobody"; echo "--- fertig"')
+
+
+@pytest.mark.parametrize("cmd", [
+    USER_PROCESS_CHECK, "ps -eo user", "ps -U root -o user", "ps -C firefox -o pid,user", "ps -A -o user",
+    "ps ax -o user", "ps axo user,pid", "ps -e -o euser", "ps --user joshua -o pid",
+    "grep joshua /etc/passwd", "cut -d: -f1 /etc/passwd", "awk -F: '{print $1,$7}' /etc/passwd",
+])
+def test_process_and_user_checks_run_in_auto(cmd):
+    """Optionswerte (user, firefox) sind kein BSD-„e“; /etc/passwd enthält keine Passwörter."""
+    from orbwise.tools.safety import auto_shell_ok
+    assert auto_shell_ok(cmd) == (True, "")
+    assert classify_command(cmd)[0] == SAFE
+
+
+@pytest.mark.parametrize("cmd", ["ps eww", "ps auxe", "ps -eo user e", "cat /etc/shadow", "env | grep -i lang"])
+def test_environment_and_shadow_still_ask(cmd):
+    from orbwise.tools.safety import auto_shell_ok
+    assert not auto_shell_ok(cmd)[0]
+
+
+def test_public_system_files_are_not_secret(tmp_path):
+    from orbwise.tools.secretpaths import is_secret_path
+    assert not is_secret_path("/etc/passwd") and not is_secret_path("/etc/group")
+    assert is_secret_path("/etc/shadow") and is_secret_path(tmp_path / "passwords.txt")
+    (tmp_path / "passwd").symlink_to("/etc/shadow")
+    assert is_secret_path(tmp_path / "passwd")

@@ -407,14 +407,38 @@ def _operands(name: str, args: list[str], programs: bool = False) -> list[str]:
     return free[:1] if programs else free[1:]
 
 
+# ps-Optionen mit Wert (ps -eo user, ps -C firefox, ps axo user): der Wert ist kein BSD-Schalter
+_PS_LONG_VALUE = {"--format", "--pid", "--ppid", "--user", "--User", "--group", "--Group", "--tty", "--sort", "--sid",
+                  "--cols", "--rows", "--columns", "--width", "--quick-pid"}
+_PS_SHORT_VALUE = set("oOpqugUGtCsk")
+_PS_BSD_VALUE = set("oOpUtk")
+
+
+def _ps_shows_env(args: list[str]) -> bool:
+    """BSD-Modifikator „e“ (ps eww, ps auxe) gibt die Umgebung jedes Prozesses aus – Optionswerte zählen nicht."""
+    skip = False
+    for a in args:
+        if skip:
+            skip = False
+        elif a.startswith("--"):
+            skip = a in _PS_LONG_VALUE
+        elif a.startswith("-"):
+            skip = len(a) > 1 and a[-1] in _PS_SHORT_VALUE
+        elif a.isalpha():
+            if "e" in a:
+                return True
+            skip = a[-1] in _PS_BSD_VALUE
+    return False
+
+
 def _prints_secrets(name: str, args: list[str], cwd: str) -> bool:
     if name == "printenv":
         return True
     if name == "nmcli":  # -s / --show-secrets zeigt WLAN- und VPN-Passwörter
         return any(a == "--show-secrets" or (a.startswith("-") and not a.startswith("--") and "s" in a)
                    for a in args)
-    if name == "ps":  # BSD-Modifikator „e“ (ps eww, ps auxe) gibt die Umgebung jedes Prozesses aus
-        return any(a.isalpha() and "e" in a for a in args if not a.startswith("-"))
+    if name == "ps":
+        return _ps_shows_env(args)
     if name == "systemctl":  # Units und Manager-Umgebung können Environment=…TOKEN enthalten
         sub = next((a for a in args if not a.startswith("-")), "")
         return sub in ("cat", "show-environment") or (sub == "show" and not any(
