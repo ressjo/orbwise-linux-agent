@@ -25,8 +25,10 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-DEFAULT_IMAGE = "orbwise-sandbox:2"
+DEFAULT_IMAGE = "orbwise-sandbox:3"
 CONTAINERFILE = Path(__file__).parent / "sandbox_image" / "Containerfile"
+# „Docker im Container“: nur falls das Standardprofil verschachtelte User-Namespaces verhindert (siehe containers_test)
+SECCOMP_NESTED = Path(__file__).parent / "sandbox_image" / "seccomp-nested.json"
 CAPS = ("CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID", "KILL")
 _engine_cache: dict[str, tuple[float, str | None, str]] = {}
 last_used: dict[str, float] = {}
@@ -114,7 +116,7 @@ def image_ready(binary: str, name: str) -> bool:
 
 
 async def build_image(binary: str, progress: Callable[[str], Awaitable[None]] | None = None) -> None:
-    """orbwise-sandbox:2 aus sandbox_image/Containerfile bauen (einmalig, einige Minuten)."""
+    """orbwise-sandbox:3 aus sandbox_image/Containerfile bauen (einmalig, einige Minuten)."""
     proc = await asyncio.create_subprocess_exec(
         binary, "build", "-t", DEFAULT_IMAGE, "-f", str(CONTAINERFILE), str(CONTAINERFILE.parent),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
@@ -137,7 +139,24 @@ def container_name(chat_id: str) -> str:
     return "orbwise-" + re.sub(r"[^a-zA-Z0-9_.-]", "", chat_id)[:40]
 
 
-def run_argv(binary: str, cfg: Any, name: str, ws: str, network: bool, img: str) -> list[str]:
+def containers_blocked(binary: str | None) -> str:
+    """Warum „Docker im Container“ nicht geht ("" = geht). Nur mit rootless Podman: dort gelten die zusätzlichen Rechte
+    nur im User-Namespace des Nutzers – mit Docker (Daemon als root) oder als root kämen sie echten Root-Rechten nahe."""
+    if not binary:
+        return "Keine Container-Engine."
+    if not is_podman(binary):
+        return "Nur mit rootless Podman – mit Docker als Engine nicht verfügbar."
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        return "Nur mit rootless Podman – Orbwise läuft als root."
+    return ""
+
+
+def containers_allowed(binary: str | None) -> bool:
+    return not containers_blocked(binary)
+
+
+def run_argv(binary: str, cfg: Any, name: str, ws: str, network: bool, img: str, containers: bool = False,
+             seccomp: bool = False) -> list[str]:
     sb = getattr(cfg, "sandbox", None)
     argv = [binary, "run", "-d", "--name", name, "--label", "orbwise=sandbox", "--hostname", "sandbox",
             "-v", f"{ws}:{ws}:Z", "-w", ws,
@@ -146,6 +165,13 @@ def run_argv(binary: str, cfg: Any, name: str, ws: str, network: bool, img: str)
     for cap in CAPS:
         argv += ["--cap-add", cap]
     argv += ["--security-opt", "no-new-privileges"]
+    if containers:  # verschachteltes rootless Podman (als builder) – kein --privileged, kein SYS_ADMIN
+        argv += ["--security-opt", "label=disable", "-e", "ORBWISE_CONTAINERS=1"]
+        # FUSE für den Image-Speicher, TUN für das Netz der inneren Container (slirp4netns, -p 8080:80 …) – beide
+        # wirken nur in Namespaces, die der Container selbst anlegt
+        argv += [x for dev in ("/dev/fuse", "/dev/net/tun") if os.path.exists(dev) for x in ("--device", dev)]
+        if seccomp:
+            argv += ["--security-opt", f"seccomp={SECCOMP_NESTED}"]
     if not network:
         argv += ["--network", "none"]
     if not is_podman(binary):
@@ -209,11 +235,32 @@ async def ensure_running(cfg: Any, sb: dict, progress: Callable[[str], Awaitable
                     if progress:
                         await progress("Baue das Sandbox-Image (einmalig, einige Minuten) …")
                     await build_image(binary, progress)
-            await asyncio.to_thread(_run, run_argv(binary, cfg, name, sb["path"], sb.get("network", True), img))
+            await asyncio.to_thread(_run, run_argv(binary, cfg, name, sb["path"], sb.get("network", True), img,
+                                                   bool(sb.get("containers")), bool(sb.get("containers_seccomp"))))
         else:
             await asyncio.to_thread(_run, [binary, "start", name])
     last_used[name] = time.monotonic()
     return binary
+
+
+_NEEDS_SECCOMP = re.compile(r"(unshare|clone|newuidmap|user namespace|userns)[^\n]*(operation not permitted|permission denied)",
+                            re.I)
+
+
+def needs_seccomp(message: str) -> bool:
+    return bool(_NEEDS_SECCOMP.search(message))
+
+
+async def containers_test(cfg: Any, sb: dict, progress: Callable[[str], Awaitable[None]] | None = None) -> dict:
+    """Läuft ein Container in der Sandbox? (docker run alpine – ein paar MB). {ok, message}"""
+    binary = await ensure_running(cfg, sb, progress)
+    proc = await asyncio.create_subprocess_exec(
+        *exec_argv(binary, sb["name"], sb["path"], "docker run --rm docker.io/library/alpine:3 true", 300),
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    out, _ = await proc.communicate()
+    if proc.returncode == 0:
+        return {"ok": True, "message": "Container laufen in der Sandbox."}
+    return {"ok": False, "message": out.decode(errors="replace").strip()[-600:] or f"Exit {proc.returncode}"}
 
 
 def stop(cfg: Any, name: str) -> None:

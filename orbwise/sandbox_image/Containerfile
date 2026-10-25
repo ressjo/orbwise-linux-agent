@@ -1,5 +1,5 @@
 # Orbwise-Sandbox für den Coding-Modus: ein schlankes Debian mit dem, was man zum Bauen und Testen meist braucht.
-# Wird beim ersten Einschalten der Sandbox gebaut (orbwise-sandbox:2). Eigenes Image: sandbox.image in der Config.
+# Wird beim ersten Einschalten der Sandbox gebaut (orbwise-sandbox:3). Eigenes Image: sandbox.image in der Config.
 FROM docker.io/library/debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8 PIP_BREAK_SYSTEM_PACKAGES=1
@@ -10,7 +10,18 @@ RUN apt-get update \
       python3 python3-pip python3-venv python-is-python3 \
       nodejs npm \
       chromium fonts-dejavu-core \
+      podman podman-compose fuse-overlayfs uidmap slirp4netns catatonit \
  && rm -rf /var/lib/apt/lists/*
+
+# „Docker im Container“ (nur wenn der Nutzer es je Chat erlaubt): docker/podman laufen als builder – rootless, in
+# einem eigenen User-Namespace, mit dem Netz der Sandbox
+RUN useradd -m -u 1000 -s /bin/bash builder \
+ && echo "builder:1001:64535" > /etc/subuid && echo "builder:1001:64535" > /etc/subgid \
+ && mkdir -p /home/builder/.config/containers
+COPY containers.conf storage.conf /home/builder/.config/containers/
+COPY container-shim /usr/local/bin/docker
+RUN chmod 755 /usr/local/bin/docker && ln -s docker /usr/local/bin/podman \
+ && chown -R builder:builder /home/builder/.config
 
 WORKDIR /workspace
 CMD ["sleep", "infinity"]

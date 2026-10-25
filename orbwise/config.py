@@ -450,7 +450,7 @@ class CodingConfig(BaseModel):
 class SandboxConfig(BaseModel):
     # Coding-Sandbox: Befehle laufen in einem Container (Podman bevorzugt, sonst Docker) auf einer Arbeitskopie
     engine: str = "auto"            # auto | podman | docker
-    image: str = ""                 # leer = orbwise-sandbox:2 (wird beim ersten Einschalten gebaut)
+    image: str = ""                 # leer = orbwise-sandbox:3 (wird beim ersten Einschalten gebaut)
     memory: str = "4g"
     cpus: float = 2.0
     network: bool = True            # Standard für neue Sandboxen (je Chat umschaltbar)

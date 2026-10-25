@@ -39,7 +39,7 @@ class CodingMixin:
         if sb:
             text += " " + prompts.sandbox_note(self.cfg, engine=sb.get("engine") or "podman", image=sb.get("image", ""),
                                                network=sb.get("network", True), project=sb.get("project", ""),
-                                               branch=sb.get("branch") or "-")
+                                               branch=sb.get("branch") or "-", containers=bool(sb.get("containers")))
         elif project and self.tool_allowed("github_push") and self.tools["github_push"].is_enabled(self.cfg):
             text += " " + prompts.github_note(self.cfg)
         return text
@@ -122,6 +122,40 @@ class CodingMixin:
         sb["network"] = on
         self.memory.conversation.save()
         await asyncio.to_thread(sbx.remove, self.cfg, sb["name"])
+        return sb
+
+    async def sandbox_containers(self, on: bool, progress=None) -> dict | None:
+        """„Docker im Container“ an/aus (nur rootless Podman): Container mit den nötigen Rechten neu anlegen, danach
+        ein kurzer Selbsttest. Verhindert das Standard-seccomp-Profil verschachtelte Container, einmal mit dem eigenen."""
+        sb = self.sandbox_state()
+        if not sb:
+            return None
+        blocked = sbx.containers_blocked((await asyncio.to_thread(sbx.engine, self.cfg))[0]) if on else ""
+        if blocked:
+            raise sbx.SandboxError(f"Docker im Container: {blocked} Die nötigen Rechte wären sonst zu weitreichend.")
+        conv = self.memory.conversation
+        if on or sb.get("containers"):  # an: immer frisch anlegen und testen
+            sb["containers"] = on
+            sb.pop("containers_seccomp", None)
+            sb.pop("containers_test", None)
+            if str(sb.get("image", "")).startswith("orbwise-sandbox:"):
+                sb["image"] = sbx.image(self.cfg)  # ältere Sandboxen: neues Image mit Podman
+            conv.save()
+            await asyncio.to_thread(sbx.remove, self.cfg, sb["name"])
+        if on and not sb.get("network", True):
+            sb["containers_test"] = {"ok": None, "message": "Netz ist aus – Images lassen sich nicht laden. Netz "
+                                                            "einschalten, dann klappt docker pull/build."}
+        elif on:
+            if progress:
+                await progress("Teste Docker im Container …")
+            res = await sbx.containers_test(self.cfg, sb, progress)
+            if not res["ok"] and sbx.needs_seccomp(res["message"]):
+                sb["containers_seccomp"] = True
+                conv.save()
+                await asyncio.to_thread(sbx.remove, self.cfg, sb["name"])
+                res = await sbx.containers_test(self.cfg, sb, progress)
+            sb["containers_test"] = res
+        conv.save()
         return sb
 
     def project_instructions(self) -> str:

@@ -107,6 +107,11 @@ All notable changes to this project are documented here. The format follows
   only actions that change or start something do; the data-leak guard still checks what goes out.
 
 ### Added
+- **Docker in the sandbox (opt-in per chat, rootless Podman only):** build and run Docker projects inside the
+  sandbox – nested rootless Podman as an unprivileged user behind `docker`/`docker compose`, with only `/dev/fuse` and
+  `/dev/net/tun` added (no `--privileged`, no `CAP_SYS_ADMIN`, `no-new-privileges` kept); a self-test runs on
+  switching it on and falls back to a bundled seccomp profile only if needed. Published ports work with `screenshot`.
+  Image `orbwise-sandbox:3`; older sandboxes switch to it when Docker is turned on.
 - **Screenshots in coding mode:** new tool `screenshot` renders a page (dev server on localhost, HTML file) with
   headless Chromium – inside the sandbox container (image `orbwise-sandbox:2` now ships Chromium) or with the
   browser on the machine – and shows it under the answer, also after reloading; models that see images get a

@@ -1186,10 +1186,13 @@ def create_app(cfg: Config) -> FastAPI:
         from . import workspace
         sb = agent.sandbox_state()
         out = {"enabled": bool(sb), **sbx.status(cfg, sb)}
+        out["containers_blocked"] = sbx.containers_blocked(sbx.engine(cfg)[0])
+        out["containers_allowed"] = not out["containers_blocked"]
         if sb:
             out.update(network=sb.get("network", True), path=sb["path"], project=sb.get("project", ""),
                        branch=workspace.head_label(sb["path"]) or sb.get("branch", ""),
-                       changes=len(workspace.changes(sb)))
+                       changes=len(workspace.changes(sb)), containers=bool(sb.get("containers")),
+                       containers_test=sb.get("containers_test"))
             from . import github
             out["github"] = github.repo_of(github.sandbox_origin(sb))
             if sb.get("network", True) and cfg.host not in ("127.0.0.1", "localhost", "::1"):
@@ -1251,7 +1254,8 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.post("/api/sandbox")
     async def sandbox_set(request: Request):
-        """{enabled}: ein-/ausschalten (aus = Container und Arbeitskopie weg); {network}: Netz an/aus."""
+        """{enabled}: ein-/ausschalten (aus = Container und Arbeitskopie weg); {network}: Netz an/aus;
+        {containers}: Docker im Container an/aus (nur rootless Podman, mit Selbsttest)."""
         from . import sandbox as sbx
         from . import workspace
         coding_chat()
@@ -1265,6 +1269,8 @@ def create_app(cfg: Config) -> FastAPI:
                     await agent.sandbox_disable()
             if "network" in data:
                 await agent.sandbox_network(bool(data["network"]))
+            if "containers" in data:
+                await agent.sandbox_containers(bool(data["containers"]), sandbox_progress)
         except (sbx.SandboxError, workspace.WorkspaceError, OSError) as e:
             raise HTTPException(400, str(e)) from e
         await chat_switched()

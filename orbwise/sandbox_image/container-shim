@@ -1,0 +1,20 @@
+#!/bin/sh
+# docker/podman in der Orbwise-Sandbox: läuft als Benutzer builder (rootless, eigener User-Namespace) – nie als root.
+# Netz der inneren Container über slirp4netns (/dev/net/tun): docker run -p 8080:80 … → http://localhost:8080
+if [ -z "$ORBWISE_CONTAINERS" ]; then
+  echo "Container in der Sandbox sind aus – der Nutzer kann sie im Sandbox-Menü erlauben („Docker im Container“)." >&2
+  exit 125
+fi
+if [ "$1" = compose ]; then
+  shift
+  set -- podman-compose "$@"
+else
+  [ "$1" = buildx ] && { shift; [ "$1" = build ] && shift; set -- build "$@"; }
+  set -- /usr/bin/podman "$@"
+fi
+[ -c /dev/fuse ] || export STORAGE_DRIVER=vfs
+if [ "$(id -u)" != 0 ]; then exec "$@"; fi
+run=/tmp/builder-run
+mkdir -p "$run" && chown builder:builder "$run" && chmod 700 "$run"
+exec setpriv --reuid=builder --regid=builder --init-groups \
+  env HOME=/home/builder USER=builder XDG_RUNTIME_DIR="$run" PATH="/usr/local/bin:/usr/bin:/bin" "$@"

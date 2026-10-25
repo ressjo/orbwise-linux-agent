@@ -1,0 +1,58 @@
+{
+ "defaultAction": "SCMP_ACT_ALLOW",
+ "architectures": [
+  "SCMP_ARCH_X86_64",
+  "SCMP_ARCH_X86",
+  "SCMP_ARCH_AARCH64",
+  "SCMP_ARCH_ARM"
+ ],
+ "syscalls": [
+  {
+   "names": [
+    "kexec_load",
+    "kexec_file_load",
+    "init_module",
+    "finit_module",
+    "delete_module",
+    "reboot",
+    "swapon",
+    "swapoff",
+    "bpf",
+    "perf_event_open",
+    "keyctl",
+    "add_key",
+    "request_key",
+    "open_by_handle_at",
+    "name_to_handle_at",
+    "iopl",
+    "ioperm",
+    "acct",
+    "settimeofday",
+    "clock_settime",
+    "clock_adjtime",
+    "adjtimex",
+    "userfaultfd",
+    "lookup_dcookie",
+    "quotactl",
+    "nfsservctl",
+    "uselib",
+    "vm86",
+    "vm86old",
+    "syslog",
+    "create_module",
+    "get_kernel_syms",
+    "query_module",
+    "kcmp",
+    "process_vm_readv",
+    "process_vm_writev",
+    "fanotify_init",
+    "mbind",
+    "migrate_pages",
+    "move_pages",
+    "set_mempolicy"
+   ],
+   "action": "SCMP_ACT_ERRNO",
+   "errnoRet": 1
+  }
+ ]
+}

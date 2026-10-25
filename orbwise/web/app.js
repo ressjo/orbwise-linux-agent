@@ -5184,6 +5184,7 @@
     const container = { running: L("läuft", "running"), exited: L("angehalten", "stopped"), missing: L("startet beim ersten Befehl", "starts with the first command") }[st.container] || st.container || "";
     sandboxMenu.innerHTML = `<div class="sb-status"><b></b><small></small></div>
       <button type="button" data-sb="network"><b></b><small></small></button>
+      <button type="button" data-sb="containers"><b></b><small></small></button>
       <button type="button" data-sb="changes"><b></b><small></small></button>
       <button type="button" data-sb="apply"><b>${L("In Projekt übernehmen", "Apply to project")}</b><small>${L("Geänderte Dateien in deinen Projektordner kopieren.", "Copy changed files into your project folder.")}</small></button>
       ${st.github ? `<button type="button" data-sb="push"><b>${L("Zu GitHub pushen", "Push to GitHub")}</b><small></small></button>` : ""}
@@ -5195,12 +5196,32 @@
     net.querySelector("small").textContent = st.network ? L("Zum Abschalten klicken (Container startet neu).", "Click to switch off (container restarts).")
       : L("Kein Internet im Container – zum Einschalten klicken.", "No internet in the container – click to switch on.");
     if (st.warning) net.querySelector("small").textContent += " ⚠ " + st.warning;
+    const cont = sandboxMenu.querySelector('[data-sb="containers"]');
+    const test = st.containers_test;
+    cont.querySelector("b").textContent = st.containers ? L("Docker im Container: an", "Docker in the container: on")
+      : L("Docker im Container: aus", "Docker in the container: off");
+    cont.querySelector("small").textContent = !st.containers_allowed && !st.containers
+      ? st.containers_blocked
+      : st.containers ? (test && test.ok === false ? "⚠ " + test.message : (test && test.message) || L("Docker-Projekte bauen und testen.", "Build and test Docker projects."))
+      : L("Erlaubt docker build/run in der Sandbox (rootless).", "Allows docker build/run in the sandbox (rootless).");
+    cont.disabled = !st.containers_allowed && !st.containers;
     const ch = sandboxMenu.querySelector('[data-sb="changes"]');
     ch.querySelector("b").textContent = L(`Änderungen ansehen (${st.changes})`, `View changes (${st.changes})`);
     ch.querySelector("small").textContent = L("Was sich in der Arbeitskopie geändert hat, mit Diff.", "What changed in the working copy, with diffs.");
     const push = sandboxMenu.querySelector('[data-sb="push"]');
     if (push) push.querySelector("small").textContent = L(`Branch ${st.branch} nach github.com/${st.github}`, `Branch ${st.branch} to github.com/${st.github}`);
     net.onclick = () => { sandboxMenu.classList.add("hidden"); api("POST", "/api/sandbox", { network: !st.network }).catch(() => {}); };
+    cont.onclick = async () => {
+      sandboxMenu.classList.add("hidden");
+      if (!st.containers && !await ask(L("Docker im Container erlauben? Der Agent kann dann Images bauen und Container starten – rootless als eigener Benutzer im Container, ohne Root-Rechte und ohne Zugriff auf deinen Rechner. Dafür bekommt die Sandbox FUSE und User-Namespaces, das vergrößert die Angriffsfläche zum Kernel etwas. Der Container startet neu (die Arbeitskopie bleibt), danach ein kurzer Test.",
+                                        "Allow Docker in the container? The agent can then build images and start containers – rootless as its own user inside the container, without root and without access to your machine. The sandbox gets FUSE and user namespaces for that, which slightly enlarges the attack surface towards the kernel. The container restarts (the working copy stays), then a short test runs."))) return;
+      toast(st.containers ? L("Docker im Container wird abgeschaltet …", "Switching Docker in the container off …") : L("Docker im Container wird eingerichtet und getestet …", "Setting up and testing Docker in the container …"));
+      try {
+        const r = await api("POST", "/api/sandbox", { containers: !st.containers });
+        const t = r.containers_test;
+        if (r.containers) toast(t && t.ok ? L("Docker im Container funktioniert.", "Docker in the container works.") : "⚠ " + ((t && t.message) || "?"));
+      } catch {}
+    };
     ch.onclick = () => { sandboxMenu.classList.add("hidden"); openSandboxChanges(); };
     sandboxMenu.querySelector('[data-sb="apply"]').onclick = () => { sandboxMenu.classList.add("hidden"); applySandbox(); };
     if (push) push.onclick = () => { sandboxMenu.classList.add("hidden"); pushGithub(); };

@@ -463,9 +463,21 @@ GITHUB_NOTE = {
 }
 
 
-def sandbox_note(cfg, network: bool, **values) -> str:
+SANDBOX_CONTAINERS = {
+    "de": {True: " Docker/Podman: verfügbar (rootless) – nach docker run -p 8080:80 … ist die App in der Sandbox "
+                 "unter http://localhost:8080 erreichbar (screenshot).",
+           False: " Docker/Podman gibt es in der Sandbox nicht – der Nutzer kann es im Sandbox-Menü erlauben "
+                  "(„Docker im Container“)."},
+    "en": {True: " Docker/Podman: available (rootless) – after docker run -p 8080:80 … the app is at "
+                 "http://localhost:8080 inside the sandbox (screenshot).",
+           False: " No Docker/Podman in the sandbox – the user can allow it in the sandbox menu (“Docker in the "
+                  "container”)."},
+}
+
+
+def sandbox_note(cfg, network: bool, containers: bool = False, **values) -> str:
     on = ("an" if network else "aus") if lang_of(cfg) == "de" else ("on" if network else "off")
-    return SANDBOX_NOTE[lang_of(cfg)].format(network=on, **values)
+    return SANDBOX_NOTE[lang_of(cfg)].format(network=on, **values) + SANDBOX_CONTAINERS[lang_of(cfg)][containers]
 
 
 def github_note(cfg) -> str:

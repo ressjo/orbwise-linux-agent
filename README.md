@@ -896,6 +896,14 @@ writing outside the copy, and pushing to GitHub; the leak guard keeps watching w
   **End sandbox** deletes container and copy.
 - No credentials go into the container (no token, no `~/.ssh`, no Docker socket); memory, CPU and processes are
   limited; the container stops after 30 minutes without commands and starts again with the next one.
+- **Docker in the container** (sandbox menu, per chat, off by default – rootless Podman only): the agent may run
+  `docker build`, `docker run -p 8080:80 …` (Podman behind a `docker` command) and `docker compose` (podman-compose)
+  inside the sandbox – as an unprivileged user with its own user namespace, no `--privileged`, no `CAP_SYS_ADMIN`,
+  `no-new-privileges` stays. The sandbox only gets `/dev/fuse` (image storage) and `/dev/net/tun` (network of the
+  inner containers); a short self-test runs when you switch it on, and only if the default seccomp profile blocks
+  nested containers, a bundled profile (default allow, dangerous calls such as module loading, kexec, bpf, keyctl
+  blocked) is used. Published ports are reachable inside the sandbox, so `screenshot http://localhost:8080` works.
+  Trade-off: a slightly larger attack surface towards the kernel – still limited to your user.
 - **Screenshots:** the agent can take a screenshot of the app it is building (`screenshot`, e.g. of the dev
   server on `localhost` or an HTML file) with headless Chromium – in the sandbox inside the container, otherwise with
   the Chromium/Chrome on your machine. The image appears under the answer; if the loaded model sees images, it also
@@ -907,7 +915,7 @@ writing outside the copy, and pushing to GitHub; the leak guard keeps watching w
   on, the container reaches the internet and your LAN (not services on your machine's `127.0.0.1`, such as Orbwise
   itself – `orbwise doctor` warns if Orbwise listens on another address). Prefer rootless Podman over Docker: a
   kernel exploit – which no container fully rules out – then only gets your own user.
-- The default image `orbwise-sandbox:2` (Debian with git, Python, Node, build tools, ripgrep, Chromium for screenshots) is built on first use;
+- The default image `orbwise-sandbox:3` (Debian with git, Python, Node, build tools, ripgrep, Chromium for screenshots, Podman) is built on first use;
   `sandbox.image` takes any other image (e.g. `python:3.12`). Install Podman with `sudo apt install podman`.
   If Podman is installed but not usable, the error says why (e.g. missing `subuid` ranges, with the fix) instead of
   Docker's “cannot connect to the Docker daemon”. On btrfs Podman may need `fuse-overlayfs` (`mount_program` in

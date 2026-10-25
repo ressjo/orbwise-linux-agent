@@ -503,3 +503,47 @@ def test_branches_list_the_default_first(cfg):
             return httpx.Response(200, json=[{"name": "dev"}, {"name": "main"}, {"name": "alt"}])
         return httpx.Response(404)
     assert run(github.branches(cfg, "jo/app", httpx.MockTransport(handler))) == ["main", "alt", "dev"]
+
+
+# ---------------------------------------------------------------- Docker im Container (verschachteltes rootless Podman)
+def test_containers_add_only_minimal_rights(cfg):
+    plain = sandbox.run_argv("/usr/bin/podman", cfg, "orbwise-x", "/w", True, "img:3")
+    argv = sandbox.run_argv("/usr/bin/podman", cfg, "orbwise-x", "/w", True, "img:3", containers=True)
+    assert "ORBWISE_CONTAINERS=1" in argv and "label=disable" in argv and "ORBWISE_CONTAINERS=1" not in plain
+    assert "--privileged" not in argv and "SYS_ADMIN" not in argv and "no-new-privileges" in argv
+    assert "/dev/net/tun" not in " ".join(plain) and not any(a.startswith("seccomp=") for a in argv)
+    tight = sandbox.run_argv("/usr/bin/podman", cfg, "orbwise-x", "/w", True, "img:3", containers=True, seccomp=True)
+    assert f"seccomp={sandbox.SECCOMP_NESTED}" in tight and sandbox.SECCOMP_NESTED.is_file()
+    assert sandbox.containers_allowed("/usr/bin/podman") == (os.geteuid() != 0)
+    assert not sandbox.containers_allowed("/usr/bin/docker") and not sandbox.containers_allowed(None)
+
+
+@git_missing
+def test_containers_switch_tests_and_retries_with_the_own_profile(cfg, llm, memory, repo, fake_engine, monkeypatch):
+    agent = Agent(cfg, llm, memory)
+    memory.switch_mode("coding")
+    memory.set_project(str(repo))
+    sb = run(agent.sandbox_enable())
+    monkeypatch.setattr(sandbox, "containers_blocked", lambda b: "")
+    results = [{"ok": False, "message": "cannot clone: Operation not permitted\nError: cannot re-exec process"},
+               {"ok": True, "message": "Container laufen in der Sandbox."}]
+    seen = []
+
+    async def fake_test(c, s, progress=None):
+        seen.append(bool(s.get("containers_seccomp")))
+        return results.pop(0)
+    monkeypatch.setattr(sandbox, "containers_test", fake_test)
+    out = run(agent.sandbox_containers(True))
+    assert out["containers"] and out["containers_seccomp"] and out["containers_test"]["ok"] and seen == [False, True]
+    assert "Docker/Podman: verfügbar" in agent.coding_env()
+    run(agent.sandbox_containers(False))
+    assert not sb["containers"] and "Sandbox-Menü erlauben" in agent.coding_env()
+    monkeypatch.setattr(sandbox, "containers_blocked", lambda b: "Nur mit rootless Podman – mit Docker als Engine.")
+    with pytest.raises(sandbox.SandboxError, match="rootless Podman"):
+        run(agent.sandbox_containers(True))
+
+
+def test_container_shim_refuses_when_switched_off(tmp_path):
+    shim = Path(sandbox.__file__).parent / "sandbox_image" / "container-shim"
+    r = subprocess.run(["sh", str(shim), "build", "."], capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"})
+    assert r.returncode == 125 and "Sandbox-Menü" in r.stderr
