@@ -15,6 +15,17 @@ def _own_cache_dir(tmp_path: Path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _own_keystore(tmp_path: Path, monkeypatch):
+    """Zugangsdaten nie in den echten Schlüsselbund des Entwicklers – Tests nutzen eine Datei im Test-Ordner."""
+    from orbwise import keystore
+    monkeypatch.setenv("ORBWISE_SECRETS", "file")
+    monkeypatch.setenv("ORBWISE_SECRETS_FILE", str(tmp_path / "secrets.json"))
+    keystore.reset()
+    yield
+    keystore.reset()
+
+
+@pytest.fixture(autouse=True)
 def _not_root(monkeypatch):
     """Tests laufen wie bei einem normalen Benutzer – auch wenn der Testrechner (Container) root ist."""
     from orbwise import agent_safety

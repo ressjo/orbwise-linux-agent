@@ -1,7 +1,9 @@
 # Orbwise configuration – copy to ~/.config/orbwise/config.yaml (or run: orbwise init-config)
 # Every value is optional; anything not set uses the built-in default. Commented lines (# key: value) show the
-# default – remove the "#" to change them. Passwords and tokens stay empty here: enter your own, or use the
-# environment variables named next to them (ORBWISE_…), which keeps secrets out of this file.
+# default – remove the "#" to change them.
+# Integrations (mail, Paperless, Portainer …) are easiest to set up under Settings → Skills or with
+# `orbwise skills setup`: passwords and tokens then go to your keyring instead of this file. Keep the token/password
+# lines below empty – if you do write one here, Orbwise moves it to the keyring on the next start.
 
 language: de             # de (Deutsch) | en (English) – assistant, speech recognition, voice and UI
 host: 127.0.0.1          # keep it local only – Orbwise can run commands on your machine!

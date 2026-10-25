@@ -31,8 +31,12 @@ Orbwise can run commands on your computer, so its safety model matters.
   Shell commands that print such files, the environment (`printenv`, `env`, `$…TOKEN`) or Wi-Fi passwords
   (`nmcli -s`) need confirmation. This keeps a prompt injection in a mail or web page from quietly exfiltrating
   credentials.
-- **Home network services** (Trilium, Paperless, Home Assistant) are contacted directly, never through a proxy;
-  tokens stay in your local config file.
+- **Home network services** (Trilium, Paperless, Home Assistant) are contacted directly, never through a proxy.
+- **Credentials live in the keyring.** Tokens, passwords and API keys entered under Settings → Skills or with
+  `orbwise skills setup` are stored in the session keyring (Secret Service), or – without one – in
+  `~/.config/orbwise/secrets.json` with mode 0600. Plain-text credentials found in `config.yaml` are moved there on
+  start (backup `config.yaml.bak`). The web UI never receives a stored secret back, only "set". Both files are on the
+  agent's protected list: the model cannot read them.
 
 Please keep `host: 127.0.0.1`. Exposing Orbwise to a network gives anyone on that network a way to ask it to
 run commands – the dashboard has no login, and the `Host` check stops browsers, not a device that sets the header
@@ -51,7 +55,7 @@ prefer the Telegram bot, a VPN (WireGuard, Tailscale) or an SSH tunnel (`ssh -L 
   know. `/stop` cancels whatever is running.
 - **The bot token is a key.** Anyone holding it can read what is sent to the bot and write to you in its name.
   Orbwise keeps it out of logs and error messages; if it ever leaks, revoke it in **@BotFather** (`/revoke`) and
-  put the new token into the config.
+  enter the new token under Settings → Skills → Telegram.
 - **Home network from the phone.** Requests from the phone act with the PC's access – e.g. web fetches can reach
   devices in your LAN. That is intended; keep the account secure (see above).
 - Messages pass through Telegram's servers and are not end-to-end encrypted.

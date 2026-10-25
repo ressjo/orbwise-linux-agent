@@ -104,6 +104,15 @@ All notable changes to this project are documented here. The format follows
   only actions that change or start something do; the data-leak guard still checks what goes out.
 
 ### Added
+- **Skills:** every integration and built-in ability can be set up and switched without editing `config.yaml` –
+  in the installer (pick by number, enter details, connection tested right away), under **Settings → Skills** in the
+  web UI (state, on/off switch, form with help per field, *Test connection*, changes apply at once; Telegram finds
+  its chat ID after `/start`) and with `orbwise skills [setup|enable|disable]`. The installer's Brave question is
+  now part of the skill selection.
+- **Credentials in the keyring:** tokens, passwords and API keys go to the session keyring (Secret Service via the
+  new `keyring` dependency), without one to `~/.config/orbwise/secrets.json` (0600). Plain-text credentials in
+  `config.yaml` are moved there on start (backup `config.yaml.bak`, comments kept). `orbwise doctor` shows where they
+  live and warns about leftovers. There is no `.env`; `$ORBWISE_…` variables still work as a fallback.
 - **Coding sandbox (like Claude on the web):** a working copy of the project on its own branch, the agent's
   commands run in a Podman/Docker container (no credentials inside, limits, network on/off per chat, stops when
   idle). Shell and file changes in the copy run without asking; **View changes** with diffs, **Apply to project**

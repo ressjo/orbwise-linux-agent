@@ -62,6 +62,28 @@ def explain(error: str) -> str:
     return error
 
 
+async def check_bot(token: str, want_chat: bool = False) -> dict:
+    """Token prüfen (getMe); want_chat: die Chat-ID aus der letzten Nachricht an den Bot („/start“) holen."""
+    import httpx
+    if not token:
+        return {"enabled": False, "online": False}
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            me = (await c.get(f"{API}/bot{token}/getMe")).json()
+            if not me.get("ok"):
+                raise RuntimeError(me.get("description", "Fehler"))
+            out = {"enabled": True, "online": True, "bot": "@" + str(me["result"].get("username", "?"))}
+            if want_chat:
+                upd = (await c.get(f"{API}/bot{token}/getUpdates", params={"limit": 20})).json()
+                chats = [((u.get("message") or {}).get("chat") or {}).get("id") for u in upd.get("result") or []]
+                chats = [c_id for c_id in chats if c_id]
+                if chats:
+                    out["chat_id"] = chats[-1]
+    except (httpx.HTTPError, RuntimeError, ValueError) as e:
+        return {"enabled": True, "online": False, "error": redact(explain(str(e)), token)}
+    return out
+
+
 class RedactToken(logging.Filter):
     """Entfernt den Bot-Token aus jedem Log-Eintrag – Text, Argumente und Traceback. Hängt an den Loggern von
     Orbwise-Telegram und httpx/httpcore (die mit -v jede Anfrage-URL samt Token protokollieren würden)."""

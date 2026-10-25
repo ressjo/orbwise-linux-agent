@@ -33,6 +33,7 @@ dependencies = [
     "trafilatura>=1.8",
     "caldav>=3.3.1",
     "pypdf>=5.0",
+    "keyring>=25.7.0",
 ]
 
 [project.optional-dependencies]

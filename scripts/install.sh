@@ -210,29 +210,25 @@ uv run python -c "from faster_whisper import WhisperModel; WhisperModel('small',
 
 # ---------------------------------------------------------------- Configuration
 say "Configuration"
-BRAVE_KEY=""
-if (( ASK )); then
-  echo "$(t 'Websuche: Mit einem (kostenlosen) Brave-Search-API-Schlüssel sucht Orbwise über die offizielle API statt
-Suchseiten auszulesen – kein Risiko, als Bot gesperrt zu werden. Schlüssel: https://api-dashboard.search.brave.com' \
-            'Web search: with a (free) Brave Search API key Orbwise uses the official API instead of scraping result
-pages – no risk of being blocked as a bot. Get a key: https://api-dashboard.search.brave.com')"
-  read -r -p "$(t 'Brave-API-Schlüssel (Enter = überspringen): ' 'Brave API key (Enter = skip): ')" BRAVE_KEY
-  if [[ -n "$BRAVE_KEY" && ! "$BRAVE_KEY" =~ ^[A-Za-z0-9_-]+$ ]]; then
-    echo "$(t '✘ Ungültiger Schlüssel – übersprungen (später in tools.brave_api_key eintragen).' \
-              '✘ Invalid key – skipped (add it later as tools.brave_api_key).')"
-    BRAVE_KEY=""
-  fi
-fi
 if [[ ! -f "$CONF/config.yaml" ]]; then
   uv run orbwise init-config
   [[ -n "$OLLAMA_MODEL" ]] && sed -i "s|^  model: .*|  model: $OLLAMA_MODEL|" "$CONF/config.yaml"
   sed -i "s|^language: [a-z]*|language: $LANG_CHOICE|" "$CONF/config.yaml"
-  [[ -n "$BRAVE_KEY" ]] && sed -i "s|^  brave_api_key: \"\"|  brave_api_key: \"$BRAVE_KEY\"|" "$CONF/config.yaml"
-  echo "→ Add your NAS paths etc. in $CONF/config.yaml (tools.nas_paths)."
 else
-  echo "$CONF/config.yaml already exists – left unchanged."
-  [[ -n "$BRAVE_KEY" ]] && echo "$(t "→ Brave-Schlüssel bitte selbst eintragen: tools.brave_api_key: \"$BRAVE_KEY\"" \
-                                        "→ Please add the Brave key yourself: tools.brave_api_key: \"$BRAVE_KEY\"")"
+  echo "$(t "$CONF/config.yaml gibt es schon – bleibt unverändert." "$CONF/config.yaml already exists – left unchanged.")"
+fi
+
+# ---------------------------------------------------------------- Skills (Mail, Paperless, Portainer …)
+say "Skills"
+if (( ASK )); then
+  echo "$(t 'Orbwise kann sich mit deinen Diensten verbinden. Wähle aus, was du jetzt einrichten möchtest –
+Zugangsdaten landen im Schlüsselbund, nicht im Klartext. Alles geht später auch unter Einstellungen → Skills.' \
+            'Orbwise can connect to your services. Pick what you want to set up now – credentials go to the
+keyring, not into a plain-text file. Everything also works later under Settings → Skills.')"
+  uv run orbwise skills setup || echo "$(t '→ Später einrichten: orbwise skills setup' '→ Set up later: orbwise skills setup')"
+else
+  echo "$(t '→ Skills später einrichten: Einstellungen → Skills oder orbwise skills setup' \
+            '→ Set up skills later: Settings → Skills or orbwise skills setup')"
 fi
 
 # ---------------------------------------------------------------- Launcher
@@ -279,8 +275,7 @@ Update:   orbwise update
 Web UI:   http://localhost:8765
 Models:   orbwise model add        (download and switch to another model – also in the web UI: LLM menu)
 EOF
-if [[ -n "$BRAVE_KEY" ]]; then echo "Search:   Brave Search API"
-else echo "Search:   scraping result pages – for the official API without bot blocking set tools.brave_api_key"; fi
+echo "Skills:   orbwise skills        (Mail, Paperless, Portainer … – also under Settings → Skills)"
 cat <<EOF
 
 NVIDIA: speech recognition can run on the GPU – set voice.stt_device: cuda and voice.stt_compute_type: float16.

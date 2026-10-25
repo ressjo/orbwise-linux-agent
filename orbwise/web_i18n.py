@@ -190,9 +190,9 @@ HTML_EN = [
     ('data-mirror="btn-plan">Aus<', 'data-mirror="btn-plan">Off<'),
     ('data-think="off">Aus</button><button type="button" data-think="on" class="hidden">An<',
      'data-think="off">Off</button><button type="button" data-think="on" class="hidden">On<'),
-    ('>Weitere Einstellungen (Integrationen, Telegram, Mail …) stehen in ',
-     '>Further settings (integrations, Telegram, mail …) live in '),
-    (' – <code>orbwise doctor</code> prüft sie.<', ' – <code>orbwise doctor</code> checks them.<'),
+    ('>Mail, Paperless, Telegram und andere Verbindungen richtest du unter <b>Skills</b> ein. Alles Weitere steht in ',
+     '>Set up mail, Paperless, Telegram and other connections under <b>Skills</b>. Everything else lives in '),
+    (' – <code>orbwise doctor</code> prüft es.<', ' – <code>orbwise doctor</code> checks it.<'),
     ('<b>Stimme</b><em>', '<b>Voice</b><em>'),
     ('<b>Gedächtnis</b><em>', '<b>Memory</b><em>'),
     # Dialoge

@@ -319,6 +319,15 @@ def cmd_doctor(args) -> None:
     from .server import remote_bind_warning
     line(not remote_bind_warning(cfg), T(f"Dashboard nur lokal ({cfg.host})", f"Dashboard local only ({cfg.host})"),
          T("host: 127.0.0.1 setzen", "set host: 127.0.0.1"))
+    from . import keystore, skills
+    line(True, T("Zugangsdaten: Schlüsselbund der Sitzung", "Credentials: session keyring")
+         if keystore.backend() == "keyring" else
+         T(f"Zugangsdaten: {keystore.file_path()} (0600, kein Schlüsselbund gefunden)",
+           f"Credentials: {keystore.file_path()} (0600, no keyring found)"))
+    left = skills.plaintext_left(cfg)
+    line(not left, T("keine Zugangsdaten im Klartext in config.yaml", "no plain-text credentials in config.yaml")
+         if not left else T(f"Klartext in config.yaml: {', '.join(left)}", f"plain text in config.yaml: {', '.join(left)}"),
+         T("orbwise starten – die Werte ziehen in den Schlüsselbund um", "start orbwise – the values move to the keyring"))
     if cfg.telegram.secret:
         import httpx
 
@@ -712,6 +721,34 @@ def _migrate_legacy() -> None:
             pass
 
 
+def cmd_skills(args) -> None:
+    from . import skills, skills_cli
+    cfg = load_config()
+    unknown = [n for n in args.names if n not in skills.BY_ID]
+    if unknown:
+        print(T(f"Unbekannte Skills: {', '.join(unknown)} – vorhanden: ", f"Unknown skills: {', '.join(unknown)} – "
+                "available: ") + ", ".join(skills.BY_ID))
+        sys.exit(2)
+    if args.action == "setup":
+        if not sys.stdin.isatty() and not args.names:
+            print(T("Keine Eingabe möglich – Skills später einrichten: orbwise skills setup",
+                    "No input possible – set up skills later: orbwise skills setup"))
+            return
+        try:
+            skills_cli.setup(cfg, args.names or None)
+        except (KeyboardInterrupt, EOFError):
+            print("\n" + T("Abgebrochen – Bisheriges ist gespeichert.", "Cancelled – what was done is saved."))
+        return
+    if args.action in ("enable", "disable"):
+        for n in args.names:
+            skills.save(cfg, n, enabled=args.action == "enable")
+            print(("✔ " if args.action == "enable" else "– ") + n)
+        print(T("Ein laufendes Orbwise übernimmt das beim nächsten Start (oder sofort unter Einstellungen → Skills).",
+                "A running Orbwise picks this up on its next start (or right away under Settings → Skills)."))
+        return
+    skills_cli.overview(cfg)
+
+
 def main(argv: list[str] | None = None) -> None:
     if argv is None and env("NO_MIGRATE") != "1":
         _migrate_legacy()
@@ -752,6 +789,10 @@ def main(argv: list[str] | None = None) -> None:
                                      "rebuild the memory search index from the Markdown files"))
     p = sub.add_parser("summarize", help=T("Tageszusammenfassungen erzeugen", "create daily summaries"))
     p.add_argument("day", nargs="?", help=T("YYYY-MM-DD (Standard: alle fälligen Tage)", "YYYY-MM-DD (default: all due days)"))
+    p = sub.add_parser("skills", help=T("Skills anzeigen und einrichten (Mail, Paperless, Portainer …)",
+                                        "list and set up skills (mail, Paperless, Portainer …)"))
+    p.add_argument("action", nargs="?", choices=["list", "setup", "enable", "disable"], default="list")
+    p.add_argument("names", nargs="*", help=T("Skill-Namen, z. B. mail paperless", "skill names, e.g. mail paperless"))
     p = sub.add_parser("init-config", help=T("Beispielkonfiguration anlegen", "create the example configuration"))
     p.add_argument("--force", action="store_true")
     args = parser.parse_args(argv)
@@ -763,7 +804,7 @@ def main(argv: list[str] | None = None) -> None:
         args = parser.parse_args(["serve", *(argv or sys.argv[1:])])
     {"serve": cmd_serve, "doctor": cmd_doctor, "update": cmd_update, "model": cmd_model, "version": cmd_version,
      "reindex": cmd_reindex, "summarize": cmd_summarize, "init-config": cmd_init_config,
-     "context-test": cmd_context_test, "voice": cmd_voice}[args.cmd](args)
+     "context-test": cmd_context_test, "voice": cmd_voice, "skills": cmd_skills}[args.cmd](args)
 
 
 if __name__ == "__main__":

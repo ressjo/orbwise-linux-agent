@@ -828,6 +828,50 @@ details.card[open] > summary .caret { transform: rotate(180deg); }
 .set-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .set-row b { display: block; font-weight: 550; font-size: var(--fs-base); }
 .set-row small { color: var(--muted); font-size: var(--fs-md); }
+/* Skills */
+.skills-where { display: flex; align-items: center; gap: 8px; }
+.skills-where span { min-width: 0; overflow-wrap: anywhere; }
+.skills-where .i { flex: none; color: var(--accent); }
+.skills-warn { color: var(--warn); }
+.skill-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.skill-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto auto auto; align-items: center; gap: 12px;
+  padding: 10px 12px; border-radius: var(--r-md); background: var(--surface); border: 1px solid var(--border); }
+.skill-ico { width: 34px; height: 34px; display: grid; place-items: center; border-radius: var(--r-md); background: var(--surface-2); color: var(--text-2); }
+.skill-row.ok .skill-ico { background: var(--accent-soft); color: var(--accent); }
+.skill-text b { display: block; font-weight: 550; }
+.skill-text small { color: var(--muted); font-size: var(--fs-md); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.skill-state { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.skill-state i { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+.skill-row.ok .skill-state i { background: var(--success); box-shadow: 0 0 0 3px var(--success-soft); }
+.skill-row.warn .skill-state i { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
+.skill-state em { font-style: normal; color: var(--muted); font-size: var(--fs-md); }
+.ui-dialog.skill-form { width: min(560px, 100%); overflow-y: auto; }
+.skill-form-head { display: flex; align-items: center; gap: 12px; }
+.skill-form-head b { display: block; font-size: var(--fs-lg); font-weight: 600; }
+.skill-form-head small { color: var(--muted); font-size: var(--fs-md); }
+.skill-fields { display: flex; flex-direction: column; gap: 12px; }
+.skill-field { display: flex; flex-direction: column; gap: 5px; }
+.skill-field .switch { align-self: flex-start; }
+.skill-input { display: flex; gap: 6px; }
+.skill-input .ui-dialog-input { flex: 1; min-width: 0; }
+.skill-help { color: var(--muted); font-size: var(--fs-sm); line-height: 1.4; }
+.skill-more { align-self: flex-start; margin-left: 0; }
+.skill-hosts { display: flex; flex-direction: column; gap: 6px; }
+.skill-hosts > .btn { align-self: flex-start; }
+.skill-host { display: grid; grid-template-columns: 1fr 1.6fr 1fr 70px 32px; gap: 6px; align-items: center; }
+.skill-result { margin: 0; padding: 9px 12px; border-radius: var(--r-md); background: var(--surface-2); font-size: var(--fs-md); }
+.skill-result.ok { background: var(--success-soft); color: var(--text); }
+.skill-result.bad { background: var(--danger-soft); color: var(--text); }
+.skill-form .modal-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.skill-form .modal-actions .spacer { flex: 1; }
+.danger-text { color: var(--danger); }
+@media (max-width: 700px) {
+  .skill-row { grid-template-columns: 34px minmax(0, 1fr) auto; }
+  .skill-row .skill-state { grid-column: 2; }
+  .skill-row .skill-edit { grid-column: 3; grid-row: 1; }
+  .skill-row .switch { grid-column: 3; grid-row: 2; }
+  .skill-host { grid-template-columns: 1fr 1fr; }
+}
 .status-list { display: flex; flex-direction: column; gap: 6px; }
 .status-row { display: flex; align-items: center; gap: 10px; padding: 11px 12px; border-radius: var(--r-md); background: var(--surface); border: 1px solid var(--border); }
 .status-row b { font-weight: 550; min-width: 110px; }

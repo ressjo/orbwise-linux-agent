@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "orbwise"
 DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "orbwise"
@@ -470,6 +470,8 @@ class GitHubConfig(BaseModel):
 
 
 class Config(BaseModel):
+    # Abschnitte, wie sie aus config.yaml kamen – Grundlage für die Skills (skills.apply), nicht Teil der Datei
+    _skills_base: dict | None = PrivateAttr(default=None)
     # Sprache von Orbwise und der Oberfläche: "de" (Deutsch) oder "en" (English)
     language: str = "de"
     host: str = "127.0.0.1"
@@ -528,9 +530,20 @@ def config_path() -> Path:
     return Path(env("CONFIG") or CONFIG_DIR / "config.yaml").expanduser()
 
 
-def load_config(path: Path | None = None) -> Config:
+def load_config(path: Path | None = None, skills: bool = True) -> Config:
+    """config.yaml lesen; skills=True legt die eingerichteten Skills darüber (Werte, Schalter, Geheimnisse aus dem
+    Schlüsselbund) und zieht Geheimnisse, die noch im Klartext in der Datei stehen, dorthin um."""
     path = path or config_path()
     data = {}
     if path.exists():
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    return Config.model_validate(data).expand_paths()
+    cfg = Config.model_validate(data).expand_paths()
+    if skills:
+        from . import skills as skill_store
+        try:
+            skill_store.migrate_plaintext(cfg, path)
+        except OSError as e:  # z. B. schreibgeschützte config.yaml – dann bleibt sie, wie sie ist
+            import logging
+            logging.getLogger(__name__).warning("Zugangsdaten nicht umgezogen: %s", e)
+        skill_store.apply(cfg)
+    return cfg

@@ -168,6 +168,16 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         self.lock = asyncio.Lock()
         self.services: dict = {}
 
+    def reload_tools(self) -> None:
+        """Nach dem Ein-/Ausschalten oder Einrichten eines Skills: Werkzeuglisten neu aufbauen (die nächste Anfrage
+        liest den Prompt einmal neu ein – die Werkzeuge stehen vorn)."""
+        self.all_schemas = [s for s in tool_schemas(self.cfg)
+                            if self.groups_of.get(s["function"]["name"]) not in CODING_ONLY]
+        self.all_schema_tokens = est_tokens(json.dumps(self.all_schemas, ensure_ascii=False))
+        self._textonly_schemas = self._coding_schemas = None
+        self.schemas, self.schema_tokens = self._mode_schemas()
+        self._cache_owner = None
+
     # ---------- Prompt ----------
     @property
     def mode(self) -> str:

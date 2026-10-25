@@ -92,7 +92,8 @@ git clone https://github.com/ressjo/orbwise-linux-agent.git ~/orbwise
 
 The installer asks for the **language**, the **graphics card** (NVIDIA / AMD / none, the detected one is
 pre-selected), the **language model** from a list of presets that shows what fits your video memory
-(✔ fits · ~ partly in RAM · ✘ too big) with a recommendation, and optionally a **Brave Search API key**. On AMD cards that ROCm doesn't officially support
+(✔ fits · ~ partly in RAM · ✘ too big) with a recommendation, and which **skills** to set up (see
+[Skills: set up and switch](#skills-set-up-and-switch)). On AMD cards that ROCm doesn't officially support
 (RX 6600/6650/6700, RX 7600) it offers to set the needed `HSA_OVERRIDE_GFX_VERSION` for Ollama.
 
 Options: `--model qwen3:8b` (skip the model question), `--gpu auto|cuda|rocm|vulkan|cpu`, `--lang de|en`,
@@ -519,6 +520,27 @@ chorus and a "digital" shimmer.
 
 Speech recognition uses faster-whisper: on NVIDIA set `voice.stt_device: cuda` and `stt_compute_type: float16`;
 on AMD it runs on the CPU (`small`/`int8` takes about 1–2 s per sentence).
+
+## Skills: set up and switch
+
+Every integration and built-in ability is a **skill**. Set them up wherever is handiest:
+
+- **Installer:** pick the skills by number (`2 5 7`, `a` = all), then enter their details – passwords hidden, Proton
+  Mail Bridge defaults filled in, each connection tested right away (*again / skip / save anyway*).
+- **Settings → Skills** in the web UI: all skills with their state and an on/off switch. *Set up* opens a form with
+  short help for every field (where to find the Paperless token, the Home Assistant access token …), **Test
+  connection** and **Save** – changes apply at once, no restart. For Telegram, *Test connection* finds the chat ID
+  after you sent the bot `/start`. Switching a skill off keeps its data and removes its tools from the prompt.
+- **Console:** `orbwise skills` (overview), `orbwise skills setup [name …]`, `orbwise skills enable|disable <name>`.
+
+**Credentials don't live in plain text.** Tokens, passwords and API keys go to your session keyring (KWallet / GNOME
+keyring via Secret Service, encrypted and unlocked at login). Without a keyring – a server without a desktop, say –
+they go to `~/.config/orbwise/secrets.json`, readable only by you (0600); the Skills page and `orbwise doctor` tell
+you which one is in use. Other skill values sit in `state.json`. Credentials still written in `config.yaml` are moved
+to the keyring on the next start (a backup `config.yaml.bak` is made, comments stay). There is no `.env` file;
+`$ORBWISE_…` environment variables still work as a fallback, e.g. for services started without a session.
+
+The sections below describe each integration; the `config.yaml` snippets remain an alternative to the Skills page.
 
 ## Integrations
 
