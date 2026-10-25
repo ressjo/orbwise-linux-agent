@@ -203,9 +203,6 @@
             <div class="chip-menu hidden" id="think-menu" role="menu">
               <button type="button" role="menuitemradio" data-think="off"><b>Nicht denken</b><small>Direkte Antworten – am schnellsten.</small></button>
               <button type="button" role="menuitemradio" data-think="on" class="hidden"><b>Denken</b><small>Das Modell überlegt vor der Antwort.</small></button>
-              <button type="button" role="menuitemradio" data-think="low"><b>Kurz</b><small>Das Modell überlegt knapp.</small></button>
-              <button type="button" role="menuitemradio" data-think="medium"><b>Normal</b><small>Ausgewogen zwischen Tempo und Gründlichkeit.</small></button>
-              <button type="button" role="menuitemradio" data-think="high"><b>Gründlich</b><small>So lange wie nötig – am langsamsten.</small></button>
             </div>
           </div>
           <button type="submit" class="send" id="btn-send" title="Senden" aria-label="Senden"><svg class="i"><use href="#i-send"/></svg></button>
@@ -423,7 +420,7 @@
           <div class="set-row"><div><b>Auto-Modus</b><small>Was ohne Rückfrage laufen darf.</small></div>
             <div class="seg" id="set-auto"><button type="button" data-auto="off">Aus</button><button type="button" data-auto="read">Nur lesen</button><button type="button" data-auto="files">+ Dateien</button><button type="button" data-auto="auto">Auto</button></div></div>
           <div class="set-row"><div><b>Denkmodus</b><small>Gründlicher, dafür langsamer.</small></div>
-            <div class="seg" id="set-think"><button type="button" data-think="off">Aus</button><button type="button" data-think="on" class="hidden">An</button><button type="button" data-think="low">Kurz</button><button type="button" data-think="medium">Normal</button><button type="button" data-think="high">Gründlich</button></div></div>
+            <div class="seg" id="set-think"><button type="button" data-think="off">Aus</button><button type="button" data-think="on" class="hidden">An</button></div></div>
           <p class="set-hint">Weitere Einstellungen (Integrationen, Telegram, Mail …) stehen in <code>~/.config/orbwise/config.yaml</code> – <code>orbwise doctor</code> prüft sie.</p>
         </div>
         <div class="set-section hidden" id="set-status">

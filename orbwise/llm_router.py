@@ -495,6 +495,23 @@ class LLMRouter:
             self._vision_cache = cache
         return cache[key]
 
+    async def thinking_levels(self) -> tuple[list[str], str | None]:
+        """Die Denkstufen des aktiven Modells (nur bei Modellen mit Stufen) und seine Voreinstellung."""
+        if self.unloaded or not hasattr(self.client, "thinking_levels"):
+            return [], None
+        key = (self.active, id(self.client))
+        cache = getattr(self, "_levels_cache", {})
+        if key not in cache:
+            try:
+                found = await self.client.thinking_levels()
+            except Exception:  # noqa: BLE001
+                return [], None
+            if not found[0]:
+                return found  # nicht merken – vielleicht ist der Server noch nicht bereit
+            cache[key] = found
+            self._levels_cache = cache
+        return cache[key]
+
     async def thinking_caps(self) -> str | None:
         """Wie kann das aktive Modell denken? levels | toggle | none, None = unbekannt (je Profil gemerkt)."""
         if self.unloaded:

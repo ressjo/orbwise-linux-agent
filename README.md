@@ -491,13 +491,14 @@ llama-server, **don't** pass `--reasoning-budget 0`, which disables reasoning se
 
 The menu follows what the loaded model can do. Orbwise reads it from the model's chat template (llama-server
 `/props`) or Ollama's capabilities:
-- **Real levels** (gpt-oss: `reasoning_effort` in the template): **Off / Brief / Normal / Thorough**, passed to the
-  model as `low`/`medium`/`high`. As a safety net Brief and Normal also have a budget (~500 / ~2,000 tokens) – if the
-  reasoning runs longer, Orbwise stops it and the model continues the step without further thinking, with its
-  thoughts so far (the activity shows "enough thinking – acting now").
-- **Only on/off** (Qwen 3 and most others): **Off / On** – no invented levels.
+- **The model's own levels** (`reasoning_effort` in the template, e.g. gpt-oss): **Off** plus exactly the levels the
+  template names (e.g. Low / Medium / High; the model's default is marked). The level goes to the model as
+  `reasoning_effort` – Orbwise adds no token budgets or "think briefly" hints of its own. If the levels cannot be
+  read, the menu shows on/off.
+- **Only on/off** (Qwen 3 and most others) or unknown: **Off / On** – no invented levels.
 - **No thinking at all**: the button is greyed out.
-In a small context window the reasoning is always capped so the answer still fits.
+Only in a small context window (< 16k) is the reasoning capped so the answer still fits; if it runs longer, the step
+continues without further thinking, with the thoughts so far (the activity shows "enough thinking – acting now").
 
 ## Voice & Jarvis effect
 

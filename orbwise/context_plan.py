@@ -14,8 +14,6 @@ SMALL_BELOW = 16384  # darunter: kleines Fenster (Sparmodus)
 
 ANSWER_RESERVE = 1500  # Token, die im Kontextfenster für die Antwort frei bleiben
 THINK_RESERVE = 3000  # mit Denkmodus: die Denkkette belegt dasselbe Fenster
-# Denkstufen: Höchstlänge der Denkkette (0 = unbegrenzt). Modelle mit echten Stufen (gpt-oss) bekommen sie dazu.
-THINK_LEVELS = {"low": 512, "medium": 2048, "high": 0}
 SUMMARY_MIN = 500  # kürzeste Zusammenfassung im großen Fenster, wenn der Platz knapp ist
 
 
@@ -52,21 +50,18 @@ class ContextPlan:
         """Höchstlänge eines Werkzeug-Ergebnisses in Zeichen (≈ 3 Zeichen pro Token)."""
         return max(1500, int(self.window * self.output_share * 3))
 
-    def think_budget(self, level: str | None) -> int:
-        """Höchstlänge der Denkkette für eine Stufe – im kleinen Fenster auch „gründlich“ begrenzt."""
-        budget = THINK_LEVELS.get(level or "", 0)
-        if self.think_cap and (budget == 0 or budget > self.think_cap):
-            budget = self.think_cap
-        return budget
+    def think_budget(self) -> int:
+        """Höchstlänge der Denkkette – nur im kleinen Fenster begrenzt (sonst passt die Antwort nicht mehr hinein);
+        wie lange gedacht wird, bestimmt sonst das Modell bzw. seine eigene Stufe (0 = unbegrenzt)."""
+        return self.think_cap
 
-    def reserve(self, think: bool, level: str | None) -> int:
+    def reserve(self, think: bool) -> int:
         """Freier Platz für Antwort (und Denkkette)."""
         if not think:
             return self.answer_reserve
-        budget = self.think_budget(level)
         if self.small:
-            return self.answer_reserve + budget
-        return min(THINK_RESERVE, self.answer_reserve + budget) if budget else THINK_RESERVE
+            return self.answer_reserve + self.think_budget()
+        return THINK_RESERVE
 
 
 def plan_for(window: int) -> ContextPlan:

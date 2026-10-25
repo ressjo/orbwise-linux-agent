@@ -87,11 +87,6 @@ HTML_EN = [
      '<b>No thinking</b><small>Direct answers – fastest.</small>'),
     ('<b>Denken</b><small>Das Modell überlegt vor der Antwort.</small>',
      '<b>Think</b><small>The model reasons before answering.</small>'),
-    ('<b>Kurz</b><small>Das Modell überlegt knapp.</small>', '<b>Brief</b><small>The model reasons briefly.</small>'),
-    ('<b>Normal</b><small>Ausgewogen zwischen Tempo und Gründlichkeit.</small>',
-     '<b>Normal</b><small>Balanced between speed and depth.</small>'),
-    ('<b>Gründlich</b><small>So lange wie nötig – am langsamsten.</small>',
-     '<b>Thorough</b><small>As long as needed – slowest.</small>'),
     ('title="Auto-Modus: was ohne Rückfrage laufen darf"', 'title="Auto mode: what may run without asking"'),
     ('<span id="auto-label">Lesen<', '<span id="auto-label">Read<'),
     ('<b>Aus</b><small>Jeder Shell-Befehl fragt vorher.</small>',
@@ -193,12 +188,8 @@ HTML_EN = [
     ('data-mirror="btn-tts">Aus<', 'data-mirror="btn-tts">Off<'),
     ('data-mirror="btn-wake">Aus<', 'data-mirror="btn-wake">Off<'),
     ('data-mirror="btn-plan">Aus<', 'data-mirror="btn-plan">Off<'),
-    ('data-think="off">Aus</button><button type="button" data-think="on" class="hidden">An</button><button '
-     'type="button" data-think="low">Kurz</button><button type="button" data-think="medium">Normal</button><button '
-     'type="button" data-think="high">Gründlich<',
-     'data-think="off">Off</button><button type="button" data-think="on" class="hidden">On</button><button '
-     'type="button" data-think="low">Brief</button><button type="button" data-think="medium">Normal</button><button '
-     'type="button" data-think="high">Thorough<'),
+    ('data-think="off">Aus</button><button type="button" data-think="on" class="hidden">An<',
+     'data-think="off">Off</button><button type="button" data-think="on" class="hidden">On<'),
     ('>Weitere Einstellungen (Integrationen, Telegram, Mail …) stehen in ',
      '>Further settings (integrations, Telegram, mail …) live in '),
     (' – <code>orbwise doctor</code> prüft sie.<', ' – <code>orbwise doctor</code> checks them.<'),

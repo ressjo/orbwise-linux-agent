@@ -5,6 +5,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **Thinking levels come from the model:** models with their own levels (`reasoning_effort` in the chat template)
+  show exactly those levels in the Think menu and settings, with the model's default marked; models with only on/off
+  (or unknown) show Off / On. Orbwise's own level budgets (~500 / ~2,000 tokens with a cut-off and a second pass
+  without thinking) and the "think briefly" hints are gone – the model decides how long it reasons at its level. The
+  cap in small context windows (< 16k) stays.
+
 ### Removed
 - **Learning from experience:** lessons, the idle reflection and the thumbs up/down under answers are gone – with
   local models they rarely helped, and reflecting while idle pushed the chat out of the prompt cache (the next

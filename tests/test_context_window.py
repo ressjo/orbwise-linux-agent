@@ -425,8 +425,9 @@ def test_compact_command_and_history_dividers(client):
         assert not any(m["content"].startswith("/compact") for m in h["messages"])  # Befehl, keine Nachricht
 
 
-def test_think_budget_stops_overthinking_and_carries_on(cfg, llm, memory, stamps):
-    """Stufe „Kurz“: Denkt das Modell zu lange, wird abgebrochen und ohne Denken weitergemacht – mit den Gedanken."""
+def test_model_level_is_sent_without_own_limits(cfg, llm, memory, stamps):
+    """Die Stufe gibt das Modell vor – Orbwise bricht im großen Fenster nicht selbst ab und schreibt auch keinen
+    „denke kurz“-Hinweis dazu (das zwang früher einen zweiten Anlauf ohne Denken, samt neu eingelesenem Prompt)."""
     llm.thought_repeat = 200  # ~4.000 Token Denkkette
     agent = Agent(cfg, llm, memory)
     events = []
@@ -434,29 +435,12 @@ def test_think_budget_stops_overthinking_and_carries_on(cfg, llm, memory, stamps
     async def emit(ev):
         events.append(ev)
 
-    answer = run(agent.run("Wie spät ist es?", emit, _noop, think="low"))
-    assert answer  # es kommt eine Antwort
-    first, second = llm.opts[-2], llm.opts[-1]
-    assert first["think"] is True and first["effort"] == "low"
-    assert second["think"] is False  # zweiter Anlauf ohne Denken …
-    tail = llm.calls[-1][-1]["content"]
-    assert "Genug überlegt" in tail and "Ich überlege kurz" in tail  # … mit den bisherigen Gedanken
-    assert llm.calls[-1][:-1] == llm.calls[-2]  # gleicher Anfang – nur die Notiz ist neu
-    assert not any("Genug überlegt" in (m.get("content") or "") for m in memory.conversation.history
-                   if m["role"] == "user")  # die Notiz landet nicht im Verlauf
-    assert any(e.get("phase") == "think_cut" for e in events)
+    assert run(agent.run("Wie spät ist es?", emit, _noop, think="low"))
+    assert len(llm.opts) == 1 and (llm.opts[0]["think"], llm.opts[0]["effort"]) == (True, "low")
+    assert not any(e.get("phase") == "think_cut" for e in events)
     note = [m for m in memory.conversation.history if m["role"] == "user"][-1]["note"]
-    assert "Denke nur kurz nach" in note
-    assert agent.answer_reserve() == 1500  # nach der Anfrage wieder ohne Denken
-
-
-def test_think_levels_reserve_and_no_cut_when_thorough(cfg, llm, memory):
-    agent = Agent(cfg, llm, memory)
+    assert "Denke nur kurz" not in note
     agent._set_think("low")
-    assert agent.answer_reserve() == 1500 + 512 and agent.think_budget() == 512
-    agent._set_think("high")
     assert agent.answer_reserve() == 3000 and agent.think_budget() == 0
     agent._set_think(False)
-    llm.thought_repeat = 200
-    run(agent.run("Hallo", _noop, _noop, think="high"))
-    assert len(llm.calls) == 1 and llm.opts[0]["effort"] == "high"  # gründlich: kein Abbruch
+    assert agent.answer_reserve() == 1500

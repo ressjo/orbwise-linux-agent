@@ -31,7 +31,7 @@ from .agent_safety import TAINT_SOURCES, SafetyMixin, is_taint_source  # noqa: F
 from .agent_speed import SpeedMixin
 from .agent_tools import CODING_GROUPS, CODING_ONLY, ToolSelectionMixin  # noqa: F401
 from .config import Config
-from .context_plan import SUMMARY_MIN, THINK_LEVELS, ContextPlan, plan_for
+from .context_plan import SUMMARY_MIN, ContextPlan, plan_for
 from .llm import ContextOverflow, LLMError, strip_think
 from .memory import Memory, est_tokens
 from .memory.context import PROMPT_KEYS, TRIM_NOTE, msg_tokens
@@ -66,7 +66,7 @@ def prompt_size(stats: dict, estimated: int) -> int:
     return 0 if total and total < 0.6 * estimated else total
 
 
-__all__ = ["Agent", "CODING_GROUPS", "SUMMARY_MIN", "THINK_LEVELS", "ThinkFilter", "is_taint_source", "prompt_size"]
+__all__ = ["Agent", "CODING_GROUPS", "SUMMARY_MIN", "ThinkFilter", "is_taint_source", "prompt_size"]
 Emit = Callable[[dict], Awaitable[None]]
 Confirm = Callable[[str, str, dict, str], Awaitable[bool]]
 
@@ -124,7 +124,7 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         self._turn_memories = ""  # zur aktuellen Anfrage gefundene Erinnerungen
         self._turn_open = False  # läuft gerade eine Anfrage (deren Notiz noch eingefroren werden darf)?
         self._think: bool | None = None
-        self._think_level: str | None = None  # low | medium | high, wenn gedacht wird
+        self._think_level: str | None = None  # Stufe des Modells (z. B. low/medium/high), nur bei Modellen mit Stufen
         # Sprache der gewählten Stimme, wenn sie nicht die der Oberfläche ist – dann antwortet Orbwise in ihr
         self.reply_language: str | None = None
         self._plan = False  # Planmodus: nur lesen, am Ende einen Plan vorlegen
@@ -255,11 +255,7 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         memories = self.memory.format_hits(hits) if hits is not None else self._turn_memories
         stamp = self._turn_stamp or prompts.note_stamp(self.cfg, datetime.now())
         msg = conv.history[users[-1]]
-        # Hinweis „kurz/zügig denken“ nur für diese Stufen („gründlich“ wird im kleinen Fenster nur begrenzt)
-        hint = prompts.text(self.cfg, f"think_{self._think_level}") \
-            if self._think and self._think_level in ("low", "medium") else ""
-        notes = self.coding_notes()  # fertige Hintergrund-Jobs, zurückgesetzte Antworten
-        hint = "\n".join(x for x in (hint, notes) if x)
+        hint = self.coding_notes()  # fertige Hintergrund-Jobs, zurückgesetzte Antworten
         msg["note"] = prompts.context_note(self.cfg, stamp, memories, plan=self._plan,
                                            approved_plan=self._approved_plan, extra=hint)
         msg["note_meta"] = {"time": stamp, "plan": self._plan, "approved": self._approved_plan, "hint": hint}
@@ -370,34 +366,48 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
 
     def answer_reserve(self) -> int:
         """Platz für Antwort bzw. Denkkette – im kleinen Fenster knapper, Denken dort begrenzt."""
-        return self.plan().reserve(self._thinking(), self._think_level or "high")
+        return self.plan().reserve(self._thinking())
 
     def think_budget(self) -> int:
         """Höchstlänge der Denkkette in Token für diese Anfrage (0 = unbegrenzt bzw. kein Denken)."""
-        return self.plan().think_budget(self._think_level) if self._think else 0
+        return self.plan().think_budget() if self._think else 0
 
     def _set_think(self, think) -> None:
-        """think: None (Profil), False, True (an, ohne Stufe) oder eine Stufe low/medium/high."""
+        """think: None (Profil), False/"off", True/"on" (an, Stufe nach Modell) oder eine Stufe des Modells."""
         if isinstance(think, str):
-            level = think if think in THINK_LEVELS else "medium"
-            self._think, self._think_level = (think != "off"), (level if think != "off" else None)
+            self._think = think != "off"
+            self._think_level = think if think not in ("off", "on") else None
         else:
             self._think = think
             self._think_level = None
 
     async def _fit_think(self) -> None:
-        """Denken an das Modell anpassen: kann es nicht denken → aus; kennt es nur an/aus → ohne Stufe (dann gibt es
-        weder Stufen-Budget noch „kurz denken“-Hinweis, nur die Grenze im kleinen Fenster). Unbekannt → wie gewählt."""
+        """Denken an das Modell anpassen: kann es nicht denken → aus; Stufen nur, wenn das Modell selbst welche hat
+        (und nur seine eigenen – eine unbekannte Stufe wird zu seiner Voreinstellung). Nur an/aus oder unbekannt →
+        ohne Stufe. Eigene Stufen legt Orbwise nicht darüber."""
         if not self._think or not hasattr(self.llm, "thinking_caps"):
             return
         try:
             caps = await self.llm.thinking_caps()
         except Exception:  # noqa: BLE001
-            return
+            caps = None
         if caps == "none":
             self._think, self._think_level = False, None
-        elif caps == "toggle":
+        elif caps != "levels":
             self._think_level = None
+        elif self._think_level:
+            levels, _default = await self._think_levels()
+            if self._think_level not in levels:
+                self._think_level = None  # Voreinstellung des Modells
+
+    async def _think_levels(self) -> tuple[list[str], str | None]:
+        fn = getattr(self.llm, "thinking_levels", None)
+        if fn is None:
+            return [], None
+        try:
+            return await fn()
+        except Exception:  # noqa: BLE001
+            return [], None
 
     def _think_kwargs(self, no_think: bool = False) -> dict:
         """think/effort für den Aufruf – Vorwärmen und Frage müssen gleich senden: die Chat-Vorlage rendert je nach

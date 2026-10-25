@@ -29,9 +29,18 @@
   const ico = (name) => `<svg class="i"><use href="#i-${name}"/></svg>`;
   const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   // Denkstufe: off | low | medium | high (früher gespeichert als true/false)
-  function thinkLevel(v) { return v === true ? "medium" : ["low", "medium", "high"].includes(v) ? v : "off"; }
-  const THINK_LABEL = { off: L("Denken", "Think"), low: L("Denken · kurz", "Think · brief"),
-                        medium: L("Denken · normal", "Think · normal"), high: L("Denken · gründlich", "Think · thorough") };
+  // Denken: "off", "on" (Modelle ohne Stufen) oder eine Stufe, die das Modell selbst vorgibt (z. B. low/medium/high)
+  function thinkLevel(v) { return v === true ? "on" : typeof v === "string" && /^[a-z][a-z-]{1,15}$/.test(v) ? v : "off"; }
+  // Namen für bekannte Stufen der Modelle – unbekannte zeigen den Namen, den das Modell nennt
+  const THINK_NAMES = {
+    minimal: [L("Minimal", "Minimal"), L("Kaum Überlegen – fast so schnell wie ohne.", "Barely any reasoning – almost as fast as off.")],
+    low: [L("Niedrig", "Low"), L("Das Modell überlegt knapp.", "The model reasons briefly.")],
+    medium: [L("Mittel", "Medium"), L("Ausgewogen zwischen Tempo und Gründlichkeit.", "Balanced between speed and depth.")],
+    high: [L("Hoch", "High"), L("Das Modell überlegt ausführlich – langsamer.", "The model reasons at length – slower.")],
+    xhigh: [L("Sehr hoch", "Extra high"), L("Noch ausführlicher – deutlich langsamer.", "Even longer reasoning – much slower.")],
+    max: [L("Maximal", "Max"), L("So lange wie das Modell kann – am langsamsten.", "As long as the model can – slowest.")],
+  };
+  function thinkName(k) { return (THINK_NAMES[k] || [k.charAt(0).toUpperCase() + k.slice(1)])[0]; }
   const AUTO_LABEL = { off: L("Auto aus", "Auto off"), read: L("Lesen", "Read"), files: L("Dateien", "Files"), auto: "Auto" };
   const S = {
     previews: {},  // Diff-Vorschau je Werkzeug-Aufruf (für die Freigabe-Karte)
@@ -2116,30 +2125,63 @@
     thinkMenu.classList.toggle("hidden", !open);
     $("btn-think").setAttribute("aria-expanded", String(open));
   }
-  // Was das geladene Modell kann: "levels" (echte Stufen), "toggle" (nur an/aus), "none" – null = unbekannt (an/aus)
+  // Was das geladene Modell kann: "levels" (eigene Stufen des Modells), "toggle" (nur an/aus), "none" – null =
+  // unbekannt (an/aus). Stufen gibt es nur, wenn das Modell sie selbst vorgibt – keine erfundenen von Orbwise.
   async function loadThinkCaps() {
-    try { S.thinkCaps = (await getJSON("/api/think")).caps; } catch { S.thinkCaps = null; }
+    try {
+      const r = await getJSON("/api/think");
+      S.thinkCaps = r.caps; S.thinkLevels = r.levels || []; S.thinkDefault = r.default || null;
+    } catch { S.thinkCaps = null; S.thinkLevels = []; S.thinkDefault = null; }
+    buildThinkLevels();
     refresh();
   }
+  function thinkLevels() { return S.thinkCaps === "levels" ? S.thinkLevels || [] : []; }
+  function thinkCurrent() {  // gewählte Stufe – sonst die Voreinstellung des Modells
+    const levels = thinkLevels();
+    return levels.includes(S.think) ? S.think : levels.includes(S.thinkDefault) ? S.thinkDefault : levels[0];
+  }
+  function buildThinkLevels() {
+    document.querySelectorAll("[data-think].lvl").forEach((b) => b.remove());
+    const levels = thinkLevels();
+    for (const box of [thinkMenu, $("set-think")]) {
+      if (!box) continue;
+      let after = box.querySelector('[data-think="on"]');
+      for (const k of levels) {
+        const b = document.createElement("button");
+        b.type = "button"; b.className = "lvl"; b.dataset.think = k;
+        if (box === thinkMenu) {
+          b.setAttribute("role", "menuitemradio");
+          const desc = (THINK_NAMES[k] || [])[1] || L(`Stufe „${k}“ des Modells.`, `The model's "${k}" level.`);
+          b.innerHTML = `<b>${escapeHtml(thinkName(k))}</b><small>${escapeHtml(desc)}${k === S.thinkDefault ? L(" Voreinstellung des Modells.", " Model default.") : ""}</small>`;
+        } else {
+          b.textContent = thinkName(k);
+        }
+        b.onclick = (e) => { e.stopPropagation(); setThinkMenu(false); setThink(k); };
+        after.after(b);
+        after = b;
+      }
+    }
+  }
   function renderThink() {
-    const caps = S.thinkCaps, levels = caps === "levels", none = caps === "none";
+    const none = S.thinkCaps === "none", levels = thinkLevels().length > 0;
     const on = S.think !== "off" && !none;
     const btn = $("btn-think");
     btn.classList.toggle("on", on);
     btn.disabled = none;
     btn.title = none ? L("Dieses Modell kann nicht denken.", "This model cannot think.")
       : L("Denkmodus: Jarvis überlegt vor der Antwort – langsamer, dafür gründlicher.", "Thinking mode: Jarvis reasons before answering – slower but more thorough.");
-    $("think-label").textContent = levels && on ? THINK_LABEL[S.think] : THINK_LABEL.off;
+    $("think-label").textContent = levels && on ? L("Denken · ", "Think · ") + thinkName(thinkCurrent()) : L("Denken", "Think");
+    const cur = levels ? thinkCurrent() : "";
     document.querySelectorAll("[data-think]").forEach((b) => {
       const k = b.dataset.think;
-      b.classList.toggle("hidden", k === "on" ? levels : k !== "off" && !levels);
-      b.classList.toggle("on", k === "off" ? !on : k === "on" ? on : on && levels && k === S.think);
+      if (k === "on") b.classList.toggle("hidden", levels);
+      b.classList.toggle("on", k === "off" ? !on : k === "on" ? on : on && k === cur);
       b.disabled = none && k !== "off";
     });
   }
   function sendThink() {
     const on = S.think !== "off" && S.thinkCaps !== "none";
-    send({ type: "think", enabled: on, level: on && S.thinkCaps === "levels" ? S.think : undefined });
+    send({ type: "think", enabled: on, level: on && thinkLevels().length ? thinkCurrent() : undefined });
   }
   function applySettings(ev, fromHello) {
     if (["off", "read", "files", "auto"].includes(ev.auto_mode)) { S.autoMode = ev.auto_mode; store.set("autoMode", S.autoMode); }
@@ -2147,7 +2189,7 @@
     if (ev.think === null || ev.think === undefined) {
       if (fromHello) sendThink();  // der Server kennt noch keine Wahl → die gemerkte schicken
     } else if (ev.think === "on") {
-      if (S.think === "off") S.think = "medium";  // „an“ bei Modellen ohne Stufen – die gemerkte Stufe bleibt
+      if (S.think === "off") S.think = "on";  // „an“ bei Modellen ohne Stufen – eine gemerkte Stufe bleibt
     } else {
       S.think = thinkLevel(ev.think);
     }
@@ -2155,15 +2197,13 @@
     refresh();
   }
   function setThink(level) {
-    if (level === "on") level = S.think !== "off" ? S.think : "medium";
+    if (level === "on" && S.think !== "off") level = S.think;  // die gemerkte Stufe bleibt für Modelle mit Stufen
     S.think = thinkLevel(level);
     store.set("think", S.think);
     sendThink();
-    const levels = S.thinkCaps === "levels";
     toast(S.think === "off" ? L("Denken aus – schnelle Antworten.", "Thinking off – fast answers.")
-      : !levels ? L("Denken an – der Gedankengang läuft in der Antwort mit.", "Thinking on – the reasoning shows in the answer.")
-      : { low: L("Denken: kurz.", "Thinking: brief."), medium: L("Denken: normal.", "Thinking: normal."),
-          high: L("Denken: gründlich – Antworten dauern länger.", "Thinking: thorough – answers take longer.") }[S.think]);
+      : thinkLevels().length ? L("Denken: ", "Thinking: ") + thinkName(thinkCurrent()) + "."
+      : L("Denken an – der Gedankengang läuft in der Antwort mit.", "Thinking on – the reasoning shows in the answer."));
     refresh();
   }
   $("btn-think").onclick = (e) => { e.stopPropagation(); setThinkMenu(thinkMenu.classList.contains("hidden")); };

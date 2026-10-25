@@ -1435,9 +1435,14 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.get("/api/think")
     async def think_caps():
-        """Denkfähigkeit des aktiven Modells: levels | toggle | none, null = unbekannt (Oberfläche: an/aus)."""
+        """Denkfähigkeit des aktiven Modells: levels | toggle | none, null = unbekannt (Oberfläche: an/aus).
+        levels/default: nur bei Modellen mit Stufen – die, die das Modell selbst vorgibt, und seine Voreinstellung."""
         caps = await llm.thinking_caps() if hasattr(llm, "thinking_caps") else None
-        return {"caps": caps}
+        levels, default = await llm.thinking_levels() if caps == "levels" and hasattr(llm, "thinking_levels") \
+            else ([], None)
+        if caps == "levels" and not levels:
+            caps = "toggle"  # Stufen nicht lesbar – dann nur an/aus statt erfundener Stufen
+        return {"caps": caps, "levels": levels, "default": default}
 
     def mode_info() -> dict:
         conv = memory.active
@@ -1799,7 +1804,9 @@ def create_app(cfg: Config) -> FastAPI:
                 elif t == "think":
                     level = str(data.get("level") or "")
                     # Stufe (low/medium/high) bei Modellen mit Stufen, sonst nur an/aus
-                    think = (level if level in ("low", "medium", "high") else True) if data.get("enabled") else False
+                    # Stufe des Modells (bei Modellen mit Stufen), sonst nur an/aus
+                    think = (level if re.fullmatch(r"[a-z][a-z-]{1,15}", level) and level not in ("on", "off")
+                             else True) if data.get("enabled") else False
                     if think != hub.think:  # die Vorlage rendert den Prompt mit anderem Denkmodus anders → neu vorwärmen
                         hub.think = think
                         agent._cache_owner = None

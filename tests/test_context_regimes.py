@@ -56,8 +56,8 @@ def test_plan_values_for_both_stages():
     assert s.output_chars() == 2457 and big.output_chars() > 6000  # groß: begrenzt dann tools.max_output_chars
     assert (s.memories, s.facts) == (491, 409) and (big.memories, big.facts) == (1310, 983)
     assert (s.summary_max, s.summary_floor) == (655, 409) and (big.summary_max, big.summary_floor) == (1638, 983)
-    assert s.think_budget("high") == 1638 and big.think_budget("high") == 0  # klein: auch „gründlich“ begrenzt
-    assert s.reserve(True, "low") == 1024 + 512 and big.reserve(True, "high") == 3000
+    assert s.think_budget() == 1638 and big.think_budget() == 0  # nur das kleine Fenster begrenzt das Denken
+    assert s.reserve(True) == 1024 + 1638 and big.reserve(True) == 3000 and big.reserve(False) == 1500
 
 
 # ---------------------------------------------------------------- Werkzeuge nach Bedarf

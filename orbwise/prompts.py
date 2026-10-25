@@ -205,8 +205,6 @@ SECTIONS = {
 
 TEXTS = {
     "de": {
-        "think_low": "Denke nur kurz nach (wenige Sätze), dann handle.",
-        "think_medium": "Denke zügig nach – nicht alles mehrfach durchgehen.",
         "think_cut": "(System: Genug überlegt – deine Überlegungen bisher:\n{thoughts}\nEntscheide jetzt ohne weiteres "
                      "Nachdenken und handle bzw. antworte.)",
         "final_nudge": "(System: Das Schrittlimit für diese Aufgabe ist erreicht. Rufe keine Werkzeuge mehr auf. Fasse in "
@@ -252,8 +250,6 @@ TEXTS = {
                          "bei Bedarf {tool} erneut aufrufen]",
     },
     "en": {
-        "think_low": "Think only briefly (a few sentences), then act.",
-        "think_medium": "Think efficiently – don't go over everything several times.",
         "think_cut": "(System: Enough thinking – your thoughts so far:\n{thoughts}\nDecide now without further "
                      "thinking and act or answer.)",
         "final_nudge": "(System: The step limit for this task has been reached. Do not call any more tools. Summarise "

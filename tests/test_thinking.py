@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from orbwise.agent import Agent
 from orbwise.config import LLMConfig, ProfileConfig
-from orbwise.llm import OllamaLLM, OpenAICompatLLM, template_thinking
+from orbwise.llm import OllamaLLM, OpenAICompatLLM, template_levels, template_thinking
 
 
 def test_template_decides_the_caps():
@@ -16,6 +16,15 @@ def test_template_decides_the_caps():
     assert template_thinking("{{ message.reasoning_content }}") == "toggle"
     assert template_thinking("<|start_header_id|>{{ role }}") == "none"  # Llama 3
     assert template_thinking("") is None and template_thinking(None) is None
+
+
+def test_levels_come_from_the_model():
+    gpt_oss = '{%- if not reasoning_effort is defined %}{%- set reasoning_effort = "medium" %}{%- endif %}'
+    assert template_levels(gpt_oss) == (["low", "medium", "high"], "medium")
+    own = "{% if reasoning_effort in ['minimal', 'low', 'medium', 'high'] %}{{ reasoning_effort | default('low') }}"
+    assert template_levels(own) == (["minimal", "low", "medium", "high"], "low")
+    assert template_levels("{% if enable_thinking %}<think>") == ([], None)  # nur an/aus – keine Stufen
+    assert template_levels("", "gpt-oss-20b") == (["low", "medium", "high"], "medium")
 
 
 def test_ollama_caps_from_show():
@@ -45,7 +54,9 @@ def test_llama_server_caps_from_props():
     ("levels", "low", (True, "low")),
     ("toggle", "low", (True, None)),  # keine erfundene Stufe, kein Stufen-Budget
     ("none", "high", (False, None)),
-    (None, "medium", (True, "medium")),  # unbekannt: wie gewählt
+    (None, "medium", (True, None)),  # unbekannt: nur an/aus – keine Stufen von Orbwise
+    ("levels", "max", (True, None)),  # Stufe, die das Modell nicht kennt → seine Voreinstellung
+    ("levels", "on", (True, None)),
     ("toggle", True, (True, None)),
 ])
 def test_agent_fits_think_to_the_model(cfg, llm, memory, caps, think, want):
@@ -84,4 +95,14 @@ def test_api_reports_caps(cfg, monkeypatch):
     monkeypatch.setenv("ORBWISE_FAKE_THINK", "toggle")
     from orbwise.server import create_app
     client = TestClient(create_app(cfg), base_url="http://localhost:8765")
-    assert client.get("/api/think").json() == {"caps": "toggle"}
+    assert client.get("/api/think").json() == {"caps": "toggle", "levels": [], "default": None}
+
+
+def test_api_reports_the_models_own_levels(cfg, monkeypatch):
+    monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    monkeypatch.delenv("ORBWISE_FAKE_THINK", raising=False)
+    from orbwise.server import create_app
+    client = TestClient(create_app(cfg), base_url="http://localhost:8765")
+    assert client.get("/api/think").json() == {"caps": "levels", "levels": ["low", "medium", "high"],
+                                               "default": "medium"}
