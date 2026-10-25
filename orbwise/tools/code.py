@@ -783,7 +783,8 @@ async def _shot_bytes(ctx: ToolContext, url: str, width: int, height: int) -> by
 
 
 @tool("Screenshot einer Seite (Dev-Server auf localhost, HTML-Datei) – der Nutzer sieht ihn im Chat; mit Bildmodell "
-      "kommt eine Beschreibung zurück. Nach UI-Änderungen nutzen.", risk=_shot_risk, name="screenshot")
+      "kommt eine Beschreibung zurück. Nur bei sichtbaren UI-Änderungen oder auf Wunsch, nicht für Logik/Backend.",
+      risk=_shot_risk, name="screenshot")
 async def code_screenshot(
     ctx: ToolContext,
     url: Annotated[str, "URL oder Datei"],
