@@ -19,9 +19,8 @@ from datetime import datetime
 from ..config import MemoryConfig
 from .chats import ChatStore, chat_mode
 from .context import Conversation, est_tokens
-from .files import Facts, Journal, Summaries, day_str
+from .files import Facts, Journal, Summaries, day_str, digest
 from .index import Hit, MemoryIndex, split_text
-from .lessons import LessonStore
 
 log = logging.getLogger(__name__)
 
@@ -40,7 +39,6 @@ class Memory:
         self.facts = Facts(cfg.dir / "facts.md")
         self.index = MemoryIndex(cfg.dir / "index.sqlite", embedder=llm)
         self.chats = ChatStore(cfg.dir / "chats", legacy_session=cfg.dir / "session.json")
-        self.lessons = LessonStore(cfg.dir, embed=self.index._embed, max_count=cfg.lessons_max)
         self.conversation = self.chats.open_active()  # Chat, in dem der Agent gerade arbeitet
         self._outer: list[Conversation] = []  # während in_chat: die darunterliegenden Chats (unten = Nutzer-Chat)
         self.last_activity = time.time()
@@ -254,12 +252,19 @@ class Memory:
         return summary
 
     def days_needing_summary(self, include_today: bool) -> list[str]:
+        """Tage, deren Journal sich seit der letzten Zusammenfassung inhaltlich geändert hat. Vorhandene
+        Zusammenfassungen ohne Vermerk (ältere Versionen) gelten als aktuell – der Vermerk wird nachgetragen."""
         today = day_str()
         out = []
         for day in self.journal.days():
             if day == today and not include_today:
                 continue
-            if self.journal.mtime(day) > self.summaries.mtime(day):
+            fp = digest(self.journal.read(day, raw=True) or "")
+            done = self.summaries.summarized(day)
+            if done is None and self.summaries.mtime(day) and day != today:
+                self.summaries.mark(day, fp)
+                continue
+            if done != fp:
                 out.append(day)
         return out
 
@@ -267,12 +272,15 @@ class Memory:
         idle = time.time() - self.last_activity > self.cfg.summarize_idle_minutes * 60
         done = []
         for day in self.days_needing_summary(include_today=idle):
+            fp = digest(self.journal.read(day, raw=True) or "")
             try:
-                await self.summarize_day(day)
-                done.append(day)
+                summary = await self.summarize_day(day)
             except Exception as e:  # noqa: BLE001
                 log.warning("Zusammenfassung für %s fehlgeschlagen: %s", day, e)
                 break
+            self.summaries.mark(day, fp)  # auch bei leerem Tag – sonst käme er alle paar Minuten wieder
+            if summary:
+                done.append(day)
         return done
 
     # ---------- Wartung ----------

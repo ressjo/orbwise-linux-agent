@@ -105,6 +105,17 @@ def remove_strata_files(dirs: list[str], run: Runner = subprocess.run, home: Pat
     return freed
 
 
+def remove_lessons(memory_dir: Path) -> int:
+    """„Aus Erfahrung lernen“ gibt es nicht mehr: Lektionen und Kandidaten löschen → freigegebene Bytes."""
+    freed = 0
+    for name in ("lessons.json", "lessons_pending.jsonl"):
+        f = Path(memory_dir) / name
+        if f.is_file():
+            freed += f.stat().st_size
+            f.unlink()
+    return freed
+
+
 PIPER_FILES = ("*.onnx", "*.onnx.json", "*.onnx.part", "*.onnx.json.part", "voices_catalog.json")
 
 

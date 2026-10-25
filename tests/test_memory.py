@@ -127,3 +127,30 @@ def test_only_relevant_memories_reach_the_prompt(cfg, llm, memory):
     assert not agent._relevant("Wie heiße ich?", fact)  # Fakten stehen schon im Systemprompt
     plain = Hit(4, "journal", "2026-09-01", "Das NAS heißt Tresor", 0, 0.03)  # ohne Embeddings
     assert agent._relevant("Wie heißt mein NAS?", plain) and not agent._relevant("Hallo", plain)
+
+
+def test_each_day_is_summarised_once_even_with_a_future_file_time(memory):
+    """Journal-Datei mit einer Zeit in der Zukunft (Backup, Sync): früher wurde der Tag alle 5 Minuten neu
+    zusammengefasst – jetzt zählt der Inhalt."""
+    import os
+    import time
+    memory.journal.append("Du", "Mach ein Systemupdate", datetime(2026, 9, 20, 10, 0, 0))
+    future = time.time() + 86400
+    os.utime(memory.journal.path("2026-09-20"), (future, future))
+    assert run(memory.summarize_pending()) == ["2026-09-20"]
+    assert run(memory.summarize_pending()) == []
+    # neuer Inhalt (z. B. nach dem Löschen eines Chats umgeschrieben) → einmal neu
+    memory.journal.append("Du", "Noch eine Frage", datetime(2026, 9, 20, 11, 0, 0))
+    assert run(memory.summarize_pending()) == ["2026-09-20"]
+    assert run(memory.summarize_pending()) == []
+
+
+def test_empty_day_and_old_summaries_do_not_loop(memory):
+    p = memory.journal.path("2026-09-21")
+    p.write_text("")  # leerer Tag: wird vermerkt, aber nicht als erstellt gemeldet – und nicht endlos wiederholt
+    assert run(memory.summarize_pending()) == []
+    assert "2026-09-21" not in memory.days_needing_summary(include_today=True)
+    # Zusammenfassung aus einer älteren Version (ohne Vermerk) gilt als aktuell
+    memory.journal.append("Du", "Alt", datetime(2026, 9, 19, 9, 0, 0))
+    memory.summaries.write("2026-09-19", "- alt")
+    assert "2026-09-19" not in memory.days_needing_summary(include_today=True)

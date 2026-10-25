@@ -108,3 +108,19 @@ def test_bonsai_profiles_are_dropped_but_files_stay(tmp_path):
     data = json.loads(state.read_text())
     assert list(data["added_profiles"]) == ["bonsai-eigen"] and data["kv_cache"] == {} and "active_profile" not in data
     assert (bonsai_dir / "models").is_dir()  # ~/bonsai löscht Orbwise nicht
+
+
+def test_learned_lessons_are_removed(tmp_path):
+    from orbwise import retire
+    (tmp_path / "lessons.json").write_text("[]")
+    (tmp_path / "lessons_pending.jsonl").write_text("{}\n")
+    (tmp_path / "facts.md").write_text("- bleibt")
+    assert retire.remove_lessons(tmp_path) > 0
+    assert not (tmp_path / "lessons.json").exists() and (tmp_path / "facts.md").exists()
+    assert retire.remove_lessons(tmp_path) == 0
+
+
+def test_old_config_with_learning_keys_still_loads():
+    from orbwise.config import Config
+    c = Config.model_validate({"memory": {"learning": True, "lessons_max": 300}})
+    assert not hasattr(c.memory, "learning")

@@ -24,7 +24,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
 
-from . import prompts, toolselect
+from . import prompts
 from .agent_code import CodingMixin
 from .agent_compact import CompactMixin
 from .agent_safety import TAINT_SOURCES, SafetyMixin, is_taint_source  # noqa: F401 – auch für Aufrufer
@@ -51,16 +51,6 @@ from .tools.registry import (
 from .tools.system import _os_name
 
 log = logging.getLogger(__name__)
-
-# Lernen aus Erfahrung (memory/lessons.py): Werkzeug-Ergebnisse, die nach Fehlschlag aussehen …
-FAILED_RESULT = re.compile(r"^(?:\[[^\]]*\] )?(?:Fehler|Error|BLOCKIERT|Unbekanntes Tool|Fehlende Parameter|"
-                           r"Exit-Code [1-9]|Zeitüberschreitung|Datei nicht gefunden|Programm '.*' ist nicht installiert)")
-# … und Nutzer-Korrekturen der vorigen Antwort („nein, das ist falsch …“, „nimm lieber …“)
-CORRECTION = re.compile(r"^\W*(?:nein\b|falsch|stimmt nicht|das (?:ist|war) (?:falsch|nicht (?:richtig|korrekt|das))|"
-                        r"nicht so\b|doch nicht|nimm (?:lieber|stattdessen|doch)|du hast (?:das |es )?(?:falsch|vergessen)|"
-                        r"eigentlich (?:meinte|wollte)|ich meinte|no\b|wrong|that'?s (?:wrong|not)|not what i|i meant)",
-                        re.I)
-
 
 def plan_steps(text: str) -> int:
     """Anzahl nummerierter Schritte in einem Plan (für „Mein Plan hat n Schritte“)."""
@@ -132,10 +122,6 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         self._turn_time = ""  # Uhrzeit der aktuellen Anfrage
         self._turn_stamp = ""  # Datum + Uhrzeit für die Kontext-Notiz der aktuellen Anfrage
         self._turn_memories = ""  # zur aktuellen Anfrage gefundene Erinnerungen
-        self._turn_lessons = ""  # … und passende gelernte Erfahrungen (Text für die Kontext-Notiz)
-        self._turn_lesson_ids: list[str] = []
-        self._turns: dict[str, dict] = {}  # letzte Runden (für 👍/👎): msg_id → Auszug
-        self._last_turn: dict | None = None
         self._turn_open = False  # läuft gerade eine Anfrage (deren Notiz noch eingefroren werden darf)?
         self._think: bool | None = None
         self._think_level: str | None = None  # low | medium | high, wenn gedacht wird
@@ -275,9 +261,8 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         notes = self.coding_notes()  # fertige Hintergrund-Jobs, zurückgesetzte Antworten
         hint = "\n".join(x for x in (hint, notes) if x)
         msg["note"] = prompts.context_note(self.cfg, stamp, memories, plan=self._plan,
-                                           approved_plan=self._approved_plan, extra=hint, lessons=self._turn_lessons)
-        msg["note_meta"] = {"time": stamp, "plan": self._plan, "approved": self._approved_plan, "hint": hint,
-                            "lessons": self._turn_lessons}
+                                           approved_plan=self._approved_plan, extra=hint)
+        msg["note_meta"] = {"time": stamp, "plan": self._plan, "approved": self._approved_plan, "hint": hint}
 
     def _prompt_message(self, m: dict) -> dict:
         out = {k: v for k, v in m.items() if k in ("role", "content", "tool_calls", "tool_name")}
@@ -533,72 +518,6 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         ep["shown"] = sorted(shown | set(taken))
         return text
 
-    # ---------- Lernen aus Erfahrung (siehe memory/lessons.py) ----------
-    async def _lessons_for(self, user_text: str) -> tuple[str, list[str]]:
-        """Passende Lektionen für die Kontext-Notiz – festes, kleines Budget (context_plan.lessons); was in dieser
-        Epoche schon mitging, kommt nicht noch einmal. Meist: keine."""
-        store = getattr(self.memory, "lessons", None)
-        if not self.cfg.memory.learning or store is None or not store.lessons:
-            return "", []
-        plan = self.plan()
-        ep = self.memory.conversation.epoch
-        groups = {u.split(":")[0] for u in toolselect.units_for([user_text], False)}
-        found = await store.relevant(user_text, groups, k=plan.lessons_count, skip=set(ep.get("lessons_shown") or []))
-        lines, ids, used = [], [], 0
-        for x in found:
-            line = f"- {x.text}"
-            if used + est_tokens(line) > plan.lessons:
-                break
-            lines.append(line)
-            ids.append(x.id)
-            used += est_tokens(line)
-        if ids:
-            ep["lessons_shown"] = sorted(set(ep.get("lessons_shown") or []) | set(ids))
-            store.mark_used(ids)
-        return "\n".join(lines), ids
-
-    def _turn_record(self, user_text: str, notes: list[str], answer: str, groups: set[str]) -> dict:
-        return {"user": user_text[:600], "steps": [n[:240] for n in notes[-12:]], "answer": answer[:800],
-                "groups": sorted(groups), "lessons": list(self._turn_lesson_ids)}
-
-    def feedback(self, msg_id: str, good: bool, text: str = "") -> bool:
-        """👍/👎 zu einer Antwort: 👍 bestätigt die mitgegebenen Lektionen, 👎 wird zum Lern-Kandidaten."""
-        store = getattr(self.memory, "lessons", None)
-        turn = self._turns.get(msg_id)
-        if store is None or turn is None:
-            return False
-        if good:
-            store.mark_helped(turn["lessons"])
-        else:
-            store.mark_helped(turn["lessons"], -1)
-            if self.cfg.memory.learning:
-                store.add_candidate({"kind": "feedback", **turn, "correction": text[:500]})
-        return True
-
-    async def reflect_lessons(self, limit: int = 3) -> int:
-        """Im Leerlauf: über Fehler, Korrekturen und 👎 nachdenken → je höchstens eine kurze Lektion. Liefert die
-        Zahl neuer bzw. zusammengeführter Lektionen."""
-        store = getattr(self.memory, "lessons", None)
-        if store is None or not self.cfg.memory.learning or not store.pending():
-            return 0
-        learned = 0
-        for cand in store.take_candidates(limit):
-            messages = [{"role": "system", "content": prompts.text(self.cfg, "reflect_system")},
-                        {"role": "user", "content": prompts.reflect_request(self.cfg, cand)}]
-            try:
-                reply = await self.llm.chat(messages)
-            except Exception as e:  # noqa: BLE001 – dann eben später
-                store.add_candidate(cand)
-                log.info("Nachdenken über einen Fehler verschoben: %s", e)
-                break
-            lesson = prompts.parse_lesson(reply)
-            if lesson:
-                await store.add(lesson, cand.get("groups") or [], cand.get("kind", "error"))
-                learned += 1
-        store.prune()
-        self._cache_owner = None  # der Server hatte dafür einen anderen Prompt im Cache
-        return learned
-
     async def _run(self, user_text: str, emit: Emit, confirm: Confirm, images: list[str] | None = None) -> str:
         now = datetime.now()
         self._turn_time = now.strftime("%H:%M")
@@ -612,14 +531,6 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         start_len = len(conv.history)
         await emit({"type": "state", "state": "thinking"})
         self._turn_memories = await self._memories_for(user_text)
-        self._turn_lessons, self._turn_lesson_ids = await self._lessons_for(user_text)
-        store = getattr(self.memory, "lessons", None)
-        if (store is not None and self.cfg.memory.learning and self._last_turn and CORRECTION.match(user_text)
-                and len(user_text.split()) >= 3):
-            # Korrektur der vorigen Antwort → darüber im Leerlauf nachdenken; die damals mitgegebenen Lektionen
-            # haben offenbar nicht geholfen
-            store.add_candidate({"kind": "correction", **self._last_turn, "correction": user_text[:500]})
-            store.mark_helped(self._last_turn.get("lessons") or [], -1)
         await self._check_vision()
         from . import attachments
         pics = [n for n in images or [] if not attachments.is_doc(n)]
@@ -638,7 +549,6 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         await self.snapshot_begin()
         try:
             seen: dict[str, int] = {}  # gleiche Tool-Aufrufe zählen (Schleifenerkennung)
-            failures, recovered = 0, False  # fehlgeschlagene Werkzeug-Aufrufe, danach noch ein erfolgreicher?
             retried = False
             finished = False
             used_tools: set[str] = set()
@@ -691,10 +601,6 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
                     name, result, note = done[i] if i in done else await self._execute(call, emit, confirm)
                     conv.add({"role": "tool", "content": result, "tool_name": name})
                     tool_notes.append(note)
-                    if FAILED_RESULT.match(result or ""):
-                        failures += 1
-                    elif failures:
-                        recovered = True
                 if looping:
                     break
             if not finished:
@@ -735,19 +641,8 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         self._note_recent()
 
         answer = "\n\n".join(spoken)
-        groups = {self.groups_of.get(n, "") for n in used_tools} - {""}
-        record = self._turn_record(user_text, tool_notes, answer, groups)
-        self._turns[msg_id] = record
-        while len(self._turns) > 30:
-            self._turns.pop(next(iter(self._turns)))
-        self._last_turn = record
-        if store is not None and self.cfg.memory.learning:
-            if failures and (recovered or not finished):  # erst schiefgegangen, dann anders gelöst (oder gar nicht)
-                store.add_candidate({"kind": "error", **record})
-            elif not failures and self._turn_lesson_ids:
-                store.mark_helped(self._turn_lesson_ids)  # glatt gelaufen – die Lektionen haben (wohl) geholfen
         await self.snapshot_end(emit, msg_id)
-        await emit({"type": "assistant_end", "id": msg_id, "text": answer, "feedback": True})
+        await emit({"type": "assistant_end", "id": msg_id, "text": answer})
         if self._plan and answer.strip():
             await emit({"type": "plan", "id": msg_id, "text": answer, "steps": plan_steps(answer)})
         # Antwort ist fertig – das Nachbereiten (Tagebuch, ggf. Komprimieren) läuft still im Hintergrund

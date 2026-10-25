@@ -82,7 +82,6 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
 | **Obsidian** | Search, read and ask questions about notes in your vault, create/append/update notes, open them in Obsidian |
 | **Trilium** | Search and read notes, create notes in the inbox, append to and update notes |
 | **Calendar** | iCloud or any CalDAV server: list events, find free time, create/change/delete events |
-| **Learning from experience** | Short lessons from errors, your corrections and thumbs-down ratings ("docker on the NAS needs sudo") – thought about while idle, only matching ones go along with a question under a small fixed limit, so the context window does not grow; viewable, editable and deletable under Memory → Experience |
 | **Memory** | Remembers everything permanently (see below), `remember` / `recall` / `forget`, **chat history** with search, pinning, rename, Markdown export and delete; the search index repairs itself if it gets damaged |
 | **Dashboard** | Calm, warm design in **light, dark or system** (Settings → General → Appearance), petrol accent, a serif reading font (Newsreader) for headings and answers and Inter for the controls – both bundled, nothing is loaded from the internet. The **orb** is three fine rings around a dot: it breathes when idle, follows your voice when listening or speaking, circles while thinking, shows running tools as small dots and the **context** as a thin outer arc. Collapsible sidebar with chats, the orb with greeting and suggestions on an empty chat that docks small at the side once you talk, a live line in each answer showing what the model is doing (reading the prompt, thinking, writing a call) and a small time/token summary afterwards, an activity panel with live telemetry (tokens/s, context, GPU, VRAM, RAM, power, Brave search) and every step grouped under the question that caused it (readable names, duration, click for the raw call), Models, Planner, Memory and Settings as large windows, Orbwise's own dialogs instead of browser pop-ups; works on the phone too |
 | **Models & voices** | **Models page** (sidebar, like LM Studio): all models with engine, quantization, size and VRAM fit; load with one click (quick switch on the model chip at the top); per model context window (Tools/Coding), KV cache, sampling, context test and llama-server log; add models from Hugging Face, `~/models` or presets with download progress and cancel; delete models · **Settings → Voice:** natural **Pocket TTS** voices on the CPU, each with the language it speaks (which is also the language of the answers), "Jarvis" voice effect · **Think** button for reasoning models |
@@ -165,7 +164,7 @@ from now on. Your assistant keeps its name "Jarvis".
   **Think** lets the model reason before answering (see [Thinking mode](#thinking-mode)), **Plan** makes it present
   a plan first (see [Plan mode](#plan-mode)).
 - **Sidebar:** Tools / Coding / Image switch, new chat, search, all chats; at the bottom **Models**, **Planner**
-  (routines, reminders, morning briefing), **Memory** (facts, journal, experience) and **Settings** (general, voice,
+  (routines, reminders, morning briefing), **Memory** (facts, journal) and **Settings** (general, voice,
   status) – each opens as a large window. The **model chip** at the top switches models quickly (plus *Unload model*
   and *Manage models …*), the pulse icon opens the **activity** panel – it opens by itself when a tool runs.
 - **Activity:** every step is grouped under the question (or routine / Telegram run) that caused it, with a readable
@@ -193,7 +192,7 @@ Everything is stored as readable files in `~/.local/share/orbwise/memory/`:
 | File | Content |
 |---|---|
 | `journal/2026-09-27.md` | Complete log of the day – every question, answer and tool call |
-| `summaries/2026-09-27.md` | Daily summary, generated automatically (day change or 15 min idle) |
+| `summaries/2026-09-27.md` | Daily summary, generated automatically (day change or 15 min idle) – once per day, again only if the day's content changes (e.g. a chat was deleted) |
 | `facts.md` | Permanent facts ("The NAS is mounted at /mnt/nas") – editable by hand |
 | `chats/<id>.json` | One chat: all messages, the summary of each compacted part, title, star (`chats/active` = current chat) |
 | `index.sqlite` | Search index (full text + embeddings) – just a cache, rebuild with `orbwise reindex` |
@@ -279,24 +278,6 @@ Afterwards – and after switching chat, mode or model – Orbwise reads the cur
 nothing else runs, and again when you start typing or recording if needed. A quiet note above the activity list
 shows it (*chat pre-read · 4,716 tokens*); the next question then only reads its new part. See also the
 [prompt cache tips](#prompt-cache-tips).
-
-### Learning from experience
-
-The model's weights cannot be retrained locally, so Orbwise learns the way large assistants do: from experience,
-outside the model.
-
-- **Candidates** are noted for free during a turn: a tool failed and the model then solved it differently (or not at
-  all), you corrected the previous answer ("no, that's wrong …", "use … instead"), or you gave a thumbs-down
-  (optionally with a note on what was wrong).
-- **Reflection while idle** (no question for ~10 minutes, nothing else loaded): the model looks at each candidate and
-  writes at most **one short lesson** – or nothing if there is nothing general to learn. Similar lessons are merged
-  instead of appended; lessons that went along often without helping are removed; at most `memory.lessons_max` (300).
-- **The context does not grow:** lessons never sit in the system prompt. For each question only lessons that really
-  match (similarity threshold, same tool area) go into its context note – at most ~2 % of the window below 16k
-  (2 lessons) and ~3 % from 16k (5 lessons), often none. 10 or 300 stored lessons cost the same. Lessons already shown
-  in a chat are not repeated, and the prompt cache stays intact.
-- **Memory → Experience** lists everything learned (where it came from, how often it was used and helped); click a
-  lesson to edit it, the trash icon deletes it, and you can add your own rules. `memory.learning: false` turns it off.
 
 ### Chat history
 

@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Removed
+- **Learning from experience:** lessons, the idle reflection and the thumbs up/down under answers are gone – with
+  local models they rarely helped, and reflecting while idle pushed the chat out of the prompt cache (the next
+  question re-read everything). Stored lessons (`lessons.json`) are deleted on the first start; old
+  `memory.learning` / `memory.lessons_max` settings are ignored.
 - **Piper speech output:** replaced by Pocket TTS – the Piper voice catalogue, voice uploads, `voice.tts_voice` /
   `voice.tts_length_scale` and the `piper-tts` dependency are gone. Downloaded Piper voices in
   `~/.local/share/orbwise/voices/` are deleted on the first start. Without Pocket TTS the browser speaks.
@@ -186,6 +190,9 @@ All notable changes to this project are documented here. The format follows
   the open chat stays untouched.
 
 ### Fixed
+- **Daily summaries no longer repeat:** whether a day needs a (new) summary now depends on the journal's content,
+  not its file time. A journal with a file time in the future (backup, sync) made Orbwise summarise the same day
+  every 5 minutes, each time pushing the chat out of the prompt cache.
 - **Auto mode as root:** when Orbwise runs as root, *Read + edit files* and *Auto* no longer approve system changes as
   "without root" – they ask, and `orbwise doctor` warns.
 - **Cache numbers for one-token requests:** llama-server sometimes omits the generation speed when only one token is

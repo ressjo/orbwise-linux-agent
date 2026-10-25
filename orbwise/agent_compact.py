@@ -298,8 +298,7 @@ class CompactMixin:
             meta = hist[q]["note_meta"]
             hist[q]["note"] = prompts.context_note(
                 self.cfg, meta.get("time", ""), "", meta.get("plan", False), meta.get("approved", ""),
-                extra=(meta.get("hint", "") + "\n" + (prompts.compact_text(self.cfg, "continue") if in_turn else "")),
-                lessons=meta.get("lessons", ""))
+                extra=(meta.get("hint", "") + "\n" + (prompts.compact_text(self.cfg, "continue") if in_turn else "")))
         turn_tools = {c.get("function", {}).get("name", "") for m in hist[q:] for c in m.get("tool_calls") or []} - {""}
         # ab 16k: die Werkzeugauswahl bleibt (passt sie in die Grenze, bleiben Systemprompt und Werkzeuge im Cache)
         inherit = conv.epoch.get("groups") if not plan.small else None

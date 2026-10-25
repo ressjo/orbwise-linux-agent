@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -127,6 +129,34 @@ class Summaries:
     def delete(self, day: str) -> None:
         if valid_day(day) and self.path(day).exists():
             self.path(day).unlink()
+        self.forget_state(day)
+
+    # Welcher Journal-Stand wurde zusammengefasst? (Inhalt statt Dateizeit – eine Journal-Datei mit einer Zeit in der
+    # Zukunft, z. B. aus einem Backup, ließ den Tag sonst alle paar Minuten neu zusammenfassen)
+    def _state_path(self) -> Path:
+        return self.dir / ".state.json"
+
+    def _state(self) -> dict:
+        try:
+            return json.loads(self._state_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+
+    def summarized(self, day: str) -> str | None:
+        return self._state().get(day)
+
+    def mark(self, day: str, digest: str) -> None:
+        state = self._state()
+        state[day] = digest
+        tmp = self._state_path().with_suffix(".tmp")
+        tmp.write_text(json.dumps(state, indent=0, sort_keys=True), encoding="utf-8")
+        tmp.replace(self._state_path())
+
+    def forget_state(self, day: str) -> None:
+        state = self._state()
+        if state.pop(day, None) is not None:
+            self._state_path().write_text(json.dumps(state, indent=0, sort_keys=True), encoding="utf-8")
+
 
     def read(self, day: str) -> str | None:
         if not valid_day(day):
@@ -211,3 +241,8 @@ class Facts:
             lines.append(line)
             used += len(line) + 1
         return "\n".join(reversed(lines))
+
+
+def digest(text: str) -> str:
+    """Kurzer Fingerabdruck eines Journals (Inhalt, nicht Dateizeit)."""
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:16]

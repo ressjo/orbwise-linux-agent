@@ -148,14 +148,6 @@ HTML_EN = [
     ('<h2>Gedächtnis</h2>', '<h2>Memory</h2>'),
     ('<h3>Fakten</h3>', '<h3>Facts</h3>'),
     ('<h3>Tagebuch</h3>', '<h3>Journal</h3>'),
-    ('<h3>Erfahrungen</h3>', '<h3>Experience</h3>'),
-    ('Kurze Lektionen, die Jarvis aus Fehlern, deinen Korrekturen und schlechten Bewertungen gelernt hat. Zu einer Frage gehen nur die '
-     'passenden mit (feste kleine Grenze) – das Kontextfenster wächst dadurch nicht.',
-     'Short lessons Jarvis learned from errors, your corrections and bad ratings. Only matching ones go along with a question '
-     '(small fixed limit) – the context window does not grow.'),
-    ('placeholder="Eigene Regel hinzufügen, z. B. „Docker auf dem NAS immer mit sudo“"',
-     'placeholder="Add your own rule, e.g. “always use sudo for docker on the NAS”"'),
-    ('<button class="btn small" type="submit">Hinzufügen</button>', '<button class="btn small" type="submit">Add</button>'),
     ('title="Bild: Bilder erzeugen und bearbeiten mit Qwen-Image-2.1 – lokal"><svg class="i"><use href="#i-image"/></svg><span>Bild<',
      'title="Image: generate and edit images with Qwen-Image-2.1 – locally"><svg class="i"><use href="#i-image"/></svg><span>Image<'),
     ('title="Bild oder PDF anhängen (auch einfügen mit Strg+V oder hineinziehen)" aria-label="Bild oder PDF anhängen"',
