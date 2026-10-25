@@ -178,11 +178,11 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
 }
 .side-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 4px 6px; }
 .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
-/* Zeichen: drei Ringe um einen Punkt (wie der Orb) */
-.brand-mark {
-  width: 26px; height: 26px; flex: none; border-radius: 50%; border: 1.5px solid var(--accent);
-  background: radial-gradient(circle, var(--accent) 0 20%, transparent 22%), radial-gradient(circle, transparent 0 48%, var(--accent-strong) 50% 56%, transparent 58%);
-}
+/* Logo (wie in der README): äußerer Ring mit kleinem Begleiter, innerer Ring, Kern */
+.brand-mark { width: 32px; height: 32px; flex: none; color: var(--accent); }
+.brand-mark .bm-outer { fill: none; stroke: currentColor; stroke-width: 4; stroke-linecap: round; }
+.brand-mark .bm-inner { fill: none; stroke: currentColor; stroke-width: 2.6; opacity: .5; }
+.brand-mark .bm-core, .brand-mark .bm-moon { fill: currentColor; }
 .brand-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
 .brand-name { font-family: var(--serif); font-weight: 500; font-size: var(--fs-xl); letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .brand-sub { font-size: var(--fs-sm); color: var(--muted); white-space: nowrap; }
@@ -250,11 +250,11 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
 .nav-item .i { color: var(--muted); }
 .app.side-collapsed .sidebar { padding-left: 10px; padding-right: 10px; align-items: center; }
 .app.side-collapsed .brand-text, .app.side-collapsed .new-chat span, .app.side-collapsed .side-search,
-.app.side-collapsed .side-chats, .app.side-collapsed .nav-item span, .app.side-collapsed .brand { display: none; }
+.app.side-collapsed .side-chats, .app.side-collapsed .nav-item span { display: none; }
 .app.side-collapsed .new-chat { width: 40px; padding: 0; justify-content: center; }
 .app.side-collapsed .side-nav { margin-top: auto; }
 .app.side-collapsed .nav-item { width: 40px; padding: 0; justify-content: center; }
-.app.side-collapsed .side-head { padding: 2px 0 6px; }
+.app.side-collapsed .side-head { padding: 2px 0 6px; flex-direction: column; }
 
 /* ---------- Modus: Tools / Coding ---------- */
 .mode-switch { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; padding: 3px; margin: 2px 0 10px;
@@ -282,7 +282,7 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
   background: var(--glass); border: 1px solid var(--border); }
 .app.coding .main.has-messages .stage-info:has(.substate:empty) .state:is(:empty) { display: none; }
 .app.coding .msg .body { font-size: var(--fs-base); }
-.app.coding .brand-mark { border-color: var(--coding); background: radial-gradient(circle, var(--coding) 0 20%, transparent 22%); }
+.app.coding .brand-mark { color: var(--coding); }
 .project-chip { align-items: center; gap: 7px; height: 30px; padding: 0 11px; margin-left: 10px; max-width: 360px;
   border-radius: var(--r-full); border: 1px solid var(--border-strong); background: var(--surface); color: var(--text-2);
   font: inherit; font-size: var(--fs-md); cursor: pointer; }
@@ -441,6 +441,12 @@ textarea.ui-dialog-input { height: auto; padding: 9px 12px; resize: vertical; }
 .main.has-messages .live-transcript:empty { display: none; }
 /* Chat nicht unter dem Dock verstecken: rechts Platz lassen, solange die Spalte sonst darunter reichen würde */
 .main.has-messages .chat { padding-right: 150px; }
+@container main (min-width: 1060px) {
+  .main.has-messages .stage { bottom: 18px; }
+}
+@container main (min-width: 1300px) {
+  .app.coding .main.has-messages .stage { bottom: 18px; }  /* Coding: Eingabeleiste bis 980 px */
+}
 @container main (min-width: 1290px) {
   .main.has-messages .stage { width: 140px; right: 22px; }
   .main.has-messages .orb-wrap { width: 140px; height: 124px; }
