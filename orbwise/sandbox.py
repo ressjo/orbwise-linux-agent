@@ -25,7 +25,7 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-DEFAULT_IMAGE = "orbwise-sandbox:1"
+DEFAULT_IMAGE = "orbwise-sandbox:2"
 CONTAINERFILE = Path(__file__).parent / "sandbox_image" / "Containerfile"
 CAPS = ("CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID", "KILL")
 _engine_cache: dict[str, tuple[float, str | None, str]] = {}
@@ -114,7 +114,7 @@ def image_ready(binary: str, name: str) -> bool:
 
 
 async def build_image(binary: str, progress: Callable[[str], Awaitable[None]] | None = None) -> None:
-    """orbwise-sandbox:1 aus sandbox_image/Containerfile bauen (einmalig, einige Minuten)."""
+    """orbwise-sandbox:2 aus sandbox_image/Containerfile bauen (einmalig, einige Minuten)."""
     proc = await asyncio.create_subprocess_exec(
         binary, "build", "-t", DEFAULT_IMAGE, "-f", str(CONTAINERFILE), str(CONTAINERFILE.parent),
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)

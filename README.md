@@ -896,6 +896,10 @@ writing outside the copy, and pushing to GitHub; the leak guard keeps watching w
   **End sandbox** deletes container and copy.
 - No credentials go into the container (no token, no `~/.ssh`, no Docker socket); memory, CPU and processes are
   limited; the container stops after 30 minutes without commands and starts again with the next one.
+- **Screenshots:** the agent can take a screenshot of the app it is building (`screenshot`, e.g. of the dev
+  server on `localhost` or an HTML file) with headless Chromium – in the sandbox inside the container, otherwise with
+  the Chromium/Chrome on your machine. The image appears under the answer; if the loaded model sees images, it also
+  gets a description to check its work.
 - **How tight is it?** Capabilities dropped, `no-new-privileges`, only the working copy is mounted. Orbwise never runs
   git on the host inside the copy's `.git` (hooks or `core.fsmonitor` written by the agent would run outside the
   container): commits happen in the container, a push fetches the branch into a fresh repository and pushes it to the
@@ -903,7 +907,7 @@ writing outside the copy, and pushing to GitHub; the leak guard keeps watching w
   on, the container reaches the internet and your LAN (not services on your machine's `127.0.0.1`, such as Orbwise
   itself – `orbwise doctor` warns if Orbwise listens on another address). Prefer rootless Podman over Docker: a
   kernel exploit – which no container fully rules out – then only gets your own user.
-- The default image `orbwise-sandbox:1` (Debian with git, Python, Node, build tools, ripgrep) is built on first use;
+- The default image `orbwise-sandbox:2` (Debian with git, Python, Node, build tools, ripgrep, Chromium for screenshots) is built on first use;
   `sandbox.image` takes any other image (e.g. `python:3.12`). Install Podman with `sudo apt install podman`.
   If Podman is installed but not usable, the error says why (e.g. missing `subuid` ranges, with the fix) instead of
   Docker's “cannot connect to the Docker daemon”. On btrfs Podman may need `fuse-overlayfs` (`mount_program` in

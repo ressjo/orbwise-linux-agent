@@ -582,6 +582,7 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         if docs:  # ein PDF ist fremder Inhalt wie eine Mail – versteckte Anweisungen darin dürfen nichts auslösen
             self._tainted = True
         self._turn_open = True
+        self._shots: list[str] = []  # Screenshots dieser Antwort (screenshot-Werkzeug) – erscheinen unter ihr
         spoken: list[str] = []
         tool_notes: list[str] = []
         msg_id = uuid.uuid4().hex[:8]
@@ -681,6 +682,10 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         self._note_recent()
 
         answer = "\n\n".join(spoken)
+        if self._shots:  # an der letzten Antwort merken – nach dem Neuladen wieder zu sehen
+            last = next((m for m in reversed(conv.history[start_len:]) if m["role"] == "assistant"), None)
+            if last is not None:
+                last["shots"] = list(self._shots)
         await self.snapshot_end(emit, msg_id)
         await emit({"type": "assistant_end", "id": msg_id, "text": answer})
         if self._plan and answer.strip():

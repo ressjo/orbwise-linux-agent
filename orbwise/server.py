@@ -1110,7 +1110,7 @@ def create_app(cfg: Config) -> FastAPI:
         conv = memory.active
         shown = [(i, m) for i, m in enumerate(conv.history)
                  if m["role"] in ("user", "assistant")
-                 and (m.get("content") or m.get("attachments") or m.get("docs"))][-40:]
+                 and (m.get("content") or m.get("attachments") or m.get("docs") or m.get("shots"))][-40:]
         epochs = []
         for ep in conv.epochs[1:]:
             at = next((pos for pos, (i, _) in enumerate(shown) if i >= ep.get("start", 0)), None)
@@ -1131,6 +1131,7 @@ def create_app(cfg: Config) -> FastAPI:
                 "messages": [{"role": m["role"], "content": m["content"], "turn": turns.get(i, 0), **changes(i, m),
                               "editable": i >= start,
                               **({"images": m["attachments"]} if m.get("attachments") else {}),
+                              **({"images": m["shots"]} if m.get("shots") else {}),
                               **({"files": [attachments.doc_info(d) for d in m["docs"]]} if m.get("docs") else {})}
                              for i, m in shown],
                 "turns": max(turns.values(), default=0), "epochs": epochs}

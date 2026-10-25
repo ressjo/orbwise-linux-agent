@@ -73,7 +73,7 @@ def outbound_text(name: str, args: dict) -> str:
     parts: list[str] = []
     if name in ("web_search", "websearch"):
         parts.append(str(args.get("query") or ""))
-    elif name in ("fetch_url", "webfetch"):
+    elif name in ("fetch_url", "webfetch", "screenshot"):
         parts.append(str(args.get("url") or ""))
     elif name == "open_website":
         parts += [str(args.get("site") or ""), str(args.get("query") or "")]

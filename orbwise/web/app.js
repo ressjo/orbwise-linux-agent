@@ -444,6 +444,9 @@
       case "tool_output":
         toolOutput(ev);
         break;
+      case "tool_images":
+        if (S.currentMsg && assistants[S.currentMsg]) addShots(assistants[S.currentMsg].el, ev.images || []);
+        break;
       case "tool_result":
         toolResult(ev);
         sayNext("think");
@@ -749,24 +752,31 @@
     return el;
   }
 
+  function imageBox(names, cls = "") {
+    const box = document.createElement("div");
+    box.className = "msg-images" + (cls ? " " + cls : "");
+    for (const name of names) {
+      const img = document.createElement("img");
+      img.src = `/api/attachments/${encodeURIComponent(name)}`;
+      img.alt = "";
+      img.loading = "lazy";
+      img.onclick = () => window.open(img.src, "_blank");
+      box.appendChild(img);
+    }
+    return box;
+  }
+  // Screenshots des Agenten: unter dem Antworttext (nicht in .body – die wird beim Streamen neu gerendert)
+  function addShots(el, names) {
+    let box = el.querySelector(".msg-shots");
+    if (!box) { box = imageBox([], "msg-shots"); el.querySelector(".body").after(box); }
+    for (const img of [...imageBox(names).children]) box.appendChild(img);
+  }
   function addUser(text, source, images, turn, editable, files) {
     const el = addMsg("user", source === "voice" ? L("Du · Sprache", "You · voice") : L("Du", "You"), escapeHtml(text));
     el._raw = text;
     if (turn) el.dataset.turn = turn;
     userActions(el, editable !== false && !!turn);
-    if (images && images.length) {
-      const box = document.createElement("div");
-      box.className = "msg-images";
-      for (const name of images) {
-        const img = document.createElement("img");
-        img.src = `/api/attachments/${encodeURIComponent(name)}`;
-        img.alt = "";
-        img.loading = "lazy";
-        img.onclick = () => window.open(img.src, "_blank");
-        box.appendChild(img);
-      }
-      el.querySelector(".body").prepend(box);
-    }
+    if (images && images.length) el.querySelector(".body").prepend(imageBox(images));
     if (files && files.length) {
       const box = document.createElement("div");
       box.className = "msg-files";
@@ -1121,7 +1131,7 @@
     read: ["Lesen", "Read"], edit: ["Bearbeiten", "Edit"], write: ["Schreiben", "Write"], grep: ["Durchsuchen", "Grep"],
     glob: ["Dateien finden", "Glob"], shell: ["Befehl", "Command"], job_output: ["Job-Ausgabe", "Job output"],
     websearch: ["Websuche", "Web search"], webfetch: ["Webseite lesen", "Fetch page"],
-    subagent: ["Unteragent", "Subagent"], question: ["Rückfrage", "Question"],
+    subagent: ["Unteragent", "Subagent"], question: ["Rückfrage", "Question"], screenshot: ["Screenshot", "Screenshot"],
   };
   const TOOL_PREFIX = [[/^mail_/, ["Mail", "Mail"]], [/^paperless_/, ["Paperless", "Paperless"]], [/^ha_/, ["Smart Home", "Smart home"]],
     [/^calendar_/, ["Kalender", "Calendar"]], [/^obsidian_/, ["Obsidian", "Obsidian"]], [/^trilium_/, ["Trilium", "Trilium"]],
@@ -1139,7 +1149,7 @@
     portainer: "code", web: "search", files: "file", apps: "bolt", memory_tools: "brain", calendar_tools: "calendar",
     reminder_tools: "bell", mail: "chat", telegram_tools: "chat", vision: "image", images: "image", paperless: "file" };
   const CODE_ICONS = { read: "file", edit: "file", write: "file", grep: "search", glob: "search", shell: "code",
-    job_output: "code", websearch: "search", webfetch: "search", subagent: "brain", question: "chat" };
+    job_output: "code", websearch: "search", webfetch: "search", subagent: "brain", question: "chat", screenshot: "image" };
   const toolIcon = (ev) => (ev.group === "code" ? CODE_ICONS[ev.name] : ACT_ICONS[ev.group]) || "bolt";
   // das aussagekräftigste Argument als Kurzinfo hinter dem Namen
   function keyArg(args) {
@@ -1507,7 +1517,7 @@
   const SAT_GROUPS = [
     [/^(read|edit|write|grep|glob)$/, ["Dateien", "Files"]], [/^(shell|job_output)$/, ["Shell", "Shell"]],
     [/^(websearch|webfetch)$/, ["Web", "Web"]], [/^subagent$/, ["Unteragent", "Subagent"]],
-    [/^question$/, ["Rückfrage", "Question"]],
+    [/^question$/, ["Rückfrage", "Question"]], [/^screenshot$/, ["Screenshot", "Screenshot"]],
     [/^look_at_/, ["Sehen", "Vision"]], [/^(web_search|fetch_url|open_website)$/, ["Web", "Web"]], [/^paperless_/, ["Paperless", "Paperless"]],
     [/^mail_/, ["Mail", "Mail"]], [/^obsidian_/, ["Obsidian", "Obsidian"]], [/^trilium_/, ["Trilium", "Trilium"]],
     [/^ha_/, ["Smart Home", "Smart Home"]], [/^calendar_/, ["Kalender", "Calendar"]], [/^run_shell$/, ["Shell", "Shell"]],
@@ -5296,6 +5306,7 @@
         el._raw = m.content;
         if (m.turn) el.dataset.turn = m.turn;
         assistantActions(el);
+        if (m.images && m.images.length) addShots(el, m.images);
         if (m.changes) showChanges(el, m.turn, m.changes.files, m.changes.undone);
       });
       markLast();

@@ -1177,6 +1177,9 @@ details.card[open] > summary .caret { transform: rotate(180deg); }
 .composer.dragging { border-color: var(--image); box-shadow: 0 0 0 3px var(--warn-soft); }
 .msg .msg-images { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
 .msg .msg-images img { max-width: 220px; max-height: 180px; border-radius: var(--r-md); border: 1px solid var(--border); cursor: zoom-in; }
+.msg .msg-shots { margin: 10px 0 4px; }
+.msg .msg-shots img { max-width: min(100%, 560px); max-height: 380px; object-fit: contain; object-position: left top;
+  background: var(--surface-2); }
 .app.imaging .attach-row { display: none !important; }
 
 /* ---------------------------------------------------------------- Lernen aus Erfahrung */

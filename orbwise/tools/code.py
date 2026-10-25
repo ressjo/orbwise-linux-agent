@@ -683,6 +683,113 @@ async def code_webfetch(
     return await fetch_page(ctx, url, format if format in ("markdown", "text", "html") else "markdown")
 
 
+# ---------------------------------------------------------------- Screenshot (headless Chromium)
+BROWSERS = ("chromium", "chromium-browser", "google-chrome", "google-chrome-stable")
+_LOCAL_URL = re.compile(r"^https?://(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:\d+)?(/|$)", re.I)
+
+
+def _shot_target(ctx: ToolContext, url: str) -> str:
+    """http(s)-URL bleibt, sonst Datei (relativ zum Projekt) als file://-URL."""
+    url = url.strip()
+    if re.match(r"^(https?|file)://", url, re.I):
+        return url
+    return ctx.path(url).resolve().as_uri()
+
+
+def _shot_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
+    raw = str(args.get("url") or "")
+    if raw and not re.match(r"^https?://", raw, re.I):
+        path = raw.removeprefix("file://")
+        if is_secret_path(str(ctx.path(path))):
+            return BLOCKED, secret_reason()
+    return SAFE, ""
+
+
+def _browser_argv(binary: str, url: str, out: str, width: int, height: int, profile: str, root: bool) -> list[str]:
+    # eigenes, leeres Profil – nie das des Nutzers; als root (Container) geht Chromium nur ohne eigene Sandbox
+    return [binary, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--no-first-run",
+            f"--user-data-dir={profile}", f"--window-size={width},{height}", "--virtual-time-budget=4000",
+            f"--screenshot={out}", *(["--no-sandbox"] if root else []), url]
+
+
+async def _shot_bytes(ctx: ToolContext, url: str, width: int, height: int) -> bytes:
+    """PNG der Seite – in der Sandbox im Container (dort läuft der Dev-Server), sonst mit dem Chromium des Rechners."""
+    import shlex
+    import tempfile
+    if ctx.sandbox:
+        from .. import sandbox
+        binary = await sandbox.ensure_running(ctx.cfg, ctx.sandbox)
+        argv = _browser_argv("$(command -v chromium || command -v chromium-browser)", url, "/tmp/orbwise-shot.png",
+                             width, height, "/tmp/orbwise-shot-profile", True)
+        cmd = ("command -v chromium >/dev/null || command -v chromium-browser >/dev/null || "
+               "{ echo NOBROWSER >&2; exit 3; }; rm -f /tmp/orbwise-shot.png; "
+               + " ".join(a if a.startswith("$(") else shlex.quote(a) for a in argv)
+               + " >/dev/null 2>&1; cat /tmp/orbwise-shot.png")
+        p = await asyncio.create_subprocess_exec(*sandbox.exec_argv(binary, ctx.sandbox["name"], ctx.sandbox["path"],
+                                                                    cmd, 90),
+                                                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        out, err = await p.communicate()
+        if p.returncode == 3 or b"NOBROWSER" in err:
+            raise RuntimeError("Im Container fehlt Chromium – Sandbox beenden und neu starten (das neue Image bringt "
+                               "ihn mit) oder im Container `apt-get install -y chromium` ausführen.")
+        return out
+    binary = next((b for b in (shutil.which(n) for n in BROWSERS) if b), None)
+    if not binary:
+        raise RuntimeError("Kein Chromium/Chrome gefunden – z. B. `sudo apt install chromium` (oder die Sandbox "
+                           "nutzen, dort ist er dabei).")
+    with tempfile.TemporaryDirectory(prefix="orbwise-shot-") as tmp:
+        out = os.path.join(tmp, "shot.png")
+        p = await asyncio.create_subprocess_exec(*_browser_argv(binary, url, out, width, height,
+                                                                os.path.join(tmp, "profile"),
+                                                                hasattr(os, "geteuid") and os.geteuid() == 0),
+                                                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+        try:
+            await asyncio.wait_for(p.wait(), 90)
+        except asyncio.TimeoutError:
+            p.kill()
+            raise RuntimeError("Chromium hat nicht rechtzeitig fertig gerendert (90 s).") from None
+        return Path(out).read_bytes() if os.path.isfile(out) else b""
+
+
+@tool("Screenshot einer Seite (Dev-Server auf localhost, HTML-Datei) – der Nutzer sieht ihn im Chat; mit Bildmodell "
+      "kommt eine Beschreibung zurück. Nach UI-Änderungen nutzen.", risk=_shot_risk, name="screenshot")
+async def code_screenshot(
+    ctx: ToolContext,
+    url: Annotated[str, "URL oder Datei"],
+    width: int = 1280,
+    height: int = 800,
+    question: Annotated[str, "Optional: worauf achten"] = "",
+) -> str:
+    from .. import attachments
+    width, height = max(200, min(int(width or 1280), 3840)), max(200, min(int(height or 800), 4000))
+    target = _shot_target(ctx, url)
+    try:
+        data = await _shot_bytes(ctx, target, width, height)
+        name = attachments.save(ctx.cfg, data, "screenshot") if data else ""
+    except (RuntimeError, OSError, ValueError) as e:
+        return f"Screenshot fehlgeschlagen: {e}"
+    if not name or not name.endswith(".png"):
+        return f"Screenshot fehlgeschlagen: Chromium hat kein Bild geliefert (läuft {target}?)."
+    if ctx.agent is not None:
+        ctx.agent._shots = [*getattr(ctx.agent, "_shots", []), name]
+    if ctx.emit:
+        await ctx.emit({"type": "tool_images", "id": ctx.call_id, "images": [name]})
+    head = f"Screenshot von {target} ({width}×{height}) wird dem Nutzer im Chat gezeigt."
+    if not getattr(ctx.agent, "_vision", False):
+        return head + " (Das geladene Modell sieht keine Bilder – keine Beschreibung.)"
+    from . import vision
+    prompt = ("Beschreibe knapp, was auf diesem Screenshot einer Web-Oberfläche zu sehen ist: Aufbau, Texte, "
+              "auffällige Fehler (Überlappungen, abgeschnittene Texte, leere Bereiche, Fehlermeldungen).")
+    if question.strip():
+        prompt += f" Achte besonders auf: {question.strip()}"
+    try:
+        answer = await vision.ask_model(ctx, attachments.path_of(ctx.cfg, name), prompt)
+    except vision.VisionError as e:
+        return f"{head} (Beschreibung nicht möglich: {e})"
+    source = "Screenshot" if _LOCAL_URL.match(target) or target.startswith("file://") else "Screenshot einer Webseite"
+    return head + "\n" + vision._wrap(ctx.cfg, source, answer)
+
+
 # ---------------------------------------------------------------- Unteragent, Rückfrage
 @tool("Startet einen Unteragenten mit eigenem Kontext für eine abgegrenzte Aufgabe und liefert nur sein Ergebnis "
       "zurück – spart Platz im Kontext. agent='explore': schnell und nur lesend – Dateien nach Muster finden, Code "

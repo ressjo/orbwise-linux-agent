@@ -352,6 +352,8 @@ Werkzeugen direkt im Projekt: lesen, suchen, ändern, Befehle ausführen, im Web
 - Für Dateien die eigenen Werkzeuge, nicht die Shell: read statt cat/head/tail (auch für Ordner), edit statt
   sed/awk, write statt echo/heredoc, grep und glob zum Suchen. shell für echte Befehle: git, Build, Tests,
   Pakete; lange Läufe und Server mit background=true.
+- Nach Änderungen an einer Oberfläche: Dev-Server starten (background=true) und mit screenshot prüfen – der
+  Nutzer sieht das Bild im Chat.
 - edit: oldString aus dem aktuellen Dateiinhalt übernehmen (ohne die Zeilennummern aus read) und so klein wie
   möglich halten – jede in newString fehlende Zeile wird gelöscht.
 - Unabhängige Aufrufe (mehrere read/grep) gleichzeitig im selben Schritt stellen.
@@ -391,6 +393,8 @@ with tools: read, search, change, run commands, look things up on the web.
 - Use the file tools, not the shell: read instead of cat/head/tail (also for folders), edit instead of sed/awk,
   write instead of echo/heredoc, grep and glob to search. shell for real commands: git, build, tests, packages;
   long runs and servers with background=true.
+- After changing a UI: start the dev server (background=true) and check it with screenshot – the user sees the
+  image in the chat.
 - edit: take oldString from the current file content (without the line numbers from read) and keep it as small as
   possible – every line missing from newString is deleted.
 - Make independent calls (several read/grep) at the same time in one step.

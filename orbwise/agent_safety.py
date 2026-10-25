@@ -25,7 +25,7 @@ from .tools.safety import local_read_only
 log = logging.getLogger(__name__)
 
 TAINT_SOURCES = {"mail_list", "mail_search", "mail_read", "mail_ask", "daily_briefing", "fetch_url", "webfetch",
-                 "look_at_screen", "look_at_image"}  # Webseiten, Bildschirm, Bild: können Anweisungen enthalten
+                 "look_at_screen", "look_at_image", "screenshot"}  # Webseiten, Bildschirm, Bild: können Anweisungen enthalten
 
 # Auto-Modus „Auto“ gibt diese ohne Root frei (shell/write/edit: die Coding-Werkzeuge nach OpenCode)
 AUTO_TOOLS = ("run_shell", "ssh_run", "write_file", "edit_file", "shell", "write", "edit")
@@ -49,7 +49,7 @@ TAINT_READ_OK = {"read_file", "list_directory", "find_files", "search_file_conte
                  "ha_find", "ha_state", "obsidian_search", "obsidian_read", "obsidian_ask", "trilium_search",
                  "trilium_read", "portainer_containers", "portainer_stacks", "portainer_logs",
                  "portainer_check_updates", "list_installed_apps",
-                 "read", "grep", "glob", "websearch", "webfetch", "job_output", "question"}
+                 "read", "grep", "glob", "websearch", "webfetch", "job_output", "question", "screenshot"}
 
 
 def running_as_root() -> bool:
@@ -59,6 +59,8 @@ def running_as_root() -> bool:
 
 def is_taint_source(name: str, result: str) -> bool:
     """Bringt dieses Tool-Ergebnis fremden Text (Mails) in den Verlauf?"""
+    if name == "screenshot":  # eigene Seite (localhost, Projektdatei) ist kein fremder Inhalt – eine Webseite schon
+        return "Screenshot einer Webseite" in result
     return name in TAINT_SOURCES and (name != "daily_briefing" or "E-Mail:" in result)
 
 

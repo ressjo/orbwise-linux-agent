@@ -107,6 +107,10 @@ All notable changes to this project are documented here. The format follows
   only actions that change or start something do; the data-leak guard still checks what goes out.
 
 ### Added
+- **Screenshots in coding mode:** new tool `screenshot` renders a page (dev server on localhost, HTML file) with
+  headless Chromium – inside the sandbox container (image `orbwise-sandbox:2` now ships Chromium) or with the
+  browser on the machine – and shows it under the answer, also after reloading; models that see images get a
+  description back. Screenshots of foreign web pages count as untrusted content.
 - **Clone from GitHub with a branch:** click a repo to pick its branch; `github_clone` takes `branch`, an existing
   folder is switched to it.
 - **Skills:** every integration and built-in ability can be set up and switched without editing `config.yaml` –
