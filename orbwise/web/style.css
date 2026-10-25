@@ -573,6 +573,7 @@ textarea.ui-dialog-input { height: auto; padding: 9px 12px; resize: vertical; }
 
 /* Planmodus: Plan-Karte mit Ausführen / Ändern / Verwerfen */
 .msg.assistant.plan .body { padding: 14px 16px; border-radius: var(--radius); border: 1px solid var(--warn-line); background: var(--warn-soft); }
+.msg.assistant.plan .body:empty { display: none; }  /* Plankasten erst, wenn der Plan geschrieben wird */
 .msg.assistant.plan .body .md-h { color: var(--warn); font-size: var(--fs-sm); letter-spacing: .14em; text-transform: uppercase; }
 .plan-bar { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
 .plan-actions { display: flex; gap: 8px; flex-wrap: wrap; }

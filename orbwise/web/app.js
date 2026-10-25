@@ -820,7 +820,8 @@
   const dirty = new Set();
   let renderQueued = false;
   function renderAssistant(a) {
-    a.el.querySelector(".body").innerHTML = renderMarkdown(a.raw.replace(/\n{3,}/g, "\n\n"));
+    // nur Leerraum: leer lassen (der Plankasten erscheint erst mit dem ersten Wort)
+    a.el.querySelector(".body").innerHTML = a.raw.trim() ? renderMarkdown(a.raw.replace(/\n{3,}/g, "\n\n")) : "";
   }
   function flushTokens() {
     renderQueued = false;
