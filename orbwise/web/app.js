@@ -5088,7 +5088,7 @@
           li.querySelector("small").textContent = repo.description || "";
           li.querySelector(".gh-meta").textContent = (repo.private ? L("privat", "private") : L("öffentlich", "public"))
             + (repo.pushed_at ? " · " + new Date(repo.pushed_at).toLocaleDateString(LOCALE) : "");
-          li.querySelector("button").onclick = () => cloneRepo(repo.full_name, li);
+          li.querySelector("button").onclick = () => openRepo(repo, li);
           list.appendChild(li);
         }
       } catch { list.innerHTML = `<li class="empty">${L("Repos nicht ladbar.", "Could not load repos.")}</li>`; }
@@ -5098,13 +5098,43 @@
     load();
     setTimeout(() => search.focus(), 50);
   }
-  async function cloneRepo(name, li) {
+  // Klick auf ein Repo: Zeile aufklappen mit Branch-Auswahl und „Klonen“ (nur eine Zeile offen)
+  async function openRepo(repo, li) {
+    const list = li.parentElement;
+    const open = li.querySelector(".gh-clone");
+    list.querySelectorAll(".gh-clone").forEach((el) => el.remove());
+    list.querySelectorAll("li.open").forEach((el) => el.classList.remove("open"));
+    if (open) return;
+    li.classList.add("open");
+    const box = document.createElement("div");
+    box.className = "gh-clone";
+    box.innerHTML = `<label>${L("Branch", "Branch")}<select disabled><option></option></select></label>
+      <button type="button" class="btn small primary">${L("Klonen", "Clone")}</button>`;
+    li.appendChild(box);
+    const select = box.querySelector("select");
+    select.options[0].value = repo.default_branch;
+    select.options[0].textContent = L("lade …", "loading …");
+    box.querySelector("button").onclick = () => cloneRepo(repo.full_name, select.value, li);
+    let names = [repo.default_branch];
+    try { names = (await getJSON("/api/github/branches?repo=" + encodeURIComponent(repo.full_name))).branches || names; } catch {}
+    if (!box.isConnected) return;
+    select.innerHTML = "";
+    for (const n of names.length ? names : [repo.default_branch]) {
+      const o = document.createElement("option");
+      o.value = o.textContent = n;
+      if (n === repo.default_branch) o.textContent += L(" (Standard)", " (default)");
+      select.appendChild(o);
+    }
+    select.value = repo.default_branch;
+    select.disabled = false;
+  }
+  async function cloneRepo(name, branch, li) {
     li.classList.add("busy");
     li.querySelector(".gh-meta").textContent = L("klone …", "cloning …");
     try {
-      const r = await api("POST", "/api/github/clone", { repo: name });
+      const r = await api("POST", "/api/github/clone", { repo: name, branch });
       closeSheet();
-      toast(L(`Geklont – Projektordner: ${r.project}`, `Cloned – project folder: ${r.project}`));
+      toast(L(`Geklont – Branch ${branch} · Projektordner: ${r.project}`, `Cloned – branch ${branch} · project folder: ${r.project}`));
     } catch { li.classList.remove("busy"); li.querySelector(".gh-meta").textContent = L("fehlgeschlagen", "failed"); }
   }
 

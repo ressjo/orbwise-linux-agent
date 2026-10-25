@@ -1320,21 +1320,30 @@ def create_app(cfg: Config) -> FastAPI:
         except github.GitHubError as e:
             raise HTTPException(400, str(e)) from e
 
+    @app.get("/api/github/branches")
+    async def github_branches(repo: str = ""):
+        from . import github
+        try:
+            return {"branches": await github.branches(cfg, repo)}
+        except github.GitHubError as e:
+            raise HTTPException(400, str(e)) from e
+
     @app.post("/api/github/clone")
     async def github_clone(request: Request):
         """Repo klonen und zum Projekt des offenen Coding-Chats machen."""
         from . import github
         coding_chat()
         not_busy()
-        repo = str((await request.json()).get("repo", "")).strip()
+        data = await request.json()
+        repo, branch = str(data.get("repo", "")).strip(), str(data.get("branch") or "").strip()
         try:
-            path = await asyncio.to_thread(github.clone, cfg, repo)
+            path = await asyncio.to_thread(github.clone, cfg, repo, None, branch)
             await agent.switch_project(path)
         except (github.GitHubError, OSError) as e:
             raise HTTPException(400, str(e)) from e
         await chat_switched()
         await hub.broadcast({"type": "chats_changed"})
-        return {"project": path}
+        return {"project": path, "branch": branch}
 
     @app.post("/api/github/push")
     async def github_push():

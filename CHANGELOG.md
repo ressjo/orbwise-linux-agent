@@ -107,6 +107,8 @@ All notable changes to this project are documented here. The format follows
   only actions that change or start something do; the data-leak guard still checks what goes out.
 
 ### Added
+- **Clone from GitHub with a branch:** click a repo to pick its branch; `github_clone` takes `branch`, an existing
+  folder is switched to it.
 - **Skills:** every integration and built-in ability can be set up and switched without editing `config.yaml` –
   in the installer (pick by number, enter details, connection tested right away), under **Settings → Skills** in the
   web UI (state, on/off switch, form with help per field, *Test connection*, changes apply at once; Telegram finds
@@ -234,6 +236,10 @@ All notable changes to this project are documented here. The format follows
   the open chat stays untouched.
 
 ### Fixed
+- Sandbox with Podman installed showed Docker's “failed to connect to the docker API”: when Podman is not usable its
+  reason now comes first, with a fix for common causes (missing subuid ranges, timeout on first start, missing
+  `XDG_RUNTIME_DIR` when run as a service – now set automatically); `podman info` may take up to 60 s, failures are
+  only cached for 15 s.
 - **Sandbox escape via git:** Orbwise ran git on the host inside the working copy's `.git`, which the container can
   write – a hook or `core.fsmonitor` placed by the agent would have run on the host (with the GitHub token in the
   environment during a push), and a rewritten `origin` would have received the token. Commits now run in the

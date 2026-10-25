@@ -361,6 +361,14 @@ textarea.ui-dialog-input { height: auto; padding: 9px 12px; resize: vertical; }
 .gh-main small { color: var(--muted); font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gh-meta { flex: none; color: var(--faint); font-size: var(--fs-xs); }
 .gh-repos li.busy { opacity: .6; pointer-events: none; }
+.gh-repos li.open > .gh-repo { background: var(--surface-3); }
+.gh-clone { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; padding: 10px 10px 12px 38px;
+  border-bottom: 1px solid var(--border); }
+.gh-clone label { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 160px; color: var(--muted);
+  font-size: var(--fs-sm); }
+.gh-clone select { height: 32px; padding: 0 8px; border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+  background: var(--field); color: var(--text); font: inherit; }
+@media (max-width: 600px) { .gh-clone { padding-left: 10px; } .gh-clone .btn { width: 100%; } }
 .sbc-layout { display: grid; grid-template-columns: 240px 1fr; gap: 12px; min-height: 260px; margin: 0 8px; }
 .sbc-files { list-style: none; margin: 0; padding: 4px; border: 1px solid var(--border); border-radius: var(--r-md); overflow: auto; max-height: 52vh; }
 .sbc-files li { display: flex; gap: 8px; align-items: baseline; padding: 6px 8px; border-radius: var(--r-sm); cursor: pointer; }

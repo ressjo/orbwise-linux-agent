@@ -7,6 +7,7 @@ git bekommt es für den einen Aufruf über GIT_ASKPASS (ein kleines Skript, das 
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
@@ -20,6 +21,8 @@ from typing import Any
 import httpx
 
 from .config import env
+
+log = logging.getLogger(__name__)
 
 API = "https://api.github.com"
 _REMOTE = re.compile(r"github\.com[:/]+(?P<repo>[\w.-]+/[\w.-]+?)(?:\.git)?/?$")
@@ -112,6 +115,15 @@ async def repos(cfg: Any, query: str = "", transport=None) -> list[dict]:
              "default_branch": r.get("default_branch") or "main"} for r in items]
 
 
+async def branches(cfg: Any, full_name: str, transport=None) -> list[str]:
+    """Branches eines Repos, der Standard-Branch zuerst."""
+    full_name = _repo_name(full_name)
+    info = await _get(cfg, f"/repos/{full_name}", transport=transport)
+    names = [b.get("name", "") for b in await _get(cfg, f"/repos/{full_name}/branches", {"per_page": 100}, transport)]
+    default = info.get("default_branch") or ""
+    return ([default] if default in names else []) + sorted(n for n in names if n and n != default)
+
+
 # ---------------------------------------------------------------- git mit Token
 def _askpass() -> str:
     base = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
@@ -178,20 +190,39 @@ def clone_dir(cfg: Any) -> Path:
     return home / ("Projects" if getattr(cfg, "language", "de") == "en" else "Projekte")
 
 
-def clone(cfg: Any, full_name: str, url: str | None = None) -> str:
-    """Klont owner/name nach clone_dir (gibt es den Ordner schon: fetch). Liefert den Pfad."""
+def _repo_name(full_name: str) -> str:
     full_name = full_name.strip().removeprefix("https://github.com/").removesuffix(".git").strip("/")
     if not re.fullmatch(r"[\w.-]+/[\w.-]+", full_name):
         raise GitHubError(f"'{full_name}' ist kein Repo-Name (owner/name).")
+    return full_name
+
+
+def clone(cfg: Any, full_name: str, url: str | None = None, branch: str = "") -> str:
+    """Klont owner/name nach clone_dir (gibt es den Ordner schon: fetch) und checkt branch aus (leer: Standard bzw.
+    der aktuelle). Liefert den Pfad."""
+    full_name = _repo_name(full_name)
+    branch = branch.strip()
+    if branch:
+        git(["check-ref-format", "--branch", branch])
     dest = clone_dir(cfg) / full_name.split("/", 1)[1]
     tok = token(cfg)
     if (dest / ".git").is_dir():
         git(["fetch", "--prune", "origin"], cwd=str(dest), tok=tok)
+        if branch and branch != current_branch(str(dest)):
+            if git(["status", "--porcelain", "--untracked-files=no"], cwd=str(dest)).strip():
+                raise GitHubError(f"{dest} hat ungespeicherte Änderungen – erst committen oder verwerfen, dann auf "
+                                  f"„{branch}“ wechseln.")
+            git(["checkout", "--quiet", branch], cwd=str(dest))
+        if branch:
+            try:
+                git(["pull", "--ff-only", "--quiet"], cwd=str(dest), tok=tok)
+            except GitHubError as e:
+                log.info("pull --ff-only in %s: %s", dest, e)
         return str(dest)
     if dest.exists() and any(dest.iterdir()):
         raise GitHubError(f"{dest} gibt es schon und ist kein Git-Repo.")
     dest.parent.mkdir(parents=True, exist_ok=True)
-    git(["clone", url or repo_url(full_name), str(dest)], tok=tok)
+    git(["clone", *(["--branch", branch] if branch else []), url or repo_url(full_name), str(dest)], tok=tok)
     return str(dest)
 
 

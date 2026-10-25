@@ -16,14 +16,16 @@ def _connected(cfg) -> bool:
 
 
 def _clone_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
-    return CONFIRM, f"klont {args.get('repo', '')} nach {github.clone_dir(ctx.cfg)} und macht es zum Projekt"
+    branch = f" (Branch {args['branch']})" if args.get("branch") else ""
+    return CONFIRM, f"klont {args.get('repo', '')}{branch} nach {github.clone_dir(ctx.cfg)} und macht es zum Projekt"
 
 
 @tool("Klont ein GitHub-Repo (owner/name) in den Projekte-Ordner und macht es zum Projekt dieses Chats. Gibt es den "
       "Ordner schon, wird er aktualisiert (fetch).", risk=_clone_risk, enabled=_connected)
-async def github_clone(ctx: ToolContext, repo: Annotated[str, "Repo als owner/name"]) -> str:
+async def github_clone(ctx: ToolContext, repo: Annotated[str, "Repo als owner/name"],
+                       branch: Annotated[str, "Optional: Branch (Standard: der des Repos)"] = "") -> str:
     try:
-        path = await asyncio.to_thread(github.clone, ctx.cfg, repo)
+        path = await asyncio.to_thread(github.clone, ctx.cfg, repo, None, branch)
     except (github.GitHubError, OSError) as e:
         return f"Klonen fehlgeschlagen: {e}"
     if ctx.agent is not None:

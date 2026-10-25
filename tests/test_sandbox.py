@@ -115,6 +115,21 @@ def test_engine_prefers_podman_and_explains_when_missing(monkeypatch):
     sandbox._engine_cache.clear()
 
 
+
+def test_engine_reports_why_podman_failed_before_docker(monkeypatch):
+    sandbox._engine_cache.clear()
+    monkeypatch.setattr(sandbox.shutil, "which", lambda n: f"/usr/bin/{n}" if n in ("podman", "docker") else None)
+    answers = {"/usr/bin/podman": (False, "cannot find UID/GID for user jo: no subuid ranges found"),
+               "/usr/bin/docker": (False, "failed to connect to the docker API at unix:///var/run/docker.sock")}
+    monkeypatch.setattr(sandbox, "_info_ok", lambda b: answers[b])
+
+    class C:
+        class sandbox:
+            engine = "auto"
+    binary, error = sandbox.engine(C)
+    assert binary is None and error.startswith("podman:") and "usermod --add-subuids" in error and "docker:" in error
+    sandbox._engine_cache.clear()
+
 def test_run_and_exec_arguments(cfg):
     argv = sandbox.run_argv("/usr/bin/podman", cfg, "orbwise-x", "/home/u/ws", False, "img:1")
     assert argv[argv.index("-v") + 1] == "/home/u/ws:/home/u/ws:Z" and argv[argv.index("-w") + 1] == "/home/u/ws"
@@ -321,6 +336,16 @@ def test_sandbox_endpoints(cfg, repo, fake_engine, monkeypatch):
         assert client.post("/api/sandbox", json={"network": False}).json()["network"] is False
         client.post("/api/sandbox", json={"enabled": False})
         assert not Path(st["path"]).exists()
+        calls = []
+
+        async def fake_branches(c, name, transport=None):
+            return ["main", "dev"]
+        monkeypatch.setattr(github, "branches", fake_branches)
+        monkeypatch.setattr(github, "clone", lambda c, name, url=None, branch="": calls.append((name, branch))
+                            or str(repo))
+        assert client.get("/api/github/branches", params={"repo": "jo/app"}).json()["branches"] == ["main", "dev"]
+        assert client.post("/api/github/clone", json={"repo": "jo/app", "branch": "dev"}).json()["branch"] == "dev"
+        assert calls == [("jo/app", "dev")]
         listing = client.get("/api/fs/dirs", params={"path": str(repo.parent)}).json()
         assert "proj" in listing["dirs"] and listing["parent"] and not any(d.startswith(".") for d in listing["dirs"])
         half = client.get("/api/fs/dirs", params={"path": str(repo.parent / "pro")}).json()
@@ -437,3 +462,43 @@ def test_writes_in_the_copy_never_follow_a_swapped_symlink(cfg, data):
     (ws / "echt.txt").write_text("alt")
     (ws / "intern").symlink_to(ws / "echt.txt")
     assert _write_in_copy(str(ws), ws / "intern", b"neu") is None and (ws / "echt.txt").read_text() == "neu"
+
+
+@git_missing
+def test_clone_picks_the_branch_and_switches_later(cfg, data):
+    remote = data / "zwei.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+    seed = data / "seed2"
+    seed.mkdir()
+    sh(seed, "init", "-q", "-b", "main")
+    sh(seed, "-c", "user.email=a@b", "-c", "user.name=A", "commit", "-q", "--allow-empty", "-m", "start")
+    sh(seed, "push", "-q", str(remote), "HEAD:main")
+    sh(seed, "checkout", "-q", "-b", "feature")
+    (seed / "f.txt").write_text("f")
+    sh(seed, "add", ".")
+    sh(seed, "-c", "user.email=a@b", "-c", "user.name=A", "commit", "-q", "-m", "feature")
+    sh(seed, "push", "-q", str(remote), "feature")
+    cfg.github.token = "t"
+    cfg.github.clone_dir = str(data / "Projekte")
+    path = github.clone(cfg, "owner/zwei", url=str(remote), branch="feature")
+    assert github.current_branch(path) == "feature" and (Path(path) / "f.txt").exists()
+    assert github.clone(cfg, "owner/zwei", url=str(remote), branch="main") == path
+    assert github.current_branch(path) == "main"
+    (Path(path) / "README").write_text("x")
+    sh(path, "add", "README")  # ungespeicherte Änderung
+    with pytest.raises(github.GitHubError, match="ungespeicherte"):
+        github.clone(cfg, "owner/zwei", url=str(remote), branch="feature")
+    with pytest.raises(github.GitHubError):
+        github.clone(cfg, "owner/zwei", url=str(remote), branch="bad..name")
+
+
+def test_branches_list_the_default_first(cfg):
+    cfg.github.token = "t"
+
+    def handler(request):
+        if request.url.path == "/repos/jo/app":
+            return httpx.Response(200, json={"default_branch": "main"})
+        if request.url.path == "/repos/jo/app/branches":
+            return httpx.Response(200, json=[{"name": "dev"}, {"name": "main"}, {"name": "alt"}])
+        return httpx.Response(404)
+    assert run(github.branches(cfg, "jo/app", httpx.MockTransport(handler))) == ["main", "alt", "dev"]

@@ -40,20 +40,44 @@ class SandboxError(RuntimeError):
 def _info_ok(binary: str) -> tuple[bool, str]:
     try:
         r = subprocess.run([binary, "info", "--format", "{{.Host.Arch}}" if "podman" in binary else "{{.OSType}}"],
-                           capture_output=True, text=True, timeout=15)
+                           capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        return False, "timeout"
     except (OSError, subprocess.SubprocessError) as e:
         return False, str(e)
     return r.returncode == 0, (r.stderr or r.stdout).strip()[-300:]
 
 
+def _runtime_dir() -> None:
+    """Als Dienst gestartet fehlt oft XDG_RUNTIME_DIR – rootless Podman braucht es (für alle späteren Aufrufe)."""
+    run_dir = f"/run/user/{os.getuid()}" if hasattr(os, "getuid") else ""
+    if not os.environ.get("XDG_RUNTIME_DIR") and run_dir and os.path.isdir(run_dir):
+        os.environ["XDG_RUNTIME_DIR"] = run_dir
+
+
+def _podman_hint(msg: str) -> str:
+    """Konkreter Rat zu häufigen Podman-Fehlern."""
+    low = msg.lower()
+    if msg == "timeout":
+        return "Podman antwortet nicht (der erste Start dauert manchmal) – gleich nochmal versuchen."
+    if "subuid" in low or "subgid" in low or "newuidmap" in low or "uid mapping" in low:
+        return ("Für deinen Benutzer fehlen UID-Bereiche: sudo usermod --add-subuids 100000-165535 "
+                "--add-subgids 100000-165535 $USER && podman system migrate")
+    if "xdg_runtime_dir" in low or "/run/user" in low:
+        return "XDG_RUNTIME_DIR fehlt – Orbwise in der Desktop-Sitzung starten oder loginctl enable-linger $USER."
+    return "Im Terminal `podman info` ausführen, um den Grund zu sehen."
+
+
 def engine(cfg: Any) -> tuple[str | None, str]:
-    """(Programm, Fehlertext). auto: Podman vor Docker. Ergebnis eine Minute zwischengespeichert."""
+    """(Programm, Fehlertext). auto: Podman vor Docker. Treffer eine Minute, Fehlschläge 15 s zwischengespeichert.
+    Scheitern beide, steht Podmans Grund vorn (Docker ist nur der Rückfall)."""
     want = getattr(getattr(cfg, "sandbox", None), "engine", "auto")
     hit = _engine_cache.get(want)
-    if hit and time.monotonic() - hit[0] < 60:
+    if hit and time.monotonic() - hit[0] < (60 if hit[1] else 15):
         return hit[1], hit[2]
+    _runtime_dir()
     names = ["podman", "docker"] if want == "auto" else [want]
-    found, error = None, ""
+    found, errors = None, []
     for name in names:
         binary = shutil.which(name)
         if not binary:
@@ -62,9 +86,12 @@ def engine(cfg: Any) -> tuple[str | None, str]:
         if ok:
             found = binary
             break
-        error = f"{name}: {msg}"
-    if not found and not error:
-        error = "Weder Podman noch Docker ist installiert (z. B. sudo apt install podman)."
+        if name == "podman":
+            errors.append(f"podman: {'keine Antwort' if msg == 'timeout' else msg} – {_podman_hint(msg)}")
+        else:
+            errors.append(f"{name}: {msg}")
+    error = "" if found else (" · ".join(errors) or
+                              "Weder Podman noch Docker ist installiert (z. B. sudo apt install podman).")
     _engine_cache[want] = (time.monotonic(), found, error)
     return found, error
 

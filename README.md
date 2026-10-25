@@ -905,6 +905,8 @@ writing outside the copy, and pushing to GitHub; the leak guard keeps watching w
   kernel exploit – which no container fully rules out – then only gets your own user.
 - The default image `orbwise-sandbox:1` (Debian with git, Python, Node, build tools, ripgrep) is built on first use;
   `sandbox.image` takes any other image (e.g. `python:3.12`). Install Podman with `sudo apt install podman`.
+  If Podman is installed but not usable, the error says why (e.g. missing `subuid` ranges, with the fix) instead of
+  Docker's “cannot connect to the Docker daemon”.
 
 #### GitHub
 
@@ -913,7 +915,8 @@ Sign in once with the GitHub CLI (`gh auth login`) – Orbwise uses its token �
 `github.token` (or `$ORBWISE_GITHUB_TOKEN`). Then:
 
 - **Project chip → Clone from GitHub …**: search your repos, one click clones into `~/Projects` (`github.clone_dir`)
-  and makes it the project of the chat.
+  and makes it the project of the chat. Click a repo to pick the **branch** (default branch preselected); if the
+  folder exists already it is fetched and switched to that branch (only without uncommitted changes).
 - **Push:** from the sandbox menu, the *Changes* window (*Push to GitHub*) or by the agent (`github_push`, always asks – also in auto mode *Auto*); afterwards
   a link to **create the pull request** on GitHub. The token is handed to git only for that one call (via
   `GIT_ASKPASS`) and never written into `.git/config`.
