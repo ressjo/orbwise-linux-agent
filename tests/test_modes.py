@@ -45,6 +45,7 @@ def test_memory_switches_between_the_last_chat_of_each_mode(memory):
 
 def test_coding_mode_sends_fewer_tools_and_its_own_prompt(cfg, llm, memory):
     cfg.paperless.url, cfg.paperless.token = "http://pl", "t"
+    cfg.tools.extra = ["sysadmin"]
     agent = Agent(cfg, llm, memory)
     tools_names = {s["function"]["name"] for s in agent.all_schemas}
     tools_prompt = agent.system_prompt()

@@ -244,6 +244,7 @@ def test_manual_compact_with_focus(cfg, llm, memory):
 
 def test_sticky_tool_groups_only_grow_within_an_epoch(cfg, memory):
     """Ab 16k: einmal geladene Gruppen bleiben bis zur Komprimierung (unter 16k: siehe test_context_regimes.py)."""
+    cfg.tools.extra = ["sysadmin"]
     class Small:
         context_size = 16384
         sent: list[set] = []

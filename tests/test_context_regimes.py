@@ -65,7 +65,7 @@ def test_small_window_starts_lean(cfg, llm, memory, tmp_path):
     all_integrations(cfg, tmp_path)
     cfg.llm.num_ctx = 8192
     system, names, tool_tokens = first_request(cfg, llm, memory, "Hallo")
-    assert set(names) == SMALL_CORE
+    assert set(names) == SMALL_CORE - {"list_directory"}  # Hülle um ls – standardmäßig aus (run_shell)
     assert est_tokens(system) + tool_tokens <= 2500  # ab 16k ~4,8k
     for absent in ("power", "weather", "set_reminder", "daily_briefing", "Paperless", "mail_list"):
         assert absent not in system  # Hinweise nur zu Werkzeugen, die das Modell auch hat
@@ -103,6 +103,7 @@ def test_yes_loads_what_the_model_proposed(cfg, memory, tmp_path):
 
 def test_small_window_repacks_only_when_something_new_is_needed(cfg, memory, tmp_path):
     all_integrations(cfg, tmp_path)
+    cfg.tools.extra = ["sysadmin"]  # die Gruppe braucht der Test als „neue“ Gruppe
     llm = Recorder(8192)
     agent = Agent(cfg, llm, memory)
     events = []

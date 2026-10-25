@@ -104,7 +104,10 @@ def test_disable_tools_and_groups(cfg):
     from orbwise.tools.registry import tool_schemas
     load_all_tools()
     names = lambda: {s["function"]["name"] for s in tool_schemas(cfg)}  # noqa: E731
-    assert {"top_processes", "ping_host", "web_search"} <= names()
+    # Hüllen um einzelne Befehle sind standardmäßig aus – tools.extra schaltet Gruppe oder Werkzeug wieder ein
+    assert not {"top_processes", "list_directory", "ssh_connect"} & names() and "cleanup_system" in names()
+    cfg.tools.extra = ["sysadmin", "list_directory"]
+    assert {"top_processes", "ping_host", "list_directory", "web_search"} <= names() and "ssh_connect" not in names()
     cfg.tools.disabled = ["sysadmin", "web_search"]
     assert not {"top_processes", "ping_host", "web_search"} & names()
     assert "run_shell" in names()
@@ -112,6 +115,7 @@ def test_disable_tools_and_groups(cfg):
 
 def test_small_context_sends_only_relevant_tool_groups(cfg, memory):
     import json
+    cfg.tools.extra = ["sysadmin"]
 
     from orbwise.agent import Agent
     from orbwise.config import ProfileConfig

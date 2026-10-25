@@ -1046,7 +1046,8 @@ untrusted content (mail, screen) still ask. If Orbwise runs as **root**, the upp
 | `tools.sudo_remember_minutes` | How long the dashboard password is remembered (default 15, RAM only, never for Telegram/routines; 0 = always ask) |
 | `tools.package_manager` | `auto`, `pacman` or `apt` |
 | `tools.max_steps` | Max. tool rounds per request (default 25), then Orbwise summarises and offers to continue |
-| `tools.disabled` | Tools or groups to switch off, e.g. `[sysadmin, open_ports]` |
+| `tools.disabled` | Tools or groups to switch off, e.g. `[routine_tools, weather]` |
+| `tools.extra` | Switch thin wrapper tools back on that are off by default (process list, services, logs, network, ports, disk usage, `ls`, `rg`, `ssh_connect` …) – the model does these with `run_shell` and the usual commands, which run without asking when read-only. E.g. `[sysadmin]` |
 | `user_name`, `persona_extra` | How the assistant addresses you and extra personality instructions (its name: `assistant_name`) |
 | `host`, `allow_remote` | Keep `127.0.0.1`; other addresses only with `allow_remote: true` |
 | `mail.send_enabled` | Let Orbwise write and send mails (always through the editable confirmation card) |

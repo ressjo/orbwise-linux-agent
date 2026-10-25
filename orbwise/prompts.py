@@ -67,6 +67,9 @@ HINTS = {
         "tool_loader": "- Fehlt dir für eine Bitte ein Werkzeug (z. B. Mail, Dokumente, Kalender, System), lade die "
                        "Gruppe mit load_tools nach, statt aufzugeben oder es mit run_shell zu versuchen.\n",
         "sysadmin": "- Prozesse, Dienste, Netzwerk und Speicherplatz: die speziellen Tools ({tools}) statt run_shell.\n",
+        "shell_sys": "- Prozesse, Dienste, Logs, Netzwerk, Ports, Speicherplatz: run_shell mit den üblichen Befehlen "
+                     "(ps, systemctl, journalctl, ip, ss, df/du) – lesende laufen ohne Rückfrage.\n",
+        "cleanup": "Platz schaffen → cleanup_system",
         "packages": "- Updates und Pakete: die speziellen Paket-Tools statt run_shell.\n",
         "routines": "- Wiederkehrende oder zeitgesteuerte Aufgaben („jeden Morgen um 8 …“, „werktags um 17 Uhr …“, "
                     "„am Freitag um 9 einmal …“) legst du mit routine_create an – die Aufgabe als klaren Auftrag "
@@ -139,6 +142,9 @@ HINTS = {
                        "load_tools instead of giving up or trying run_shell.\n",
         "sysadmin": "- Processes, services, network and disk space: use the dedicated tools ({tools}) instead of "
                     "run_shell.\n",
+        "shell_sys": "- Processes, services, logs, network, ports, disk space: run_shell with the usual commands "
+                     "(ps, systemctl, journalctl, ip, ss, df/du) – read-only ones run without asking.\n",
+        "cleanup": "freeing disk space → cleanup_system",
         "packages": "- Updates and packages: use the dedicated package tools instead of run_shell.\n",
         "routines": "- Recurring or scheduled tasks (“every morning at 8 …”, “weekdays at 5 pm …”, “once on Friday "
                     "at 9 …”) are created with routine_create – phrase the task as a clear instruction. A plain "
@@ -495,7 +501,7 @@ HINT_TOOLS = {
     "remember": ("remember",), "recall": ("recall",), "dates": ("date_info",), "power": ("power",),
     "tool_loader": ("load_tools",),
     "sysadmin": ("top_processes", "service_status", "service_control", "service_logs", "network_info", "ping_host",
-                 "open_ports", "check_port", "disk_usage", "kill_process", "cleanup_system"),
+                 "open_ports", "check_port", "disk_usage", "kill_process"),
     "packages": ("list_updates", "search_package", "install_package", "remove_package", "system_update"),
     "routines": ("routine_create", "routine_list"),
     "calendar": ("calendar_events", "calendar_free"), "calendar_write": ("calendar_add", "calendar_update"),
@@ -507,16 +513,16 @@ HINT_TOOLS = {
     "homeassistant": ("ha_find", "ha_control"),
     "portainer": ("portainer_containers", "portainer_check_updates"),
     "portainer_write": ("portainer_update", "portainer_container_action", "portainer_deploy_stack"),
-    "ssh": ("ssh_run", "ssh_connect"),
+    "ssh": ("ssh_run",),
     "image": ("generate_image",),
     "mail": ("mail_list", "mail_search", "mail_read"), "mail_write": ("mail_manage", "mail_to_paperless"),
 }
-HINT_ORDER = ("remember", "recall", "dates", "power", "actions", "tool_loader", "sysadmin", "packages", "routines",
-              "calendar", "calendar_write", "services", "paperless", "paperless_write", "trilium", "trilium_write",
+HINT_ORDER = ("remember", "recall", "dates", "power", "actions", "tool_loader", "sysadmin", "shell_sys", "packages",
+              "routines", "calendar", "calendar_write", "services", "paperless", "paperless_write", "trilium", "trilium_write",
               "obsidian", "obsidian_write", "homeassistant", "portainer", "portainer_write", "ssh", "image",
               "mail", "mail_write")
 ACTION_HINTS = (("briefing", "daily_briefing"), ("reminder", "set_reminder"), ("website", "open_website"),
-                ("weather", "weather"))  # eine gemeinsame Zeile für die kurzen Zuordnungen
+                ("weather", "weather"), ("cleanup", "cleanup_system"))  # eine gemeinsame Zeile für die kurzen Zuordnungen
 
 
 def attachment_note(cfg, paths: list[str], can_look: bool) -> str:
@@ -543,6 +549,9 @@ def hints(cfg, tools: set[str]) -> str:
         if key == "actions":
             parts = [h[k] for k, name in ACTION_HINTS if name in tools]
             out += f"- {'; '.join(parts)}.\n" if parts else ""
+        elif key == "shell_sys":  # Systemabfragen ohne die Hüllen-Werkzeuge (siehe registry.DEFAULT_OFF)
+            if "run_shell" in tools and not any(n in tools for n in HINT_TOOLS["sysadmin"]):
+                out += h[key]
         elif any(name in tools for name in HINT_TOOLS[key]):
             loaded = ", ".join(name for name in HINT_TOOLS[key] if name in tools)
             out += h[key].format(tools=loaded) if "{tools}" in h[key] else h[key]

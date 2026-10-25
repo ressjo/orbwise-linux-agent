@@ -56,7 +56,8 @@ def test_all_hints_when_every_tool_fits(cfg, llm, memory, tmp_path):
     cfg.llm.num_ctx = 131072  # großes Fenster: alle Werkzeuge, alle Hinweise
     system, names, _ = first_request(cfg, llm, memory, "Hallo")
     assert "paperless_search" in names and "mail_list" in names
-    assert "paperless_ask" in system and "mail_list" in system and "top_processes" in system
+    assert "paperless_ask" in system and "mail_list" in system and "top_processes" not in system
+    assert "ps, systemctl, journalctl" in system and "cleanup_system" in system  # Systemabfragen über run_shell
 
 
 def test_missing_tools_can_be_loaded_on_demand(cfg, llm, memory, tmp_path):

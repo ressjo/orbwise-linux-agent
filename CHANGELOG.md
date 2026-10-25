@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **Fewer tools by default:** 15 thin wrappers around single commands are off by default – `top_processes`,
+  `kill_process`, `service_status`/`_control`/`_logs`, `network_info`, `ping_host`, `open_ports`, `check_port`,
+  `disk_usage`, `list_directory`, `search_file_contents`, `ssh_connect`, `ssh_disconnect`, `list_installed_apps`. The
+  model does the same with `run_shell` (`ps`, `systemctl`, `journalctl`, `ss`, `df` … – read-only commands still run
+  without asking, changing ones still ask), guided by a short hint. The basic tool set shrinks from about 6.0k to
+  4.4k estimated tokens; `tools.extra: [sysadmin]` (or single names) brings them back.
 - **Leaner tool descriptions:** the tools-mode tool list is about 22 % smaller (≈16.4k → ≈12.7k estimated tokens with
   all integrations): shorter descriptions, no descriptions for self-explanatory parameters, repeated phrases unified.
   Names, types, required parameters and the rules the model must follow (confirmations, untrusted mail content,

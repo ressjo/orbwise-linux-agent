@@ -138,6 +138,9 @@ class ToolsConfig(BaseModel):
     shell_timeout: int = 120
     # Tools oder ganze Gruppen abschalten (spart Kontext bei kleinen Modellen), z. B. [sysadmin, web, open_ports]
     disabled: list[str] = Field(default_factory=list)
+    # Werkzeuge, die standardmäßig aus sind (dünne Hüllen um einzelne Befehle wie ps, systemctl, df – das Modell nutzt
+    # dafür run_shell), wieder einschalten: Gruppen- oder Werkzeugnamen, z. B. [sysadmin] oder [list_directory]
+    extra: list[str] = Field(default_factory=list)
     # so viele Modellschritte (Tool-Runden) darf eine Aufgabe höchstens brauchen
     max_steps: int = 25
     update_timeout: int = 3600

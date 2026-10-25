@@ -75,8 +75,11 @@ class ToolSpec:
     def is_enabled(self, cfg: Any) -> bool:
         if cfg is None:
             return True
-        disabled = set(getattr(getattr(cfg, "tools", None), "disabled", None) or [])
+        tools_cfg = getattr(cfg, "tools", None)
+        disabled = set(getattr(tools_cfg, "disabled", None) or [])
         if self.name in disabled or self.group in disabled:
+            return False
+        if self.name in DEFAULT_OFF and not ({self.name, self.group} & set(getattr(tools_cfg, "extra", None) or [])):
             return False
         return self.enabled is None or bool(self.enabled(cfg))
 
@@ -110,6 +113,15 @@ def lean_parameters(parameters: dict) -> dict:
 
 
 REGISTRY: dict[str, ToolSpec] = {}
+
+# Standardmäßig aus (tools.extra schaltet sie wieder ein): dünne Hüllen um einzelne Befehle, die das Modell mit
+# run_shell genauso erledigt – diese Befehle gelten dort als nur lesend und laufen ohne Rückfrage, ändernde fragen
+# weiter nach. Spart Platz im Prompt, ohne dass etwas fehlt.
+DEFAULT_OFF = frozenset({
+    "top_processes", "kill_process", "service_status", "service_control", "service_logs", "network_info",
+    "ping_host", "open_ports", "check_port", "disk_usage", "list_directory", "search_file_contents",
+    "ssh_connect", "ssh_disconnect", "list_installed_apps",
+})
 
 _JSON_TYPES = {str: "string", int: "integer", float: "number", bool: "boolean"}
 
