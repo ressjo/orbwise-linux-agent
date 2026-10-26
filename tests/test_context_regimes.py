@@ -57,7 +57,9 @@ def test_plan_values_for_both_stages():
     assert (s.memories, s.facts) == (491, 409) and (big.memories, big.facts) == (1310, 983)
     assert (s.summary_max, s.summary_floor) == (655, 409) and (big.summary_max, big.summary_floor) == (1638, 983)
     assert s.think_budget() == 1638 and big.think_budget() == 0  # nur das kleine Fenster begrenzt das Denken
-    assert s.reserve(True) == 1024 + 1638 and big.reserve(True) == 3000 and big.reserve(False) == 1500
+    # mindestens ein Viertel des Fensters bleibt für die Ausgabe frei (höchstens 16k)
+    assert s.reserve(True) == 1024 + 1638 and s.reserve(False) == 2048
+    assert big.reserve(True) == big.reserve(False) == 4096 and plan_for(200_000).reserve(True) == 16000
 
 
 # ---------------------------------------------------------------- Werkzeuge nach Bedarf

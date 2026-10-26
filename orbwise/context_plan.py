@@ -3,7 +3,9 @@
 Unter 16k Token (z. B. 8k auf einer 8-GB-Karte) wird gespart: wenige Werkzeuge vorab (der Rest kommt per
 Stichwort oder load_tools), kürzere Werkzeug-Ergebnisse, weniger Erinnerungen und Fakten, kurze Zusammenfassungen.
 Ab 16k bleibt für alles mehr Raum. In beiden Stufen werden alte Werkzeug-Ergebnisse ausgeblendet, bevor
-zusammengefasst wird (wie Claude Code) – das kostet keinen Modellaufruf.
+zusammengefasst wird (wie Claude Code) – das kostet keinen Modellaufruf. Ein Viertel des Fensters (höchstens 16k)
+bleibt immer für die Ausgabe frei – sonst bricht eine lange Antwort oder ein write mit einer ganzen Datei mitten im
+Aufruf ab.
 """
 
 from __future__ import annotations
@@ -14,6 +16,8 @@ SMALL_BELOW = 16384  # darunter: kleines Fenster (Sparmodus)
 
 ANSWER_RESERVE = 1500  # Token, die im Kontextfenster für die Antwort frei bleiben
 THINK_RESERVE = 3000  # mit Denkmodus: die Denkkette belegt dasselbe Fenster
+OUTPUT_SHARE = 0.25  # so viel vom Fenster bleibt für die Ausgabe frei …
+OUTPUT_RESERVE_MAX = 16000  # … höchstens so viele Token
 SUMMARY_MIN = 500  # kürzeste Zusammenfassung im großen Fenster, wenn der Platz knapp ist
 
 
@@ -56,12 +60,14 @@ class ContextPlan:
         return self.think_cap
 
     def reserve(self, think: bool) -> int:
-        """Freier Platz für Antwort (und Denkkette)."""
+        """Freier Platz für Antwort (und Denkkette): mindestens ein Viertel des Fensters (höchstens 16k)."""
         if not think:
-            return self.answer_reserve
-        if self.small:
-            return self.answer_reserve + self.think_budget()
-        return THINK_RESERVE
+            base = self.answer_reserve
+        elif self.small:
+            base = self.answer_reserve + self.think_budget()
+        else:
+            base = THINK_RESERVE
+        return max(base, min(OUTPUT_RESERVE_MAX, int(self.window * OUTPUT_SHARE)))
 
 
 def plan_for(window: int) -> ContextPlan:

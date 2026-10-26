@@ -200,9 +200,16 @@ def test_cut_shell_call_is_retried_without_a_trace(cfg, llm, memory):
     assert not any(m.get("tool_calls") for m in memory.conversation.history)
 
 
-def test_coding_mode_keeps_room_for_long_output(cfg, llm, memory):
+def test_both_modes_keep_room_for_long_output(cfg, llm, memory):
     agent = Agent(cfg, llm, memory)
     agent.model_window = lambda: 49152
     tools = agent.answer_reserve()
     memory.switch_mode("coding")
-    assert agent.answer_reserve() >= 12000 > tools
+    assert agent.answer_reserve() == tools >= 12000
+
+
+def test_output_reserve_for_every_window():
+    from orbwise.context_plan import plan_for
+    assert plan_for(8192).reserve(False) == 2048 and plan_for(8192).reserve(True) == 1024 + int(8192 * 0.2)
+    assert plan_for(49152).reserve(False) == plan_for(49152).reserve(True) == 12288
+    assert plan_for(131072).reserve(True) == 16000

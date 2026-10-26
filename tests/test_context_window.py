@@ -201,7 +201,7 @@ def test_one_big_task_does_not_compact_at_half_the_window(cfg, memory, tmp_path,
     agent.build_messages(display=False)
     assert 7000 <= agent._full_prompt <= 0.75 * 16384  # gut die Hälfte belegt – die alte Logik komprimierte hier
     assert not any(is_compaction(r[1]) for r in llm.requests) and len(memory.conversation.epochs) == 1
-    assert agent.compact_limit() == 14884  # 91 % – erst dort (oder kurz davor nach einer Antwort)
+    assert agent.compact_limit() == 12288  # 75 % – ein Viertel bleibt für die Ausgabe frei
 
 
 def test_memories_first_turn_full_then_only_new_and_none_in_coding(cfg, llm, memory, stamps):
@@ -217,8 +217,8 @@ def test_memories_first_turn_full_then_only_new_and_none_in_coding(cfg, llm, mem
     assert "Erinnerungen" not in coding_note  # Coding: nur auf Anfrage (recall)
 
 
-@pytest.mark.parametrize("window,think,limit", [(8192, False, 7168), (16384, False, 14884),
-                                                 (16384, True, 13384), (32768, False, 30402)])
+@pytest.mark.parametrize("window,think,limit", [(8192, False, 6144), (16384, False, 12288),
+                                                 (16384, True, 12288), (32768, False, 24576)])
 def test_compaction_point_leaves_room_for_answer_and_summary(cfg, memory, window, think, limit):
     llm = type("W", (), {"context_size": window})()
     agent = Agent(cfg, llm, memory)
@@ -442,6 +442,7 @@ def test_model_level_is_sent_without_own_limits(cfg, llm, memory, stamps):
     note = [m for m in memory.conversation.history if m["role"] == "user"][-1]["note"]
     assert "Denke nur kurz" not in note
     agent._set_think("low")
-    assert agent.answer_reserve() == 3000 and agent.think_budget() == 0
+    quarter = agent.plan().window // 4  # ein Viertel bleibt für die Ausgabe frei (mit und ohne Denken)
+    assert agent.answer_reserve() == max(3000, quarter) and agent.think_budget() == 0
     agent._set_think(False)
-    assert agent.answer_reserve() == 1500
+    assert agent.answer_reserve() == max(1500, quarter)

@@ -80,7 +80,7 @@ def test_everything_fine(cfg, memory):
     assert result["small"] is True and result["compact_at"] == agent.compact_limit()
     fill = next(c for c in result["checks"] if c["id"] == "fill")["detail"]
     pct = int(re.search(r"\((\d+) %", fill).group(1))
-    assert 80 <= pct <= 100  # bis an den Komprimierungspunkt gefüllt, ohne Überlauf
+    assert 70 <= pct <= 100  # bis an den Komprimierungspunkt (75 %, ein Viertel bleibt frei) gefüllt, ohne Überlauf
     assert agent.token_ratio() != 1.0  # echte Zahlen des Servers wurden gelernt
     assert "✔" in format_report(result)
 

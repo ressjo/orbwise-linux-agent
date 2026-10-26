@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **Room for output in every mode and window:** a quarter of the context window (at most 16k tokens) stays free for
+  the answer – tools and coding mode, small and large windows (8k: 2k, 49k: ~12k, 128k+: 16k). Compaction starts a
+  bit earlier, long answers and whole files no longer break off mid-call.
 - **Start:** Orbwise always starts with an empty chat in tools mode (an empty one is reused, earlier chats stay in
   the list); after the model has loaded only the system prompt and tools are pre-read, no old chat. The image view is
   only restored on a page reload within the same server run.

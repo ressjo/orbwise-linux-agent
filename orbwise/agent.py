@@ -52,7 +52,6 @@ from .tools.system import _os_name
 from .tools.vision import VISION_TOOLS
 
 log = logging.getLogger(__name__)
-CODING_RESERVE = 16000  # Token, die im Coding-Modus höchstens für eine Ausgabe frei bleiben
 
 def plan_steps(text: str) -> int:
     """Anzahl nummerierter Schritte in einem Plan (für „Mein Plan hat n Schritte“)."""
@@ -385,14 +384,8 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         return bool(think)
 
     def answer_reserve(self) -> int:
-        """Platz für Antwort bzw. Denkkette – im kleinen Fenster knapper, Denken dort begrenzt. Coding: ein Viertel des
-        Fensters (höchstens CODING_RESERVE) – ein write mit einer ganzen Datei braucht schnell 10 000 Token, sonst
-        bricht die Ausgabe mitten im Aufruf ab."""
-        plan = self.plan()
-        base = plan.reserve(self._thinking())
-        if self.mode == "coding" and not plan.small:
-            return max(base, min(CODING_RESERVE, plan.window // 4))
-        return base
+        """Platz für Antwort bzw. Denkkette (ein Viertel des Fensters, höchstens 16k – siehe context_plan)."""
+        return self.plan().reserve(self._thinking())
 
     def think_budget(self) -> int:
         """Höchstlänge der Denkkette in Token für diese Anfrage (0 = unbegrenzt bzw. kein Denken)."""
