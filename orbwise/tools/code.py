@@ -436,23 +436,27 @@ def _read_text(p: Path) -> str | None:
 
 def write_preview(ctx: ToolContext, args: dict) -> str:
     p = ctx.path(args.get("path", ""))
-    return diff_text((_read_text(p) or "").replace("\r\n", "\n"), str(args.get("content", "")), _rel(ctx, p))[0]
+    before = (_read_text(p) or "").replace("\r\n", "\n")
+    after = before + str(args.get("content", "")) if args.get("append") else str(args.get("content", ""))
+    return diff_text(before, after, _rel(ctx, p))[0]
 
 
-@tool("Schreibt eine Datei (legt sie an oder überschreibt sie komplett); fehlende Ordner werden angelegt. Für "
-      "Teiländerungen an bestehenden Dateien edit nutzen.", risk=_write_risk, name="write",
+@tool("Schreibt eine Datei (legt sie an oder überschreibt sie komplett; append=true hängt an); fehlende Ordner werden "
+      "angelegt. Für Teiländerungen an bestehenden Dateien edit nutzen.", risk=_write_risk, name="write",
       preview=lambda c, a: write_preview(c, a))
 async def code_write(
     ctx: ToolContext,
     path: Annotated[str, "Zieldatei"],
-    content: Annotated[str, "Vollständiger Inhalt"],
+    content: Annotated[str, "Inhalt"],
+    append: bool = False,
 ) -> str:
     p = ctx.path(path)
     if p.exists() and not p.is_file():
         return f"{_rel(ctx, p)} ist ein Ordner."
     if p.is_file() and _stale(ctx, p):
         return f"{_rel(ctx, p)} wurde seit dem letzten read geändert – erst mit read neu lesen."
-    return _write_file(ctx, p, _read_text(p) if p.exists() else None, content)
+    before = _read_text(p) if p.exists() else None
+    return _write_file(ctx, p, before, (before or "") + content if append else content)
 
 
 # ---------------------------------------------------------------- grep / glob

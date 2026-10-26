@@ -32,7 +32,7 @@ from .agent_speed import SpeedMixin
 from .agent_tools import CODING_GROUPS, CODING_ONLY, ToolSelectionMixin  # noqa: F401
 from .config import Config
 from .context_plan import SUMMARY_MIN, ContextPlan, plan_for
-from .llm import ContextOverflow, LLMError, strip_think
+from .llm import ContextOverflow, LLMError, ToolCallBroken, strip_think
 from .memory import Memory, est_tokens
 from .memory.context import PROMPT_KEYS, TRIM_NOTE, msg_tokens
 from .memory.index import shared_words
@@ -583,6 +583,8 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
             self._tainted = True
         self._turn_open = True
         self._shots: list[str] = []  # Screenshots dieser Antwort (screenshot-Werkzeug) – erscheinen unter ihr
+        self._step_hint: str | None = None  # Hinweis nur für den nächsten Schritt (nicht im Verlauf)
+        broken = False
         spoken: list[str] = []
         tool_notes: list[str] = []
         msg_id = uuid.uuid4().hex[:8]
@@ -607,6 +609,17 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
                         raise
                     retried = True
                     continue
+                except ToolCallBroken:
+                    # Aufruf wurde abgeschnitten (z. B. riesige Datei in einem write): einmal mit dem Hinweis, in Teilen
+                    # zu schreiben, wiederholen – der Hinweis gilt nur für diesen Schritt
+                    if broken:
+                        raise LLMError(prompts.text(self.cfg, "tool_call_broken")) from None
+                    broken = True
+                    self._step_hint = prompts.text(self.cfg, "tool_call_split")
+                    if self._over_limit():
+                        await self._make_room(emit, msg_id)
+                    continue
+                self._step_hint = None
                 retried = False
                 entry = {"role": "assistant", "content": content}
                 if calls:
@@ -840,6 +853,8 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
                     messages.append({"role": "user", "content": prompts.text(self.cfg, "final_nudge")})
                 if tail:
                     messages.append({"role": "user", "content": tail})
+                if getattr(self, "_step_hint", None):
+                    messages.append({"role": "user", "content": self._step_hint})
                 kwargs = self._think_kwargs(no_think)
                 # auch die Zwischenbilanz mit derselben Werkzeugliste – ohne sie stünde vorn im Prompt etwas anderes
                 # und der ganze Chat müsste neu eingelesen werden (und bei der nächsten Frage gleich noch einmal)

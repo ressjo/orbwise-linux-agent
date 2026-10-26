@@ -233,6 +233,12 @@ TEXTS = {
         "auto_files": "ändert nur Dateien in deinem Home (Auto: Dateien bearbeiten)",
         "auto_project": "ändert eine Datei im Projektordner (Auto: Dateien bearbeiten)",
         "auto_sandbox": "läuft in der Sandbox (Container, Arbeitskopie)",
+        "tool_call_split": "(Hinweis vom System: Dein letzter Werkzeugaufruf war zu lang und wurde abgeschnitten – Ausgabe- "
+                           "bzw. Kontextgrenze. Schreibe große Dateien in Teilen: zuerst write mit dem Anfang (höchstens "
+                           "~250 Zeilen), dann die weiteren Teile mit write und append=true. Bestehende Dateien mit edit "
+                           "ändern statt neu schreiben.)",
+        "tool_call_broken": "Das Modell hat zweimal einen zu langen Werkzeugaufruf erzeugt (abgeschnitten). Sag z. B. "
+                            "„schreib die Datei in Teilen“ oder beginne einen neuen Chat.",
         "sandbox_outside_read": "liest außerhalb der Arbeitskopie – in der Sandbox fragt das, damit nichts Privates in "
                                 "den Container gelangt",
         "auto_full": "ohne Root-Rechte (Auto)",
@@ -279,6 +285,12 @@ TEXTS = {
         "auto_files": "only changes files in your home folder (Auto: edit files)",
         "auto_project": "changes a file in the project folder (Auto: edit files)",
         "auto_sandbox": "runs in the sandbox (container, working copy)",
+        "tool_call_split": "(System note: your last tool call was too long and got cut off – output or context limit. "
+                           "Write large files in parts: first write with the beginning (at most ~250 lines), then the "
+                           "remaining parts with write and append=true. Change existing files with edit instead of "
+                           "rewriting them.)",
+        "tool_call_broken": "The model produced a too-long tool call twice (cut off). Say e.g. “write the file in "
+                            "parts” or start a new chat.",
         "sandbox_outside_read": "reads outside the working copy – the sandbox asks so nothing private gets into the "
                                 "container",
         "auto_full": "without root privileges (Auto)",
@@ -352,6 +364,7 @@ Werkzeugen direkt im Projekt: lesen, suchen, ändern, Befehle ausführen, im Web
 - Für Dateien die eigenen Werkzeuge, nicht die Shell: read statt cat/head/tail (auch für Ordner), edit statt
   sed/awk, write statt echo/heredoc, grep und glob zum Suchen. shell für echte Befehle: git, Build, Tests,
   Pakete; lange Läufe und Server mit background=true.
+- Große neue Dateien (über ~250 Zeilen) in Teilen schreiben: write, dann write mit append=true.
 - screenshot nur, wenn sich etwas Sichtbares ändert (Layout, Farben, Texte, Komponenten einer Oberfläche) oder
   der Nutzer ein Bild möchte – nicht bei Logik, Backend, APIs, Skripten, Tests oder Konfiguration; dort reichen
   Tests bzw. Ausgaben. Der Nutzer sieht das Bild im Chat.
@@ -394,6 +407,7 @@ with tools: read, search, change, run commands, look things up on the web.
 - Use the file tools, not the shell: read instead of cat/head/tail (also for folders), edit instead of sed/awk,
   write instead of echo/heredoc, grep and glob to search. shell for real commands: git, build, tests, packages;
   long runs and servers with background=true.
+- Write large new files (over ~250 lines) in parts: write, then write with append=true.
 - screenshot only when something visible changes (layout, colours, texts, components of a UI) or the user wants
   an image – not for logic, backend, APIs, scripts, tests or configuration; tests or output are enough there. The
   user sees the image in the chat.

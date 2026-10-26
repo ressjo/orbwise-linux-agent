@@ -248,6 +248,10 @@ All notable changes to this project are documented here. The format follows
   the open chat stays untouched.
 
 ### Fixed
+- A tool call cut off mid-way (e.g. a huge file in one `write`, until the output/context limit) ended the answer with
+  llama-server's 500 “Failed to parse tool call arguments”: Orbwise now retries the step once with a hint – only for
+  that request, not stored – to write large files in parts; `write` got `append=true` for that, and the coding
+  prompt suggests it for files over ~250 lines. A second failure shows a clear message instead of the raw error.
 - Chat did not always follow while generating (e.g. when the thinking block opened): every change in the chat now
   keeps it at the bottom unless you scroll up yourself (scrolling back down follows again); following scrolls
   instantly instead of the CSS smooth animation, which lagged behind and broke off while streaming.

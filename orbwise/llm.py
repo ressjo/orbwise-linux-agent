@@ -35,6 +35,16 @@ class ContextOverflow(LLMError):
         self.n_prompt = n_prompt
 
 
+class ToolCallBroken(LLMError):
+    """Der Server konnte die Argumente eines Werkzeugaufrufs nicht lesen – meist, weil die Ausgabe mitten im Aufruf
+    abgeschnitten wurde (z. B. eine riesige Datei in einem write, bis Ausgabe- oder Kontextgrenze)."""
+
+
+def _check_tool_call(text: str) -> None:
+    if "Failed to parse tool call" in text:
+        raise ToolCallBroken(text[:300])
+
+
 def _check_overflow(status: int, body: str) -> None:
     """llama-server meldet einen zu großen Prompt als 400 exceed_context_size_error."""
     if status not in (400, 500) or "exceed" not in body or "context" not in body:
@@ -468,6 +478,7 @@ class OpenAICompatLLM:
                 if resp.status_code != 200:
                     body = (await resp.aread()).decode(errors="replace")
                     _check_overflow(resp.status_code, body)
+                    _check_tool_call(body)
                     raise LLMError(f"Modell-Server antwortet mit {resp.status_code}: {body[:300]}")
                 async for line in resp.aiter_lines():
                     line = line.strip()
@@ -478,6 +489,7 @@ class OpenAICompatLLM:
                         break
                     chunk = json.loads(data)
                     if chunk.get("error"):
+                        _check_tool_call(json.dumps(chunk["error"], ensure_ascii=False))
                         raise LLMError(str(chunk["error"]))
                     timings = chunk.get("timings") or timings
                     usage = chunk.get("usage") or usage
