@@ -229,6 +229,7 @@ def test_server_start_shows_an_empty_tools_chat(cfg, llm, monkeypatch):
         with client.websocket_connect("ws://localhost:8765/ws", headers={"Origin": "http://localhost:8765"}) as ws:
             hello = ws.receive_json()
         assert hello["type"] == "hello" and hello["mode"] == "tools" and hello["boot"]
+        assert hello["name"] == "Orbwise" and hello["wake_phrase"] == "Hey Jarvis"  # Satz des Wake-Word-Modells
 
 
 def test_chat_list_marks_chats_with_a_sandbox(cfg, llm):
@@ -241,3 +242,9 @@ def test_chat_list_marks_chats_with_a_sandbox(cfg, llm):
     row = next(c for c in m.chats.list() if c["id"] == m.conversation.chat_id)
     assert row["sandbox"] is True
     m.close()
+
+
+def test_wake_phrase_from_the_model_name():
+    from orbwise.config import Config, wake_phrase
+    assert Config().assistant_name == "Orbwise"
+    assert wake_phrase("hey_jarvis_v0.1") == "Hey Jarvis" and wake_phrase("/m/hey_mycroft.onnx") == "Hey Mycroft"

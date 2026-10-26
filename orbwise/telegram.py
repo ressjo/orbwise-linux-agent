@@ -323,10 +323,10 @@ class TelegramBot:
             await self.send(self.L("Hallo! Schreib oder sprich mir einfach, was du brauchst – z. B. „Erinner mich "
                                    "morgen um 9 an den Zahnarzt“. Erinnerungen kommen hierher. Mit /stop (oder "
                                    "„stopp“) brichst du ab, was gerade läuft – auch am PC. Mit /plan <Anfrage> legt "
-                                   "Jarvis erst einen Plan vor, den du freigibst. /bild <Beschreibung> malt ein Bild.",
+                                   "Orbwise erst einen Plan vor, den du freigibst. /bild <Beschreibung> malt ein Bild.",
                                    "Hi! Just write or speak what you need – e.g. “Remind me tomorrow at 9 about the "
                                    "dentist”. Reminders arrive here. /stop (or “stop”) cancels whatever is running – "
-                                   "on the PC too. /plan <request> makes Jarvis present a plan for you to approve "
+                                   "on the PC too. /plan <request> makes Orbwise present a plan for you to approve "
                                    "first. /image <description> paints a picture."))
             return
         if text.lower().strip(" .!") in STOP_WORDS:

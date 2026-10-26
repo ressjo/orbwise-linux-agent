@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import yaml
@@ -12,9 +13,15 @@ CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / 
 DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "orbwise"
 
 
+def wake_phrase(model: str) -> str:
+    """Was man sagen muss, aus dem Namen des openWakeWord-Modells: „hey_jarvis_v0.1“ → „Hey Jarvis“."""
+    name = re.sub(r"(_v?\d[\w.]*)?(\.onnx|\.tflite)?$", "", os.path.basename(model or ""))
+    return " ".join(w.capitalize() for w in name.split("_") if w) or "Wake-Word"
+
+
 def env(name: str, default: str = "") -> str:
-    """$ORBWISE_<name> – oder der frühere Name $JARVIS_<name> (vor der Umbenennung hieß das Projekt „Jarvis“)."""
-    return os.environ.get(f"ORBWISE_{name}") or os.environ.get(f"JARVIS_{name}") or default
+    """$ORBWISE_<name>."""
+    return os.environ.get(f"ORBWISE_{name}") or default
 
 
 class ServerConfig(BaseModel):
@@ -158,8 +165,7 @@ class ToolsConfig(BaseModel):
     @field_validator("privilege_cmd")
     @classmethod
     def _privilege(cls, v: str) -> str:
-        # frühere Namen des Passwortfelds (vor der Umbenennung hieß das Projekt „Jarvis“)
-        return "dashboard" if v in ("jarvis", "orbwise") else v
+        return "dashboard" if v == "orbwise" else v  # „orbwise“: früherer Name des Passwortfelds
 
     @field_validator("search_paths", "nas_paths", mode="before")
     @classmethod
@@ -478,7 +484,7 @@ class Config(BaseModel):
     port: int = 8765
     # Nur mit true startet Orbwise auf einer anderen Adresse als 127.0.0.1 (Dashboard hat keine Anmeldung!)
     allow_remote: bool = False
-    assistant_name: str = "Jarvis"
+    assistant_name: str = "Orbwise"
     user_name: str = ""
     # Zusätzliche Persönlichkeits-/Verhaltensanweisungen für den System-Prompt
     persona_extra: str = ""

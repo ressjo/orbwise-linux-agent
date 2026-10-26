@@ -22,7 +22,7 @@ ALIASES = {"shutdown": "poweroff", "aus": "poweroff", "ausschalten": "poweroff",
            "neustart": "reboot", "standby": "suspend", "sleep": "suspend", "ruhezustand": "hibernate",
            "sperren": "lock", "abbrechen": "cancel"}
 ACTIONS_EN = {"poweroff": "shut down", "reboot": "restart", "suspend": "suspend", "hibernate": "hibernate"}
-START_DELAY = 5  # Sekunden – damit Jarvis die Antwort noch aussprechen kann
+START_DELAY = 5  # Sekunden – damit Orbwise die Antwort noch aussprechen kann
 
 # Für Tests austauschbar
 _tasks: set[asyncio.Task] = set()

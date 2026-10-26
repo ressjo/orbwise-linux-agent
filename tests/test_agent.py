@@ -26,12 +26,12 @@ async def collect(agent, text, approve=None):
 
 def test_plain_answer_logged_to_journal(cfg, llm, memory):
     agent = make_agent(cfg, llm, memory)
-    answer, events, _ = run(collect(agent, "Hallo Jarvis"))
-    assert "Hallo Jarvis" in answer
+    answer, events, _ = run(collect(agent, "Hallo Orbwise"))
+    assert "Hallo Orbwise" in answer
     assert any(e["type"] == "token" for e in events)
     assert [e["type"] for e in events][-2:] == ["assistant_end", "state"] and events[-1]["state"] == "idle"
     day = memory.journal.days()[0]
-    assert "Hallo Jarvis" in memory.journal.read(day)
+    assert "Hallo Orbwise" in memory.journal.read(day)
 
 
 def test_safe_tool_runs_without_confirmation(cfg, llm, memory, tmp_path):

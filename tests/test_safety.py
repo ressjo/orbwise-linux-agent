@@ -141,7 +141,7 @@ def test_extended_list_keeps_changes_confirmed(cmd):
 
 
 def test_shell_does_not_go_around_service_tools(cfg):
-    """Gemeldet: Jarvis fragte Paperless per curl ab (erfundene API, Token-Datei) – das blockiert jetzt mit Verweis
+    """Gemeldet: Orbwise fragte Paperless per curl ab (erfundene API, Token-Datei) – das blockiert jetzt mit Verweis
     auf die passenden Werkzeuge."""
     from orbwise.tools.registry import BLOCKED, ToolContext, get_tool, load_all_tools
     load_all_tools()

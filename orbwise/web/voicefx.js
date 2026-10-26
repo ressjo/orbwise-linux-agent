@@ -1,4 +1,4 @@
-/* "Jarvis-Effekt": Klangkette für die Sprachausgabe (Web Audio).
+/* "Stimm-Effekt": Klangkette für die Sprachausgabe (Web Audio).
  * Etwas tiefere Stimme (über die Abspielrate – der Server spricht entsprechend schneller, damit das Tempo gleich bleibt),
  * sonore Bässe, ein Hauch Chorus und metallischer Kammfilter für den "KI"-Charakter, kurzer Raumhall, Kompressor. */
 (function () {

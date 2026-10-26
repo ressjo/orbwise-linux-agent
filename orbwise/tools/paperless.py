@@ -757,7 +757,7 @@ async def paperless_apply_metadata(
 
 # ---------------------------------------------------------------- Sortier-Durchgang (Paket für Paket)
 # Viele Dokumente einordnen: Der Fortschritt steht in einer Datei statt nur im Chat (überlebt Kürzen, Komprimieren
-# und Neustarts), es gibt immer nur ein kleines Paket pro Nutzernachricht – danach hält Jarvis an und fragt.
+# und Neustarts), es gibt immer nur ein kleines Paket pro Nutzernachricht – danach hält Orbwise an und fragt.
 
 def _ledger_path(cfg: Any) -> Path:
     return Path(cfg.memory.dir) / "paperless-review.json"

@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from . import agent_safety, askpass, metrics, prompts, retire, usage
 from . import skills as skill_store
 from .agent import Agent
-from .config import BRIEFING_SECTIONS, BriefingConfig, Config, env
+from .config import BRIEFING_SECTIONS, BriefingConfig, Config, env, wake_phrase
 from .lang import T, set_lang
 from .llm import FakeLLM, LLMError
 from .llm_router import LLMRouter
@@ -160,7 +160,7 @@ class Hub:
         await asyncio.gather(*(c.send(event) for c in list(self.clients) if c.tts))
 
     def coding(self) -> bool:
-        """Im Coding-Modus spricht Jarvis nicht (keine Sprachausgabe, keine Spracheingabe)."""
+        """Im Coding-Modus spricht Orbwise nicht (keine Sprachausgabe, keine Spracheingabe)."""
         return self.agent.memory.active.meta.get("mode") == "coding"
 
     async def emit(self, event: dict) -> None:
@@ -551,7 +551,7 @@ def create_app(cfg: Config) -> FastAPI:
         else:
             await startup.set("wake", "running", T("lade Wake-Word-Modell …", "loading the wake word model …"))
             ok = await asyncio.to_thread(wake.available)
-            await startup.set("wake", "ok" if ok else "warn", "„Hey Jarvis“" if ok else (wake.error or ""))
+            await startup.set("wake", "ok" if ok else "warn", wake_phrase(cfg.voice.wakeword_model) if ok else (wake.error or ""))
         if stt is None:
             await startup.set("stt", "error", T("faster-whisper ist nicht installiert", "faster-whisper is not installed"))
         elif env("SKIP_WARMUP") == "1":
@@ -1011,7 +1011,7 @@ def create_app(cfg: Config) -> FastAPI:
         if images.lock.locked():
             raise HTTPException(409, "Es wird gerade ein Bild erzeugt – bitte warten oder abbrechen.")
         if agent.busy():
-            raise HTTPException(409, "Jarvis arbeitet gerade – bitte kurz warten.")
+            raise HTTPException(409, "Orbwise arbeitet gerade – bitte kurz warten.")
         # Vorlagen in Reihenfolge (Bild 1, 2, 3): {"file": Galerie-Name} oder {"data": data:-URL eines hochgeladenen Bilds}
         sources = list(data.get("refs") or [])
         sources += [{"file": n} for n in data.get("ref_files") or []] + [{"data": d} for d in data.get("ref_images") or []]
@@ -1460,7 +1460,7 @@ def create_app(cfg: Config) -> FastAPI:
 
     def not_busy() -> None:
         if agent.busy():
-            raise HTTPException(409, "Jarvis arbeitet gerade – bitte kurz warten oder STOP drücken")
+            raise HTTPException(409, "Orbwise arbeitet gerade – bitte kurz warten oder STOP drücken")
 
     def settings_info() -> dict:
         """Was der Server gerade anwendet – alle Fenster zeigen dasselbe (Handy und PC, Telegram nutzt es auch).
@@ -1835,6 +1835,7 @@ def create_app(cfg: Config) -> FastAPI:
         client.audio = AudioSession(cfg.voice, stt, wake, client.send, lambda t: hub.submit(t, "voice"))
         hub.clients.add(client)
         await client.send({"type": "hello", "busy": agent.busy(), "boot": boot_id,
+                           "name": cfg.assistant_name, "wake_phrase": wake_phrase(cfg.voice.wakeword_model),
                            "pending": [cid for cid in hub.pending], "context": agent.last_context,
                            **mode_info(), **settings_info()})
         await client.send(startup.snapshot())

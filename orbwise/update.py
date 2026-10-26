@@ -48,7 +48,7 @@ def server_running(port: int) -> bool:
 
 def restart_server(port: int, root: Path, out: Callable[[str], None] = print) -> None:
     """Beendet laufende `orbwise serve`-Prozesse und startet im Hintergrund neu."""
-    pids = subprocess.run(["pgrep", "-f", "(orbwise|jarvis) serve"], capture_output=True, text=True).stdout.split()
+    pids = subprocess.run(["pgrep", "-f", "orbwise serve"], capture_output=True, text=True).stdout.split()
     for pid in pids:
         if int(pid) != os.getpid():
             try:
@@ -59,8 +59,7 @@ def restart_server(port: int, root: Path, out: Callable[[str], None] = print) ->
         if not server_running(port):
             break
         time.sleep(0.25)
-    launcher = next((p for p in (Path.home() / ".local/bin/orbwise", Path.home() / ".local/bin/jarvis") if p.exists()),
-                    Path.home() / ".local/bin/orbwise")  # jarvis = Starter aus der Zeit vor der Umbenennung
+    launcher = Path.home() / ".local/bin/orbwise"
     cmd = [str(launcher)] if launcher.exists() else [str(root / ".venv/bin/orbwise")]
     log_dir = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state"))
     log_dir.mkdir(parents=True, exist_ok=True)

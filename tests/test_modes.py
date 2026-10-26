@@ -152,7 +152,7 @@ def test_server_mode_switch_project_and_no_voice(client, tmp_path):
 
 def test_prompts_ask_for_edit_and_real_error_messages(cfg):
     from orbwise import prompts
-    values = dict(name="Jarvis", project="/p", env="", os="Linux", host="h", user="u", home="/home/u", nas="-")
+    values = dict(name="Orbwise", project="/p", env="", os="Linux", host="h", user="u", home="/home/u", nas="-")
     for lang, keep, cause in (("de", "nie komplett neu schreiben", "erfinde keine Ursache"),
                               ("en", "never rewrite them completely", "invent a cause")):
         cfg.language = lang

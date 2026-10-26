@@ -29,10 +29,10 @@ HTML_EN = [
     ('title="Menü" aria-label="Menü"', 'title="Menu" aria-label="Menu"'),
     ('title="Sprachmodell wechseln"', 'title="Switch language model"'),
     ('title="Sprachausgabe an/aus" aria-label="Sprachausgabe"', 'title="Speech output on/off" aria-label="Speech output"'),
-    ('title="Wake-Word „Hey Jarvis“ an/aus" aria-label="Wake-Word"', 'title="Wake word “Hey Jarvis” on/off" aria-label="Wake word"'),
+    ('title="Wake-Word an/aus" aria-label="Wake-Word"', 'title="Wake word on/off" aria-label="Wake word"'),
     ('title="Aktivität und Systemauslastung" aria-label="Aktivität"', 'title="Activity and system load" aria-label="Activity"'),
     # Bühne
-    ('aria-label="Jarvis Statusanzeige"', 'aria-label="Jarvis status display"'),
+    ('aria-label="Orbwise Statusanzeige"', 'aria-label="Orbwise status display"'),
     ('>Wie kann ich helfen?<', '>How can I help?<'),
     ('data-text="Mach ein Systemupdate">Systemupdate<', 'data-text="Run a system update">System update<'),
     ('data-text="Was ist das für eine Fehlermeldung auf meinem Bildschirm?">Bildschirm erklären<',
@@ -43,7 +43,7 @@ HTML_EN = [
     # Eingabe
     ('title="Halten zum Sprechen (Leertaste) · kurz tippen = zuhören bis Stille" aria-label="Mikrofon"',
      'title="Hold to talk (space bar) · tap = listen until silence" aria-label="Microphone"'),
-    ('placeholder="Frag Jarvis oder sag „Hey Jarvis“ …"', 'placeholder="Ask Jarvis or say “Hey Jarvis” …"'),
+    ('placeholder="Frag Orbwise …"', 'placeholder="Ask Orbwise …"'),
     ('aria-label="Modus"', 'aria-label="Mode"'),
     ('title="Tools: Fragen, Websuche, Paperless, Mail, System bedienen – mit Sprache"',
      'title="Tools: questions, web search, Paperless, mail, running the system – with voice"'),
@@ -75,13 +75,13 @@ HTML_EN = [
      'data-text="What changed since the last commit? Review the changes for bugs.">Review changes<'),
     ('data-text="Schreib mir ein kleines Python-Skript, das ">Skript schreiben<',
      'data-text="Write me a small Python script that ">Write a script<'),
-    ('title="Planmodus: Jarvis schaut nur lesend nach und legt erst einen Plan vor – ausgeführt wird nach '
+    ('title="Planmodus: Orbwise schaut nur lesend nach und legt erst einen Plan vor – ausgeführt wird nach '
      'deiner Freigabe."><svg class="i"><use href="#i-plan"/></svg><span>Plan<',
-     'title="Plan mode: Jarvis only looks things up and presents a plan first – it is carried out once you '
+     'title="Plan mode: Orbwise only looks things up and presents a plan first – it is carried out once you '
      'approve it."><svg class="i"><use href="#i-plan"/></svg><span>Plan<'),
-    ('title="Denkmodus: Jarvis denkt vor der Antwort nach – langsamer, dafür gründlicher."><svg class="i"><use '
+    ('title="Denkmodus: Orbwise denkt vor der Antwort nach – langsamer, dafür gründlicher."><svg class="i"><use '
      'href="#i-sparkles"/></svg><span id="think-label">Denken<',
-     'title="Thinking mode: Jarvis reasons before answering – slower but more thorough."><svg class="i"><use '
+     'title="Thinking mode: Orbwise reasons before answering – slower but more thorough."><svg class="i"><use '
      'href="#i-sparkles"/></svg><span id="think-label">Think<'),
     ('<b>Nicht denken</b><small>Direkte Antworten – am schnellsten.</small>',
      '<b>No thinking</b><small>Direct answers – fastest.</small>'),
@@ -99,8 +99,8 @@ HTML_EN = [
      '<b>Auto</b><small>Everything without root. Deleting, sudo, sending over the network, autostart and credentials still ask.</small>'),
     ('title="Senden" aria-label="Senden"', 'title="Send" aria-label="Send"'),
     ('title="Aktuelle Aufgabe abbrechen (Esc)" aria-label="Abbrechen"', 'title="Cancel the current task (Esc)" aria-label="Cancel"'),
-    ('>Leertaste halten zum Sprechen · Esc bricht ab · Änderungen am System fragt Jarvis vorher<',
-     '>Hold the space bar to talk · Esc cancels · Jarvis asks before changing your system<'),
+    ('>Leertaste halten zum Sprechen · Esc bricht ab · Änderungen am System fragt Orbwise vorher<',
+     '>Hold the space bar to talk · Esc cancels · Orbwise asks before changing your system<'),
     # Aktivität
     ('<span>Aktivität</span>', '<span>Activity</span>'),
     ('title="Schließen" aria-label="Schließen"', 'title="Close" aria-label="Close"'),
@@ -161,15 +161,15 @@ HTML_EN = [
     ('data-mtab="mine" class="on">Meine Modelle<', 'data-mtab="mine" class="on">My models<'),
     ('data-mtab="add">Hinzufügen<', 'data-mtab="add">Add<'),
     ('data-mtab="api">API-Server<', 'data-mtab="api">API server<'),
-    ('<div class="mm-title">Jarvis-Effekt</div>', '<div class="mm-title">Jarvis effect</div>'),
+    ('<div class="mm-title">Stimm-Effekt</div>', '<div class="mm-title">Voice effect</div>'),
     ('id="fx-toggle">Aus<', 'id="fx-toggle">Off<'),
     ('aria-label="Effektstärke"', 'aria-label="Effect strength"'),
     ('>Tiefere, sonore Stimme mit leichtem Hall und digitalem Schimmer.<',
      '>Deeper, sonorous voice with a light reverb and a digital shimmer.<'),
     ('<b>Sprachausgabe</b><small>Antworten werden vorgelesen.</small>',
      '<b>Speech output</b><small>Answers are read out.</small>'),
-    ('<b>Wake-Word</b><small>„Hey Jarvis“ startet die Spracheingabe.</small>',
-     '<b>Wake word</b><small>“Hey Jarvis” starts voice input.</small>'),
+    ('<b>Wake-Word</b><small>Das Wake-Word startet die Spracheingabe.</small>',
+     '<b>Wake word</b><small>The wake word starts voice input.</small>'),
     ('<b>Planmodus</b><small>Erst einen Plan vorlegen, ausführen nach Freigabe.</small>',
      '<b>Plan mode</b><small>Present a plan first, carry it out once approved.</small>'),
     ('<b>Auto-Modus</b><small>Was ohne Rückfrage laufen darf.</small>',

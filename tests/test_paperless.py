@@ -425,7 +425,7 @@ def test_apply_uses_similar_existing_names_instead_of_creating(cfg, fake):
 
 
 def test_search_documents_without_correspondent_type_or_tags(cfg, fake):
-    """Gemeldet: „Dokumente ohne Korrespondent“ – Jarvis wich auf curl aus, weil die Suche keinen Filter dafür hatte."""
+    """Gemeldet: „Dokumente ohne Korrespondent“ – Orbwise wich auf curl aus, weil die Suche keinen Filter dafür hatte."""
     fake.docs.append({"id": 40, "title": "Scan ohne alles", "created": "2026-09-01", "added": "2026-09-01",
                       "correspondent": None, "document_type": None, "tags": [], "content": "Brief"})
     fake.docs.append({"id": 41, "title": "Scan mit Typ", "created": "2026-09-02", "added": "2026-09-02",
@@ -451,7 +451,7 @@ def test_paperless_hint_says_never_curl(cfg):
 
 
 def test_suggestion_package_lists_only_matching_names_when_there_are_many(cfg, fake):
-    """Gemeldet: ein Paket listete alle Namen (bis 3×150) – zu lang, Jarvis musste es stückweise nachlesen."""
+    """Gemeldet: ein Paket listete alle Namen (bis 3×150) – zu lang, Orbwise musste es stückweise nachlesen."""
     fake.correspondents += [{"id": 200 + i, "name": f"Firma Nummer {i}"} for i in range(60)]
     fake.correspondents.append({"id": 300, "name": "Mobilfunk Service GmbH"})
     out = run(pl.paperless_suggest_metadata(ctx(cfg), [7, 8]))

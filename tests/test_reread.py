@@ -10,7 +10,7 @@ from orbwise.reread import compare, fingerprint, with_server
 
 TOOLS = [{"type": "function", "function": {"name": "read_file", "parameters": {}}}]
 WEB = [*TOOLS, {"type": "function", "function": {"name": "web_search", "parameters": {}}}]
-CHAT = [{"role": "system", "content": "Du bist Jarvis." * 200},
+CHAT = [{"role": "system", "content": "Du bist Orbwise." * 200},
         {"role": "user", "content": "Lies die Datei"},
         {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "read_file", "arguments": {}}}]},
         {"role": "tool", "content": "x" * 30000, "tool_name": "read_file"}]

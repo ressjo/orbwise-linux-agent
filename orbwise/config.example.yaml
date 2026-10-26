@@ -9,8 +9,8 @@ language: de             # de (Deutsch) | en (English) – assistant, speech rec
 host: 127.0.0.1          # keep it local only – Orbwise can run commands on your machine!
 port: 8765
 # allow_remote: false    # only with true Orbwise starts on another address – the dashboard has no login!
-assistant_name: Jarvis
-user_name: ""            # how Jarvis should address you, e.g. "Alex"
+assistant_name: Orbwise
+user_name: ""            # how Orbwise should address you, e.g. "Alex"
 persona_extra: ""        # extra personality instructions, e.g. "Call me 'boss'."
 # holiday_region: BW      # German state for regional public holidays (date_info), empty = nationwide only
 
@@ -74,7 +74,7 @@ voice:
   stt_device: cpu          # cuda on NVIDIA (faster-whisper); AMD GPUs: stay on cpu
   stt_compute_type: int8   # int8 on CPU, float16 on CUDA
   # speech output: Pocket TTS – install it and pick the voice (and the language it speaks) under Settings → Voice
-  wakeword_model: hey_jarvis
+  wakeword_model: hey_jarvis   # openWakeWord model (pre-trained: hey_jarvis, hey_mycroft, alexa …)
   wakeword_threshold: 0.5
   silence_ms: 900          # this much silence ends a recording
   # max_record_seconds: 20 # a recording ends after this long at the latest

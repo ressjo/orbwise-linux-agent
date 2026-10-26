@@ -1,4 +1,4 @@
-"""Spracheingabe: Wake-Word ("Hey Jarvis"), Sprachaktivitätserkennung und Transkription.
+"""Spracheingabe: Wake-Word (openWakeWord, Modell aus voice.wakeword_model), Sprachaktivitätserkennung und Transkription.
 
 Der Browser streamt 16-kHz-Mono-PCM (Int16) über den WebSocket; pro Verbindung gibt es eine
 AudioSession, die Wake-Word erkennt, die Äußerung aufnimmt und mit Whisper transkribiert.
@@ -53,7 +53,7 @@ class WhisperSTT:
         audio = pcm.astype(np.float32) / 32768.0
         segments, _ = self._load().transcribe(
             audio, language=self.language, beam_size=3, vad_filter=True,
-            initial_prompt="Jarvis, Linux, Arch, pacman, NAS.",
+            initial_prompt="Orbwise, Linux, Arch, pacman, NAS.",
         )
         return " ".join(s.text.strip() for s in segments).strip()
 

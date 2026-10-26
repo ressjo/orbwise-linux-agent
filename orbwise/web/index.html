@@ -128,14 +128,14 @@
         <div class="head-actions">
           <button class="model-chip" id="pill-llm" title="Sprachmodell wechseln"><i></i><svg class="i"><use href="#i-chip"/></svg><em>–</em><svg class="i caret"><use href="#i-chevron"/></svg></button>
           <button class="icon-btn" id="btn-tts" title="Sprachausgabe an/aus" aria-label="Sprachausgabe"><svg class="i"><use href="#i-volume"/></svg></button>
-          <button class="icon-btn" id="btn-wake" title="Wake-Word „Hey Jarvis“ an/aus" aria-label="Wake-Word"><svg class="i"><use href="#i-ear"/></svg></button>
+          <button class="icon-btn" id="btn-wake" title="Wake-Word an/aus" aria-label="Wake-Word"><svg class="i"><use href="#i-ear"/></svg></button>
           <button class="icon-btn" id="btn-activity" title="Aktivität und Systemauslastung" aria-label="Aktivität"><svg class="i"><use href="#i-activity"/></svg><span class="badge hidden" id="act-badge"></span></button>
         </div>
       </header>
 
       <section class="stage" id="stage">
         <div class="orb-wrap">
-          <canvas id="orb" aria-label="Jarvis Statusanzeige"></canvas>
+          <canvas id="orb" aria-label="Orbwise Statusanzeige"></canvas>
           <canvas id="orb-overlay" aria-hidden="true"></canvas>
         </div>
         <div class="stage-info">
@@ -194,8 +194,8 @@
           <button type="button" class="mic attach-btn" id="btn-attach" title="Bild oder PDF anhängen (auch einfügen mit Strg+V oder hineinziehen)" aria-label="Bild oder PDF anhängen"><svg class="i"><use href="#i-clip"/></svg></button>
           <input type="file" id="attach-input" accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,.pdf" multiple hidden>
           <button type="button" class="mic" id="btn-mic" title="Halten zum Sprechen (Leertaste) · kurz tippen = zuhören bis Stille" aria-label="Mikrofon"><svg class="i"><use href="#i-mic"/></svg></button>
-          <input id="input" type="text" autocomplete="off" placeholder="Frag Jarvis oder sag „Hey Jarvis“ …">
-          <button type="button" class="chip-toggle" id="btn-plan" title="Planmodus: Jarvis schaut nur lesend nach und legt erst einen Plan vor – ausgeführt wird nach deiner Freigabe."><svg class="i"><use href="#i-plan"/></svg><span>Plan</span></button>
+          <input id="input" type="text" autocomplete="off" placeholder="Frag Orbwise …">
+          <button type="button" class="chip-toggle" id="btn-plan" title="Planmodus: Orbwise schaut nur lesend nach und legt erst einen Plan vor – ausgeführt wird nach deiner Freigabe."><svg class="i"><use href="#i-plan"/></svg><span>Plan</span></button>
           <div class="chip-split" id="auto-wrap">
             <button type="button" class="chip-toggle" id="btn-auto" aria-haspopup="menu" aria-expanded="false" title="Auto-Modus: was ohne Rückfrage laufen darf"><svg class="i"><use href="#i-bolt"/></svg><span id="auto-label">Lesen</span><svg class="i caret"><use href="#i-chevron"/></svg></button>
             <div class="chip-menu hidden" id="auto-menu" role="menu">
@@ -206,7 +206,7 @@
             </div>
           </div>
           <div class="chip-split" id="think-wrap">
-            <button type="button" class="chip-toggle" id="btn-think" aria-haspopup="menu" aria-expanded="false" title="Denkmodus: Jarvis denkt vor der Antwort nach – langsamer, dafür gründlicher."><svg class="i"><use href="#i-sparkles"/></svg><span id="think-label">Denken</span><svg class="i caret"><use href="#i-chevron"/></svg></button>
+            <button type="button" class="chip-toggle" id="btn-think" aria-haspopup="menu" aria-expanded="false" title="Denkmodus: Orbwise denkt vor der Antwort nach – langsamer, dafür gründlicher."><svg class="i"><use href="#i-sparkles"/></svg><span id="think-label">Denken</span><svg class="i caret"><use href="#i-chevron"/></svg></button>
             <div class="chip-menu hidden" id="think-menu" role="menu">
               <button type="button" role="menuitemradio" data-think="off"><b>Nicht denken</b><small>Direkte Antworten – am schnellsten.</small></button>
               <button type="button" role="menuitemradio" data-think="on" class="hidden"><b>Denken</b><small>Das Modell überlegt vor der Antwort.</small></button>
@@ -215,7 +215,7 @@
           <button type="submit" class="send" id="btn-send" title="Senden" aria-label="Senden"><svg class="i"><use href="#i-send"/></svg></button>
           <button type="button" class="send stop hidden" id="btn-stop" title="Aktuelle Aufgabe abbrechen (Esc)" aria-label="Abbrechen"><svg class="i"><use href="#i-stop"/></svg></button>
         </form>
-        <div class="composer-hint">Leertaste halten zum Sprechen · Esc bricht ab · Änderungen am System fragt Jarvis vorher</div>
+        <div class="composer-hint">Leertaste halten zum Sprechen · Esc bricht ab · Änderungen am System fragt Orbwise vorher</div>
       </footer>
     </main>
 
@@ -408,7 +408,7 @@
         <div class="set-section hidden" id="set-voice">
           <div class="model-menu voice-menu inline" id="voice-menu" role="list">
             <div id="voice-list"></div>
-            <div class="mm-title">Jarvis-Effekt</div>
+            <div class="mm-title">Stimm-Effekt</div>
             <div class="fx-row">
               <button class="switch" id="fx-toggle">Aus</button>
               <input type="range" id="fx-amount" min="0" max="100" value="60" aria-label="Effektstärke">
@@ -422,7 +422,7 @@
             <div class="seg" id="set-theme"><button type="button" data-theme-pick="light">Hell</button><button type="button" data-theme-pick="dark">Dunkel</button><button type="button" data-theme-pick="system">System</button></div></div>
           <div class="set-row"><div><b>Sprachausgabe</b><small>Antworten werden vorgelesen.</small></div>
             <button class="switch" data-mirror="btn-tts">Aus</button></div>
-          <div class="set-row"><div><b>Wake-Word</b><small>„Hey Jarvis“ startet die Spracheingabe.</small></div>
+          <div class="set-row"><div><b>Wake-Word</b><small>Das Wake-Word startet die Spracheingabe.</small></div>
             <button class="switch" data-mirror="btn-wake">Aus</button></div>
           <div class="set-row"><div><b>Planmodus</b><small>Erst einen Plan vorlegen, ausführen nach Freigabe.</small></div>
             <button class="switch" data-mirror="btn-plan">Aus</button></div>

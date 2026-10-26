@@ -178,7 +178,7 @@ FACT_RE = re.compile(r"^- (.+?)(?: _\((\d{4}-\d{2}-\d{2})\)_)?$")
 class Facts:
     """Kuratierte Langzeit-Fakten in facts.md (eine Zeile pro Fakt, von Hand editierbar)."""
 
-    HEADER = "# Fakten, die Jarvis sich dauerhaft merkt\n\n"
+    HEADER = "# Fakten, die Orbwise sich dauerhaft merkt\n\n"
 
     def __init__(self, path: Path):
         self.path = path

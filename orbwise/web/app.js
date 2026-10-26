@@ -35,6 +35,7 @@
   function thinkName(k) { return k; }
   const AUTO_LABEL = { off: L("Auto aus", "Auto off"), read: L("Lesen", "Read"), files: L("Dateien", "Files"), auto: "Auto" };
   const S = {
+    name: "Orbwise", wakePhrase: "Wake-Word",  // aus „hello“: assistant_name und der Satz des Wake-Word-Modells
     previews: {},  // Diff-Vorschau je Werkzeug-Aufruf (für die Freigabe-Karte)
     question: null,  // offene Rückfrage (Werkzeug question)
     ws: null, connected: false, retry: 0,
@@ -227,7 +228,7 @@
     let sub = S.substate || (S.startupModel && !S.modelSwitching ? S.startupModel : "");
     if (S.recording) sub = S.recordingMode === "ptt" ? L("Loslassen zum Senden", "Release to send") : L("Sprich jetzt …", "Speak now …");
     else if (S.transcribing) sub = L("Transkribiere …", "Transcribing …");
-    else if (s === "idle" && S.wake) sub = L("Sag „Hey Jarvis“", "Say “Hey Jarvis”");
+    else if (s === "idle" && S.wake) sub = L(`Sag „${S.wakePhrase}“`, `Say “${S.wakePhrase}”`);
     if (warming && !sub) {
       sub = S.prewarm.tokens ? L(`${num(S.prewarm.tokens)} Token`, `${num(S.prewarm.tokens)} tokens`) : "";
       if (S.prewarm.eta) sub += (sub ? " · " : "") + L(`höchstens ~${Math.ceil(S.prewarm.eta)} s`, `at most ~${Math.ceil(S.prewarm.eta)} s`);
@@ -303,7 +304,7 @@
     if (S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify(obj));
   }
 
-  // Unter dem Orb, solange Jarvis arbeitet: wechselnde Sprüche passend zur Tätigkeit (die technischen
+  // Unter dem Orb, solange Orbwise arbeitet: wechselnde Sprüche passend zur Tätigkeit (die technischen
   // Modell-Schritte stehen in der Antwort selbst)
   const SAYINGS = {
     think: [L("Einen Moment, Sir …", "One moment, sir …"), L("Analysiere …", "Analysing …"),
@@ -354,6 +355,8 @@
         renderBoot();
         return;
       case "hello":
+        S.name = ev.name || "Orbwise";
+        S.wakePhrase = ev.wake_phrase || S.wakePhrase;
         S.serverState = ev.busy ? "thinking" : "idle";  // tatsächlichen Zustand übernehmen (auch nach Neuverbinden)
         S.transcribing = false;  // neue Verbindung = neue Audio-Sitzung, eine alte Transkription meldet sich nie mehr
         if (ev.context) showContext(ev.context);
@@ -839,7 +842,7 @@
   }
 
   function startAssistant(id, plan) {
-    const el = addMsg("assistant streaming" + (plan ? " plan" : ""), "Jarvis", "");
+    const el = addMsg("assistant streaming" + (plan ? " plan" : ""), S.name, "");
     el.dataset.msg = id;
     if (S.turns) el.dataset.turn = S.turns;
     // statt eines blinkenden Cursors: was das Modell gerade macht (Einlesen, Denken, Aufruf schreiben …)
@@ -1022,7 +1025,7 @@
     if (msgs.length) msgs[msgs.length - 1].classList.add("last");
   }
   async function rewind(turn, text) {
-    if (isBusy()) { toast(L("Jarvis arbeitet gerade – erst abwarten oder STOP.", "Jarvis is busy – wait or press STOP.")); return false; }
+    if (isBusy()) { toast(L("Orbwise arbeitet gerade – erst abwarten oder STOP.", "Orbwise is busy – wait or press STOP.")); return false; }
     try {
       await api("POST", "/api/chats/active/rewind", text == null ? { turn } : { turn, text });
       return true;
@@ -1030,7 +1033,7 @@
   }
   function editUser(el) {
     if (el.querySelector(".msg-edit")) return;
-    if (isBusy()) { toast(L("Jarvis arbeitet gerade – erst abwarten oder STOP.", "Jarvis is busy – wait or press STOP.")); return; }
+    if (isBusy()) { toast(L("Orbwise arbeitet gerade – erst abwarten oder STOP.", "Orbwise is busy – wait or press STOP.")); return; }
     const turn = Number(el.dataset.turn);
     const body = el.querySelector(".body");
     const form = document.createElement("form");
@@ -1695,7 +1698,7 @@
     const title = document.createElement("div");
     title.className = "confirm-title";
     title.innerHTML = `<span class="warn-dot"></span><span></span>`;
-    title.lastChild.textContent = L("Jarvis hat eine Rückfrage", "Jarvis has a question");
+    title.lastChild.textContent = L("Orbwise hat eine Rückfrage", "Orbwise has a question");
     const actions = document.createElement("div");
     actions.className = "modal-actions";
     actions.innerHTML = `<button type="button" class="btn ghost q-skip"></button><button type="button" class="btn approve q-send"></button>`;
@@ -1759,7 +1762,7 @@
     box.querySelector(".mc-toggle").onclick = () => box.classList.toggle("open");
     box.querySelector(".mc-undo").onclick = async () => {
       const redo = box.classList.contains("undone");
-      if (isBusy()) { toast(L("Jarvis arbeitet gerade – erst abwarten oder STOP.", "Jarvis is busy – wait or press STOP.")); return; }
+      if (isBusy()) { toast(L("Orbwise arbeitet gerade – erst abwarten oder STOP.", "Orbwise is busy – wait or press STOP.")); return; }
       if (!redo && !await ask(L(`Die Änderungen dieser Antwort an ${n === 1 ? "1 Datei" : n + " Dateien"} zurücksetzen? Spätere Änderungen an denselben Dateien gehen dabei verloren.`,
                               `Undo this answer's changes to ${n === 1 ? "1 file" : n + " files"}? Later changes to the same files are lost.`))) return;
       try {
@@ -2153,9 +2156,9 @@
     S.plan = !S.plan;
     store.set("plan", S.plan);
     send({ type: "plan_mode", enabled: S.plan });
-    toast(S.plan ? L("Planmodus an – Jarvis legt erst einen Plan vor, ausgeführt wird nach deiner Freigabe.",
-                     "Plan mode on – Jarvis presents a plan first and carries it out once you approve it.")
-                 : L("Planmodus aus – Jarvis legt direkt los.", "Plan mode off – Jarvis gets going right away."));
+    toast(S.plan ? L("Planmodus an – Orbwise legt erst einen Plan vor, ausgeführt wird nach deiner Freigabe.",
+                     "Plan mode on – Orbwise presents a plan first and carries it out once you approve it.")
+                 : L("Planmodus aus – Orbwise legt direkt los.", "Plan mode off – Orbwise gets going right away."));
     refresh();
   };
 
@@ -2215,7 +2218,7 @@
     btn.classList.toggle("on", on);
     btn.disabled = none;
     btn.title = none ? L("Dieses Modell kann nicht denken.", "This model cannot think.")
-      : L("Denkmodus: Jarvis überlegt vor der Antwort – langsamer, dafür gründlicher.", "Thinking mode: Jarvis reasons before answering – slower but more thorough.");
+      : L("Denkmodus: Orbwise überlegt vor der Antwort – langsamer, dafür gründlicher.", "Thinking mode: Orbwise reasons before answering – slower but more thorough.");
     $("think-label").textContent = levels && on ? L("Denken · ", "Think · ") + thinkName(thinkCurrent()) : L("Denken", "Think");
     const cur = levels ? thinkCurrent() : "";
     document.querySelectorAll("[data-think]").forEach((b) => {
@@ -4740,9 +4743,9 @@
     const extra = box + (c.legacy ? L("\n\nHinweis: Dieser Chat stammt von vor der Chat-Historie – ältere Tagebuch-Einträge "
       + "daraus lassen sich nicht zuordnen und bleiben im Gedächtnis.",
       "\n\nNote: this chat predates the chat history – older journal entries from it cannot be attributed and stay in memory.") : "");
-    if (await ask(L(`„${c.title}“ löschen?\n\nDer Chat wird auch aus Jarvis' Gedächtnis entfernt (Tagebuch, Suche, `
+    if (await ask(L(`„${c.title}“ löschen?\n\nDer Chat wird auch aus Orbwise' Gedächtnis entfernt (Tagebuch, Suche, `
         + `Tageszusammenfassung). Gelernte Fakten bleiben.`, `Delete “${c.title}”?\n\nThe chat is also removed from `
-        + `Jarvis' memory (journal, search, daily summary). Learned facts are kept.`) + extra)) {
+        + `Orbwise' memory (journal, search, daily summary). Learned facts are kept.`) + extra)) {
       api("DELETE", `/api/chats/${c.id}`).then(() => { toast(L("Chat gelöscht.", "Chat deleted.")); loadChats(); }).catch(() => {});
     }
   }
@@ -5000,9 +5003,11 @@
   // ---------------------------------------------------------------- Modi: Tools (Assistent) / Coding
   // Getrennte Chat-Verläufe; Coding lädt nur Dateien, Shell, Web und Gedächtnis und hat keine Sprache.
   const MODE_TEXT = {
-    tools: { placeholder: L("Frag Jarvis oder sag „Hey Jarvis“ …", "Ask Jarvis or say “Hey Jarvis” …"),
-             hint: L("Leertaste halten zum Sprechen · Esc bricht ab · Änderungen am System fragt Jarvis vorher",
-                     "Hold the space bar to talk · Esc cancels · Jarvis asks before changing your system") },
+    get tools() {
+      return { placeholder: L(`Frag ${S.name} oder sag „${S.wakePhrase}“ …`, `Ask ${S.name} or say “${S.wakePhrase}” …`),
+               hint: L(`Leertaste halten zum Sprechen · Esc bricht ab · Änderungen am System fragt ${S.name} vorher`,
+                       `Hold the space bar to talk · Esc cancels · ${S.name} asks before changing your system`) };
+    },
     coding: { placeholder: L("Beschreib die Aufgabe – Code, Fehler, Idee …", "Describe the task – code, bug, idea …"),
               hint: L("Coding: Dateien, Shell, Web und Gedächtnis · Esc bricht ab · Auto-Modus regelt, was ohne Rückfrage läuft",
                       "Coding: files, shell, web and memory · Esc cancels · the auto mode decides what runs without asking") },
@@ -5193,8 +5198,8 @@
     projectMenu.classList.add("hidden");
     if (!S.project) { toast(L("Erst einen Projektordner wählen.", "Choose a project folder first.")); return; }
     if (!S.sandbox) {
-      if (!await ask(L("Sandbox einschalten? Jarvis arbeitet dann in einer Kopie des Projekts in einem Container und darf dort frei bauen, testen und installieren. Dein Projektordner bleibt unberührt, bis du die Änderungen übernimmst.",
-                     "Turn on the sandbox? Jarvis then works on a copy of the project in a container and may build, test and install freely there. Your project folder stays untouched until you apply the changes."),
+      if (!await ask(L("Sandbox einschalten? Orbwise arbeitet dann in einer Kopie des Projekts in einem Container und darf dort frei bauen, testen und installieren. Dein Projektordner bleibt unberührt, bis du die Änderungen übernimmst.",
+                     "Turn on the sandbox? Orbwise then works on a copy of the project in a container and may build, test and install freely there. Your project folder stays untouched until you apply the changes."),
                      { ok: L("Einschalten", "Turn on") })) return;
       $("sandbox-label").textContent = L("Sandbox …", "Sandbox …");
       try {
@@ -5288,7 +5293,7 @@
   $("sbc-apply").onclick = () => applySandbox(true);
   $("sbc-push").onclick = () => pushGithub();
   async function applySandbox(fromSheet) {
-    if (isBusy()) { toast(L("Jarvis arbeitet gerade – erst abwarten oder STOP.", "Jarvis is busy – wait or press STOP.")); return; }
+    if (isBusy()) { toast(L("Orbwise arbeitet gerade – erst abwarten oder STOP.", "Orbwise is busy – wait or press STOP.")); return; }
     try {
       let r = await api("POST", "/api/sandbox/apply", {});
       if (r.conflicts.length && await ask(L(`Diese Dateien hast du im Projekt inzwischen selbst geändert:\n${r.conflicts.join("\n")}\n\nTrotzdem mit der Version aus der Sandbox überschreiben?`,
@@ -5387,7 +5392,7 @@
       h.messages.forEach((m, i) => {
         if (dividers[i]) { chat.appendChild(compactDivider(dividers[i].summary, dividers[i].ts)); }
         if (m.role === "user") { addUser(m.content, "", m.images, m.turn, m.editable, m.files); return; }
-        const el = addMsg("assistant" + (m.editable === false ? " locked" : ""), "Jarvis", renderMarkdown(m.content));
+        const el = addMsg("assistant" + (m.editable === false ? " locked" : ""), S.name, renderMarkdown(m.content));
         el._raw = m.content;
         if (m.turn) el.dataset.turn = m.turn;
         assistantActions(el);

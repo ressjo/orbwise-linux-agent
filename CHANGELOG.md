@@ -46,6 +46,10 @@ All notable changes to this project are documented here. The format follows
   cap in small context windows (< 16k) stays.
 
 ### Removed
+- Everything from the time the project was called differently: the old command name, the environment-variable
+  aliases, the automatic migration of old folders and launchers. The assistant's default name is now **Orbwise**
+  (`assistant_name`); the persona is described neutrally. Only the pre-trained wake word model (`hey_jarvis`) stays
+  the default, as there is no "Hey Orbwise" model.
 - **Separate vision model:** screen and image questions (`look_at_screen`, `look_at_image`) are now answered by the
   loaded model when it can see images (llama.cpp with `mmproj`, Ollama with vision); without image support the tools
   are not offered. `vision.backend`, `base_url`, `model`, `api_key` and `keep_alive` are ignored; `vision.enabled`,
@@ -362,7 +366,7 @@ All notable changes to this project are documented here. The format follows
   names the weekday.
 - **Paperless: sorting many documents package by package** – `paperless_review_next` hands out 3 documents of the
   inbox (or of the documents without correspondent/type) at a time, with progress saved in a file; after applying
-  Jarvis stops and asks whether to continue, and only one package per message is possible, so it can no longer run
+  Orbwise stops and asks whether to continue, and only one package per message is possible, so it can no longer run
   on endlessly or forget documents. `paperless_review_skip` skips unclear ones.
 - **edit_file and a task list:** files are changed by replacing an exact snippet (with clear errors and the changed
   lines as result) instead of rewriting them; multi-step work keeps a task list (`todo_write`) that shows as a
@@ -416,7 +420,7 @@ All notable changes to this project are documented here. The format follows
   retrying with a trimmed context, summarising the chat or adding tools. Afterwards a small line under the answer
   sums up where the time went (total time, tokens read and cached, tokens written, tok/s – expand it for each step).
   Background work (pre-reading the chat, Telegram, routines) stays in the activity panel. Under the orb, changing
-  Jarvis-style lines match what it is doing ("Consulting the command line …", "Leafing through your documents …").
+  Short lines match what it is doing ("Consulting the command line …", "Leafing through your documents …").
 - **Auto button for read-only commands** (next to *Think*, on by default): many more harmless commands are recognised
   as read-only and run without a confirmation – containers (`docker/podman ps|images|logs`, `kubectl get`), packages
   (`dpkg -l`, `rpm -q`, `apt list`, `flatpak list`, `pip list`, `ollama list`), network (`nmcli … show/status`,
@@ -430,8 +434,8 @@ All notable changes to this project are documented here. The format follows
 - **New, calmer design:** graphite instead of neon, system font, icons and chat bubbles; collapsible sidebar with
   chats, Planner/Memory sheets and a settings page (models, voices, general, status) instead of the top pills; big orb
   with greeting and suggestions on an empty chat that shrinks to a live strip during a conversation; activity panel
-  with telemetry opens by itself when a tool runs; send turns into stop while Jarvis works; works on phones.
-- **Plan mode** (PLAN button, Telegram `/plan`): Jarvis (thinking only if *Think* is on) only uses read-only tools and
+  with telemetry opens by itself when a tool runs; send turns into stop while Orbwise works; works on phones.
+- **Plan mode** (PLAN button, Telegram `/plan`): Orbwise (thinking only if *Think* is on) only uses read-only tools and
   presents a step-by-step plan to run, change (revised by the AI from your feedback) or discard; a short spoken
   "yes"/"no" decides too; after running a plan, plan mode switches off. The approved plan stays pinned to the request while it runs, so it never drops out of a tight context. Chat Markdown now renders headings and numbered lists.
 - **Understand the screen and images:** "What's that error message?" – Orbwise takes a screenshot (spectacle,
@@ -457,10 +461,6 @@ All notable changes to this project are documented here. The format follows
 
 First public release.
 
-> The project was developed as **Jarvis** and renamed to **Orbwise** for this release. The assistant's default
-> persona is still "Jarvis" ("Hey Jarvis"). Earlier installations are migrated automatically; the old `jarvis`
-> command and `JARVIS_*` environment variables keep working as aliases and will be removed in 0.2.
-
 ### Assistant
 - Local LLM via **Ollama** (Qwen 3 recommended) or any **OpenAI-compatible server** (llama.cpp `llama-server`,
   e.g. Bonsai 27B); switchable **model profiles**, Orbwise can start/stop the model server itself.
@@ -471,10 +471,10 @@ First public release.
 - German and English (`language: de|en`) – prompt, voice, speech recognition, UI and CLI.
 
 ### Voice
-- Wake word "Hey Jarvis" (openWakeWord), push-to-talk, faster-whisper speech recognition.
-- Piper text-to-speech with installable German and English voices and an optional "Jarvis" voice effect.
+- Wake word (openWakeWord, pre-trained model), push-to-talk, faster-whisper speech recognition.
+- Piper text-to-speech with installable German and English voices and an optional voice effect.
 - Voices are managed in the menu of the **VOICE** pill (like the models): select, preview, delete, add from the
-  catalogue, plus the Jarvis effect – the separate VOICE tab is gone. "+ ADD VOICE" offers every official Piper
+  catalogue, plus the voice effect – the separate VOICE tab is gone. "+ ADD VOICE" offers every official Piper
   voice of the language (catalogue cached for a day, search field, grouped by region, download size); own Piper
   voices (e.g. from Hugging Face) can be uploaded there (.onnx + .onnx.json, file dialog or drag & drop). The space bar no longer starts push-to-talk
   while typing in any input field (e.g. the planner).

@@ -307,7 +307,7 @@ def test_overflow_hides_old_results_when_that_covers_it(cfg, llm, memory):
 
 
 def test_small_window_keeps_used_tools_for_follow_ups_and_across_compaction(cfg, llm, memory, tmp_path):
-    """Gemeldet: bei unter 16k fehlten bei der zweiten Paperless-Frage die Paperless-Werkzeuge (Jarvis wich auf curl
+    """Gemeldet: bei unter 16k fehlten bei der zweiten Paperless-Frage die Paperless-Werkzeuge (Orbwise wich auf curl
     aus) – nach einer Komprimierung bzw. wenn eine neue Gruppe dazukam."""
     all_integrations(cfg, tmp_path)
     cfg.llm.num_ctx = 8192

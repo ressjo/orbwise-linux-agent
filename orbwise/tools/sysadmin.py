@@ -63,7 +63,7 @@ def _kill_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     target = str(args.get("target", "")).strip()
     if target.isdigit() and int(target) in (0, 1, os.getpid(), os.getppid()):
         return BLOCKED, T("Systemprozess bzw. Orbwise selbst", "system process or Orbwise itself")
-    if target.lower() in ("orbwise", "jarvis", "systemd", "init", "kwin_wayland", "gnome-shell", "plasmashell", "xorg", "xwayland"):
+    if target.lower() in ("orbwise", "systemd", "init", "kwin_wayland", "gnome-shell", "plasmashell", "xorg", "xwayland"):
         return BLOCKED, T("würde die Sitzung oder Orbwise beenden", "would end the session or Orbwise")
     force = " (erzwungen, SIGKILL)" if args.get("force") else ""
     return CONFIRM, T("Prozess beenden: ", "end process: ") + f"{target}{force}"

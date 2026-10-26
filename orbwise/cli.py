@@ -706,27 +706,6 @@ def cmd_version(args) -> None:
     print(f"Orbwise {version()}\n{project_root()}")
 
 
-def _migrate_legacy() -> None:
-    """Früher hieß das Projekt „Jarvis“: alte Ordner/Starter einmalig umziehen, alten Befehlsnamen erklären."""
-    from .migrate import migrate
-    try:
-        for line in migrate():
-            print(f"[orbwise] {line}", file=sys.stderr)
-    except OSError as e:
-        print(f"[orbwise] Migration: {e}", file=sys.stderr)
-    alias = env("VIA_ALIAS") == "1" or Path(sys.argv[0]).name == "jarvis"
-    marker = config_path().parent / ".alias-hint-shown"
-    if alias and not marker.exists():
-        print(T("[orbwise] Hinweis: Der Befehl heißt jetzt 'orbwise' – 'jarvis' funktioniert noch bis Version 0.2.",
-                "[orbwise] Note: the command is now called 'orbwise' – 'jarvis' keeps working until version 0.2."),
-              file=sys.stderr)
-        try:
-            marker.parent.mkdir(parents=True, exist_ok=True)
-            marker.touch()
-        except OSError:
-            pass
-
-
 def cmd_skills(args) -> None:
     from . import skills, skills_cli
     cfg = load_config()
@@ -756,8 +735,6 @@ def cmd_skills(args) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    if argv is None and env("NO_MIGRATE") != "1":
-        _migrate_legacy()
     try:
         set_lang(load_config().language)
     except Exception:  # noqa: BLE001 – kaputte Config: doctor/serve melden das selbst

@@ -151,7 +151,6 @@ if [[ -n "$HSA" ]] && ask_yes "Deine AMD-Karte braucht für ROCm meist HSA_OVERR
   sudo mkdir -p /etc/systemd/system/ollama.service.d
   printf '[Service]\nEnvironment="HSA_OVERRIDE_GFX_VERSION=%s"\n' "$HSA" | \
     sudo tee /etc/systemd/system/ollama.service.d/orbwise-rocm.conf >/dev/null
-  sudo rm -f /etc/systemd/system/ollama.service.d/jarvis-rocm.conf   # name before the project was renamed
   sudo systemctl daemon-reload && sudo systemctl restart ollama.service || true
 fi
 
@@ -159,8 +158,6 @@ fi
 say "Setting up the Python environment (uv)"
 cd "$ROOT"
 uv sync --extra voice
-# the project used to be called "Jarvis": move ~/.config/jarvis and ~/.local/share/jarvis over first
-uv run python -c "from orbwise.migrate import migrate; [print('  ' + line) for line in migrate()]"
 
 # ---------------------------------------------------------------- Model choice by VRAM
 if [[ -z "$MODEL" ]]; then
@@ -204,7 +201,7 @@ say "$(t "Installiere die Sprachausgabe Pocket TTS" "Installing the Pocket TTS s
 uv run orbwise voice install || echo "$(t "⚠ Pocket TTS nicht eingerichtet – später: orbwise voice install (bis dahin spricht der Browser)" \
   "⚠ Pocket TTS not set up – later: orbwise voice install (until then the browser speaks)")"
 
-say "Downloading the wake word model “Hey Jarvis” and Whisper"
+say "Downloading the wake word model and Whisper"
 uv run python -c "import openwakeword.utils as u; u.download_models(['hey_jarvis'])"
 uv run python -c "from faster_whisper import WhisperModel; WhisperModel('small', device='cpu', compute_type='int8')"
 
@@ -235,15 +232,6 @@ fi
 say "Setting up the launcher"
 mkdir -p "$HOME/.local/bin" "$HOME/.local/share/applications"
 rm -f "$HOME/.local/bin/orbwise"
-# the project used to be called "Jarvis": keep the old command names as forwarders
-for old in jarvis jarvis-open; do
-  if [[ -e "$HOME/.local/bin/$old" ]]; then
-    printf '#!/usr/bin/env bash\n# Former command name – the project is now called Orbwise.\nORBWISE_VIA_ALIAS=1 exec "$HOME/.local/bin/%s" "$@"\n' \
-      "${old/jarvis/orbwise}" > "$HOME/.local/bin/$old"
-    chmod 755 "$HOME/.local/bin/$old"
-  fi
-done
-rm -f "$HOME/.local/share/applications/jarvis.desktop" "$HOME/.config/autostart/jarvis.desktop"
 sed -e "s|@ORBWISE_HOME@|$ROOT|g" -e "s|@ORBWISE_BRANCH@|$BRANCH|g" -e "s|@ORBWISE_REPO@|$REPO|g" \
   "$ROOT/scripts/orbwise-launcher" > "$HOME/.local/bin/orbwise"
 chmod 755 "$HOME/.local/bin/orbwise"
@@ -251,7 +239,7 @@ chmod 755 "$HOME/.local/bin/orbwise"
 # Put ~/.local/bin on the PATH (once)
 for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
   [[ -f "$rc" || "$rc" == "$HOME/.bashrc" ]] || continue
-  if ! grep -q -E "# (orbwise|jarvis)-path" "$rc" 2>/dev/null; then
+  if ! grep -q "# orbwise-path" "$rc" 2>/dev/null; then
     printf '\nexport PATH="$HOME/.local/bin:$PATH"  # orbwise-path\n' >> "$rc"
   fi
 done

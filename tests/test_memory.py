@@ -7,12 +7,12 @@ from orbwise.memory.context import Conversation, est_tokens
 
 def test_journal_file_per_day(memory):
     memory.journal.append("Du", "Hallo", datetime(2026, 9, 20, 10, 0, 0))
-    memory.journal.append("Jarvis", "Guten Morgen", datetime(2026, 9, 20, 10, 0, 5))
+    memory.journal.append("Orbwise", "Guten Morgen", datetime(2026, 9, 20, 10, 0, 5))
     memory.journal.append("Du", "Update bitte", datetime(2026, 9, 21, 9, 0, 0))
     assert memory.journal.days() == ["2026-09-21", "2026-09-20"]
     assert (memory.cfg.dir / "journal" / "2026-09-20.md").exists()
     entries = memory.journal.entries("2026-09-20")
-    assert [(e.speaker, e.text) for e in entries] == [("Du", "Hallo"), ("Jarvis", "Guten Morgen")]
+    assert [(e.speaker, e.text) for e in entries] == [("Du", "Hallo"), ("Orbwise", "Guten Morgen")]
     assert "Sonntag, 20.09.2026" in memory.journal.read("2026-09-20")
     assert memory.journal.read("../../etc/passwd") is None
 

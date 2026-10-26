@@ -804,7 +804,7 @@ _PKEXEC_RE = re.compile(r"(^|[;&|(]\s*|\s)pkexec\s+")
 def apply_privilege(command: str, privilege_cmd: str) -> str:
     """Ersetzt 'sudo' durch das konfigurierte Werkzeug: 'orbwise' → sudo -A (Passwortdialog in der Oberfläche),
     'pkexec' → grafischer Polkit-Dialog, 'sudo' → sudo -n (nur mit NOPASSWD-Regel)."""
-    if privilege_cmd in ("dashboard", "orbwise", "jarvis"):
+    if privilege_cmd in ("dashboard", "orbwise"):
         command = _PKEXEC_RE.sub(lambda m: f"{m.group(1)}sudo ", command)
         return _SUDO_RE.sub(lambda m: f"{m.group(1)}sudo -A{_SUDO_OWN_FLAGS.sub('', m.group(2))} ", command)
     if privilege_cmd == "pkexec":

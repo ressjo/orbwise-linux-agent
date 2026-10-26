@@ -18,7 +18,8 @@
 
 Orbwise is a web app on `localhost` with a voice, a long memory and real hands on your system. The model runs on
 your machine through llama.cpp or Ollama; speech recognition and speech output run locally too. Out of the box it
-calls itself "Jarvis" and listens for "Hey Jarvis" – rename it with `assistant_name`. German and English are
+calls itself "Orbwise" (rename it with `assistant_name`) and wakes up on a pre-trained openWakeWord phrase
+(`voice.wakeword_model`). German and English are
 supported.
 
 ![A conversation: answer in a serif reading font, a running web search on the small orb, activity panel with live telemetry](docs/screenshot-chat.png)
@@ -40,7 +41,7 @@ or push the branch. Clone your repositories and push with your `gh` login or a t
 **Local, voice included.** A model page in the style of LM Studio downloads GGUF models from Hugging Face, picks
 the right llama.cpp build for your GPU (ROCm, CUDA or Vulkan) and measures which settings read prompts fastest.
 Whisper listens, Pocket TTS answers sentence by sentence. Nothing leaves the PC unless you use web search or a
-service you configured. → [Models](#models--profiles) · [Voice](#voice--jarvis-effect)
+service you configured. → [Models](#models--profiles) · [Voice](#voice--voice-effect)
 
 **It asks before it changes things.** Every command that changes the system appears as a card with the exact command
 or diff – confirm by click, key or voice. Read-only commands run directly, destructive ones never; content from mails,
@@ -67,8 +68,7 @@ What Orbwise can do for you – each line links to the details.
 | **Phone** | Telegram bot: text and voice messages, confirmations, files in both directions → [Telegram](#telegram-phone) |
 | **Planning** | Plan mode: looks things up read-only and presents a plan to run, change or discard → [Plan mode](#plan-mode) |
 
-> Orbwise is an independent hobby project; the "Jarvis" persona is a nod to the film assistant, not affiliated with
-> Marvel or Disney. It can run commands on your computer – use it at your own risk, see the
+> Orbwise is an independent hobby project. It can run commands on your computer – use it at your own risk, see the
 > [Disclaimer](#disclaimer). Most of the code was written with an AI coding assistant (Claude Code) and reviewed,
 > tested and used by a human; bug reports and fixes are welcome.
 
@@ -130,23 +130,15 @@ then just reload the browser page. `orbwise version` shows what is installed. Yo
 (`~/.config/orbwise/`), **voices** and **memory** (`~/.local/share/orbwise/`) live outside the project folder and
 are never touched by updates.
 
-### Upgrading from "Jarvis"
-
-Until version 0.1 the project was called **Jarvis**. Existing installations move over automatically on the first
-start after `jarvis update`: `~/.config/jarvis` and `~/.local/share/jarvis` become `…/orbwise` (the old paths stay
-as symlinks), the launcher, menu and autostart entries are switched to Orbwise, and `JARVIS_*` environment
-variables are still read. The old `jarvis` command keeps working as an alias until version 0.2 – use `orbwise`
-from now on. Your assistant keeps its name "Jarvis".
-
 ## Using Orbwise
 
 - **Start:** the start screen shows live what is still loading (language model, speech recognition, voice, wake word,
   Telegram, your last chat) and continues by itself once everything is loaded – or click **Start now**. Browsers
   only allow sound and the microphone after a click or key press, so they switch on with your first interaction.
-- **Wake word** (ear icon at the top) on → say "Hey Jarvis, …". The microphone is only streamed to your own local
-  server.
+- **Wake word** (ear icon at the top) on → say the wake phrase of the configured openWakeWord model (default
+  `hey_jarvis`, i.e. "Hey Jarvis, …"). The microphone is only streamed to your own local server.
 - **Hold the microphone button / space bar** → speak → release. Tap once to listen until silence.
-- The speaker icon toggles speech output; while Jarvis works, the send button turns into **stop** (or press `Esc`).
+- The speaker icon toggles speech output; while Orbwise works, the send button turns into **stop** (or press `Esc`).
   **Think** lets the model reason before answering (see [Thinking mode](#thinking-mode)), **Plan** makes it present
   a plan first (see [Plan mode](#plan-mode)).
 - **Sidebar:** Tools / Coding / Image switch, new chat, search, all chats; at the bottom **Models**, **Planner**
@@ -162,13 +154,13 @@ from now on. Your assistant keeps its name "Jarvis".
 
 Examples:
 
-- "Hey Jarvis, run a system update." → confirmation card in the chat → live output in the activity panel
+- "Run a system update." → confirmation card in the chat → live output in the activity panel
 - "Install htop and fastfetch." · "How much disk space is left?" · "What's eating my CPU?"
 - "Find the newest PDF with *invoice* in its name on the NAS and open it."
 - "Restart the Docker service." · "Is my NAS reachable?" · "Show me the last errors of sshd."
 - "Turn the living room lights to 40 percent." · "Set the bathroom heating to 22 degrees."
 - "When can I cancel my phone contract?" (Paperless) · "What's in my note about Docker?" (Trilium)
-- "Remind me in 20 minutes to check the oven." · "Good morning, Jarvis."
+- "Remind me in 20 minutes to check the oven." · "Good morning."
 - "Remember that my server is at 192.168.1.10." · "What did we do last Tuesday?"
 
 ## Memory – without context-window problems
@@ -493,7 +485,7 @@ The menu follows what the loaded model can do. Orbwise reads it from the model's
 Only in a small context window (< 16k) is the reasoning capped so the answer still fits; if it runs longer, the step
 continues without further thinking, with the thoughts so far (the activity shows "enough thinking – acting now").
 
-## Voice & Jarvis effect
+## Voice & voice effect
 
 Orbwise speaks with [Kyutai's Pocket TTS](https://github.com/kyutai-labs/pocket-tts) – natural-sounding, on the CPU.
 The installer sets it up (`orbwise voice install`); otherwise **Settings → Voice → Install Pocket TTS** does. It is a
@@ -515,7 +507,7 @@ in `state.json`. Switching to another language loads that language's model (a fe
 Needs an x86-64 CPU with AVX2 or ARM64. Cloning your own voice from a recording is not offered yet (Kyutai only hands
 out those weights after accepting terms on Hugging Face).
 
-The **Jarvis effect** (on/off + strength, in the same menu) adds a slightly deeper, sonorous tone, a light room reverb, a subtle
+The **voice effect** (on/off + strength, in the same menu) adds a slightly deeper, sonorous tone, a light room reverb, a subtle
 chorus and a "digital" shimmer.
 
 Speech recognition uses faster-whisper: on NVIDIA set `voice.stt_device: cuda` and `stt_compute_type: float16`;
@@ -937,15 +929,15 @@ Sign in once with the GitHub CLI (`gh auth login`) – Orbwise uses its token �
 
 ### Plan mode
 
-For bigger jobs switch on **Plan** in the input bar. Jarvis then may only
+For bigger jobs switch on **Plan** in the input bar. Orbwise then may only
 look things up with read-only tools (system info, file and package search, status …) and answers with a numbered
 plan: what it will do, with which tool or exact command, and where it will ask for confirmation. Anything that would
 change something is not run – it becomes a step of the plan. After **Run** plan mode switches itself off. While the plan runs it stays pinned to the current request, so it is never cut from the context even when long tool output fills it up. Plan mode uses thinking only when **Think** is
 switched on too – leave it off for fast plans, switch it on for more thorough ones (also for Telegram `/plan`).
 
 Under the plan: **Run** carries it out (confirmations for changes still appear as usual), **Change** lets you
-write what should be different ("keep the journal logs") and Jarvis presents a revised plan, **Discard** drops it.
-By voice, a short "yes" or "no" decides; the plan itself is not read out, Jarvis only says how many steps it has.
+write what should be different ("keep the journal logs") and Orbwise presents a revised plan, **Discard** drops it.
+By voice, a short "yes" or "no" decides; the plan itself is not read out, Orbwise only says how many steps it has.
 From the phone: `/plan clean up my disk` – the plan arrives with ✅ Run / ✏️ Change / ❌ Discard buttons.
 
 ### Screen & images

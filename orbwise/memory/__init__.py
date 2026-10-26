@@ -55,9 +55,9 @@ class Memory:
         self.journal.append("Du", user_text, now, chat)
         for note in tool_notes:
             self.journal.append("Tool", note, now, chat)
-        self.journal.append("Jarvis", assistant_text or "(keine Antwort)", now, chat)
+        self.journal.append("Orbwise", assistant_text or "(keine Antwort)", now, chat)
         self.last_activity = time.time()
-        text = f"Nutzer: {user_text}\n" + "".join(f"Tool: {n}\n" for n in tool_notes) + f"Jarvis: {assistant_text}"
+        text = f"Nutzer: {user_text}\n" + "".join(f"Tool: {n}\n" for n in tool_notes) + f"Orbwise: {assistant_text}"
         await self.index.add("journal", day_str(now), f"chat:{chat}" if chat else f"journal:{day_str(now)}", text)
 
     # ---------- Chats ----------
@@ -242,7 +242,7 @@ class Memory:
         if not text:
             return None
         system = {"role": "system", "content": (
-            "Du fasst das Tagesprotokoll zwischen einem Nutzer und seinem KI-Assistenten Jarvis zusammen. "
+            "Du fasst das Tagesprotokoll zwischen einem Nutzer und seinem KI-Assistenten Orbwise zusammen. "
             "Schreibe auf Deutsch prägnante Stichpunkte: was wurde gemacht, welche Befehle/Pakete/Dateien "
             "waren beteiligt, Ergebnisse, Vorlieben des Nutzers, offene Punkte. Keine Einleitung.")}
         parts = split_text(text, DAY_CHUNK_CHARS)

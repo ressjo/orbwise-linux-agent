@@ -54,7 +54,7 @@ def render_transcript(messages: list[dict], max_chars: int = 20000) -> str:
             lines.append(f"Nutzer: {content}")
         elif m["role"] == "assistant":
             if content:
-                lines.append(f"Jarvis: {content}")
+                lines.append(f"Orbwise: {content}")
             for call in m.get("tool_calls") or []:
                 fn = call.get("function", {})
                 args = json.dumps(fn.get("arguments"), ensure_ascii=False)

@@ -61,11 +61,11 @@ def test_edit_follows_auto_modes(cfg, llm, memory, home):
     f = home / "proj" / "notiz.md"
     f.write_text("Hallo Welt\n", encoding="utf-8")
     agent = Agent(cfg, llm, memory)
-    call = "/tool edit_file " + json.dumps({"path": str(f), "old_text": "Welt", "new_text": "Jarvis"})
+    call = "/tool edit_file " + json.dumps({"path": str(f), "old_text": "Welt", "new_text": "Orbwise"})
     assert len(collect(agent, call)) == 1  # Standard: fragt
     agent.auto_mode = "files"
     f.write_text("Hallo Welt\n", encoding="utf-8")
-    assert not collect(agent, call) and f.read_text() == "Hallo Jarvis\n"
+    assert not collect(agent, call) and f.read_text() == "Hallo Orbwise\n"
     rc = home / ".bashrc"
     rc.write_text("alias a=b\n")
     for mode in ("files", "auto"):

@@ -47,9 +47,9 @@ def test_agent_answer_ignores_context_note(cfg, memory, llm):
     async def confirm(*a):
         return False
 
-    answer = run(agent.run("Hallo Jarvis", emit, confirm))
-    assert "Hallo Jarvis" in answer and "Kontext" not in answer
-    assert memory.conversation.history[0]["content"] == "Hallo Jarvis"
+    answer = run(agent.run("Hallo Orbwise", emit, confirm))
+    assert "Hallo Orbwise" in answer and "Kontext" not in answer
+    assert memory.conversation.history[0]["content"] == "Hallo Orbwise"
 
 
 def test_token_estimate_learns_from_server(cfg, memory, llm):

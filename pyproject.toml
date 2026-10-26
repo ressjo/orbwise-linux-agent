@@ -56,7 +56,6 @@ Changelog = "https://github.com/ressjo/orbwise-linux-agent/blob/main/CHANGELOG.m
 
 [project.scripts]
 orbwise = "orbwise.cli:main"
-jarvis = "orbwise.cli:main"  # alter Befehlsname (vor der Umbenennung) – entfällt in 0.2
 
 [build-system]
 requires = ["hatchling"]
