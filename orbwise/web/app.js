@@ -358,6 +358,9 @@
         S.transcribing = false;  // neue Verbindung = neue Audio-Sitzung, eine alte Transkription meldet sich nie mehr
         if (ev.context) showContext(ev.context);
         applyMode(ev);
+        // Bildmodus nur innerhalb desselben Serverlaufs wiederherstellen – nach einem Neustart von Orbwise: leerer Chat
+        if (ev.boot && ev.boot !== store.get("boot", "")) { store.set("boot", ev.boot); store.set("view", "chat"); }
+        else if (store.get("view", "chat") === "image" && !IV.open) setTimeout(openImageView, 0);
         applySettings(ev, true);
         loadThinkCaps();
         loadChats();  // Chats des aktuellen Modus
@@ -4968,7 +4971,6 @@
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); generateImage(); }
   });
   $("iv-cancel").onclick = () => api("POST", "/api/image/cancel").catch(() => {});
-  if (store.get("view", "chat") === "image") setTimeout(openImageView, 0);  // zuletzt offen → wieder öffnen
 
   // ---------------------------------------------------------------- Modi: Tools (Assistent) / Coding
   // Getrennte Chat-Verläufe; Coding lädt nur Dateien, Shell, Web und Gedächtnis und hat keine Sprache.

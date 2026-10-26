@@ -83,6 +83,12 @@ class Memory:
         self.conversation = self.chats.create(mode=self.mode)
         return self.conversation
 
+    def start_fresh(self) -> Conversation:
+        """Beim Start von Orbwise: Tools-Modus, leerer Chat (ein noch leerer wird weiterverwendet) – alte Chats bleiben
+        in der Liste."""
+        self.switch_mode("tools")
+        return self.new_chat()
+
     def switch_mode(self, mode: str) -> Conversation:
         """Zwischen Tools- und Coding-Modus wechseln: öffnet den zuletzt benutzten Chat dieses Modus."""
         if mode != self.mode:

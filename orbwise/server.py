@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -432,6 +433,8 @@ def create_app(cfg: Config) -> FastAPI:
             log.info("Gelernte Lektionen entfernt (Funktion „Aus Erfahrung lernen“ gibt es nicht mehr)")
     llm = FakeLLM(language=cfg.language) if fake else LLMRouter(cfg.llm, state_path=cfg.memory.dir.parent / "state.json")
     memory = Memory(cfg.memory, llm)
+    memory.start_fresh()  # nach dem Start immer ein leerer Chat im Tools-Modus – vorgeladen werden nur Modell + Werkzeuge
+    boot_id = uuid.uuid4().hex[:8]  # je Serverstart: die Oberfläche stellt den Bildmodus nur innerhalb eines Laufs wieder her
     agent = Agent(cfg, llm, memory)
     # Auto-Knopf überlebt einen Neustart – sonst liefen Telegram/Routinen bis zum Öffnen des Dashboards mit „Nur lesen“
     auto_file = cfg.memory.dir.parent / "auto_mode"
@@ -686,6 +689,8 @@ def create_app(cfg: Config) -> FastAPI:
                     warm_error = str(e)
             await hub.broadcast({"type": "model_active", "name": name})
             await startup.set("model", "warn" if warm_error else "ok", warm_error or label)
+            if not warm_error:
+                hub.prewarm_soon()  # leerer Chat: Systemprompt + Werkzeuge in den Cache – auch ohne offene Oberfläche
         except LLMError as e:
             log.warning("Modell-Start fehlgeschlagen: %s", e)
             await hub.broadcast({"type": "model_error", "name": name, "text": str(e)})
@@ -1829,7 +1834,7 @@ def create_app(cfg: Config) -> FastAPI:
         client = Client(ws)
         client.audio = AudioSession(cfg.voice, stt, wake, client.send, lambda t: hub.submit(t, "voice"))
         hub.clients.add(client)
-        await client.send({"type": "hello", "busy": agent.busy(),
+        await client.send({"type": "hello", "busy": agent.busy(), "boot": boot_id,
                            "pending": [cid for cid in hub.pending], "context": agent.last_context,
                            **mode_info(), **settings_info()})
         await client.send(startup.snapshot())

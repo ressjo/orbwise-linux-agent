@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **Start:** Orbwise always starts with an empty chat in tools mode (an empty one is reused, earlier chats stay in
+  the list); after the model has loaded only the system prompt and tools are pre-read, no old chat. The image view is
+  only restored on a page reload within the same server run.
 - **Sandbox in auto mode:** everything inside the sandbox runs without asking – also `sudo`/`apt` (root in the
   container only) and shell commands after reading a web page. In return, reading files outside the working copy asks
   (nothing private gets into the container); writing outside the copy and GitHub pushes still ask.

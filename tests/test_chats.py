@@ -192,3 +192,40 @@ def test_chat_actions_while_a_routine_works_in_its_own_chat(cfg):
     mine.save()
     listed = {c["id"]: c for c in memory.chats.list("")}
     assert listed[mine.chat_id]["title"] == "Mein Chat" and other.chat_id not in listed
+
+
+def test_start_fresh_opens_an_empty_tools_chat(cfg, llm):
+    from orbwise.memory import Memory
+    m = Memory(cfg.memory, llm)
+    m.switch_mode("coding")
+    m.conversation.add({"role": "user", "content": "alter Coding-Chat"})
+    m.conversation.save()
+    old = m.conversation.chat_id
+    m.close()
+    m = Memory(cfg.memory, llm)  # wie beim Neustart: der letzte Modus/Chat wäre der Coding-Chat
+    assert m.mode == "coding" and m.conversation.chat_id == old
+    fresh = m.start_fresh()
+    assert m.mode == "tools" and not fresh.history
+    again = m.start_fresh()
+    assert again.chat_id == fresh.chat_id  # kein zweiter leerer Chat
+    assert m.chats.exists(old)
+    m.close()
+
+
+def test_server_start_shows_an_empty_tools_chat(cfg, llm, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from orbwise import server
+    from orbwise.memory import Memory
+    m = Memory(cfg.memory, llm)
+    m.switch_mode("coding")
+    m.conversation.add({"role": "user", "content": "vom letzten Mal"})
+    m.conversation.save()
+    m.close()
+    monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    with TestClient(server.create_app(cfg), base_url="http://localhost:8765") as client:
+        assert client.get("/api/history").json()["messages"] == []
+        with client.websocket_connect("ws://localhost:8765/ws", headers={"Origin": "http://localhost:8765"}) as ws:
+            hello = ws.receive_json()
+        assert hello["type"] == "hello" and hello["mode"] == "tools" and hello["boot"]
