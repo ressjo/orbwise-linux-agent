@@ -148,3 +148,15 @@ def test_server_mode_switch_project_and_no_voice(client, tmp_path):
         client.post("/api/mode", json={"mode": "tools"})
         assert receive_until(ws, "chat_switched")["mode"] == "tools"
         assert all(c["mode"] == "tools" for c in client.get("/api/chats").json())
+
+
+def test_prompts_ask_for_edit_and_real_error_messages(cfg):
+    from orbwise import prompts
+    values = dict(name="Jarvis", project="/p", env="", os="Linux", host="h", user="u", home="/home/u", nas="-")
+    for lang, keep, cause in (("de", "nie komplett neu schreiben", "erfinde keine Ursache"),
+                              ("en", "never rewrite them completely", "invent a cause")):
+        cfg.language = lang
+        text = prompts.coding_prompt(cfg, **values)
+        assert keep in text and cause in text
+        assert ("ohne eine Ursache zu erfinden" if lang == "de" else "without inventing a cause") in \
+            prompts.base_prompt(cfg, **values)

@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **Prompts, two targeted rules from observed mistakes:** coding mode changes existing files with `edit` instead of
+  rewriting them (whole rewrites caused the cut-off tool calls); in both modes a failing tool is reported with its
+  own message, without inventing a cause.
 - **Room for output in every mode and window:** a quarter of the context window (at most 16k tokens) stays free for
   the answer – tools and coding mode, small and large windows (8k: 2k, 49k: ~12k, 128k+: 16k). Compaction starts a
   bit earlier, long answers and whole files no longer break off mid-call.
