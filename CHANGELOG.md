@@ -248,6 +248,9 @@ All notable changes to this project are documented here. The format follows
   the open chat stays untouched.
 
 ### Fixed
+- Chat did not always follow while generating (e.g. when the thinking block opened): every change in the chat now
+  keeps it at the bottom unless you scroll up yourself (scrolling back down follows again); following scrolls
+  instantly instead of the CSS smooth animation, which lagged behind and broke off while streaming.
 - Building the sandbox image failed when the host had no usable `/dev/net/tun` (pasta: “No such device”): the build
   now uses the host network (only apt-get for the own Containerfile), and errors naming `/dev/net/tun` explain the
   usual cause (kernel update without reboot → reboot or `sudo modprobe tun`; meanwhile “Network: off” works).

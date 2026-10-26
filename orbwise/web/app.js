@@ -730,7 +730,27 @@
       .replace(/\u0000(\d+)\u0000/g, (_, i) => blocks[+i]);
   }
 
-  function scrollChat() { chat.scrollTop = chat.scrollHeight; }
+  // Mitlaufen beim Generieren: unten bleiben, solange der Nutzer nicht selbst hochscrollt. Jede Änderung im Chat
+  // (Text, Gedankenblock, Werkzeug-Zeilen, Bilder) zieht nach – nicht nur die Stellen, die selbst scrollen.
+  let follow = true, userScrollAt = 0, pinQueued = false;
+  const atBottom = () => chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80;
+  // sofort, nicht „smooth“ (CSS): eine Animation je Token hinkt beim Streamen hinterher und bricht ab
+  const toBottom = () => chat.scrollTo({ top: chat.scrollHeight, behavior: "instant" });
+  function scrollChat() { follow = true; toBottom(); }
+  function pinChat() {
+    if (!follow || pinQueued) return;
+    pinQueued = true;
+    requestAnimationFrame(() => { pinQueued = false; if (follow) toBottom(); });
+  }
+  for (const ev of ["wheel", "touchmove", "keydown", "pointerdown"]) {
+    chat.addEventListener(ev, () => { userScrollAt = performance.now(); }, { passive: true });
+  }
+  // nur eine Bewegung des Nutzers entscheidet (eigenes Nachziehen oder Scroll-Anker des Browsers zählen nicht)
+  chat.addEventListener("scroll", () => { if (performance.now() - userScrollAt < 1000) follow = atBottom(); }, { passive: true });
+  new MutationObserver(pinChat).observe(chat, { childList: true, subtree: true, characterData: true,
+                                                attributes: true, attributeFilter: ["open", "class"] });
+  chat.addEventListener("load", pinChat, true);           // Bilder (Screenshots, Anhänge) ändern die Höhe später
+  chat.addEventListener("transitionend", pinChat, true);  // aufklappende Blöcke
 
   // Kopieren-Knopf an Code-Blöcken (Ereignis-Delegation, auch für später gerenderte Nachrichten)
   document.addEventListener("click", async (e) => {
@@ -839,10 +859,9 @@
   function flushTokens() {
     renderQueued = false;
     if (!dirty.size) return;
-    const stick = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80;
     for (const a of dirty) renderAssistant(a);
     dirty.clear();
-    if (stick) scrollChat();
+    pinChat();
   }
   function appendToken(id, text) {
     const a = assistants[id] || (startAssistant(id), assistants[id]);
@@ -901,10 +920,9 @@
         if (done) return;
         done = true;
         t.queued = false;
-        const stick = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80;
         t.pre.textContent = t.text.trim();
         t.pre.scrollTop = t.pre.scrollHeight;
-        if (stick) scrollChat();
+        pinChat();
       };
       requestAnimationFrame(go);
       setTimeout(go, 120);
@@ -934,7 +952,7 @@
   function finishAssistant(id, cancelled) {
     const a = assistants[id];
     if (!a) return;
-    if (dirty.has(a)) { dirty.delete(a); renderAssistant(a); scrollChat(); }
+    if (dirty.has(a)) { dirty.delete(a); renderAssistant(a); pinChat(); }
     a.el.classList.remove("streaming");
     a.live.remove();
     a.el._raw = a.raw.trim();
@@ -1384,7 +1402,7 @@
       li.textContent = t.text;
       return li;
     }));
-    scrollChat();
+    pinChat();
   }
 
   // Live-Zeile in der Antwort (ersetzt den Cursor) – Sekunden zählt tickPhases
