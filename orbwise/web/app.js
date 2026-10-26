@@ -4405,8 +4405,9 @@
       li.querySelector(".rt-meta").textContent = r.schedule + next;
       li.querySelector(".rt-meta").title = r.enabled && r.next !== "–" ? `${L("nächste Ausführung", "next run")}: ${r.next}` : "";
       li.querySelector(".rt-main").title = r.task + (r.last_summary ? "\n\n" + L("Zuletzt: ", "Last: ") + r.last_summary : "");
-      li.querySelector(".rt-main").onclick = () => {
+      li.querySelector(".rt-main").onclick = async () => {
         if (!r.chat_id) { toast(L("Noch kein Ergebnis – „Jetzt ausführen“ startet die Routine.", "No result yet – “run now” starts the routine.")); return; }
+        if (!await confirmLeaveSandbox()) return;
         api("POST", `/api/chats/${r.chat_id}/activate`).catch(() => {});
       };
       li.querySelector("input").onchange = (e) => api("PUT", `/api/routines/${r.id}`, { enabled: e.target.checked })
@@ -4623,7 +4624,10 @@
         + `<button class="ci-more" type="button" aria-label="${L("Aktionen", "Actions")}"><svg class="i"><use href="#i-more"/></svg></button>`;
       li.querySelector(".t").textContent = c.title;
       li.querySelector(".ci-when").textContent = chatShortWhen(c.updated);
-      li.onclick = () => { if (!c.active && !li.querySelector("input")) api("POST", `/api/chats/${c.id}/activate`).catch(() => {}); };
+      li.onclick = async () => {
+        if (c.active || li.querySelector("input") || !await confirmLeaveSandbox()) return;
+        api("POST", `/api/chats/${c.id}/activate`).catch(() => {});
+      };
       li.querySelector(".ci-more").onclick = (e) => { e.stopPropagation(); chatMenu(e.currentTarget, c, li); };
       ul.appendChild(li);
     }
@@ -4730,9 +4734,12 @@
     a.remove();
   }
   async function deleteChat(c) {
-    const extra = c.legacy ? L("\n\nHinweis: Dieser Chat stammt von vor der Chat-Historie – ältere Tagebuch-Einträge "
+    if (c.active && !await confirmLeaveSandbox(true)) return;
+    const box = c.sandbox ? L("\n\nDie Arbeitskopie der Sandbox wird mitgelöscht – nicht übernommene Änderungen gehen verloren.",
+      "\n\nThe sandbox working copy is deleted too – changes not applied are lost.") : "";
+    const extra = box + (c.legacy ? L("\n\nHinweis: Dieser Chat stammt von vor der Chat-Historie – ältere Tagebuch-Einträge "
       + "daraus lassen sich nicht zuordnen und bleiben im Gedächtnis.",
-      "\n\nNote: this chat predates the chat history – older journal entries from it cannot be attributed and stay in memory.") : "";
+      "\n\nNote: this chat predates the chat history – older journal entries from it cannot be attributed and stay in memory.") : "");
     if (await ask(L(`„${c.title}“ löschen?\n\nDer Chat wird auch aus Jarvis' Gedächtnis entfernt (Tagebuch, Suche, `
         + `Tageszusammenfassung). Gelernte Fakten bleiben.`, `Delete “${c.title}”?\n\nThe chat is also removed from `
         + `Jarvis' memory (journal, search, daily summary). Learned facts are kept.`) + extra)) {
@@ -5035,10 +5042,10 @@
     });
   }
   document.querySelectorAll(".mode-switch [data-mode]").forEach((b) => {
-    b.onclick = () => {
+    b.onclick = async () => {
       if (b.dataset.mode === "image") { openImageView(); return; }
       if (IV.open) closeImageView();
-      if (b.dataset.mode === S.mode) return;
+      if (b.dataset.mode === S.mode || !await confirmLeaveSandbox()) return;
       api("POST", "/api/mode", { mode: b.dataset.mode })
         .then(() => toast(b.dataset.mode === "coding"
           ? L("Coding-Modus – nur Dateien, Shell, Web und Gedächtnis, ohne Sprache. Eigene Chats.", "Coding mode – only files, shell, web and memory, no voice. Separate chats.")
@@ -5060,7 +5067,7 @@
   projectMenu.querySelector('[data-project="folder"]').onclick = async () => {
     projectMenu.classList.add("hidden");
     const path = await askFolder(S.project || "");
-    if (path === null || !S.chatId) return;
+    if (path === null || !S.chatId || !await confirmLeaveSandbox(true)) return;
     api("POST", `/api/chats/${S.chatId}/project`, { path: path.trim() })
       .then((r) => toast(r.project ? L(`Projektordner: ${r.project}`, `Project folder: ${r.project}`) : L("Kein Projektordner.", "No project folder.")))
       .catch(() => {});  // Fehler zeigt api() schon an
@@ -5145,7 +5152,7 @@
     const select = box.querySelector("select");
     select.options[0].value = repo.default_branch;
     select.options[0].textContent = L("lade …", "loading …");
-    box.querySelector("button").onclick = () => cloneRepo(repo.full_name, select.value, li);
+    box.querySelector("button").onclick = async () => { if (await confirmLeaveSandbox(true)) cloneRepo(repo.full_name, select.value, li); };
     let names = [repo.default_branch];
     try { names = (await getJSON("/api/github/branches?repo=" + encodeURIComponent(repo.full_name))).branches || names; } catch {}
     if (!box.isConnected) return;
@@ -5317,8 +5324,45 @@
     toastTimer = setTimeout(() => $("toast").classList.add("hidden"), 15000);
   }
 
-  function newChat() {
+  async function newChat() {
+    if (!await confirmLeaveSandbox()) return;
     api("POST", "/api/chats").catch(() => {});
+  }
+
+  // Vor dem Verlassen eines Chats mit Sandbox: nicht übernommene Änderungen anbieten. Ohne Übernehmen bleiben sie in
+  // diesem Chat (Chat wieder öffnen → Sandbox-Menü) – außer discards: Projektwechsel/Löschen werfen die Kopie weg.
+  async function confirmLeaveSandbox(discards = false) {
+    if (!S.sandbox) return true;
+    let st;
+    try { st = await getJSON("/api/sandbox"); } catch { return true; }
+    if (!st.enabled || !st.changes) return true;
+    const el = document.createElement("div");
+    el.className = "leave-choice";
+    el.innerHTML = `<button type="button" class="btn ghost"></button>`;
+    const body = { el, value: () => "apply" };
+    const skip = el.querySelector("button");
+    skip.textContent = discards ? L("Verwerfen", "Discard") : L("Weiter ohne Übernehmen", "Continue without applying");
+    skip.onclick = () => body.done("skip");
+    const n = st.changes;
+    const head = n === 1 ? L("In der Sandbox ist 1 geänderte Datei, die noch nicht im Projekt ist.", "The sandbox has 1 changed file that is not in the project yet.")
+      : L(`In der Sandbox sind ${n} geänderte Dateien, die noch nicht im Projekt sind.`, `The sandbox has ${n} changed files that are not in the project yet.`);
+    const tail = discards ? L("Die Arbeitskopie wird dabei gelöscht.", "The working copy will be deleted.")
+      : L("Ohne Übernehmen bleiben sie in diesem Chat erhalten (später wieder öffnen → Sandbox-Menü).",
+          "Without applying they stay in this chat (open it again later → sandbox menu).");
+    const choice = await dialog({ text: `${head}\n\n${tail}`, body, ok: L("Übernehmen und weiter", "Apply and continue") });
+    if (choice === "skip") return true;
+    if (choice !== "apply") return false;
+    try {
+      const r = await api("POST", "/api/sandbox/apply", {});
+      if (r.conflicts.length) {
+        toast(L(`Nicht übernommen – im Projekt inzwischen selbst geändert: ${r.conflicts.join(", ")}. Unter „Änderungen ansehen“ klären.`,
+                `Not applied – changed in the project meanwhile: ${r.conflicts.join(", ")}. Resolve under “View changes”.`));
+        return false;
+      }
+      toast(r.applied.length === 1 ? L("1 Datei ins Projekt übernommen.", "1 file applied to the project.")
+        : L(`${r.applied.length} Dateien ins Projekt übernommen.`, `${r.applied.length} files applied to the project.`));
+      return true;
+    } catch { return false; }
   }
 
   function openChatView(ev) {

@@ -482,6 +482,9 @@ class OpenAICompatLLM:
                     raise LLMError(f"Modell-Server antwortet mit {resp.status_code}: {body[:300]}")
                 async for line in resp.aiter_lines():
                     line = line.strip()
+                    if line.startswith("error:"):  # llama-server meldet Fehler beim Streamen auch so
+                        _check_tool_call(line)
+                        raise LLMError(f"Modell-Server: {line[6:].strip()[:300]}")
                     if not line.startswith("data:"):
                         continue
                     data = line[5:].strip()

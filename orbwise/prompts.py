@@ -233,12 +233,12 @@ TEXTS = {
         "auto_files": "ändert nur Dateien in deinem Home (Auto: Dateien bearbeiten)",
         "auto_project": "ändert eine Datei im Projektordner (Auto: Dateien bearbeiten)",
         "auto_sandbox": "läuft in der Sandbox (Container, Arbeitskopie)",
-        "tool_call_split": "(Hinweis vom System: Dein letzter Werkzeugaufruf war zu lang und wurde abgeschnitten – Ausgabe- "
-                           "bzw. Kontextgrenze. Schreibe große Dateien in Teilen: zuerst write mit dem Anfang (höchstens "
-                           "~250 Zeilen), dann die weiteren Teile mit write und append=true. Bestehende Dateien mit edit "
-                           "ändern statt neu schreiben.)",
+        "tool_call_split": "(Hinweis vom System: Dein letzter Werkzeugaufruf war zu lang und wurde abgeschnitten – "
+                           "Ausgabe- bzw. Kontextgrenze. Schreibe die Datei JETZT in Teilen: dieser Aufruf write mit "
+                           "höchstens 200 Zeilen, danach die weiteren Teile mit write und append=true. Bestehende "
+                           "Dateien mit edit ändern statt neu schreiben.)",
         "tool_call_broken": "Das Modell hat zweimal einen zu langen Werkzeugaufruf erzeugt (abgeschnitten). Sag z. B. "
-                            "„schreib die Datei in Teilen“ oder beginne einen neuen Chat.",
+                            "„schreib die Datei in Teilen“ – bisherige Änderungen (auch in der Sandbox) bleiben erhalten.",
         "sandbox_outside_read": "liest außerhalb der Arbeitskopie – in der Sandbox fragt das, damit nichts Privates in "
                                 "den Container gelangt",
         "auto_full": "ohne Root-Rechte (Auto)",
@@ -286,11 +286,11 @@ TEXTS = {
         "auto_project": "changes a file in the project folder (Auto: edit files)",
         "auto_sandbox": "runs in the sandbox (container, working copy)",
         "tool_call_split": "(System note: your last tool call was too long and got cut off – output or context limit. "
-                           "Write large files in parts: first write with the beginning (at most ~250 lines), then the "
-                           "remaining parts with write and append=true. Change existing files with edit instead of "
-                           "rewriting them.)",
+                           "Write the file in parts NOW: this call write with at most 200 lines, then the remaining "
+                           "parts with write and append=true. Change existing files with edit instead of rewriting "
+                           "them.)",
         "tool_call_broken": "The model produced a too-long tool call twice (cut off). Say e.g. “write the file in "
-                            "parts” or start a new chat.",
+                            "parts” – earlier changes (also in the sandbox) are kept.",
         "sandbox_outside_read": "reads outside the working copy – the sandbox asks so nothing private gets into the "
                                 "container",
         "auto_full": "without root privileges (Auto)",

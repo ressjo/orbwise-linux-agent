@@ -229,3 +229,15 @@ def test_server_start_shows_an_empty_tools_chat(cfg, llm, monkeypatch):
         with client.websocket_connect("ws://localhost:8765/ws", headers={"Origin": "http://localhost:8765"}) as ws:
             hello = ws.receive_json()
         assert hello["type"] == "hello" and hello["mode"] == "tools" and hello["boot"]
+
+
+def test_chat_list_marks_chats_with_a_sandbox(cfg, llm):
+    from orbwise.memory import Memory
+    m = Memory(cfg.memory, llm)
+    m.switch_mode("coding")
+    m.conversation.add({"role": "user", "content": "baue was"})
+    m.conversation.meta["sandbox"] = {"enabled": True, "path": "/x"}
+    m.conversation.save()
+    row = next(c for c in m.chats.list() if c["id"] == m.conversation.chat_id)
+    assert row["sandbox"] is True
+    m.close()

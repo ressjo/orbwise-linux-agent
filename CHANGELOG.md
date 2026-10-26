@@ -110,6 +110,9 @@ All notable changes to this project are documented here. The format follows
   only actions that change or start something do; the data-leak guard still checks what goes out.
 
 ### Added
+- **Leaving a sandbox chat asks first:** with changes not yet applied, a new chat, another chat, a mode switch, a
+  project change, cloning or deleting the chat offers *Apply and continue*, *Continue without applying* (they stay in
+  that chat) or *Cancel*; deleting a chat with a sandbox warns that the working copy goes with it.
 - **Docker in the sandbox (opt-in per chat, rootless Podman only):** build and run Docker projects inside the
   sandbox – nested rootless Podman as an unprivileged user behind `docker`/`docker compose`, with only `/dev/fuse` and
   `/dev/net/tun` added (no `--privileged`, no `CAP_SYS_ADMIN`, `no-new-privileges` kept); a self-test runs on
@@ -248,6 +251,8 @@ All notable changes to this project are documented here. The format follows
   the open chat stays untouched.
 
 ### Fixed
+- Cut-off tool calls: errors llama-server sends as `error:` lines in the stream are recognised too, and the retry
+  always makes room first.
 - A tool call cut off mid-way (e.g. a huge file in one `write`, until the output/context limit) ended the answer with
   llama-server's 500 “Failed to parse tool call arguments”: Orbwise now retries the step once with a hint – only for
   that request, not stored – to write large files in parts; `write` got `append=true` for that, and the coding

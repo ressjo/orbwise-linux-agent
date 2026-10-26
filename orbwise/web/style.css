@@ -1372,3 +1372,4 @@ button.file-chip:hover { border-color: var(--accent-line); }
 .tune-note { margin-top: 6px; }
 .spec-stats.low { color: var(--warn); }
 #tele-brave { grid-column: 1 / -1; }
+.leave-choice { display: flex; justify-content: flex-end; margin: 4px 0 -4px; }

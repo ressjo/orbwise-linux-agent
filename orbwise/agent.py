@@ -616,8 +616,7 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
                         raise LLMError(prompts.text(self.cfg, "tool_call_broken")) from None
                     broken = True
                     self._step_hint = prompts.text(self.cfg, "tool_call_split")
-                    if self._over_limit():
-                        await self._make_room(emit, msg_id)
+                    await self._make_room(emit, msg_id)  # immer: der Grund ist meist zu wenig Platz für die Ausgabe
                     continue
                 self._step_hint = None
                 retried = False

@@ -150,6 +150,7 @@ class ChatStore:
                 "starred": bool(meta.get("starred")), "messages": len(msgs), "active": chat_id == active,
                 "preview": make_title(last_user, 90) if last_user else "", "legacy": bool(meta.get("legacy")),
                 "mode": chat_mode(meta), "project": meta.get("project") or "",
+                "sandbox": bool((meta.get("sandbox") or {}).get("enabled")),
             })
         out.sort(key=lambda c: (not c["starred"], -(c["updated"] or 0)))
         return out

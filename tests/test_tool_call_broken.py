@@ -89,3 +89,33 @@ def test_write_appends_in_parts(cfg, memory, tmp_path):
     assert (tmp_path / "gross.tsx").read_text() == "teil 1\nteil 2\n" and (tmp_path / "neu.txt").read_text() == "x"
     assert "+teil 2" in code.write_preview(ctx, {"path": "gross.tsx", "content": "teil 2\n", "append": True})
     assert LLMError
+
+
+def test_error_lines_in_the_stream_are_read_too():
+    import pytest
+    sse = 'data: {"choices":[{"delta":{"content":"a"}}]}\n\nerror: ' + json.dumps(json.loads(BROKEN)["error"]) + "\n\n"
+    with pytest.raises(ToolCallBroken):
+        run(_drain(_client(lambda r: httpx.Response(200, text=sse, headers={"content-type": "text/event-stream"}))))
+    other = 'error: {"code":500,"message":"something else"}\n\n'
+    with pytest.raises(LLMError, match="something else"):
+        run(_drain(_client(lambda r: httpx.Response(200, text=other, headers={"content-type": "text/event-stream"}))))
+
+
+def test_retry_always_makes_room_first(cfg, llm, memory):
+    agent = Agent(cfg, llm, memory)
+    _flaky(llm, 1)
+    rooms = []
+    original = agent._make_room
+
+    async def spy(*a, **kw):
+        rooms.append(1)
+        return await original(*a, **kw)
+    agent._make_room = spy
+
+    async def emit(ev):
+        pass
+
+    async def confirm(*a):
+        return True
+    run(agent.run("Hallo", emit, confirm))
+    assert rooms
