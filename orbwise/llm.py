@@ -357,7 +357,7 @@ def to_openai_messages(messages: list[dict]) -> list[dict]:
                 pending.append(cid)
                 calls.append({"id": cid, "type": "function", "function": {
                     "name": fn.get("name", ""),
-                    "arguments": args if isinstance(args, str) else json.dumps(args, ensure_ascii=False)}})
+                    "arguments": _json_args(args)}})
             out.append({"role": "assistant", "content": m.get("content") or "", "tool_calls": calls})
         elif role == "tool":
             if pending:
@@ -402,13 +402,47 @@ def ollama_messages(messages: list[dict]) -> list[dict]:
     return out
 
 
-def _parse_args(raw: str) -> Any:
-    if not raw or not raw.strip():
-        return {}
+def _call_of(name: str, raw: str) -> dict:
+    """Ein Werkzeugaufruf aus dem Stream. Sind die Argumente kein gültiges JSON (Ausgabe mitten im Aufruf
+    abgeschnitten), kommen sie roh unter "broken" mit – im Verlauf dürfen sie so nie landen: llama-server müsste sie
+    bei jeder weiteren Anfrage lesen und bricht dann mit 500 ab."""
     try:
-        return json.loads(raw)
+        args = json.loads(raw) if raw and raw.strip() else {}
     except json.JSONDecodeError:
-        return raw  # coerce_args versucht es erneut und ignoriert Unbrauchbares
+        return {"function": {"name": name, "arguments": {}}, "broken": raw}
+    return {"function": {"name": name, "arguments": args}}
+
+
+def salvage_write(raw: str) -> tuple[str, str, bool] | None:
+    """Aus den abgeschnittenen Argumenten eines write: (path, Inhalt bis zur letzten vollständigen Zeile, append).
+    None, wenn kein vollständiger Pfad oder noch keine ganze Zeile Inhalt da ist."""
+    path_m = re.search(r'"path"\s*:\s*"((?:[^"\\]|\\.)*)"', raw)
+    content_m = re.search(r'"content"\s*:\s*"', raw)
+    if not path_m or not content_m:
+        return None
+    body = raw[content_m.end():]
+    end = re.search(r'(?<!\\)(?:\\\\)*"', body)  # schließendes Anführungszeichen, falls es doch kam
+    body = body[:end.end() - 1] if end else body
+    body = re.sub(r'\\(u[0-9a-fA-F]{0,3})?$', "", body)  # angefangene Escape-Sequenz am Ende
+    try:
+        path, content = json.loads(f'"{path_m.group(1)}"'), json.loads(f'"{body}"')
+    except json.JSONDecodeError:
+        return None
+    content = content[:content.rfind("\n") + 1]
+    if not path or not content:
+        return None
+    return path, content, bool(re.search(r'"append"\s*:\s*true', raw))
+
+
+def _json_args(args: Any) -> str:
+    """Argumente für den Server: gültiges JSON, ein kaputter String (ältere Chats) wird zu {}."""
+    if not isinstance(args, str):
+        return json.dumps(args, ensure_ascii=False)
+    try:
+        json.loads(args)
+        return args
+    except json.JSONDecodeError:
+        return "{}"
 
 
 class OpenAICompatLLM:
@@ -528,8 +562,7 @@ class OpenAICompatLLM:
             raise self._error(e) from e
         message: dict[str, Any] = {"role": "assistant", "content": "".join(content)}
         if calls:
-            message["tool_calls"] = [{"function": {"name": c["name"], "arguments": _parse_args(c["arguments"])}}
-                                     for _, c in sorted(calls.items()) if c["name"]]
+            message["tool_calls"] = [_call_of(c["name"], c["arguments"]) for _, c in sorted(calls.items()) if c["name"]]
         yield {"type": "done", "message": message, "stats": openai_stats(timings, usage, first_token, started)}
 
     async def chat(self, messages: list[dict]) -> str:

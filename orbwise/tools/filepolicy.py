@@ -17,10 +17,11 @@ EXEC_DIRS = ("bin",)
 GLOB_CHARS = set("*?[]{}")
 
 
-def in_project(path: str, project: str, cwd: str | None = None) -> bool | None:
-    """Liegt der Pfad (Symlinks aufgelöst) im Projektordner? None = unklar (Glob, Variable, nicht auflösbar)."""
+def in_project(path: str, project: str, cwd: str | None = None, literal: bool = False) -> bool | None:
+    """Liegt der Pfad (Symlinks aufgelöst) im Projektordner? None = unklar (Glob, Variable, nicht auflösbar).
+    literal=True: Pfad eines Datei-Werkzeugs – wird nicht expandiert, [ ] { } sind normale Zeichen (app/[id]/page.tsx)."""
     raw = (path or "").strip()
-    if not raw or set(raw) & GLOB_CHARS or "$" in raw or raw.startswith("-"):
+    if not raw or (not literal and set(raw) & GLOB_CHARS) or "$" in raw or raw.startswith("-"):
         return None
     p = Path(os.path.expanduser(raw))
     p = p if p.is_absolute() else Path(cwd or project) / p
@@ -31,10 +32,10 @@ def in_project(path: str, project: str, cwd: str | None = None) -> bool | None:
     return resolved == root or root in resolved.parents
 
 
-def project_editable(path: str, project: str, cwd: str | None = None) -> bool:
+def project_editable(path: str, project: str, cwd: str | None = None, literal: bool = False) -> bool:
     """Coding-Modus: Dateien im Projektordner dürfen ab „Dateien“ ohne Rückfrage geändert werden – auch außerhalb
     von $HOME und in versteckten Ordnern wie .github. Nie: Zugangsdaten, das Git-Verzeichnis, ohne Schreibrecht."""
-    if not in_project(path, project, cwd):
+    if not in_project(path, project, cwd, literal):
         return False
     p = Path(os.path.expanduser(path.strip()))
     p = (p if p.is_absolute() else Path(cwd or project) / p).resolve()
@@ -49,13 +50,13 @@ def project_editable(path: str, project: str, cwd: str | None = None) -> bool:
     return parent.is_dir() and os.access(parent, os.W_OK | os.X_OK)
 
 
-def editable_path(path: str, cwd: str | None = None, project: str | None = None) -> bool:
+def editable_path(path: str, cwd: str | None = None, project: str | None = None, literal: bool = False) -> bool:
     """Darf diese Datei/dieser Ordner im Auto-Modus „Dateien“ ohne Rückfrage angelegt oder geändert werden?
     Mit project (Coding-Modus): genau die Dateien im Projektordner (siehe project_editable)."""
     if project:
-        return project_editable(path, project, cwd)
+        return project_editable(path, project, cwd, literal)
     raw = (path or "").strip()
-    if not raw or set(raw) & GLOB_CHARS or "$" in raw or raw.startswith("-"):
+    if not raw or (not literal and set(raw) & GLOB_CHARS) or "$" in raw or raw.startswith("-"):
         return False
     base = Path(cwd or os.path.expanduser("~"))
     p = Path(os.path.expanduser(raw))
@@ -142,10 +143,11 @@ def _resolve(path: str, cwd: str | None) -> Path | None:
         return None
 
 
-def protected_path(path: str, cwd: str | None = None) -> bool:
-    """Shell-Startdateien, Autostart, systemd-Units, ~/.ssh, Orbwise selbst, Programmstarter, Zugangsdaten."""
+def protected_path(path: str, cwd: str | None = None, literal: bool = False) -> bool:
+    """Shell-Startdateien, Autostart, systemd-Units, ~/.ssh, Orbwise selbst, Programmstarter, Zugangsdaten.
+    literal=True: Pfad eines Datei-Werkzeugs (keine Glob-Expansion)."""
     resolved = _resolve(path, cwd)
-    if resolved is None or set(path) & GLOB_CHARS:
+    if resolved is None or (not literal and set(path) & GLOB_CHARS):
         return True  # unklar → lieber fragen
     if resolved.name in SHELL_START or resolved.name.lower().endswith(EXEC_SUFFIXES):
         return True

@@ -32,7 +32,7 @@ from .agent_speed import SpeedMixin
 from .agent_tools import CODING_GROUPS, CODING_ONLY, ToolSelectionMixin  # noqa: F401
 from .config import Config
 from .context_plan import SUMMARY_MIN, ContextPlan, plan_for
-from .llm import ContextOverflow, LLMError, ToolCallBroken, strip_think
+from .llm import ContextOverflow, LLMError, ToolCallBroken, salvage_write, strip_think
 from .memory import Memory, est_tokens
 from .memory.context import PROMPT_KEYS, TRIM_NOTE, msg_tokens
 from .memory.index import shared_words
@@ -52,6 +52,7 @@ from .tools.system import _os_name
 from .tools.vision import VISION_TOOLS
 
 log = logging.getLogger(__name__)
+CODING_RESERVE = 16000  # Token, die im Coding-Modus höchstens für eine Ausgabe frei bleiben
 
 def plan_steps(text: str) -> int:
     """Anzahl nummerierter Schritte in einem Plan (für „Mein Plan hat n Schritte“)."""
@@ -384,8 +385,14 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         return bool(think)
 
     def answer_reserve(self) -> int:
-        """Platz für Antwort bzw. Denkkette – im kleinen Fenster knapper, Denken dort begrenzt."""
-        return self.plan().reserve(self._thinking())
+        """Platz für Antwort bzw. Denkkette – im kleinen Fenster knapper, Denken dort begrenzt. Coding: ein Viertel des
+        Fensters (höchstens CODING_RESERVE) – ein write mit einer ganzen Datei braucht schnell 10 000 Token, sonst
+        bricht die Ausgabe mitten im Aufruf ab."""
+        plan = self.plan()
+        base = plan.reserve(self._thinking())
+        if self.mode == "coding" and not plan.small:
+            return max(base, min(CODING_RESERVE, plan.window // 4))
+        return base
 
     def think_budget(self) -> int:
         """Höchstlänge der Denkkette in Token für diese Anfrage (0 = unbegrenzt bzw. kein Denken)."""
@@ -603,6 +610,7 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
                     await self._make_room(emit, msg_id)
                 try:
                     content, calls = await self._step(emit, msg_id)
+                    calls, cut_notes = self._salvage_calls(calls or [])
                 except ContextOverflow as e:
                     # Server meldet „zu groß“ (z. B. kleiner als eingestellt): Platz schaffen und weitermachen
                     if retried or not await self._make_room(emit, msg_id, overflow=e):
@@ -652,6 +660,7 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
                         done.update(zip(quick, results))
                 for i, call in enumerate(calls):
                     name, result, note = done[i] if i in done else await self._execute(call, emit, confirm)
+                    result += cut_notes.get(i, "")
                     conv.add({"role": "tool", "content": result, "tool_name": name})
                     tool_notes.append(note)
                 if looping:
@@ -732,6 +741,26 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         if self._prefill_tps.get(key):
             phase["eta_s"] = round(phase["new"] / self._prefill_tps[key], 1)
         return phase
+
+    def _salvage_calls(self, calls: list[dict]) -> tuple[list[dict], dict[int, str]]:
+        """Abgeschnittene Aufrufe (Ausgabe- bzw. Kontextgrenze mitten im Aufruf): ein write wird bis zur letzten
+        vollständigen Zeile gerettet und das Modell setzt mit append fort; alles andere wird ohne Spur im Verlauf
+        wiederholt (ToolCallBroken). So landen nie kaputte Argumente im Verlauf."""
+        notes: dict[int, str] = {}
+        for i, call in enumerate(calls):
+            raw = call.pop("broken", None)
+            if raw is None:
+                continue
+            name = call.get("function", {}).get("name", "")
+            saved = salvage_write(raw) if name == "write" else None
+            if not saved:
+                raise ToolCallBroken(f"{name}: Argumente abgeschnitten")
+            path, content, append = saved
+            call["function"]["arguments"] = {"path": path, "content": content, **({"append": True} if append else {})}
+            lines = content.splitlines()
+            notes[i] = prompts.text(self.cfg, "write_cut").format(n=len(lines), path=path,
+                                                                    tail="\n".join(lines[-3:]))
+        return calls, notes
 
     async def _step(self, emit: Emit, msg_id: str, final: bool = False) -> tuple[str, list]:
         """Ein Modellschritt: streamt Tokens an die UI, liefert (Text, Tool-Aufrufe).

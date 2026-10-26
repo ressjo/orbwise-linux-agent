@@ -251,6 +251,15 @@ All notable changes to this project are documented here. The format follows
   the open chat stays untouched.
 
 ### Fixed
+- **Sandbox asked for every file in Next.js-style projects:** paths with `[ ]`/`{ }` (`app/forms/[id]/page.tsx`)
+  counted as glob patterns and therefore as “maybe outside”; file tools now check them literally (also in the auto
+  modes without sandbox). A file really outside the working copy says so in the prompt.
+- **A cut-off tool call broke the chat for good:** the truncated arguments were stored as a raw string and sent back
+  with every request, so llama-server answered 500 until a new chat was started. Truncated arguments never enter the
+  history any more – a cut-off `write` is saved up to its last complete line and the model continues with
+  `append=true`, other calls are retried; arguments that are not valid JSON (older chats) are sent as `{}`, so
+  affected chats work again. Coding mode keeps a quarter of the window (up to 16k tokens) free for output, so a
+  whole file fits more often.
 - Cut-off tool calls: errors llama-server sends as `error:` lines in the stream are recognised too, and the retry
   always makes room first.
 - A tool call cut off mid-way (e.g. a huge file in one `write`, until the output/context limit) ended the answer with

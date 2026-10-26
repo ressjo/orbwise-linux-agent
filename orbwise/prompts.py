@@ -237,8 +237,12 @@ TEXTS = {
                            "Ausgabe- bzw. Kontextgrenze. Schreibe die Datei JETZT in Teilen: dieser Aufruf write mit "
                            "höchstens 200 Zeilen, danach die weiteren Teile mit write und append=true. Bestehende "
                            "Dateien mit edit ändern statt neu schreiben.)",
+        "write_cut": "\n\n⚠ Dein write wurde abgeschnitten (Ausgabe- bzw. Kontextgrenze): nur die ersten {n} Zeilen "
+                     "stehen jetzt in {path}. Die letzten geschriebenen Zeilen:\n{tail}\nSetze mit write append=true "
+                     "genau danach fort – in Teilen von höchstens 200 Zeilen.",
         "tool_call_broken": "Das Modell hat zweimal einen zu langen Werkzeugaufruf erzeugt (abgeschnitten). Sag z. B. "
                             "„schreib die Datei in Teilen“ – bisherige Änderungen (auch in der Sandbox) bleiben erhalten.",
+        "sandbox_outside_write": "liegt außerhalb der Arbeitskopie (oder im .git) – ändert also deinen Rechner",
         "sandbox_outside_read": "liest außerhalb der Arbeitskopie – in der Sandbox fragt das, damit nichts Privates in "
                                 "den Container gelangt",
         "auto_full": "ohne Root-Rechte (Auto)",
@@ -289,8 +293,12 @@ TEXTS = {
                            "Write the file in parts NOW: this call write with at most 200 lines, then the remaining "
                            "parts with write and append=true. Change existing files with edit instead of rewriting "
                            "them.)",
+        "write_cut": "\n\n⚠ Your write was cut off (output or context limit): only the first {n} lines are now in "
+                     "{path}. The last lines written:\n{tail}\nContinue with write append=true right after them – in "
+                     "parts of at most 200 lines.",
         "tool_call_broken": "The model produced a too-long tool call twice (cut off). Say e.g. “write the file in "
                             "parts” – earlier changes (also in the sandbox) are kept.",
+        "sandbox_outside_write": "outside the working copy (or in .git) – so it changes your machine",
         "sandbox_outside_read": "reads outside the working copy – the sandbox asks so nothing private gets into the "
                                 "container",
         "auto_full": "without root privileges (Auto)",

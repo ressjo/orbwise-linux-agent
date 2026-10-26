@@ -77,9 +77,9 @@ class SafetyMixin:
         if name == "ssh_run":  # auf dem anderen Rechner: dieselben Regeln (sudo fragt dort nach dem Passwort)
             return auto_shell_ok(str(args.get("command") or ""), None)
         path = str(args.get("path") or "")
-        if project and not in_project(path, project, cwd):
+        if project and not in_project(path, project, cwd, literal=True):
             return False, T("liegt außerhalb des Projektordners", "outside the project folder")
-        if protected_path(path, cwd):
+        if protected_path(path, cwd, literal=True):
             return False, T("ändert Startdateien, Autostart, Zugangsdaten oder Orbwise selbst – fragt auch im "
                             "Auto-Modus", "changes start-up files, autostart, credentials or Orbwise itself – Auto "
                             "still asks")
@@ -94,7 +94,7 @@ class SafetyMixin:
         from .tools.filepolicy import editable_path
         from .tools.safety import file_edit_ok
         if name in FILE_TOOLS:
-            return editable_path(str(args.get("path") or ""), cwd, project)
+            return editable_path(str(args.get("path") or ""), cwd, project, literal=True)
         if name in ("run_shell", "shell"):
             return file_edit_ok(str(args.get("command") or ""), SafetyMixin._shell_cwd(name, args, cwd))
         return False
@@ -121,6 +121,8 @@ class SafetyMixin:
             if risk == CONFIRM and (name == "shell" or (name in ("write", "edit")
                                                         and self._in_sandbox(name, args, cwd, sb))):
                 risk, reason = SAFE, prompts.text(self.cfg, "auto_sandbox")
+            elif risk == CONFIRM and name in ("write", "edit"):
+                reason = prompts.text(self.cfg, "sandbox_outside_write") + (f" ({reason})" if reason else "")
             elif risk == SAFE and name in SANDBOX_READS and not self._reads_in_copy(args, cwd, sb):
                 risk, reason = CONFIRM, prompts.text(self.cfg, "sandbox_outside_read")
             elif risk == SAFE and name == "shell":
@@ -160,7 +162,7 @@ class SafetyMixin:
         """Liest read/grep/glob nur in der Arbeitskopie? Ohne Pfad: der Projektordner (= die Kopie)."""
         from .tools.filepolicy import in_project
         path = str(args.get("path") or "")
-        return not path or bool(in_project(path, sb["path"], cwd))
+        return not path or bool(in_project(path, sb["path"], cwd, literal=True))
 
     @staticmethod
     def _in_sandbox(name: str, args: dict, cwd: str | None, sb: dict) -> bool:
@@ -170,7 +172,7 @@ class SafetyMixin:
             workdir = str(args.get("workdir") or "")
             return not workdir or bool(in_project(workdir, sb["path"], cwd))
         path = str(args.get("path") or "")
-        rel_ok = bool(in_project(path, sb["path"], cwd))
+        rel_ok = bool(in_project(path, sb["path"], cwd, literal=True))
         return rel_ok and ".git" not in Path(path).parts
 
     def _leak(self, name: str, args: dict) -> str | None:

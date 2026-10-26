@@ -552,3 +552,25 @@ def test_container_shim_refuses_when_switched_off(tmp_path):
 def test_missing_tun_on_the_host_is_explained():
     msg = "setup network: pasta failed with exit code 1:\nFailed to open() /dev/net/tun: No such device"
     assert "modprobe tun" in sandbox.tun_hint(msg) and sandbox.tun_hint("other error") == ""
+
+
+def test_bracket_paths_are_literal_for_file_tools(data):
+    from orbwise.tools.filepolicy import in_project, protected_path
+    ws = data / "ws"
+    (ws / "app" / "[id]").mkdir(parents=True)
+    assert in_project("app/[id]/page.tsx", str(ws), str(ws), literal=True) is True
+    assert in_project("app/[id]/page.tsx", str(ws), str(ws)) is None  # Shell: könnte ein Glob sein
+    assert not protected_path(str(ws / "app/[id]/page.tsx"), literal=True)
+
+
+@git_missing
+def test_sandbox_writes_next_js_routes_without_asking(cfg, llm, memory, repo, fake_engine, data):
+    agent = Agent(cfg, llm, memory)
+    memory.switch_mode("coding")
+    memory.set_project(str(repo))
+    run(agent.sandbox_enable())
+    agent.auto_mode = "read"
+    assert _risk_of(agent, '/tool write {"path": "app/forms/[id]/page.tsx", "content": "x"}')[0] == "safe"
+    assert _risk_of(agent, '/tool edit {"path": "app/(auth)/[slug]/x.tsx", "oldString": "", "newString": "y"}')[0] == "safe"
+    risk, reason = _risk_of(agent, '/tool write ' + json.dumps({"path": str(data / "draussen.txt"), "content": "x"}))
+    assert risk == "confirm" and "außerhalb der Arbeitskopie" in reason

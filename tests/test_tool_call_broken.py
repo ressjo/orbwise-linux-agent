@@ -119,3 +119,90 @@ def test_retry_always_makes_room_first(cfg, llm, memory):
         return True
     run(agent.run("Hallo", emit, confirm))
     assert rooms
+
+
+# ---------------------------------------------------------------- abgeschnittene Argumente nie im Verlauf
+CUT = '{"path": "app/forms/[id]/page.tsx", "content": "zeile 1\\nzeile 2\\nzeile 3\\nzeile 4 ohne en'
+
+
+def test_stream_marks_cut_arguments_and_sending_repairs_old_chats():
+    from orbwise.llm import _json_args
+    sse = ("data: " + json.dumps({"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {
+        "name": "write", "arguments": CUT}}]}}]}) + "\n\ndata: [DONE]\n\n")
+
+    async def done(llm):
+        async for ev in llm.chat_stream([{"role": "user", "content": "hi"}], tools=[]):
+            if ev["type"] == "done":
+                return ev["message"]
+    msg = run(done(_client(lambda r: httpx.Response(200, text=sse, headers={"content-type": "text/event-stream"}))))
+    call = msg["tool_calls"][0]
+    assert call["broken"] == CUT and call["function"]["arguments"] == {}
+    assert _json_args(CUT) == "{}" and _json_args('{"a": 1}') == '{"a": 1}' and _json_args({"b": 2}) == '{"b": 2}'
+
+
+def test_salvage_write_keeps_whole_lines_only():
+    from orbwise.llm import salvage_write
+    assert salvage_write(CUT) == ("app/forms/[id]/page.tsx", "zeile 1\nzeile 2\nzeile 3\n", False)
+    assert salvage_write('{"path": "a.txt", "append": true, "content": "x\\ny\\u00') == ("a.txt", "x\n", True)
+    assert salvage_write('{"path": "a.txt", "content": "nur halb') is None
+    assert salvage_write('{"content": "a\\nb') is None
+
+
+def _cut_once(llm, raw, name="write"):
+    """Erster Schritt: abgeschnittener Aufruf; danach normales FakeLLM-Verhalten."""
+    original, seen = llm.chat_stream, []
+
+    async def stream(messages, tools=None, **kw):
+        seen.append(messages)
+        if len(seen) == 1:
+            yield {"type": "done", "message": {"role": "assistant", "content": "", "tool_calls": [
+                {"function": {"name": name, "arguments": {}}, "broken": raw}]}, "stats": {}}
+            return
+        async for ev in original(messages, tools, **kw):
+            yield ev
+    llm.chat_stream = stream
+    return seen
+
+
+def test_cut_write_is_saved_up_to_the_last_line_and_the_model_continues(cfg, llm, memory, tmp_path):
+    agent = Agent(cfg, llm, memory)
+    memory.switch_mode("coding")
+    memory.set_project(str(tmp_path))
+    agent.auto_mode = "files"
+    seen = _cut_once(llm, CUT)
+
+    async def emit(ev):
+        pass
+
+    async def confirm(*a):
+        return True
+    run(agent.run("Schreib die Seite", emit, confirm))
+    assert (tmp_path / "app/forms/[id]/page.tsx").read_text() == "zeile 1\nzeile 2\nzeile 3\n"
+    tool = next(m for m in memory.conversation.history if m["role"] == "tool")
+    assert "append=true" in tool["content"] and "zeile 3" in tool["content"]
+    for m in memory.conversation.history:
+        for c in m.get("tool_calls") or []:
+            assert isinstance(c["function"]["arguments"], dict) and "broken" not in c
+    assert len(seen) >= 2
+
+
+def test_cut_shell_call_is_retried_without_a_trace(cfg, llm, memory):
+    agent = Agent(cfg, llm, memory)
+    seen = _cut_once(llm, '{"command": "ls -la /very/lo', name="run_shell")
+
+    async def emit(ev):
+        pass
+
+    async def confirm(*a):
+        return True
+    run(agent.run("Hallo", emit, confirm))
+    assert len(seen) == 2 and "in Teilen" in seen[1][-1]["content"]
+    assert not any(m.get("tool_calls") for m in memory.conversation.history)
+
+
+def test_coding_mode_keeps_room_for_long_output(cfg, llm, memory):
+    agent = Agent(cfg, llm, memory)
+    agent.model_window = lambda: 49152
+    tools = agent.answer_reserve()
+    memory.switch_mode("coding")
+    assert agent.answer_reserve() >= 12000 > tools
