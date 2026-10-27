@@ -102,6 +102,11 @@ def create(chat_id: str, project: str, title: str = "", identity: dict | None = 
     if not src.is_dir():
         raise WorkspaceError(f"Projektordner {project} gibt es nicht.")
     ws = path_for(chat_id, str(src))
+    if ws.exists() and is_git(str(src)) and _git_dir(str(ws)) is None:
+        # Rest einer früheren Kopie (z. B. Dateien innerer Container ließen sich nicht löschen) – frisch anlegen
+        shutil.rmtree(ws, ignore_errors=True)
+        if ws.exists():
+            raise WorkspaceError(f"Die alte Arbeitskopie {ws} ließ sich nicht ganz löschen – bitte von Hand entfernen.")
     branch = ""
     origin = _git(str(src), "remote", "get-url", "origin", check=False).strip() if is_git(str(src)) else ""
     if not ws.exists():

@@ -52,6 +52,7 @@ from .tools.system import _os_name
 from .tools.vision import VISION_TOOLS
 
 log = logging.getLogger(__name__)
+PATH_TOOLS = {"read", "write", "edit", "grep", "glob", "shell", "screenshot"}  # Pfade folgen dem Sandbox-Wechsel
 
 def plan_steps(text: str) -> int:
     """Anzahl nummerierter Schritte in einem Plan (für „Mein Plan hat n Schritte“)."""
@@ -905,6 +906,35 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
             if m["role"] == "user":
                 break
 
+    def _map_paths(self, name: str, args: dict) -> dict:
+        """Sandbox mitten im Chat an- oder ausgeschaltet: Der Verlauf ist voller absoluter Pfade des vorherigen Orts,
+        und das Modell übernimmt sie gern. Sandbox an → Pfade im echten Projekt zeigen auf die Arbeitskopie; aus →
+        Pfade der früheren Kopie zeigen aufs Projekt. Liefert args unverändert (dasselbe Objekt), wenn nichts passt."""
+        if self.mode != "coding" or name not in PATH_TOOLS:
+            return args
+        sb = self.sandbox_state()
+        if sb:
+            src, dst = str(sb.get("project") or ""), str(sb["path"])
+        else:
+            src = str((self.memory.conversation.meta.get("last_sandbox") or {}).get("path") or "")
+            dst = self.project_dir() or ""
+        if not src or not dst or src == dst:
+            return args
+
+        def remap(value):
+            if not isinstance(value, str):
+                return value
+            scheme = "file://" if value.startswith("file://") else ""
+            p = os.path.expanduser(value[len(scheme):])
+            if p == src or p.startswith(src + "/"):
+                return scheme + dst + p[len(src):]
+            return value
+        out = {k: remap(v) if k in ("path", "workdir", "url") else v for k, v in args.items()}
+        if name == "shell" and isinstance(out.get("command"), str):
+            out["command"] = re.sub(re.escape(src) + r"(?=[/\s'\";&|)]|$)", dst.replace("\\", "\\\\"),
+                                    out["command"])
+        return out if out != args else args
+
     async def _execute(self, call: dict, emit: Emit, confirm: Confirm) -> tuple[str, str, str]:
         fn = call.get("function", {})
         name = fn.get("name", "")
@@ -918,6 +948,9 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         missing = missing_args(spec, args)
         if missing:
             return name, f"Fehlende Parameter: {', '.join(missing)}", f"{name}: Parameter fehlen"
+        mapped = self._map_paths(name, args)
+        if mapped is not args:
+            args = fn["arguments"] = mapped  # auch im Verlauf der tatsächlich benutzte Pfad – das Modell übernimmt ihn
         cwd = self.project_dir()
         ctx = ToolContext(cfg=self.cfg, memory=self.memory, emit=emit, call_id=call_id, services=self.services,
                           cwd=cwd, output_chars=self.output_chars(), agent=self, confirm=confirm,

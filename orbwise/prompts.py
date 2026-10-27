@@ -233,6 +233,10 @@ TEXTS = {
         "auto_files": "ändert nur Dateien in deinem Home (Auto: Dateien bearbeiten)",
         "auto_project": "ändert eine Datei im Projektordner (Auto: Dateien bearbeiten)",
         "auto_sandbox": "läuft in der Sandbox (Container, Arbeitskopie)",
+        "sandbox_on_note": "(Hinweis: Die Sandbox ist jetzt an – du arbeitest ab jetzt in der Arbeitskopie {path}. Pfade "
+                           "unter {project} aus dem bisherigen Verlauf meinen jetzt die Kopie.)",
+        "sandbox_off_note": "(Hinweis: Die Sandbox ist aus – du arbeitest wieder direkt in {project}; die Arbeitskopie "
+                            "gibt es nicht mehr.)",
         "tool_call_split": "(Hinweis vom System: Dein letzter Werkzeugaufruf war zu lang und wurde abgeschnitten – "
                            "Ausgabe- bzw. Kontextgrenze. Schreibe die Datei JETZT in Teilen: dieser Aufruf write mit "
                            "höchstens 200 Zeilen, danach die weiteren Teile mit write und append=true. Bestehende "
@@ -289,6 +293,10 @@ TEXTS = {
         "auto_files": "only changes files in your home folder (Auto: edit files)",
         "auto_project": "changes a file in the project folder (Auto: edit files)",
         "auto_sandbox": "runs in the sandbox (container, working copy)",
+        "sandbox_on_note": "(Note: the sandbox is on now – from here on you work in the working copy {path}. Paths "
+                           "under {project} from the conversation so far now mean the copy.)",
+        "sandbox_off_note": "(Note: the sandbox is off – you work directly in {project} again; the working copy no "
+                            "longer exists.)",
         "tool_call_split": "(System note: your last tool call was too long and got cut off – output or context limit. "
                            "Write the file in parts NOW: this call write with at most 200 lines, then the remaining "
                            "parts with write and append=true. Change existing files with edit instead of rewriting "

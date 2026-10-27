@@ -89,6 +89,9 @@ class CodingMixin:
               "name": sbx.container_name(conv.chat_id), "image": sbx.image(self.cfg),
               "engine": os.path.basename(binary)}
         conv.meta["sandbox"] = sb
+        conv.meta.pop("last_sandbox", None)
+        conv.meta.setdefault("pending_notes", []).append(prompts.text(self.cfg, "sandbox_on_note").format(
+            path=sb["path"], project=sb.get("project", project)))
         conv.save()
         return sb
 
@@ -96,6 +99,10 @@ class CodingMixin:
         """Ausschalten: Container weg, Arbeitskopie weg (discard) – nicht übernommene Änderungen gehen verloren."""
         conv = self.memory.conversation
         sb = conv.meta.pop("sandbox", None)
+        if sb:
+            conv.meta["last_sandbox"] = {"path": sb.get("path", ""), "project": sb.get("project", "")}
+            conv.meta.setdefault("pending_notes", []).append(prompts.text(self.cfg, "sandbox_off_note").format(
+                project=sb.get("project", "")))
         conv.save()
         if not sb:
             return

@@ -261,6 +261,11 @@ All notable changes to this project are documented here. The format follows
   the open chat stays untouched.
 
 ### Fixed
+- **Switching the sandbox off and on within a chat:** the model kept using absolute paths of the previous place from
+  the conversation and wrote into the real project. Paths now follow the switch – with the sandbox on, paths in the
+  real project (file tools, `workdir`, `cd …` in shell commands) point to the working copy; after switching it off,
+  paths of the old copy point to the project. The next message tells the model about the switch, and a leftover of an
+  old copy without `.git` is replaced by a fresh one.
 - **Sandbox asked for every file in Next.js-style projects:** paths with `[ ]`/`{ }` (`app/forms/[id]/page.tsx`)
   counted as glob patterns and therefore as “maybe outside”; file tools now check them literally (also in the auto
   modes without sandbox). A file really outside the working copy says so in the prompt.

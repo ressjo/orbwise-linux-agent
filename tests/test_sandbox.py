@@ -192,7 +192,8 @@ def test_shell_runs_through_the_container_and_never_asks(cfg, llm, memory, repo,
     assert next(e for e in events if e["type"] == "tool_call")["risk"] == "confirm"
     agent.auto_mode = "auto"
     events.clear()
-    run(agent.run('/tool write ' + json.dumps({"path": str(repo / "b.txt"), "content": "x"}), emit, confirm))
+    outside = repo.parent / "neben-dem-projekt.txt"  # Pfade im Projekt selbst zeigen in der Sandbox auf die Kopie
+    run(agent.run('/tool write ' + json.dumps({"path": str(outside), "content": "x"}), emit, confirm))
     assert next(e for e in events if e["type"] == "tool_call")["risk"] == "confirm"
     # Systemprompt nennt die Sandbox
     assert "Container" in agent.coding_env() and sb["branch"] in agent.coding_env()
@@ -387,7 +388,7 @@ def test_sandbox_allows_everything_inside_but_reading_outside_asks(cfg, llm, mem
     risk, reason = _risk_of(agent, '/tool read ' + json.dumps({"path": str(outside)}))
     assert risk == "confirm" and "Arbeitskopie" in reason
     assert _risk_of(agent, '/tool glob ' + json.dumps({"pattern": "*", "path": str(data)}))[0] == "confirm"
-    assert _risk_of(agent, '/tool write ' + json.dumps({"path": str(repo / "c.txt"), "content": "x"}))[0] == "confirm"
+    assert _risk_of(agent, '/tool write ' + json.dumps({"path": str(data / "c.txt"), "content": "x"}))[0] == "confirm"
     assert Path(sb["path"]).is_dir()
 
 
@@ -574,3 +575,45 @@ def test_sandbox_writes_next_js_routes_without_asking(cfg, llm, memory, repo, fa
     assert _risk_of(agent, '/tool edit {"path": "app/(auth)/[slug]/x.tsx", "oldString": "", "newString": "y"}')[0] == "safe"
     risk, reason = _risk_of(agent, '/tool write ' + json.dumps({"path": str(data / "draussen.txt"), "content": "x"}))
     assert risk == "confirm" and "außerhalb der Arbeitskopie" in reason
+
+
+# ---------------------------------------------------------------- Sandbox mitten im Chat an/aus: Pfade folgen
+@git_missing
+def test_paths_of_the_real_project_land_in_the_copy(cfg, llm, memory, repo, fake_engine):
+    agent = Agent(cfg, llm, memory)
+    memory.switch_mode("coding")
+    memory.set_project(str(repo))
+    sb = run(agent.sandbox_enable())
+    assert "Sandbox ist jetzt an" in memory.conversation.meta["pending_notes"][-1]
+    agent.auto_mode = "read"
+    target = repo / "neu" / "datei.txt"
+    risk, _ = _risk_of(agent, '/tool write ' + json.dumps({"path": str(target), "content": "x"}))
+    assert risk == "safe" and not target.exists() and (Path(sb["path"]) / "neu" / "datei.txt").read_text() == "x"
+    call = next(c for m in memory.conversation.history for c in m.get("tool_calls") or [])
+    assert call["function"]["arguments"]["path"].startswith(sb["path"])
+    _risk_of(agent, '/tool shell ' + json.dumps({"command": f"cd {repo} && pwd > wo.txt"}))
+    assert (Path(sb["path"]) / "wo.txt").read_text().strip() == sb["path"] and not (repo / "wo.txt").exists()
+
+
+@git_missing
+def test_switching_off_and_on_again_follows_the_paths(cfg, llm, memory, repo, fake_engine):
+    agent = Agent(cfg, llm, memory)
+    memory.switch_mode("coding")
+    memory.set_project(str(repo))
+    old = run(agent.sandbox_enable())["path"]
+    run(agent.sandbox_disable())
+    assert "Sandbox ist aus" in memory.conversation.meta["pending_notes"][-1]
+    agent.auto_mode = "files"
+    _risk_of(agent, '/tool write ' + json.dumps({"path": f"{old}/zurueck.txt", "content": "y"}))
+    assert (repo / "zurueck.txt").read_text() == "y"
+    again = run(agent.sandbox_enable())
+    assert Path(again["path"]).is_dir() and "last_sandbox" not in memory.conversation.meta
+
+
+@git_missing
+def test_leftover_copy_without_git_is_replaced(repo):
+    ws = workspace.path_for("chat1", str(repo.resolve()))
+    ws.mkdir(parents=True)
+    (ws / "node_modules_rest").write_text("alt")
+    state = workspace.create("chat1", str(repo))
+    assert (ws / ".git").is_dir() and not (ws / "node_modules_rest").exists() and state["branch"]
