@@ -53,6 +53,17 @@ from .tools.vision import VISION_TOOLS
 
 log = logging.getLogger(__name__)
 PATH_TOOLS = {"read", "write", "edit", "grep", "glob", "shell", "screenshot"}  # Pfade folgen dem Sandbox-Wechsel
+_GOAL_MARK = re.compile(r"\s*\[(ZIEL ERREICHT|GOAL REACHED|FRAGE|QUESTION)\]\s*$", re.I)
+
+
+def goal_marker(content: str) -> tuple[str, str]:
+    """Ziel-Modus: ("done" | "question" | "", Antwort ohne Marker) – der Marker steht am Ende der Antwort."""
+    m = _GOAL_MARK.search(content or "")
+    if not m:
+        return "", content or ""
+    kind = "done" if m.group(1).upper() in ("ZIEL ERREICHT", "GOAL REACHED") else "question"
+    return kind, (content or "")[:m.start()].rstrip()
+
 
 def plan_steps(text: str) -> int:
     """Anzahl nummerierter Schritte in einem Plan (für „Mein Plan hat n Schritte“)."""
@@ -276,6 +287,9 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         stamp = self._turn_stamp or prompts.note_stamp(self.cfg, datetime.now())
         msg = conv.history[users[-1]]
         hint = self.coding_notes()  # fertige Hintergrund-Jobs, zurückgesetzte Antworten
+        goal = self.goal_state()
+        if goal:  # Ziel-Modus: das Ziel steht bei jedem Schritt da (übersteht auch das Komprimieren)
+            hint = (hint + "\n" if hint else "") + prompts.text(self.cfg, "goal_note").format(goal=goal["text"])
         msg["note"] = prompts.context_note(self.cfg, stamp, memories, plan=self._plan,
                                            approved_plan=self._approved_plan, extra=hint)
         msg["note_meta"] = {"time": stamp, "plan": self._plan, "approved": self._approved_plan, "hint": hint}
@@ -596,7 +610,19 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
             retried = False
             finished = False
             used_tools: set[str] = set()
-            for _ in range(max(1, self.cfg.tools.max_steps)):
+            goal = self.goal_state() if not self._plan else None  # Ziel-Modus: ohne „mach weiter“ bis zum Ende
+            steps = nudges = 0
+            while True:
+                if goal is not None and self.goal_state() is None:  # „/goal stop“ während der Arbeit
+                    goal, steps = None, 0
+                if goal is None and steps >= max(1, self.cfg.tools.max_steps):
+                    break
+                if goal is not None and self._goal_exhausted(goal):
+                    await self._goal_event(emit, "limit", goal)
+                    break
+                steps += 1
+                if goal is not None:
+                    goal["steps"] = int(goal.get("steps", 0)) + 1
                 added = self.choose_tools(used_tools)
                 if added or self._tools_dropped:
                     await self._tools_added(emit, msg_id, added, self._tools_dropped)
@@ -626,11 +652,29 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
                 if calls:
                     entry["tool_calls"] = calls
                 conv.add(entry)
+                if not calls and goal is not None:
+                    marker, content = goal_marker(content)
+                    entry["content"] = content
+                    if marker or nudges >= 3:  # erreicht, Rückfrage – oder das Modell hört trotz Nudges auf
+                        if content:
+                            spoken.append(content)
+                        await self._goal_event(emit, marker or "stopped", goal)
+                        finished = True
+                        break
+                    if content:
+                        spoken.append(content)
+                    nudges += 1
+                    conv.add({"role": "user", "content": prompts.text(self.cfg, "goal_nudge").format(goal=goal["text"]),
+                              "goal_nudge": True})
+                    await emit({"type": "segment_end", "id": msg_id})  # nächste Runde als eigener Absatz
+                    await emit({"type": "goal", "state": "progress", "text": goal["text"], "steps": goal["steps"]})
+                    continue
                 if content:
                     spoken.append(content)
                 if not calls:
                     finished = True
                     break
+                nudges = 0
                 await emit({"type": "segment_end", "id": msg_id})
                 looping = False
                 done: dict[int, tuple[str, str, str]] = {}
@@ -658,6 +702,8 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
                     conv.add({"role": "tool", "content": result, "tool_name": name})
                     tool_notes.append(note)
                 if looping:
+                    if goal is not None:
+                        await self._goal_event(emit, "stopped", goal)
                     break
             if not finished:
                 # Limit erreicht oder Schleife: ohne Tools zusammenfassen lassen, statt hart abzubrechen
@@ -665,7 +711,7 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
                 if not content:
                     content = prompts.text(self.cfg, "paused")
                     await emit({"type": "token", "id": msg_id, "text": content})
-                hint = prompts.text(self.cfg, "continue_hint")
+                hint = prompts.text(self.cfg, "goal_continue_hint" if goal is not None else "continue_hint")
                 await emit({"type": "token", "id": msg_id, "text": "\n\n" + hint})
                 content = f"{content}\n\n{hint}"
                 conv.add({"role": "assistant", "content": content})
@@ -735,6 +781,34 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         if self._prefill_tps.get(key):
             phase["eta_s"] = round(phase["new"] / self._prefill_tps[key], 1)
         return phase
+
+    # ---------- Ziel-Modus (/goal) ----------
+    def goal_state(self) -> dict | None:
+        """Aktives Ziel des Chats ({text, started, steps}) oder None."""
+        goal = self.memory.conversation.meta.get("goal")
+        return goal if isinstance(goal, dict) and goal.get("text") else None
+
+    def set_goal(self, text: str | None) -> dict | None:
+        conv = self.memory.conversation
+        if text:
+            conv.meta["goal"] = {"text": text.strip(), "started": time.time(), "steps": 0}
+        else:
+            conv.meta.pop("goal", None)
+        conv.save()
+        return self.goal_state()
+
+    def _goal_exhausted(self, goal: dict) -> bool:
+        c = self.cfg.coding
+        return int(goal.get("steps", 0)) >= c.goal_max_steps or \
+            time.time() - float(goal.get("started", time.time())) > c.goal_max_minutes * 60
+
+    async def _goal_event(self, emit: Emit, state: str, goal: dict) -> None:
+        """done/question/stopped/limit melden; erreicht bzw. abgebrochen → Ziel weg, Grenze/Rückfrage → bleibt."""
+        if state in ("done", "stopped"):
+            self.set_goal(None)
+        else:
+            self.memory.conversation.save()
+        await emit({"type": "goal", "state": state, "text": goal["text"], "steps": goal.get("steps", 0)})
 
     def _salvage_calls(self, calls: list[dict]) -> tuple[list[dict], dict[int, str]]:
         """Abgeschnittene Aufrufe (Ausgabe- bzw. Kontextgrenze mitten im Aufruf): ein write wird bis zur letzten

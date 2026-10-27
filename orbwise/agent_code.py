@@ -223,7 +223,7 @@ class CodingMixin:
         if not files:
             return
         conv = self.memory.conversation
-        turn = sum(1 for m in conv.history if m["role"] == "user")
+        turn = sum(1 for m in conv.history if m["role"] == "user" and not m.get("goal_nudge"))
         snaps = conv.meta.setdefault("snapshots", {})
         snaps[str(turn)] = {"project": project, "before": before, "after": after, "files": files, "msg": msg_id}
         for key in list(snaps)[:-SNAPSHOTS_KEEP]:

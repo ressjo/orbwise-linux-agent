@@ -33,6 +33,7 @@ HTML_EN = [
     ('title="Aktivität und Systemauslastung" aria-label="Aktivität"', 'title="Activity and system load" aria-label="Activity"'),
     # Bühne
     ('aria-label="Orbwise Statusanzeige"', 'aria-label="Orbwise status display"'),
+    ('title="Ziel-Modus beenden" aria-label="Ziel-Modus beenden"', 'title="End goal mode" aria-label="End goal mode"'),
     ('>Wie kann ich helfen?<', '>How can I help?<'),
     ('data-text="Mach ein Systemupdate">Systemupdate<', 'data-text="Run a system update">System update<'),
     ('data-text="Was ist das für eine Fehlermeldung auf meinem Bildschirm?">Bildschirm erklären<',

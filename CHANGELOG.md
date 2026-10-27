@@ -120,6 +120,9 @@ All notable changes to this project are documented here. The format follows
   only actions that change or start something do; the data-leak guard still checks what goes out.
 
 ### Added
+- **Goal mode (`/goal <goal>`):** works on a goal without "continue" – no step limit per answer, finished only when
+  the model reports `[GOAL REACHED]` (otherwise it is nudged to carry on), `[QUESTION]` waits for you; chip with the
+  goal and step count above the input, `/goal stop`, limits `coding.goal_max_steps`/`goal_max_minutes`.
 - **Leaving a sandbox chat asks first:** with changes not yet applied, a new chat, another chat, a mode switch, a
   project change, cloning or deleting the chat offers *Apply and continue*, *Continue without applying* (they stay in
   that chat) or *Cancel*; deleting a chat with a sandbox warns that the working copy goes with it.

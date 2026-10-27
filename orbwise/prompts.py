@@ -217,6 +217,14 @@ TEXTS = {
                        "2–4 Sätzen zusammen, was du erledigt bzw. herausgefunden hast und was noch fehlt.)",
         "paused": "Ich habe nach vielen Einzelschritten pausiert.",
         "continue_hint": "Sag „mach weiter“, dann setze ich fort.",
+        "goal_none": "Kein Ziel aktiv – starte eins mit „/goal <Ziel>“.",
+        "goal_resume": "Mach mit dem Ziel weiter.",
+        "goal_continue_hint": "Ziel-Modus angehalten (Schritt- oder Zeitgrenze) – „/goal weiter“ setzt fort.",
+        "goal_note": "Ziel-Modus – Ziel: {goal}\nArbeite selbstständig weiter, bis das Ziel erreicht und geprüft ist; frag "
+                     "nicht, ob du weitermachen sollst. Ist es erreicht, beende deine Antwort mit der Zeile [ZIEL ERREICHT]. "
+                     "Brauchst du eine Entscheidung des Nutzers, stell die Frage und beende mit der Zeile [FRAGE].",
+        "goal_nudge": "(Ziel-Modus: Arbeite am Ziel weiter – {goal}. Ist es erreicht und geprüft, beende mit [ZIEL "
+                      "ERREICHT]; brauchst du eine Entscheidung, frag und beende mit [FRAGE].)",
         "interrupted": "(Unterbrochen: {error} – die bisherigen Schritte sind gespeichert, mit „mach weiter“ geht es "
                        "dort weiter.)",
         "repeat_skipped": "Dieser Aufruf wurde mit denselben Argumenten bereits ausgeführt – das Ergebnis steht oben. "
@@ -278,6 +286,14 @@ TEXTS = {
                        "in 2–4 sentences what you have done or found out and what is still missing.)",
         "paused": "I paused after a large number of steps.",
         "continue_hint": "Say “continue” and I'll carry on.",
+        "goal_none": "No goal active – start one with “/goal <goal>”.",
+        "goal_resume": "Carry on with the goal.",
+        "goal_continue_hint": "Goal mode paused (step or time limit) – “/goal continue” carries on.",
+        "goal_note": "Goal mode – goal: {goal}\nKeep working on your own until the goal is reached and verified; don't ask "
+                     "whether to continue. When it is reached, end your answer with the line [GOAL REACHED]. If you need "
+                     "a decision from the user, ask and end with the line [QUESTION].",
+        "goal_nudge": "(Goal mode: keep working on the goal – {goal}. When it is reached and verified, end with [GOAL "
+                      "REACHED]; if you need a decision, ask and end with [QUESTION].)",
         "interrupted": "(Interrupted: {error} – the steps so far are saved, say “continue” to pick up there.)",
         "repeat_skipped": "This call was already made with the same arguments – the result is above. Don't repeat "
                           "it; answer with the existing result.",

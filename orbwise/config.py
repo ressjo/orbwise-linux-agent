@@ -446,6 +446,9 @@ class CodingConfig(BaseModel):
     max_jobs: int = 4               # gleichzeitig laufende Hintergrund-Befehle (shell mit background=true)
     # Projektanweisungen aus dem Projektordner (die erste vorhandene Datei kommt in den Systemprompt)
     instructions: list[str] = Field(default_factory=lambda: ["AGENTS.md", "CLAUDE.md"])
+    # Ziel-Modus (/goal): arbeitet ohne „mach weiter“ – höchstens so viele Werkzeug-Schritte bzw. Minuten
+    goal_max_steps: int = 300
+    goal_max_minutes: int = 120
 
     @field_validator("subagent_steps", "max_jobs")
     @classmethod

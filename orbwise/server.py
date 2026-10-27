@@ -143,6 +143,32 @@ class Hub:
         except Exception as e:  # noqa: BLE001 – Vorwärmen ist nur eine Beschleunigung
             log.info("Vorwärmen fehlgeschlagen: %s", e)
 
+    async def goal_command(self, arg: str) -> str:
+        """„/goal <Ziel>“ startet den Ziel-Modus, „/goal stop“ beendet ihn, „/goal weiter“ setzt nach einer Grenze fort,
+        „/goal“ allein zeigt das aktive Ziel. Liefert den Text, der als Nutzernachricht weiterläuft (leer = nichts)."""
+        goal = self.agent.goal_state()
+        low = arg.lower()
+        if low in ("stop", "stopp", "aus", "off", "ende", "end"):
+            if goal:
+                self.agent.set_goal(None)
+                await self.broadcast({"type": "goal", "state": "stopped", "text": goal["text"],
+                                      "steps": goal.get("steps", 0)})
+            return ""
+        if not arg or low in ("weiter", "continue", "fortsetzen"):
+            if not goal:
+                await self.broadcast({"type": "toast", "text": prompts.text(self.cfg, "goal_none")})
+                return ""
+            if not arg:
+                await self.broadcast({"type": "goal", "state": "active", "text": goal["text"],
+                                      "steps": goal.get("steps", 0)})
+                return ""
+            goal = self.agent.set_goal(goal["text"])  # Zähler und Uhr neu
+            await self.broadcast({"type": "goal", "state": "started", "text": goal["text"], "steps": 0})
+            return prompts.text(self.cfg, "goal_resume")
+        goal = self.agent.set_goal(arg)
+        await self.broadcast({"type": "goal", "state": "started", "text": goal["text"], "steps": 0})
+        return arg
+
     async def compact(self, focus: str = "") -> None:
         """„/compact [Fokus]“ oder der Knopf an der Kontext-Kachel: den offenen Chat jetzt zusammenfassen."""
         try:
@@ -265,6 +291,11 @@ class Hub:
             text = prompts.text(self.cfg, "image_only")
         if not text or (source == "voice" and self.coding()):
             return  # im Coding-Modus gibt es keine Spracheingabe
+        goal_cmd = re.match(r"^/(goal|ziel)\b\s*(.*)$", text, re.I | re.S)
+        if goal_cmd and source != "voice":
+            text = await self.goal_command(goal_cmd.group(2).strip())
+            if not text:
+                return
         command = re.match(r"^/(compact|komprimieren)\b\s*(.*)$", text, re.I | re.S)
         if command and source != "voice":  # wie in Claude Code: /compact [worauf es ankommt]
             task = asyncio.create_task(self.compact(command.group(2)))
@@ -1134,6 +1165,7 @@ def create_app(cfg: Config) -> FastAPI:
             return {"changes": {"files": snap["files"], "undone": bool(snap.get("undone"))}}
         return {"summary": first, "chat": {"id": conv.chat_id, "title": conv.meta.get("title", "")},
                 "messages": [{"role": m["role"], "content": m["content"], "turn": turns.get(i, 0), **changes(i, m),
+                              **({"goal_nudge": True} if m.get("goal_nudge") else {}),
                               "editable": i >= start,
                               **({"images": m["attachments"]} if m.get("attachments") else {}),
                               **({"images": m["shots"]} if m.get("shots") else {}),
@@ -1387,7 +1419,7 @@ def create_app(cfg: Config) -> FastAPI:
         Frage davor) – so kann die Oberfläche „Frage 3 bearbeiten / neu generieren“ sagen."""
         out, n = {}, 0
         for i, m in enumerate(conv.history):
-            if m["role"] == "user":
+            if m["role"] == "user" and not m.get("goal_nudge"):  # „weiter am Ziel“ ist keine eigene Frage
                 n += 1
             out[i] = n
         return out
@@ -1484,8 +1516,9 @@ def create_app(cfg: Config) -> FastAPI:
     def mode_info() -> dict:
         conv = memory.active
         sb = agent.sandbox_state() if memory.mode == "coding" else None
+        goal = conv.meta.get("goal") if isinstance(conv.meta.get("goal"), dict) else None
         return {"mode": conv.meta.get("mode") or "tools", "project": conv.meta.get("project") or "",
-                "chat_id": conv.chat_id,
+                "chat_id": conv.chat_id, "goal": {"text": goal["text"], "steps": goal.get("steps", 0)} if goal else None,
                 "sandbox": {"enabled": True, "network": sb.get("network", True), "branch": sb.get("branch", ""),
                             "engine": sb.get("engine", ""), "path": sb.get("path", "")} if sb else None}
 

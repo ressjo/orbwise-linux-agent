@@ -927,6 +927,17 @@ Sign in once with the GitHub CLI (`gh auth login`) – Orbwise uses its token �
   `GIT_ASKPASS`) and never written into `.git/config`.
 - `orbwise doctor` shows the container engine and the GitHub account.
 
+### Goal mode (/goal)
+
+Type `/goal <what should be done>` (or `/ziel …`) and Orbwise works on it **without stopping for "continue"**: the
+usual step limit of an answer doesn't apply, the context is compacted in between as needed, and an answer only
+counts as finished when the model ends it with `[GOAL REACHED]`. If it stops early ("shall I continue?"), it is
+nudged to carry on; if it needs a decision from you it asks and waits (`[QUESTION]`) – your answer continues the
+goal. A chip above the input shows the goal and the step count; ✕ or `/goal stop` ends it, STOP cancels as usual.
+Limits: `coding.goal_max_steps` (300 tool steps) and `coding.goal_max_minutes` (120) – then it pauses and
+`/goal continue` carries on. Confirmations still ask as before; in the sandbox with auto mode practically everything
+runs on its own.
+
 ### Plan mode
 
 For bigger jobs switch on **Plan** in the input bar. Orbwise then may only

@@ -517,6 +517,12 @@
       case "transcript":
         showTranscript(ev.text);
         break;
+      case "goal":
+        goalEvent(ev);
+        break;
+      case "toast":
+        toast(ev.text);
+        break;
       case "error":
         addError(ev.text);
         S.errorUntil = Date.now() + 2500;
@@ -812,6 +818,35 @@
       el.querySelector(".body").prepend(box);
     }
   }
+  // Ziel-Modus (/goal): Chip über der Eingabe, solange ein Ziel läuft; Meldungen bei Ende/Grenze/Rückfrage
+  function renderGoal() {
+    const chip = $("goal-chip");
+    chip.classList.toggle("hidden", !S.goal);
+    if (!S.goal) return;
+    chip.querySelector(".goal-text").textContent = L("Ziel: ", "Goal: ") + S.goal.text;
+    chip.querySelector(".goal-steps").textContent = S.goal.steps ? L(` · Schritt ${S.goal.steps}`, ` · step ${S.goal.steps}`) : "";
+    chip.title = S.goal.text;
+  }
+  $("goal-chip").querySelector(".goal-stop").onclick = () => send({ type: "user_message", text: "/goal stop" });
+  function goalEvent(ev) {
+    const text = {
+      started: L(`Ziel-Modus: ${ev.text}`, `Goal mode: ${ev.text}`),
+      done: L(`Ziel erreicht (${ev.steps} Schritte).`, `Goal reached (${ev.steps} steps).`),
+      question: L("Ziel-Modus wartet auf deine Antwort.", "Goal mode is waiting for your answer."),
+      stopped: L("Ziel-Modus beendet.", "Goal mode ended."),
+      limit: L("Ziel-Modus angehalten (Grenze) – „/goal weiter“ setzt fort.", "Goal mode paused (limit) – “/goal continue” carries on."),
+      active: L(`Aktives Ziel: ${ev.text}`, `Active goal: ${ev.text}`),
+    }[ev.state];
+    S.goal = ["done", "stopped"].includes(ev.state) ? null : { text: ev.text, steps: ev.steps || 0 };
+    renderGoal();
+    if (ev.state !== "progress" && text) toast(text);
+    if (ev.state === "progress" && S.currentMsg && assistants[S.currentMsg]) {
+      const n = document.createElement("div");
+      n.className = "goal-nudge";
+      n.textContent = L("↻ weiter am Ziel", "↻ continuing with the goal");
+      assistants[S.currentMsg].el.querySelector(".body").after(n);
+    }
+  }
   function addSystem(text) {
     const el = document.createElement("div");
     el.className = "msg system";
@@ -855,9 +890,11 @@
   // vorher wurde bei jedem Token die ganze Antwort neu aufgebaut (bei langen Antworten sehr teuer).
   const dirty = new Set();
   let renderQueued = false;
+  const GOAL_MARK = /\s*\[(ZIEL ERREICHT|GOAL REACHED|FRAGE|QUESTION)\]\s*$/i;  // Ziel-Modus-Marker nicht anzeigen
   function renderAssistant(a) {
     // nur Leerraum: leer lassen (der Plankasten erscheint erst mit dem ersten Wort)
-    a.el.querySelector(".body").innerHTML = a.raw.trim() ? renderMarkdown(a.raw.replace(/\n{3,}/g, "\n\n")) : "";
+    const raw = a.raw.replace(GOAL_MARK, "");
+    a.el.querySelector(".body").innerHTML = raw.trim() ? renderMarkdown(raw.replace(/\n{3,}/g, "\n\n")) : "";
   }
   function flushTokens() {
     renderQueued = false;
@@ -5019,6 +5056,8 @@
     S.chatId = ev.chat_id || ev.id || S.chatId;
     S.project = ev.project || "";
     S.sandbox = ev.sandbox || null;
+    S.goal = ev.goal || null;
+    renderGoal();
     app.classList.toggle("coding", S.mode === "coding");
     renderSandboxChip();
     markModeTabs();
@@ -5391,6 +5430,7 @@
       S.turns = h.turns || 0;
       h.messages.forEach((m, i) => {
         if (dividers[i]) { chat.appendChild(compactDivider(dividers[i].summary, dividers[i].ts)); }
+        if (m.goal_nudge) { addSystem(L("↻ weiter am Ziel", "↻ continuing with the goal")); return; }
         if (m.role === "user") { addUser(m.content, "", m.images, m.turn, m.editable, m.files); return; }
         const el = addMsg("assistant" + (m.editable === false ? " locked" : ""), S.name, renderMarkdown(m.content));
         el._raw = m.content;

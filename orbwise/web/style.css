@@ -1373,3 +1373,14 @@ button.file-chip:hover { border-color: var(--accent-line); }
 .spec-stats.low { color: var(--warn); }
 #tele-brave { grid-column: 1 / -1; }
 .leave-choice { display: flex; justify-content: flex-end; margin: 4px 0 -4px; }
+.goal-chip { display: flex; align-items: center; gap: 8px; max-width: 100%; margin: 0 auto 6px; padding: 4px 6px 4px 12px;
+  width: fit-content; border: 1px solid var(--accent); border-radius: 999px; background: var(--accent-soft);
+  color: var(--text); font-size: var(--fs-sm); }
+.goal-chip .goal-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none;
+  animation: goal-pulse 1.6s ease-in-out infinite; }
+.goal-chip .goal-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 52ch; }
+.goal-chip .goal-steps { color: var(--muted); white-space: nowrap; }
+.goal-chip .goal-stop { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 2px 6px; border-radius: 50%; }
+.goal-chip .goal-stop:hover { color: var(--danger); background: var(--surface-3); }
+.goal-nudge { margin: 6px 0; color: var(--muted); font-size: var(--fs-sm); }
+@keyframes goal-pulse { 50% { opacity: .35; } }
