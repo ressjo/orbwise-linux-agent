@@ -820,6 +820,8 @@ details.card[open] > summary .caret { transform: rotate(180deg); }
 .brief-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .brief-status { color: var(--muted); font-size: var(--fs-md); }
 .brief-out { white-space: pre-wrap; font-family: var(--mono); font-size: var(--fs-sm); background: var(--bg-2); border: 1px solid var(--border); border-radius: var(--r-md); padding: 12px; margin: 10px 0 0; }
+.memory-scope { grid-column: 1 / -1; margin: 0; font-size: var(--fs-sm); color: var(--muted); }
+.memory-scope b { color: var(--text); font-weight: 600; }
 .facts li { font-size: var(--fs-base); padding: 8px 10px; border-radius: var(--r-md); background: var(--bg-2); border: 1px solid var(--border); }
 .facts li small { color: var(--faint); font-variant-numeric: tabular-nums; margin-left: 6px; }
 .days li button { width: 100%; text-align: left; display: flex; justify-content: space-between; align-items: center; gap: 8px;

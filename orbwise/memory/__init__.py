@@ -3,7 +3,8 @@
 ~/.local/share/orbwise/memory/
     journal/YYYY-MM-DD.md     Rohprotokoll jedes Tages
     summaries/YYYY-MM-DD.md   Tageszusammenfassungen
-    facts.md                  dauerhafte Fakten
+    facts.md                  dauerhafte Fakten (Tools-Chats)
+    projects/<pid>/           eigenes Gedächtnis je Coding-Projekt: facts.md, journal/, project.txt (Pfad)
     chats/<id>.json           Chats (Verlauf + Zusammenfassungen je Epoche), chats/active = aktueller Chat
     index.sqlite              Suchindex (aus den .md-Dateien rekonstruierbar)
 """
@@ -11,10 +12,13 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import logging
+import os
 import re
 import time
 from datetime import datetime
+from pathlib import Path
 
 from ..config import MemoryConfig
 from .chats import ChatStore, chat_mode
@@ -27,6 +31,23 @@ log = logging.getLogger(__name__)
 __all__ = ["Memory", "Conversation", "Hit", "est_tokens"]
 
 DAY_CHUNK_CHARS = 12000
+TOOLS_KINDS = ("journal", "summary", "fact")
+
+
+def project_id(project: str) -> str:
+    """Kurzer, stabiler Schlüssel des Projektordners für sein eigenes Gedächtnis ("none" ohne Projekt)."""
+    if not project:
+        return "none"
+    path = os.path.realpath(os.path.expanduser(project))
+    return hashlib.sha1(path.encode("utf-8")).hexdigest()[:12]
+
+
+def chat_project(meta: dict) -> str | None:
+    """Projekt eines Coding-Chats ("" ohne Projekt) – None bei Tools-Chats. Bei aktiver Sandbox zählt das echte
+    Projekt, nicht die Arbeitskopie."""
+    if chat_mode(meta) != "coding":
+        return None
+    return meta.get("project") or ""
 
 
 class Memory:
@@ -44,6 +65,82 @@ class Memory:
         self.last_activity = time.time()
         self.summary_ran = False
         self._rebuilding = False
+        self._project_facts: dict[str, Facts] = {}
+        try:
+            self.migrate_scopes()
+        except Exception as e:  # noqa: BLE001
+            log.warning("Gedächtnis-Trennung (Coding/Tools) nicht migriert: %s", e)
+
+    # ---------- Bereiche: Tools-Gedächtnis oder eins je Coding-Projekt ----------
+    def project_of(self, conv: Conversation | None = None) -> str | None:
+        return chat_project((conv or self.conversation).meta)
+
+    def scope_id(self, conv: Conversation | None = None) -> str | None:
+        """None = Tools-Gedächtnis, sonst die Projekt-ID."""
+        project = self.project_of(conv)
+        return None if project is None else project_id(project)
+
+    def project_dir(self, pid: str) -> Path:
+        return self.cfg.dir / "projects" / pid
+
+    def _project_seen(self, pid: str, project: str) -> None:
+        marker = self.project_dir(pid) / "project.txt"
+        if project and not marker.exists():
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(project + "\n", encoding="utf-8")
+
+    def project_name(self, pid: str) -> str:
+        try:
+            return (self.project_dir(pid) / "project.txt").read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+
+    def facts_of(self, pid: str | None) -> Facts:
+        if pid is None:
+            return self.facts
+        if pid not in self._project_facts:
+            self._project_facts[pid] = Facts(self.project_dir(pid) / "facts.md")
+        return self._project_facts[pid]
+
+    def journal_of(self, pid: str | None) -> Journal:
+        return self.journal if pid is None else Journal(self.project_dir(pid) / "journal")
+
+    def scoped_facts(self, conv: Conversation | None = None) -> Facts:
+        return self.facts_of(self.scope_id(conv))
+
+    def scope_journal(self, conv: Conversation | None = None) -> Journal:
+        return self.journal_of(self.scope_id(conv))
+
+    @staticmethod
+    def kinds_of(pid: str | None) -> tuple[str, ...]:
+        return TOOLS_KINDS if pid is None else (f"code:{pid}", f"codefact:{pid}")
+
+    def scope_kinds(self, conv: Conversation | None = None) -> tuple[str, ...]:
+        return self.kinds_of(self.scope_id(conv))
+
+    @staticmethod
+    def _fact_slot(pid: str | None) -> tuple[str, str]:
+        """(kind, source) der Fakten-Einträge im Suchindex."""
+        return ("fact", "facts") if pid is None else (f"codefact:{pid}", f"facts:{pid}")
+
+    def project_ids(self) -> list[str]:
+        base = self.cfg.dir / "projects"
+        return sorted(p.name for p in base.iterdir() if p.is_dir()) if base.is_dir() else []
+
+    def migrate_scopes(self) -> int:
+        """Einmalig: Erinnerungen an bisherige Coding-Chats gehören ins Gedächtnis ihres Projekts.
+        Die Fakten bleiben im Tools-Gedächtnis, die alten Tagebuch-Zeilen an ihrem Ort."""
+        marker = self.cfg.dir / ".scopes_v1"
+        if marker.exists():
+            return 0
+        moved = 0
+        for chat in self.chats.list(mode="coding"):
+            project = chat.get("project") or ""
+            pid = project_id(project)
+            self._project_seen(pid, project)
+            moved += self.index.retag(f"chat:{chat['id']}", f"code:{pid}")
+        marker.write_text("1\n", encoding="utf-8")
+        return moved
 
     def close(self) -> None:
         self.index.close()
@@ -52,13 +149,19 @@ class Memory:
     async def log_exchange(self, user_text: str, assistant_text: str, tool_notes: list[str]) -> None:
         now = datetime.now()
         chat = self.conversation.chat_id
-        self.journal.append("Du", user_text, now, chat)
+        project = self.project_of()
+        pid = None if project is None else project_id(project)
+        if pid is not None:
+            self._project_seen(pid, project)
+        journal = self.journal_of(pid)  # Coding-Chats: Tagebuch des Projekts (nicht in den Tageszusammenfassungen)
+        journal.append("Du", user_text, now, chat)
         for note in tool_notes:
-            self.journal.append("Tool", note, now, chat)
-        self.journal.append("Orbwise", assistant_text or "(keine Antwort)", now, chat)
+            journal.append("Tool", note, now, chat)
+        journal.append("Orbwise", assistant_text or "(keine Antwort)", now, chat)
         self.last_activity = time.time()
         text = f"Nutzer: {user_text}\n" + "".join(f"Tool: {n}\n" for n in tool_notes) + f"Orbwise: {assistant_text}"
-        await self.index.add("journal", day_str(now), f"chat:{chat}" if chat else f"journal:{day_str(now)}", text)
+        kind = "journal" if pid is None else f"code:{pid}"
+        await self.index.add(kind, day_str(now), f"chat:{chat}" if chat else f"journal:{day_str(now)}", text)
 
     # ---------- Chats ----------
     @property
@@ -156,6 +259,8 @@ class Memory:
             self.summaries.delete(day)
             with contextlib.suppress(Exception):
                 self.index.delete_source(f"summary:{day}")
+        for pid in self.project_ids():
+            days += [d for d in self.journal_of(pid).remove_chat(chat_id) if d not in days]
         self.chats.delete(chat_id)
         if chat_id == self.conversation.chat_id:
             self.conversation = self.chats.create(mode=self.mode)
@@ -168,24 +273,30 @@ class Memory:
         """Merkt sich einen Fakt. Gibt es schon eine fast gleiche, ältere Fassung („NAS unter /mnt/nas“ →
         „NAS unter /media/nas“), wird diese ersetzt statt einen Widerspruch anzuhängen. → (gespeichert, ersetzt)"""
         fact = " ".join(fact.split())
-        old = await self._similar_fact(fact)
+        project = self.project_of()
+        pid = None if project is None else project_id(project)
+        if pid is not None:
+            self._project_seen(pid, project)
+        facts = self.facts_of(pid)
+        kind, source = self._fact_slot(pid)
+        old = await self._similar_fact(fact, facts)
         if old is not None and old.lower() != fact.lower():
-            self.facts.replace(old, fact)
-            self.index.delete_source("facts")
-            await self.reindex_facts()
+            facts.replace(old, fact)
+            self.index.delete_source(source)
+            await self.reindex_facts(pid)
             return True, old
-        added = self.facts.add(fact)
+        added = facts.add(fact)
         if added:
-            await self.index.add("fact", day_str(), "facts", fact)
+            await self.index.add(kind, day_str(), source, fact)
         return added, None
 
-    async def _similar_fact(self, fact: str) -> str | None:
+    async def _similar_fact(self, fact: str, store: Facts | None = None) -> str | None:
         """Bestehender Fakt, der dasselbe meint: viele gleiche Wörter und (mit Embeddings) sehr ähnlicher Sinn."""
         def overlap(a: str, b: str) -> float:
             wa, wb = set(re.findall(r"[\w/.:-]+", a.lower())), set(re.findall(r"[\w/.:-]+", b.lower()))
             return len(wa & wb) / max(1, len(wa | wb))
 
-        facts = [f for f, _ in self.facts.list()]
+        facts = [f for f, _ in (store or self.facts).list()]
         if not facts or not fact:
             return None
         best = max(facts, key=lambda f: overlap(f, fact))
@@ -198,31 +309,34 @@ class Memory:
         return best if score >= 0.7 else None
 
     async def forget(self, query: str) -> list[str]:
-        removed = self.facts.remove(query)
+        pid = self.scope_id()
+        removed = self.facts_of(pid).remove(query)
         if removed:
             # Fakten-Chunks neu aufbauen (klein, daher billig)
-            self.index.delete_source("facts")
-            await self.reindex_facts()
+            self.index.delete_source(self._fact_slot(pid)[1])
+            await self.reindex_facts(pid)
         return removed
 
-    async def reindex_facts(self) -> None:
-        for fact, day in self.facts.list():
-            await self.index.add("fact", day or day_str(), "facts", fact)
+    async def reindex_facts(self, pid: str | None = None) -> None:
+        kind, source = self._fact_slot(pid)
+        for fact, day in self.facts_of(pid).list():
+            await self.index.add(kind, day or day_str(), source, fact)
 
     # ---------- Lesen ----------
     async def retrieve(self, query: str, exclude_after: float | None = None) -> list[Hit]:
         chat = self.conversation.chat_id
         return await self.index.search(query, k=self.cfg.retrieval_top_k, exclude_after=exclude_after,
-                                       exclude_source=f"chat:{chat}" if chat else None)
+                                       kinds=self.scope_kinds(), exclude_source=f"chat:{chat}" if chat else None)
 
     def format_hits(self, hits: list[Hit], budget: int | None = None, taken: list[int] | None = None) -> str:
         """Treffer nach Relevanz (beste zuerst), bis das Budget voll ist – weniger Budget behält die besten.
         taken: sammelt die IDs der aufgenommenen Treffer (damit sie in derselben Epoche nicht noch einmal kommen)."""
         out, used = [], 0
         budget = self.cfg.retrieval_max_tokens if budget is None else budget
-        labels = {"journal": "Gespräch", "summary": "Tageszusammenfassung", "fact": "Fakt"}
+        labels = {"journal": "Gespräch", "summary": "Tageszusammenfassung", "fact": "Fakt", "code": "Gespräch",
+                  "codefact": "Projekt-Fakt"}
         for h in hits:
-            entry = f"[{h.day} · {labels.get(h.kind, h.kind)}]\n{h.text.strip()}"
+            entry = f"[{h.day} · {labels.get(h.kind.split(':')[0], h.kind)}]\n{h.text.strip()}"
             t = est_tokens(entry)
             if used + t > budget:
                 continue
@@ -234,7 +348,7 @@ class Memory:
 
     def facts_text(self, max_tokens: int | None = None) -> str:
         """Fakten für den Systemprompt – höchstens max_tokens (Standard: facts_max_tokens; kleines Fenster weniger)."""
-        return self.facts.as_text((max_tokens or self.cfg.facts_max_tokens) * 3)
+        return self.scoped_facts().as_text((max_tokens or self.cfg.facts_max_tokens) * 3)
 
     # ---------- Tageszusammenfassungen ----------
     async def summarize_day(self, day: str) -> str | None:
@@ -307,22 +421,12 @@ class Memory:
 
     async def rebuild_index(self) -> int:
         self.index.reset()  # Datei frisch anlegen – klappt auch, wenn sie beschädigt ist
-        for day in sorted(self.journal.days()):
-            entries = self.journal.entries(day)
-            block: list[str] = []
-            source = f"journal:{day}"
-            for e in entries:
-                if e.speaker == "Du" and block:
-                    await self.index.add("journal", day, source, "\n".join(block),
-                                         created=datetime.strptime(f"{day} {e.time}", "%Y-%m-%d %H:%M:%S").timestamp())
-                    block = []
-                if e.speaker == "Du":
-                    source = f"chat:{e.chat}" if e.chat else f"journal:{day}"
-                label = {"Du": "Nutzer"}.get(e.speaker, e.speaker)
-                block.append(f"{label}: {e.text}")
-            if block:
-                await self.index.add("journal", day, source, "\n".join(block),
-                                     created=datetime.strptime(day, "%Y-%m-%d").timestamp())
+        # Ältere Coding-Chats stehen noch im Tools-Tagebuch – ihre Einträge gehören ins Gedächtnis ihres Projekts
+        coding = {c["id"]: f"code:{project_id(c.get('project') or '')}" for c in self.chats.list(mode="coding")}
+        await self._index_journal(self.journal, lambda chat: coding.get(chat, "journal"))
+        for pid in self.project_ids():
+            await self._index_journal(self.journal_of(pid), lambda chat, pid=pid: f"code:{pid}")
+            await self.reindex_facts(pid)
         for day in self.summaries.days():
             body = self.summaries.read(day) or ""
             body = body.split("\n", 2)[-1]
@@ -331,3 +435,21 @@ class Memory:
         await self.reindex_facts()
         self.index.needs_rebuild = False
         return self.index.count()
+
+    async def _index_journal(self, journal: Journal, kind_of) -> None:
+        for day in sorted(journal.days()):
+            block: list[str] = []
+            source, chat = f"journal:{day}", ""
+            for e in journal.entries(day):
+                if e.speaker == "Du" and block:
+                    await self.index.add(kind_of(chat), day, source, "\n".join(block),
+                                         created=datetime.strptime(f"{day} {e.time}", "%Y-%m-%d %H:%M:%S").timestamp())
+                    block = []
+                if e.speaker == "Du":
+                    chat = e.chat
+                    source = f"chat:{e.chat}" if e.chat else f"journal:{day}"
+                label = {"Du": "Nutzer"}.get(e.speaker, e.speaker)
+                block.append(f"{label}: {e.text}")
+            if block:
+                await self.index.add(kind_of(chat), day, source, "\n".join(block),
+                                     created=datetime.strptime(day, "%Y-%m-%d").timestamp())

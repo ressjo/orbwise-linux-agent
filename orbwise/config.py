@@ -443,6 +443,7 @@ class CodingConfig(BaseModel):
     # Coding-Modus (Arbeitsweise nach OpenCode 2)
     snapshots: bool = True          # vor/nach jeder Antwort Schnappschuss des Projekts → „Rückgängig“
     subagent_steps: int = 15        # höchstens so viele Schritte je Unteragent (explore/general)
+    max_steps: int = 60             # Werkzeug-Schritte je Antwort im Coding-Modus (Tools-Modus: tools.max_steps)
     max_jobs: int = 4               # gleichzeitig laufende Hintergrund-Befehle (shell mit background=true)
     # Projektanweisungen aus dem Projektordner (die erste vorhandene Datei kommt in den Systemprompt)
     instructions: list[str] = Field(default_factory=lambda: ["AGENTS.md", "CLAUDE.md"])
@@ -454,6 +455,11 @@ class CodingConfig(BaseModel):
     @classmethod
     def _small(cls, v: int) -> int:
         return max(1, min(int(v), 50))
+
+    @field_validator("max_steps")
+    @classmethod
+    def _steps(cls, v: int) -> int:
+        return max(1, min(int(v), 500))
 
 
 class SandboxConfig(BaseModel):

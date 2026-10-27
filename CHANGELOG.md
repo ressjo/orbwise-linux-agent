@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **Coding: own memory per project.** Facts, earlier conversations and `recall` in a coding chat belong to its project
+  folder (`memory/projects/<id>/`) – separate from the regular chats and from other projects; coding chats no longer
+  end up in the daily summaries. Existing facts stay in the general memory, search entries of earlier coding chats
+  move to their project automatically. The *Memory* sheet shows which memory is open.
+- **Coding: more tool steps per answer** – `coding.max_steps` (default 60) instead of the 25 of tools mode before
+  Orbwise pauses with "continue".
 - **Prompts, two targeted rules from observed mistakes:** coding mode changes existing files with `edit` instead of
   rewriting them (whole rewrites caused the cut-off tool calls); in both modes a failing tool is reported with its
   own message, without inventing a cause.

@@ -179,6 +179,7 @@ vision:                    # screen and image questions – answered by the load
 
 coding:                    # Coding mode (works like OpenCode 2: read/edit/grep/glob/shell, subagents, undo)
   snapshots: true          # snapshot of the project before/after each answer → "Undo" under the answer
+  # max_steps: 60          # tool rounds per answer in coding mode (tools mode: tools.max_steps), then "continue"
   # subagent_steps: 15     # max steps of a subagent (explore = read-only search, general = may change things)
   # max_jobs: 4            # background commands (shell with background=true) at the same time
   # instructions: [AGENTS.md, CLAUDE.md]   # first file found in the project folder goes into the system prompt

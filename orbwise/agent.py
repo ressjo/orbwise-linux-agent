@@ -398,6 +398,10 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
             think = bool(getattr(getattr(self.llm, "profile", None), "think", False))
         return bool(think)
 
+    def max_steps(self) -> int:
+        """Werkzeug-Schritte je Antwort, danach Zwischenbilanz + „mach weiter“ – im Coding-Modus großzügiger."""
+        return max(1, self.cfg.coding.max_steps if self.mode == "coding" else self.cfg.tools.max_steps)
+
     def answer_reserve(self) -> int:
         """Platz für Antwort bzw. Denkkette (ein Viertel des Fensters, höchstens 16k – siehe context_plan)."""
         return self.plan().reserve(self._thinking())
@@ -615,7 +619,7 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
             while True:
                 if goal is not None and self.goal_state() is None:  # „/goal stop“ während der Arbeit
                     goal, steps = None, 0
-                if goal is None and steps >= max(1, self.cfg.tools.max_steps):
+                if goal is None and steps >= self.max_steps():
                     break
                 if goal is not None and self._goal_exhausted(goal):
                     await self._goal_event(emit, "limit", goal)

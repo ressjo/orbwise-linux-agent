@@ -173,7 +173,14 @@ Everything is stored as readable files in `~/.local/share/orbwise/memory/`:
 | `summaries/2026-09-27.md` | Daily summary, generated automatically (day change or 15 min idle) – once per day, again only if the day's content changes (e.g. a chat was deleted) |
 | `facts.md` | Permanent facts ("The NAS is mounted at /mnt/nas") – editable by hand |
 | `chats/<id>.json` | One chat: all messages, the summary of each compacted part, title, star (`chats/active` = current chat) |
+| `projects/<id>/` | Own memory of one coding project: `facts.md`, `journal/`, `project.txt` (the folder) |
 | `index.sqlite` | Search index (full text + embeddings) – just a cache, rebuild with `orbwise reindex` |
+
+**Coding has its own memory – one per project folder.** In a coding chat `remember`, `forget` and `recall` only see
+that project: its facts (also in the system prompt) and the earlier coding chats about it. Regular (tools) chats never
+see them, and coding chats do not see your general facts or other projects. Coding conversations are not part of the
+daily summaries. The *Memory* sheet shows the memory of the chat that is open. On the first start of this version the
+search entries of earlier coding chats move to their project; facts stored so far stay in the general memory.
 
 **How the context stays small – and fast:** Orbwise handles the context like Claude Code. Between two compactions
 the prompt **only grows at the end**: instructions, tools, earlier messages and the note in front of each of your
@@ -1097,6 +1104,7 @@ untrusted content (mail, screen) still ask. If Orbwise runs as **root**, the upp
 | `tools.sudo_remember_minutes` | How long the dashboard password is remembered (default 15, RAM only, never for Telegram/routines; 0 = always ask) |
 | `tools.package_manager` | `auto`, `pacman` or `apt` |
 | `tools.max_steps` | Max. tool rounds per request (default 25), then Orbwise summarises and offers to continue |
+| `coding.max_steps` | The same in coding mode (default 60) |
 | `tools.disabled` | Tools or groups to switch off, e.g. `[routine_tools, weather]` |
 | `tools.extra` | Switch thin wrapper tools back on that are off by default (process list, services, logs, network, ports, disk usage, `ls`, `rg`, `ssh_connect` …) – the model does these with `run_shell` and the usual commands, which run without asking when read-only. E.g. `[sysadmin]` |
 | `user_name`, `persona_extra` | How the assistant addresses you and extra personality instructions (its name: `assistant_name`) |

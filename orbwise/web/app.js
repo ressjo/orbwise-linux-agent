@@ -5508,7 +5508,15 @@
 
   async function loadMemory() {
     try {
-      const [facts, days] = await Promise.all([getJSON("/api/memory/facts"), getJSON("/api/memory/days")]);
+      const [facts, days, scope] = await Promise.all([getJSON("/api/memory/facts"), getJSON("/api/memory/days"),
+        getJSON("/api/memory/scope")]);
+      // Coding-Projekte haben je ein eigenes Gedächtnis – getrennt von dem der normalen Chats
+      const project = scope.project ? scope.project.replace(/\/+$/, "").split("/").pop() : "";
+      $("memory-scope").innerHTML = scope.mode === "coding"
+        ? L("Gedächtnis des Projekts ", "Memory of project ") + `<b>${escapeHtml(project || L("ohne Ordner", "without folder"))}</b>`
+          + L(" – getrennt von den normalen Chats.", " – separate from the regular chats.")
+        : L("Gedächtnis der normalen Chats – Coding-Projekte haben je ein eigenes.",
+          "Memory of the regular chats – coding projects each have their own.");
       $("facts").innerHTML = facts.length
         ? facts.map((f) => `<li>${escapeHtml(f.fact)}<small>${f.day}</small></li>`).join("")
         : `<li class="empty">${L("Noch keine Fakten gespeichert.", "No facts stored yet.")}</li>`;

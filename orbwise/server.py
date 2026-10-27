@@ -950,7 +950,7 @@ def create_app(cfg: Config) -> FastAPI:
             "voice": voice,
             "memory": {
                 "days": len(memory.journal.days()),
-                "facts": len(memory.facts.list()),
+                "facts": len(memory.scoped_facts(memory.active).list()),
                 "chunks": memory.index.count(),
                 "dir": str(cfg.memory.dir),
             },
@@ -1123,20 +1123,29 @@ def create_app(cfg: Config) -> FastAPI:
     async def get_metrics():
         return {**await asyncio.to_thread(metrics.collect), "usage": usage.summary(cfg)}
 
+    # Gedächtnis-Ansicht: das des offenen Chats – Tools oder das eigene des Coding-Projekts
+    @app.get("/api/memory/scope")
+    async def memory_scope():
+        project = memory.project_of(memory.active)
+        return {"mode": "tools" if project is None else "coding", "project": project or ""}
+
     @app.get("/api/memory/days")
     async def memory_days():
-        summaries = set(memory.summaries.days())
-        return [{"day": d, "summary": d in summaries} for d in memory.journal.days()]
+        coding = memory.scope_id(memory.active) is not None
+        summaries = set() if coding else set(memory.summaries.days())
+        return [{"day": d, "summary": d in summaries} for d in memory.scope_journal(memory.active).days()]
 
     @app.get("/api/memory/day/{day}")
     async def memory_day(day: str):
         if not valid_day(day):
             raise HTTPException(400, "ungültiges Datum")
-        return {"day": day, "journal": memory.journal.read(day), "summary": memory.summaries.read(day)}
+        coding = memory.scope_id(memory.active) is not None
+        return {"day": day, "journal": memory.scope_journal(memory.active).read(day),
+                "summary": None if coding else memory.summaries.read(day)}
 
     @app.get("/api/memory/facts")
     async def memory_facts():
-        return [{"fact": f, "day": d} for f, d in memory.facts.list()]
+        return [{"fact": f, "day": d} for f, d in memory.scoped_facts(memory.active).list()]
 
     @app.get("/api/history")
     async def history():

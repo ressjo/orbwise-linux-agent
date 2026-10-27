@@ -10,7 +10,7 @@ from .registry import ToolContext, tool
 
 
 @tool("Merkt sich dauerhaft einen Fakt über den Nutzer, seine Vorlieben, sein System oder Projekte – als "
-      "vollständigen Satz.")
+      "vollständigen Satz. Im Coding-Modus landet er im Gedächtnis des aktuellen Projekts.")
 async def remember(ctx: ToolContext, fact: str) -> str:
     added, replaced = await ctx.memory.remember_fact(fact)
     if replaced:
@@ -24,14 +24,16 @@ async def forget(ctx: ToolContext, query: str) -> str:
     return ("Gelöscht: " + "; ".join(removed)) if removed else "Kein passender Fakt gefunden."
 
 
-@tool("Durchsucht das Gedächtnis (frühere Gespräche, Tageszusammenfassungen, Fakten). Mit date: Protokoll dieses "
-      "Tages; relative Angaben wie 'letzten Dienstag' direkt übergeben.")
+@tool("Durchsucht das Gedächtnis (frühere Gespräche, Tageszusammenfassungen, Fakten) – im Coding-Modus nur das des "
+      "aktuellen Projekts. Mit date: Protokoll dieses Tages; relative Angaben wie 'letzten Dienstag' direkt übergeben.")
 async def recall(
     ctx: ToolContext,
     query: str = "",
     date: Annotated[str, "YYYY-MM-DD oder wie gesagt"] = "",
 ) -> str:
     mem = ctx.memory
+    journal = mem.scope_journal()  # Coding: Tagebuch des Projekts, Tools: das allgemeine
+    coding = mem.scope_id() is not None
     parts = []
     if date and not valid_day(date):
         from ..dates import resolve
@@ -40,18 +42,18 @@ async def recall(
             return "Datum nicht verstanden – bitte YYYY-MM-DD oder z. B. 'letzten Dienstag'."
         date = when.day.isoformat()
     if date:
-        summary = mem.summaries.read(date)
-        journal = mem.journal.read(date)
+        summary = None if coding else mem.summaries.read(date)
+        log = journal.read(date)
         if summary:
             parts.append(summary)
-        if journal and (not summary or query):
-            parts.append("Protokoll:\n" + proc.clip(journal, 5000))
+        if log and (not summary or query):
+            parts.append("Protokoll:\n" + proc.clip(log, 5000))
         if not parts:
-            parts.append(f"Für {date} gibt es keine Einträge. Vorhandene Tage: {', '.join(mem.journal.days()[:15])}")
+            parts.append(f"Für {date} gibt es keine Einträge. Vorhandene Tage: {', '.join(journal.days()[:15])}")
     if query:
-        hits = await mem.index.search(query, k=8)
+        hits = await mem.index.search(query, k=8, kinds=mem.scope_kinds())
         parts.append(mem.format_hits(hits) if hits else "Keine passenden Erinnerungen gefunden.")
     if not parts:
-        days = mem.journal.days()
+        days = journal.days()
         parts.append("Tage mit Einträgen: " + (", ".join(days[:30]) or "keine"))
     return "\n\n".join(parts)

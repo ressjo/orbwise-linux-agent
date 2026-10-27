@@ -125,6 +125,7 @@ class MemoryIndex:
         self.min_similarity = min_similarity
         self._matrix: np.ndarray | None = None
         self._matrix_ids: list[int] = []
+        self._matrix_kinds: list[str] = []
         self._lock = asyncio.Lock()
         self._embed_warned = False
         # True, wenn die Datei beschädigt war und leer neu angelegt wurde → Memory.rebuild_index() füllt sie wieder
@@ -247,6 +248,17 @@ class MemoryIndex:
             self._matrix = None
         return len(new)
 
+    def retag(self, source: str, kind: str) -> int:
+        """Alle Einträge einer Quelle einem anderen Gedächtnis zuordnen (z. B. alte Coding-Chats → ihr Projekt)."""
+        def run() -> int:
+            n = self.db.execute("UPDATE chunks SET kind=? WHERE source=? AND kind!=?", (kind, source, kind)).rowcount
+            self.db.commit()
+            return n
+        n = self._guard(run)
+        if n:
+            self._matrix = None
+        return n
+
     def delete_source(self, source: str) -> None:
         def run() -> None:
             self.db.execute("DELETE FROM chunks WHERE source=?", (source,))
@@ -273,23 +285,25 @@ class MemoryIndex:
 
     def _load_matrix(self) -> None:
         rows = self._guard(lambda: self.db.execute(
-            "SELECT id, embedding FROM chunks WHERE embedding IS NOT NULL").fetchall())
-        vecs, ids = [], []
+            "SELECT id, embedding, kind FROM chunks WHERE embedding IS NOT NULL").fetchall())
+        vecs, ids, kinds = [], [], []
         dims: dict[int, int] = {}
-        for _, blob in rows:
+        for _, blob, _ in rows:
             dims[len(blob)] = dims.get(len(blob), 0) + 1
         if not dims:
-            self._matrix, self._matrix_ids = np.zeros((0, 1), dtype=np.float32), []
+            self._matrix, self._matrix_ids, self._matrix_kinds = np.zeros((0, 1), dtype=np.float32), [], []
             return
         size = max(dims, key=dims.get)  # bei gewechseltem Embedding-Modell die häufigste Dimension
-        for rid, blob in rows:
+        for rid, blob, kind in rows:
             if len(blob) == size:
                 v = np.frombuffer(blob, dtype=np.float32)
                 n = np.linalg.norm(v)
                 vecs.append(v / n if n else v)
                 ids.append(rid)
+                kinds.append(kind)
         self._matrix = np.vstack(vecs)
         self._matrix_ids = ids
+        self._matrix_kinds = kinds
 
     async def search(self, query: str, k: int = 6, exclude_after: float | None = None,
                      kinds: tuple[str, ...] | None = None, exclude_source: str | None = None) -> list[Hit]:
@@ -297,12 +311,16 @@ class MemoryIndex:
         (die stehen ohnehin noch wörtlich im aktuellen Gesprächsverlauf). Mit exclude_source gilt das nur für
         Einträge dieser Quelle (des aktuellen Chats) – andere Chats bleiben auffindbar."""
         ranks: dict[int, float] = {}
+        # Nur im gewünschten Gedächtnis (Tools bzw. ein Projekt) suchen – schon vor dem Ranking, sonst verdrängen
+        # Treffer aus dem anderen die eigenen
+        only = f" AND c.kind IN ({','.join('?' * len(kinds))})" if kinds else ""
 
         q = fts_query(query)
         if q:
             try:
                 rows = self._guard(lambda: self.db.execute(
-                    "SELECT rowid FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY bm25(chunks_fts) LIMIT 30", (q,)
+                    "SELECT chunks_fts.rowid FROM chunks_fts JOIN chunks c ON c.id = chunks_fts.rowid "
+                    f"WHERE chunks_fts MATCH ?{only} ORDER BY bm25(chunks_fts) LIMIT 30", (q, *(kinds or ()))
                 ).fetchall())
                 for rank, (rid,) in enumerate(rows):
                     ranks[rid] = ranks.get(rid, 0) + 1 / (RRF_K + rank)
@@ -317,6 +335,8 @@ class MemoryIndex:
             if self._matrix is not None and len(self._matrix_ids) and self._matrix.shape[1] == qvec.shape[0]:
                 qn = qvec / (np.linalg.norm(qvec) or 1)
                 sims = self._matrix @ qn
+                if kinds:
+                    sims = np.where(np.isin(np.array(self._matrix_kinds, dtype=object), list(kinds)), sims, -2.0)
                 order = np.argsort(-sims)[:30]
                 for rank, idx in enumerate(order):
                     if sims[idx] < self.min_similarity:
@@ -340,12 +360,12 @@ class MemoryIndex:
         for rid, kind, day, text, created, source in rows:
             if kinds and kind not in kinds:
                 continue
-            if exclude_after is not None and kind == "journal" and created >= exclude_after and \
+            if exclude_after is not None and kind.split(":")[0] in ("journal", "code") and created >= exclude_after and \
                     (exclude_source is None or source == exclude_source):
                 continue
             age_days = max(0.0, (now - created) / 86400)
             recency = 0.004 * math.exp(-age_days / 30)  # leichte Bevorzugung frischer Erinnerungen
-            bonus = 0.003 if kind in ("fact", "summary") else 0.0
+            bonus = 0.003 if kind.split(":")[0] in ("fact", "summary", "codefact") else 0.0
             hits.append(Hit(rid, kind, day, text, created, ranks[rid] + recency + bonus, sim_of.get(rid)))
         hits.sort(key=lambda h: h.score, reverse=True)
         return hits[:k]
