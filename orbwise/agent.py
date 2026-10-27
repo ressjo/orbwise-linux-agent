@@ -1042,7 +1042,8 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
             except Exception as e:  # noqa: BLE001
                 log.debug("Vorschau für %s fehlgeschlagen: %s", name, e)
         await emit({"type": "tool_call", "id": call_id, "name": name, "args": args, "risk": risk, "reason": reason,
-                    "group": spec.group, **({"preview": preview} if preview else {})})
+                    "group": spec.group, **({"preview": preview} if preview else {}),
+                    **({"jailed": True} if ctx.jail else {})})
         if self._plan and risk != SAFE:  # Planmodus: Veränderndes nur vormerken, nicht ausführen, nicht nachfragen
             result = prompts.text(self.cfg, "plan_skipped")
             await emit({"type": "tool_result", "id": call_id, "status": "planned", "text": result})

@@ -629,17 +629,27 @@ async def code_shell(
             return f"Sandbox nicht verfügbar: {e}"
         command = sandbox.strip_sudo(command)
         prefix = sandbox.exec_argv(binary, ctx.sandbox["name"], cwd, command, None if background else limit)
+    elif ctx.jail and background:  # Auto ohne Rückfrage: auch Hintergrund-Jobs im Käfig (siehe jail.py)
+        from .. import jail
+        prefix = jail.argv(command, cwd, ctx.jail["writable"], ctx.jail["key"])
+    elif ctx.jail:
+        from .. import jail
+        rc, out = await jail.run(ctx, command, cwd, limit, "shell")
+        return proc.format_result(rc, out, ctx.limit())
     else:
         command = apply_privilege(command, ctx.cfg.tools.privilege_cmd)
     if background:
         coding = getattr(ctx.cfg, "coding", None)
         jid, stop_argv = jobs.new_id(), None
-        if prefix:
+        if prefix and ctx.sandbox:
             from .. import sandbox
             prefix, stop_argv = sandbox.job_argv(prefix[0], ctx.sandbox["name"], cwd, command, jid)
         try:
             job = await jobs.start(command, cwd, limit=getattr(coding, "max_jobs", 4), emit=ctx.emit, argv=prefix,
                                    jid=jid, stop_argv=stop_argv)
+            if ctx.jail and job.proc:
+                from .. import jail
+                jail.register(job.proc.pid)
         except RuntimeError as e:
             return str(e)
         if ctx.emit:

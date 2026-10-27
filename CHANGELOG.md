@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **Auto mode isolates shell commands (bubblewrap).** What Auto runs without asking now runs in a cage: only the
+  project folder (coding) and a private `/tmp` are writable, the rest of the system and your home read-only;
+  credentials, browser profiles, Orbwise's config, tokens in the environment, the session D-Bus and the Docker socket
+  are invisible. Network stays on, but connections from the cage to Orbwise itself are refused. Before, `python -c`,
+  scripts or `npm test` could do anything the command text did not show. If a caged command needs to write elsewhere,
+  Orbwise asks once to run it without isolation. Without a working bubblewrap, Auto asks for shell commands; the
+  installer adds the package, `orbwise doctor` and the Auto menu show the state.
 - **README:** new screenshot of coding in the sandbox (the agent checks its page with a screenshot), shorter intro;
   deep technical parts (context stages, prompt-cache tuning, coding tools, sandbox hardening) fold out on demand.
   `scripts/screenshots.mjs` can regenerate single shots (`… sandbox`) and uses a small demo project.

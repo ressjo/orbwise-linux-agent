@@ -81,18 +81,19 @@ _ASKPASS_RE = re.compile(r"\bsudo\s+(?:-\w+\s+)*-A\b|--sudoflags\s+-A\b")
 
 
 async def run(ctx: ToolContext, cmd: str | list[str], timeout: float, stream: bool = True,
-              cwd: str | None = None) -> tuple[int | None, str]:
+              cwd: str | None = None, started=None) -> tuple[int | None, str]:
+    """started: wird mit der PID des gestarteten Prozesses aufgerufen (Käfig: jail.register)."""
     text = cmd if isinstance(cmd, str) else " ".join(cmd)
     if _ASKPASS_RE.search(text):
         # Root-Rechte über den Passwortdialog der Oberfläche (sudo -A → Orbwise-Askpass)
         from ..askpass import privileged_env
         with privileged_env(text) as extra:
-            return await _run(ctx, cmd, timeout, stream, cwd, extra)
-    return await _run(ctx, cmd, timeout, stream, cwd, {})
+            return await _run(ctx, cmd, timeout, stream, cwd, extra, started)
+    return await _run(ctx, cmd, timeout, stream, cwd, {}, started)
 
 
 async def _run(ctx: ToolContext, cmd: str | list[str], timeout: float, stream: bool, cwd: str | None,
-               extra_env: dict) -> tuple[int | None, str]:
+               extra_env: dict, started=None) -> tuple[int | None, str]:
     env = {**os.environ, **QUIET_ENV, **extra_env}
     kwargs = dict(stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                   cwd=cwd or os.path.expanduser("~"), env=env, start_new_session=True)
@@ -103,6 +104,8 @@ async def _run(ctx: ToolContext, cmd: str | list[str], timeout: float, stream: b
             proc = await asyncio.create_subprocess_exec(*cmd, **kwargs)
         except FileNotFoundError:
             return 127, f"Programm '{cmd[0]}' ist nicht installiert."
+    if started:
+        started(proc.pid)
 
     chunks: list[str] = []
 

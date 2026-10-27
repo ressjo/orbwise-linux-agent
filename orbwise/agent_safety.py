@@ -30,6 +30,7 @@ TAINT_SOURCES = {"mail_list", "mail_search", "mail_read", "mail_ask", "daily_bri
 # Auto-Modus „Auto“ gibt diese ohne Root frei (shell/write/edit: die Coding-Werkzeuge nach OpenCode)
 AUTO_TOOLS = ("run_shell", "ssh_run", "write_file", "edit_file", "shell", "write", "edit")
 SHELL_TOOLS = ("run_shell", "ssh_run", "shell")
+LOCAL_SHELLS = ("run_shell", "shell")  # laufen auf diesem Rechner – im Auto-Modus im Käfig (jail.py)
 # Sandbox (außer Auto „Aus“): diese Gruppen laufen ohne Rückfrage – Dateien nur in der Arbeitskopie, Lesen außerhalb
 # der Kopie (SANDBOX_READS) fragt
 SANDBOX_GROUPS = {"code", "todo_tools", "memory_tools"}
@@ -139,12 +140,15 @@ class SafetyMixin:
                                               else "auto_files")
         elif risk == CONFIRM and self.auto_mode == "auto" and relaxed and name in AUTO_TOOLS:
             ok, why = self._auto_ok(name, args, cwd, project)
-            risk, reason = (SAFE, prompts.text(self.cfg, "auto_full")) if ok else (risk, why or reason)
+            if ok and name in LOCAL_SHELLS:
+                risk, reason = self._jailed(ctx, project)
+            else:
+                risk, reason = (SAFE, prompts.text(self.cfg, "auto_full")) if ok else (risk, why or reason)
         # Nach fremden Inhalten (Mail, Webseite, Bild, PDF) fragt alles nach, was etwas verändert oder startet –
         # lesende Werkzeuge und rein lesende, lokale Shell-Befehle (echo, cd, ls …) laufen weiter
         if risk == SAFE and getattr(self, "_tainted", False) and spec.group in TAINT_GUARDED \
                 and name not in TAINT_READ_OK \
-                and not (reason != prompts.text(self.cfg, "auto_full") and name in SHELL_TOOLS
+                and not (not getattr(ctx, "jail", None) and reason != prompts.text(self.cfg, "auto_full") and name in SHELL_TOOLS
                          and local_read_only(str(args.get("command") or ""))):
             risk, reason = CONFIRM, prompts.text(self.cfg, "tainted_confirm")
         if risk == SAFE and name in SHELL_TOOLS and self.auto_mode == "off":
@@ -155,7 +159,21 @@ class SafetyMixin:
                 risk, reason = CONFIRM, leak + (f"; {reason}" if risk == CONFIRM and reason else "")
         if name in ALWAYS_ASK and risk == SAFE:
             risk = CONFIRM
+        if risk != SAFE:
+            ctx.jail = None  # was du bestätigst, läuft wie gesehen – ohne Käfig
         return risk, reason
+
+    def _jailed(self, ctx: ToolContext, project: str | None) -> tuple[str, str]:
+        """Auto: Shell-Befehl ohne Rückfrage – aber nur im Käfig (bubblewrap). Ohne Käfig fragt er nach."""
+        from . import jail
+        ok, why = jail.available()
+        if not ok:
+            return CONFIRM, prompts.text(self.cfg, "auto_no_jail").format(reason=why)
+        writable = ([project] if project else []) + list(getattr(self.cfg.tools, "jail_writable", []) or [])
+        ctx.jail = {"writable": writable, "key": getattr(self.memory.conversation, "chat_id", "") or "tools",
+                    "where": prompts.text(self.cfg, "auto_jail_where_project" if project else "auto_jail_where_tmp"),
+                    "allowed": ", ".join([*writable, "/tmp"])}
+        return SAFE, prompts.text(self.cfg, "auto_jail").format(where=ctx.jail["where"])
 
     @staticmethod
     def _reads_in_copy(args: dict, cwd: str | None, sb: dict) -> bool:

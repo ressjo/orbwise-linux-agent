@@ -37,6 +37,8 @@ class ToolContext:
     confirm: Any = None
     # Coding-Sandbox des Chats (siehe sandbox.py): Shell-Befehle laufen dann im Container
     sandbox: dict | None = None
+    # Auto-Modus: dieser Shell-Befehl läuft isoliert (siehe jail.py) – {"writable": [...], "key": Chat}
+    jail: dict | None = None
 
     def path(self, raw: str) -> Path:
         p = Path(os.path.expandvars(str(raw or ""))).expanduser()

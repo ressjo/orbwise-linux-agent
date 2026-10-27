@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Annotated, Any
 from urllib.parse import urlparse
 
@@ -64,6 +65,11 @@ async def run_shell(
     timeout_seconds: Annotated[int, "Standard 120"] = 0,
 ) -> str:
     timeout = timeout_seconds if timeout_seconds > 0 else ctx.cfg.tools.shell_timeout
+    timeout = min(timeout, ctx.cfg.tools.update_timeout)
+    if ctx.jail:  # Auto ohne Rückfrage: im Käfig (siehe jail.py)
+        from .. import jail
+        rc, out = await jail.run(ctx, command, ctx.cwd or os.path.expanduser("~"), timeout, "run_shell")
+        return proc.format_result(rc, out, ctx.limit())
     command = apply_privilege(command, ctx.cfg.tools.privilege_cmd)
-    rc, out = await proc.run(ctx, command, timeout=min(timeout, ctx.cfg.tools.update_timeout), cwd=ctx.cwd)
+    rc, out = await proc.run(ctx, command, timeout=timeout, cwd=ctx.cwd)
     return proc.format_result(rc, out, ctx.limit())

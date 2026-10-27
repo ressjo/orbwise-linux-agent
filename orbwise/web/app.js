@@ -245,6 +245,11 @@
     $("btn-auto").classList.toggle("files", S.autoMode === "files");
     $("btn-auto").classList.toggle("full", S.autoMode === "auto");
     $("auto-label").textContent = AUTO_LABEL[S.autoMode];
+    // Auto gibt Shell-Befehle nur im Käfig (bubblewrap) frei – fehlt er, fragen sie nach
+    const noJail = S.jail && !S.jail.ok && !S.root;
+    $("auto-jail-hint").classList.toggle("hidden", !noJail);
+    if (noJail) $("auto-jail-hint").textContent = L("Ohne Isolation fragen Shell-Befehle auch bei Auto nach: ",
+      "Without isolation, shell commands ask in Auto too: ") + S.jail.reason;
     $("btn-auto").classList.toggle("root", !!S.root);
     $("btn-auto").title = S.root
       ? L("Orbwise läuft als root – darum gibt der Auto-Modus nichts ohne Rückfrage frei. Besser als normaler Benutzer starten.",
@@ -1612,6 +1617,7 @@
     const el = actStep("tool", toolIcon(ev), toolLabel(ev.name), keyArg(ev.args), ev.routine);
     el.querySelector(".act-name").title = ev.name;
     if (S.sandbox && ev.name === "shell") el.querySelector(".act-name").textContent += L(" · Sandbox", " · sandbox");
+    else if (ev.jailed) el.querySelector(".act-name").textContent += L(" · isoliert", " · isolated");
     el.querySelector(".act-args").textContent = `${ev.name}  ${fmtArgs(ev.name, ev.args)}`;
     if (ev.preview) {
       const d = document.createElement("pre");
@@ -2272,6 +2278,7 @@
   function applySettings(ev, fromHello) {
     if (["off", "read", "files", "auto"].includes(ev.auto_mode)) { S.autoMode = ev.auto_mode; store.set("autoMode", S.autoMode); }
     S.root = !!ev.root;
+    if (ev.jail) S.jail = ev.jail;
     if (ev.think === null || ev.think === undefined) {
       if (fromHello) sendThink();  // der Server kennt noch keine Wahl → die gemerkte schicken
     } else if (ev.think === "on") {

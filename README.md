@@ -1075,6 +1075,8 @@ Orbwise can run commands on your system, so:
   numbers, long encoded parameters and text copied from your own files, mails or documents (read in this chat) make
   Orbwise ask, showing what it found (masked) – in every auto mode. Values you typed yourself in your last message
   don't trigger it.
+- **Isolation:** what the Auto mode runs without asking runs in a bubblewrap cage – writable only in the project
+  folder and a private `/tmp`, without credentials or tokens, unable to reach Orbwise itself. → [Auto mode](#auto-mode)
 - **Blocklist:** `rm -rf /`, formatting or overwriting disks, fork bombs, `chmod -R … /` and similar are never run –
   not even after confirmation.
 - **Local only:** the server listens on `127.0.0.1` and checks the `Host` header and `Origin` – other websites
@@ -1107,13 +1109,29 @@ server keeps the setting for every open window, Telegram and routines.
 - **Read + edit files** – also create, write, copy and move files in your home (`write_file`, `mkdir`, `cp`, `mv`,
   `tee`, `>`); never with root, never deleting, never hidden files (shell start files, autostart, `~/.ssh`,
   `~/.config` …), launchers or credentials. In coding mode, changes inside the project folder run directly.
-- **Auto** – everything without root runs directly (`make`, `git commit`, `pip install --user` …). Still asking:
-  deleting, `sudo`, shutting down, sending over the network (`git push`, `ssh`, uploads), start-up files and
-  credentials.
+- **Auto** – everything without root runs directly (`make`, `git commit`, `pip install --user` …), shell commands
+  **isolated** (see below). Still asking: deleting, `sudo`, shutting down, sending over the network (`git push`,
+  `ssh`, uploads), start-up files and credentials.
 
-A script or `python -c` can do anything you may do – Auto only sees what is visible in the command. Plan mode and
-untrusted content (mail, screen) still ask. If Orbwise runs as **root**, the upper two levels approve nothing
-(`orbwise doctor` warns).
+**Isolation in Auto mode.** Looking at a command only shows what is written in it – what `python -c …`, a script the
+agent just wrote or `npm test` then do, it cannot see. So every shell command that Auto lets through without asking
+runs in a cage ([bubblewrap](https://github.com/containers/bubblewrap), installed by the installer):
+
+| In the cage | |
+|---|---|
+| Writable | coding: the project folder · tools mode: nothing in your home · both: a private `/tmp` per chat |
+| Read-only | the rest of the system and your home |
+| Invisible | `~/.ssh`, `~/.gnupg`, keyrings, browser profiles, cloud and Docker credentials, Orbwise's config, `.netrc` & co. |
+| Gone | environment variables with tokens/passwords/keys, the session D-Bus and `systemd --user`, the Docker socket |
+| Network | on (package installs, dev servers, screenshots) – but connections to Orbwise itself are refused, so a caged program cannot approve its own requests |
+
+If a command fails because it wanted to write elsewhere (e.g. `ffmpeg` writing to `~/Videos` from tools mode),
+Orbwise asks once whether it may run **without isolation** – the card shows the command. The activity panel marks
+caged commands with *isolated*. Read-only commands (positive list), commands you confirmed and the coding sandbox run
+as before. Without a working bubblewrap (missing, or user namespaces blocked, e.g. by Ubuntu's AppArmor setting)
+shell commands ask in Auto mode too; `orbwise doctor` and the Auto menu say why. `tools.jail_writable` adds folders
+that may be written without asking. Plan mode and untrusted content (mail, screen) still ask. If Orbwise runs as
+**root**, the upper two levels approve nothing (`orbwise doctor` warns).
 
 ## AMD GPUs
 

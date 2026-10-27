@@ -914,11 +914,21 @@ def create_app(cfg: Config) -> FastAPI:
     app.state.telegram = telegram_bot
     app.state.memory = memory
 
+    def from_jail(conn) -> bool:
+        """Kommt die Verbindung aus dem Käfig des Auto-Modus? Dann darf sie Orbwise nicht bedienen (z. B. sich eine
+        Rückfrage selbst bestätigen) – das Netz ist im Käfig an, localhost also erreichbar."""
+        from . import jail
+        client = conn.client
+        return bool(client) and jail.active() and jail.peer_is_jailed(client.port, cfg.port)
+
     @app.middleware("http")
     async def only_local(request: Request, call_next):
         # Schutz vor DNS-Rebinding: nur Anfragen an localhost zulassen
         if not check_host(request.headers.get("host"), cfg.port):
             return JSONResponse({"error": "forbidden host"}, status_code=403)
+        from . import jail
+        if jail.active() and await asyncio.to_thread(from_jail, request):
+            return JSONResponse({"error": "forbidden: isolated command"}, status_code=403)
         # Schreibende Anfragen nur von der eigenen Oberfläche (Schutz vor CSRF)
         origin = request.headers.get("origin")
         if request.method not in ("GET", "HEAD") and origin and \
@@ -1507,7 +1517,9 @@ def create_app(cfg: Config) -> FastAPI:
         """Was der Server gerade anwendet – alle Fenster zeigen dasselbe (Handy und PC, Telegram nutzt es auch).
         think: None, solange noch keine Oberfläche es gesetzt hat; root: Auto-Erleichterungen sind dann aus."""
         think = hub.think
-        return {"auto_mode": agent.auto_mode, "root": agent_safety.running_as_root(),
+        from . import jail
+        ok, why = jail.available()
+        return {"auto_mode": agent.auto_mode, "root": agent_safety.running_as_root(), "jail": {"ok": ok, "reason": why},
                 "think": None if think is None else "off" if think is False else "on" if think is True else think}
 
     @app.get("/api/think")
@@ -1869,7 +1881,8 @@ def create_app(cfg: Config) -> FastAPI:
         origin = ws.headers.get("origin", "")
         host = re.sub(r"^https?://", "", origin)
         # Schutz vor Cross-Site-WebSocket-Hijacking: fremde Webseiten dürfen keine Befehle senden
-        if not check_host(host, cfg.port) or not check_host(ws.headers.get("host"), cfg.port):
+        if not check_host(host, cfg.port) or not check_host(ws.headers.get("host"), cfg.port) \
+                or await asyncio.to_thread(from_jail, ws):  # kostet nur, solange ein Käfig-Prozess lebt
             await ws.close(code=4403)
             return
         await ws.accept()

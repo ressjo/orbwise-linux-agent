@@ -258,6 +258,14 @@ TEXTS = {
         "sandbox_outside_read": "liest außerhalb der Arbeitskopie – in der Sandbox fragt das, damit nichts Privates in "
                                 "den Container gelangt",
         "auto_full": "ohne Root-Rechte (Auto)",
+        "auto_jail": "läuft isoliert (Auto): sieht keine Zugangsdaten, schreibt nur {where}",
+        "auto_jail_where_project": "im Projektordner und in /tmp",
+        "auto_jail_where_tmp": "in /tmp – dein Home ist dabei nur lesbar",
+        "auto_no_jail": "Auto führt Shell-Befehle nur isoliert ohne Rückfrage aus – {reason}",
+        "jail_escalate": "Lief isoliert und scheiterte, weil der Befehl außerhalb von {allowed} schreiben wollte. "
+                         "Ohne Isolation ausführen? (Er kann im erlaubten Bereich schon etwas geändert haben.)",
+        "jail_declined": "[Im Käfig gescheitert: der Befehl wollte außerhalb von {allowed} schreiben; der Nutzer hat die "
+                         "Ausführung ohne Isolation abgelehnt.]",
         "auto_root": "Orbwise läuft als root – Auto gibt darum nichts frei",
         "tainted_confirm": "Nach dem Lesen einer E-Mail, Webseite, eines PDFs oder Bildschirm-/Bildinhalts fragt alles nach, "
                            "was etwas verändert oder startet (Lesen und Suchen laufen weiter) – Schutz vor versteckten "
@@ -326,6 +334,14 @@ TEXTS = {
         "sandbox_outside_read": "reads outside the working copy – the sandbox asks so nothing private gets into the "
                                 "container",
         "auto_full": "without root privileges (Auto)",
+        "auto_jail": "runs isolated (Auto): sees no credentials, writes only {where}",
+        "auto_jail_where_project": "in the project folder and /tmp",
+        "auto_jail_where_tmp": "in /tmp – your home folder is read-only meanwhile",
+        "auto_no_jail": "Auto only runs shell commands without asking when isolated – {reason}",
+        "jail_escalate": "Ran isolated and failed because the command wanted to write outside {allowed}. Run it without "
+                         "isolation? (It may already have changed something in the allowed area.)",
+        "jail_declined": "[Failed in the isolation: the command wanted to write outside {allowed}; the user declined "
+                         "running it without isolation.]",
         "auto_root": "Orbwise runs as root – so Auto approves nothing",
         "tainted_confirm": "After reading an e-mail, web page, PDF or screen/image content, everything that changes or "
                            "starts something asks first (reading and searching keep running) – protection against "

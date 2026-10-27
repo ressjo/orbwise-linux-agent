@@ -203,7 +203,8 @@
               <button type="button" role="menuitemradio" data-auto="off"><b>Aus</b><small>Jeder Shell-Befehl fragt vorher.</small></button>
               <button type="button" role="menuitemradio" data-auto="read"><b>Nur lesen</b><small>Lesende Befehle (ls, df, git status …) laufen ohne Rückfrage.</small></button>
               <button type="button" role="menuitemradio" data-auto="files"><b>Lesen + Dateien bearbeiten</b><small>Dazu Dateien im eigenen Home anlegen und ändern. Löschen fragt weiter.</small></button>
-              <button type="button" role="menuitemradio" data-auto="auto"><b>Auto</b><small>Alles ohne Root. Löschen, sudo, Senden ins Netz, Autostart und Zugangsdaten fragen weiter.</small></button>
+              <button type="button" role="menuitemradio" data-auto="auto"><b>Auto</b><small>Alles ohne Root – Shell-Befehle isoliert (nur Projekt bzw. /tmp schreibbar). Löschen, sudo, Senden ins Netz, Autostart und Zugangsdaten fragen weiter.</small></button>
+              <p class="think-source hidden" id="auto-jail-hint"></p>
             </div>
           </div>
           <div class="chip-split" id="think-wrap">

@@ -126,13 +126,13 @@ if [[ $DISTRO == arch ]]; then
     OLLAMA_PKG="ollama"
   fi
   sudo pacman -S --needed --noconfirm python uv git fd ripgrep plocate xdg-utils polkit pacman-contrib libnotify \
-    gtk3 curl iproute2 iputils "$OLLAMA_PKG"
+    gtk3 curl iproute2 iputils bubblewrap "$OLLAMA_PKG"
   sudo systemctl enable --now ollama.service
   sudo systemctl enable --now plocate-updatedb.timer || true
 else
   sudo apt-get update
   sudo apt-get install -y python3 python3-venv git curl ca-certificates fd-find ripgrep plocate xdg-utils \
-    libnotify-bin libgtk-3-bin iproute2 iputils-ping zstd
+    libnotify-bin libgtk-3-bin iproute2 iputils-ping zstd bubblewrap
   # uv (Python package manager) – official installer, installs to ~/.local/bin
   if ! command -v uv >/dev/null; then
     curl -LsSf https://astral.sh/uv/install.sh | sh
