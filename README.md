@@ -17,26 +17,29 @@
 </p>
 
 Orbwise is a web app on `localhost` with a voice, a long memory and real hands on your system. The model runs on
-your machine through llama.cpp or Ollama; speech recognition and speech output run locally too. Out of the box it
-calls itself "Orbwise" (rename it with `assistant_name`) and wakes up on a pre-trained openWakeWord phrase
-(`voice.wakeword_model`). German and English are
-supported.
+your machine through llama.cpp or Ollama; speech recognition and speech output run locally too – in German or
+English.
 
 ![A conversation: answer in a serif reading font, a running web search on the small orb, activity panel with live telemetry](docs/screenshot-chat.png)
+
+<p align="center"><i>Remembers for weeks · codes in a sandbox and shows you what it built · runs your PC, but asks first</i></p>
 
 ## What makes it different
 
 **It remembers – without running out of context.** Every conversation lands in a plain Markdown journal, one file
 per day, plus daily summaries and a `facts.md` you can edit by hand. A local search index (full text + embeddings)
 brings old details back when they matter: "what did we do with the NAS last Tuesday?" works weeks later. Long chats
-are compacted the way Claude Code does it, so the prompt stays small and the prompt cache stays warm.
-→ [Memory](#memory--without-context-window-problems)
+are compacted the way Claude Code does it, so the prompt stays small and the prompt cache stays warm. Each coding
+project gets a memory of its own. → [Memory](#memory--without-context-window-problems)
 
-**A coding agent with a sandbox and GitHub.** Switch to *Coding*, pick a project and the agent works like OpenCode:
+**A coding agent that looks at its own work.** Switch to *Coding*, pick a project and the agent works like OpenCode:
 reads before it edits, makes small exact changes, runs the tests, can be undone per answer. Turn on the sandbox and
-it works in a container on its own copy and branch – your project folder stays untouched until you apply the changes
-or push the branch. Clone your repositories and push with your `gh` login or a token.
+it works in a container on its own copy and branch – it may install and build freely there, takes a screenshot of
+the page it just built to check the result, and your project folder stays untouched until you apply the changes or
+push the branch. Hand it a whole job with `/goal` and it keeps going until it's done.
 → [Coding mode](#coding-mode)
+
+![Coding in the sandbox: the agent edits a landing page, checks it with a screenshot shown in the chat, "1 file changed" with Undo, the steps in the activity panel](docs/screenshot-sandbox.png)
 
 **Local, voice included.** A model page in the style of LM Studio downloads GGUF models from Hugging Face, picks
 the right llama.cpp build for your GPU (ROCm, CUDA or Vulkan) and measures which settings read prompts fastest.
@@ -182,6 +185,9 @@ see them, and coding chats do not see your general facts or other projects. Codi
 daily summaries. The *Memory* sheet shows the memory of the chat that is open. On the first start of this version the
 search entries of earlier coding chats move to their project; facts stored so far stay in the general memory.
 
+<details>
+<summary><b>How the context stays small</b> – prompt cache, two stages by window size, what happens when it is full</summary>
+
 **How the context stays small – and fast:** Orbwise handles the context like Claude Code. Between two compactions
 the prompt **only grows at the end**: instructions, tools, earlier messages and the note in front of each of your
 questions (date and time, memories, the approved plan) stay byte for byte the same once they were sent. llama.cpp
@@ -263,6 +269,8 @@ Afterwards – and after switching chat, mode or model – Orbwise reads the cur
 nothing else runs, and again when you start typing or recording if needed. A quiet note above the activity list
 shows it (*chat pre-read · 4,716 tokens*); the next question then only reads its new part. See also the
 [prompt cache tips](#prompt-cache-tips).
+
+</details>
 
 ### Chat history
 
@@ -388,6 +396,9 @@ switch tools or whole groups off: `tools: {disabled: [sysadmin, paperless]}`.
 
 ### Prompt cache tips
 
+<details>
+<summary>Only the new part of a chat should be read – how llama-server and Ollama are set up for that</summary>
+
 How long the model reads before it answers depends mostly on how much of the prompt the model server can reuse. The
 activity panel shows it for every step ("1,240 tokens read in 4 s (+11,980 cached)") – after the first question in
 a chat only the new part should be read.
@@ -413,7 +424,12 @@ shows the full command; restored checkpoints appear in the same log.
 - **Ollama:** `llm.keep_alive` (default `30m`) – after that Ollama unloads the model and the next question reads the
   whole chat again. Raise it if you often take longer breaks and the VRAM is not needed elsewhere.
 
+</details>
+
 ### Faster prompt reading (llama.cpp)
+
+<details>
+<summary>One click measures which llama.cpp build and batch size read prompts fastest on your GPU</summary>
 
 **Find the fastest setting** on the model page (section *Performance*) measures with `llama-bench` – part of
 every llama.cpp build – which build and batch size read prompts fastest on your card: the installed build (e.g. ROCm)
@@ -428,7 +444,12 @@ Expect roughly +10–40 %, not MoE speed: a dense model (e.g. 27B) computes all 
 an MoE model only its few active billions – prompt reading is compute-bound, so that gap stays. The bigger
 lever remains not reading at all (prompt cache, see above).
 
+</details>
+
 ### Why was so much read again?
+
+<details>
+<summary>Orbwise names the reason under the answer when more than 5,000 tokens were read again</summary>
 
 With a warm prompt cache only what is new gets read; a long wait means the server had to read most of the chat
 again. Orbwise compares every request with the previous one and, when more than 5,000 tokens were read again, names
@@ -438,7 +459,12 @@ program via the API, or a hybrid model such as Qwen3.5+ without a matching check
 tool list now stays complete and fixed as long as it takes at most a quarter of the window and under a minute to
 read, so a new topic no longer forces the whole chat to be read again; the step-limit summary keeps the tool list too.
 
+</details>
+
 ### Faster prompt processing: batch size
+
+<details>
+<summary>A bigger micro-batch reads long inputs faster, at the cost of some VRAM</summary>
 
 **Models → Advanced → Prompt processing (batch size)** sets llama-server's micro-batch (`-ub`, default 512) per model to 1024 or
 2048 (`-b` grows with it). Bigger batches keep the GPU busier while reading long inputs – tool results, files, PDFs,
@@ -446,7 +472,12 @@ the first message of a chat – at the cost of a larger compute buffer in VRAM (
 with the measured prompt speed; the measurement restarts after a change). Short questions hardly change. Compare
 with **Test context**, which reads a full window and reports tokens/s. llama.cpp models only.
 
+</details>
+
 ### Faster answers: speculative decoding (MTP / n-gram)
+
+<details>
+<summary>Several tokens per step – same answer, sooner</summary>
 
 **Models → Advanced → Faster answers** lets llama.cpp models propose several tokens at once, which the server then verifies in a
 single pass – the answer stays the same, it just arrives sooner. **MTP** uses the model's own multi-token-prediction
@@ -456,6 +487,8 @@ repeats passages already in the context (code, tool calls) and works with any mo
 offers what both the model and the llama.cpp build support (`--spec-type` in `llama-server --help`; otherwise it
 suggests updating llama.cpp) and shows the hit rate from the server log – below ~30 % it is better switched off.
 Not available for Ollama models.
+
+</details>
 
 ### API server for other programs (OpenAI compatible)
 
@@ -847,6 +880,9 @@ Switch to **Coding** top left and pick a **project folder** (chip at the top). T
 verifies with the project's tests/linters/build and answers briefly with `path:line` references. Web search runs over
 the **Brave Search API** when a key is set (see [Web search](#web-search)).
 
+<details>
+<summary>The coding tools</summary>
+
 | Tool | What it does |
 |---|---|
 | `read` | File with line numbers (`12: …`), in sections with `offset`/`limit`; folders (one entry per line, `/` for folders); PDFs. An `AGENTS.md` in a sub-folder comes along once |
@@ -860,7 +896,9 @@ the **Brave Search API** when a key is set (see [Web search](#web-search)).
 | `job_output` | Status and last output of a background job, or stop it |
 | `github_clone` / `github_push` | Clone a repo as the project / push the current branch with a link to create the pull request – both always ask (only with a GitHub token) |
 
-Also: `todo_write` (task list in the answer), `remember`/`recall`/`forget`.
+Also: `todo_write` (task list in the answer), `remember`/`recall`/`forget` (the project's own memory).
+
+</details>
 
 - **AGENTS.md:** the project's `AGENTS.md` (or `CLAUDE.md`, see `coding.instructions`) goes into the system prompt,
   together with the project folder, whether it is a git repository and the shell.
@@ -875,8 +913,6 @@ Also: `todo_write` (task list in the answer), `remember`/`recall`/`forget`.
 - **Permissions:** from the auto level **Read + edit files** on, `edit`/`write` inside the project folder run without asking
   (also hidden folders like `.github`, also outside `$HOME`) – never `.git/`, credentials, or as root. Anything
   outside the project folder asks. Deleting, root and network still ask as everywhere.
-- Not taken over from OpenCode: `patch` (for GPT models), Code Mode, worktrees, LSP (OpenCode 2 runs no language
-  servers either).
 
 #### Sandbox (container, like Claude on the web)
 
@@ -895,30 +931,38 @@ writing outside the copy, and pushing to GitHub; the leak guard keeps watching w
   **End sandbox** deletes container and copy.
 - No credentials go into the container (no token, no `~/.ssh`, no Docker socket); memory, CPU and processes are
   limited; the container stops after 30 minutes without commands and starts again with the next one.
-- **Docker in the container** (sandbox menu, per chat, off by default – rootless Podman only): the agent may run
-  `docker build`, `docker run -p 8080:80 …` (Podman behind a `docker` command) and `docker compose` (podman-compose)
-  inside the sandbox – as an unprivileged user with its own user namespace, no `--privileged`, no `CAP_SYS_ADMIN`,
-  `no-new-privileges` stays. The sandbox only gets `/dev/fuse` (image storage) and `/dev/net/tun` (network of the
-  inner containers); a short self-test runs when you switch it on, and only if the default seccomp profile blocks
-  nested containers, a bundled profile (default allow, dangerous calls such as module loading, kexec, bpf, keyctl
-  blocked) is used. Published ports are reachable inside the sandbox, so `screenshot http://localhost:8080` works.
-  Trade-off: a slightly larger attack surface towards the kernel – still limited to your user.
 - **Screenshots:** the agent can take a screenshot of the app it is building (`screenshot`, e.g. of the dev
   server on `localhost` or an HTML file) with headless Chromium – in the sandbox inside the container, otherwise with
-  the Chromium/Chrome on your machine. The image appears under the answer; if the loaded model sees images, it also
-  gets a description to check its work.
-- **How tight is it?** Capabilities dropped, `no-new-privileges`, only the working copy is mounted. Orbwise never runs
-  git on the host inside the copy's `.git` (hooks or `core.fsmonitor` written by the agent would run outside the
-  container): commits happen in the container, a push fetches the branch into a fresh repository and pushes it to the
-  remote remembered when the copy was made. Host writes into the copy never follow a symlink out of it. With network
-  on, the container reaches the internet and your LAN (not services on your machine's `127.0.0.1`, such as Orbwise
-  itself – `orbwise doctor` warns if Orbwise listens on another address). Prefer rootless Podman over Docker: a
-  kernel exploit – which no container fully rules out – then only gets your own user.
+  the Chromium/Chrome on your machine. The image appears under the answer (see the
+  [screenshot above](#what-makes-it-different)); if the loaded model sees images, it also gets a description to check
+  its work.
 - The default image `orbwise-sandbox:3` (Debian with git, Python, Node, build tools, ripgrep, Chromium for screenshots, Podman) is built on first use;
   `sandbox.image` takes any other image (e.g. `python:3.12`). Install Podman with `sudo apt install podman`.
   If Podman is installed but not usable, the error says why (e.g. missing `subuid` ranges, with the fix) instead of
   Docker's “cannot connect to the Docker daemon”. On btrfs Podman may need `fuse-overlayfs` (`mount_program` in
   `~/.config/containers/storage.conf`) – that only changes how image layers are stored, not the isolation.
+
+<details>
+<summary><b>How tight is the sandbox?</b> · Docker inside the sandbox</summary>
+
+Capabilities dropped, `no-new-privileges`, only the working copy is mounted. Orbwise never runs
+git on the host inside the copy's `.git` (hooks or `core.fsmonitor` written by the agent would run outside the
+container): commits happen in the container, a push fetches the branch into a fresh repository and pushes it to the
+remote remembered when the copy was made. Host writes into the copy never follow a symlink out of it. With network
+on, the container reaches the internet and your LAN (not services on your machine's `127.0.0.1`, such as Orbwise
+itself – `orbwise doctor` warns if Orbwise listens on another address). Prefer rootless Podman over Docker: a
+kernel exploit – which no container fully rules out – then only gets your own user.
+
+**Docker in the container** (sandbox menu, per chat, off by default – rootless Podman only): the agent may run
+`docker build`, `docker run -p 8080:80 …` (Podman behind a `docker` command) and `docker compose` (podman-compose)
+inside the sandbox – as an unprivileged user with its own user namespace, no `--privileged`, no `CAP_SYS_ADMIN`,
+`no-new-privileges` stays. The sandbox only gets `/dev/fuse` (image storage) and `/dev/net/tun` (network of the
+inner containers); a short self-test runs when you switch it on, and only if the default seccomp profile blocks
+nested containers, a bundled profile (default allow, dangerous calls such as module loading, kexec, bpf, keyctl
+blocked) is used. Published ports are reachable inside the sandbox, so `screenshot http://localhost:8080` works.
+Trade-off: a slightly larger attack surface towards the kernel – still limited to your user.
+
+</details>
 
 #### GitHub
 
@@ -1098,6 +1142,7 @@ untrusted content (mail, screen) still ask. If Orbwise runs as **root**, the upp
 | `memory.context_budget_tokens` | Optional cap for the prompt size (default: automatic from the context window) |
 | `memory.compact_idle` | Compact a nearly full context right after an answer instead of before the next question (default on) |
 | `voice.stt_model` | Whisper size: `tiny`, `base`, `small`, `medium`, `large-v3` |
+| `voice.wakeword_model` | Pre-trained openWakeWord model (the wake phrase) |
 | `voice.wakeword_threshold` | Wake word sensitivity (lower = more sensitive) |
 | `tools.nas_paths` | Mounted NAS folders |
 | `tools.privilege_cmd` | `dashboard` (password field, default), `pkexec` or `sudo` (NOPASSWD) |

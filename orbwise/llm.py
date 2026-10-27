@@ -747,6 +747,8 @@ class FakeLLM:
         planning = "PLANMODUS:" in user or "PLAN MODE:" in user
         if planning and (last["role"] == "tool" or not strip_context_note_text(user).startswith("/tool ")):
             return {"role": "assistant", "content": self._demo_plan(strip_context_note_text(user))}
+        if "landing page" in user.lower():
+            return self._demo_coding(messages)
         if last["role"] == "tool":
             done = "Done. Result" if self.en else "Erledigt. Ergebnis"
             return {"role": "assistant", "content": f"{done}: {last['content'][:200]}"}
@@ -772,6 +774,26 @@ class FakeLLM:
         return {"role": "assistant",
                 "content": f"Certainly. You said: {text}. How else may I help?" if self.en
                 else f"Sehr wohl. Sie sagten: {text}. Wie kann ich sonst behilflich sein?"}
+
+    def _demo_coding(self, messages: list[dict]) -> dict:
+        """Coding-Demo für den README-Screenshot (Projekt scripts/demo/roastery): lesen, ändern, prüfen, Screenshot."""
+        start = max(i for i, m in enumerate(messages) if m["role"] == "user")
+        step = sum(1 for m in messages[start:] if m["role"] == "tool")
+        calls = [
+            ("read", {"path": "index.html"}),
+            ("edit", {"path": "index.html", "oldString": "<h1>Fresh coffee</h1>",
+                      "newString": "<h1>Roasted on Tuesday,<br>in your cup by Friday</h1>"}),
+            ("shell", {"command": "git diff --stat"}),
+            ("screenshot", {"url": "index.html", "question": "Does the new headline fit the hero?"}),
+        ]
+        if step < len(calls):
+            name, args = calls[step]
+            return {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": name, "arguments": args}}]}
+        return {"role": "assistant", "content": (
+            "The hero now leads with the roast date – **Roasted on Tuesday, in your cup by Friday** "
+            "(`index.html:19`). The screenshot shows it fits on two lines next to the cup, and the call to action "
+            "stays above the fold.\n\nThe change is on the sandbox branch; apply it to the project or push it "
+            "when you like it.")}
 
     def _demo_plan(self, request: str) -> str:
         if self.en:

@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **README:** new screenshot of coding in the sandbox (the agent checks its page with a screenshot), shorter intro;
+  deep technical parts (context stages, prompt-cache tuning, coding tools, sandbox hardening) fold out on demand.
+  `scripts/screenshots.mjs` can regenerate single shots (`… sandbox`) and uses a small demo project.
 - **Coding: own memory per project.** Facts, earlier conversations and `recall` in a coding chat belong to its project
   folder (`memory/projects/<id>/`) – separate from the regular chats and from other projects; coding chats no longer
   end up in the daily summaries. Existing facts stay in the general memory, search entries of earlier coding chats
