@@ -260,9 +260,11 @@ MIN_TEXT = 200  # weniger lesbarer Text → mit Chromium nachladen
 async def _with_browser(ctx: ToolContext, url: str, fmt: str, fallback: str) -> str:
     """Einfacher Abruf gescheitert oder leer: Seite mit headless Chromium rendern (siehe browser.py)."""
     from . import browser
-    if ctx.output:
-        await ctx.output(T("Lade die Seite mit dem Browser …\n", "Loading the page with the browser …\n"))
     try:
+        if not await browser.ensure(ctx):  # fehlt Chromium, holt Orbwise es sich (einmal gefragt)
+            return fallback + T("\n(Kein Chromium für einen zweiten Versuch mit dem Browser.)",
+                                "\n(No Chromium for a second try with the browser.)")
+        await ctx.output(T("Lade die Seite mit dem Browser …\n", "Loading the page with the browser …\n"))
         text = await browser.browse(ctx, url, fmt)
     except Exception as e:  # noqa: BLE001 – dann bleibt es beim Ergebnis des einfachen Abrufs
         log.info("Browser-Abruf fehlgeschlagen: %s", e)

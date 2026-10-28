@@ -37,8 +37,9 @@ def test_argv_locks_down_the_system(home):
     assert argv[0].endswith("bwrap") and "--ro-bind / /" in joined and "--clearenv" in argv
     assert f"--bind {home / 'proj'} {home / 'proj'}" in joined
     assert f"--tmpfs {home / '.ssh'} --remount-ro {home / '.ssh'}" in joined  # Schlüssel unsichtbar
-    assert "--unshare-all" in argv and "--share-net" in argv and "--die-with-parent" in argv
+    assert "--unshare-all" in argv and "--share-net" not in argv and "--die-with-parent" in argv  # ohne Netz
     assert argv[-3:] == ["/bin/bash", "-c", "make"]
+    assert "--share-net" in jail.argv("make", str(home / "proj"), [], "chat1", net=True)
 
 
 def test_environment_has_no_secrets(monkeypatch):
@@ -49,9 +50,14 @@ def test_environment_has_no_secrets(monkeypatch):
     assert "geheim" not in env.values() and env["TMPDIR"] == "/tmp" and "PATH" in env
 
 
-def test_denied_recognises_the_cage():
-    assert jail.denied("touch: cannot touch '/home/x/a': Read-only file system")
-    assert not jail.denied("make: *** [all] Error 2")
+def test_denied_recognises_why_the_cage_stopped_a_command():
+    assert jail.denied("touch: cannot touch '/home/x/a': Read-only file system") == "write"
+    assert jail.denied("sudo: unable to open /etc/sudoers: Invalid argument") == "root"
+    assert jail.denied("error: you cannot perform this operation unless you are root.") == "root"
+    assert jail.denied("curl: (6) Could not resolve host: example.org") == "net"
+    assert jail.denied("curl: (6) Could not resolve host: example.org", net=True) is None
+    assert jail.denied("Cannot connect to the Docker daemon at unix:///var/run/docker.sock") == "write"
+    assert jail.denied("make: *** [all] Error 2") is None
 
 
 def _risk(agent, command, project=None):
@@ -60,20 +66,24 @@ def _risk(agent, command, project=None):
     return risk, reason, ctx.jail
 
 
-def test_auto_runs_shell_only_in_the_cage(cfg, llm, memory, monkeypatch):
+def test_read_edit_runs_builds_in_the_cage_without_network(cfg, llm, memory, monkeypatch):
     agent = Agent(cfg, llm, memory)
-    agent.auto_mode = "auto"
+    agent.auto_mode = "files"  # „Lesen + Bearbeiten“
     monkeypatch.setattr(jail, "available", lambda force=False: (True, ""))
     risk, reason, cage = _risk(agent, "python3 -c 'import shutil'")
-    assert risk == "safe" and cage and cage["writable"] == [] and "isoliert" in reason
+    assert risk == "safe" and cage and cage["writable"] == [] and not cage["net"] and "isoliert" in reason
     risk, _, cage = _risk(agent, "ls -la")  # lesend (Positivliste): wie bisher, ohne Käfig
     assert risk == "safe" and cage is None
     risk, _, cage = _risk(agent, "rm x")  # die Sperrliste fragt weiter – dann ohne Käfig, wie gesehen
     assert risk == "confirm" and cage is None
 
     monkeypatch.setattr(jail, "available", lambda force=False: (False, "bubblewrap fehlt – installieren"))
-    risk, reason, cage = _risk(agent, "python3 -c 'import shutil'")
-    assert risk == "confirm" and cage is None and "bubblewrap fehlt" in reason
+    risk, _, cage = _risk(agent, "python3 -c 'import shutil'")  # ohne Käfig: fragt wie früher
+    assert risk == "confirm" and cage is None
+
+    agent.auto_mode = "auto"  # Auto: kein Käfig – läuft wie im Terminal
+    risk, _, cage = _risk(agent, "python3 -c 'import shutil'")
+    assert risk == "safe" and cage is None
 
 
 def _collect(agent, text, answer):
@@ -92,7 +102,7 @@ def _collect(agent, text, answer):
 @needs_bwrap
 def test_cage_blocks_writes_outside_and_asks_to_run_without_it(cfg, llm, memory, home):
     agent = Agent(cfg, llm, memory)
-    agent.auto_mode = "auto"
+    agent.auto_mode = "files"
     evil = home / "evil.txt"
     cmd = f"python3 -c \"open('{evil}', 'w').write('x')\""
     asked = _collect(agent, '/tool run_shell {"command": "%s"}' % cmd.replace('"', '\\"'), False)
@@ -120,7 +130,7 @@ def test_connections_from_the_cage_are_recognised():
     server.listen(4)
     port = server.getsockname()[1]
     code = f"import socket,time; s=socket.create_connection(('127.0.0.1',{port})); time.sleep(30)"
-    proc = subprocess.Popen(jail.argv(f"{sys.executable} -c \"{code}\"", "/", [], "peer"), start_new_session=True)
+    proc = subprocess.Popen(jail.argv(f"{sys.executable} -c \"{code}\"", "/", [], "peer", net=True), start_new_session=True)
     try:
         jail.register(proc.pid)
         caged, _ = server.accept()
@@ -147,3 +157,12 @@ def test_server_refuses_requests_from_the_cage(cfg, monkeypatch):
         monkeypatch.setattr(jail, "peer_is_jailed", lambda port, server_port: True)
         assert client.get("/api/memory/scope").status_code == 403
         assert client.post("/api/mode", json={"mode": "coding"}).status_code == 403
+
+
+@needs_bwrap
+def test_cage_has_no_network_and_asks_for_it(cfg, llm, memory, home):
+    agent = Agent(cfg, llm, memory)
+    agent.auto_mode = "files"
+    cmd = "python3 -c \\\"import socket; socket.create_connection(('example.org', 80), 3)\\\""
+    asked = _collect(agent, '/tool run_shell {"command": "%s"}' % cmd, False)
+    assert len(asked) == 1 and "Internet" in asked[0][3]

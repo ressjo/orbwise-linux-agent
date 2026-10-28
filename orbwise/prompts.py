@@ -258,10 +258,14 @@ TEXTS = {
         "sandbox_outside_read": "liest außerhalb der Arbeitskopie – in der Sandbox fragt das, damit nichts Privates in "
                                 "den Container gelangt",
         "auto_full": "ohne Root-Rechte (Auto)",
-        "auto_jail": "läuft isoliert (Auto): sieht keine Zugangsdaten, schreibt nur {where}",
+        "auto_jail": "läuft isoliert (Lesen + Bearbeiten): ohne Netz, sieht keine Zugangsdaten, schreibt nur {where}",
         "auto_jail_where_project": "im Projektordner und in /tmp",
         "auto_jail_where_tmp": "in /tmp – dein Home ist dabei nur lesbar",
-        "auto_no_jail": "Auto führt Shell-Befehle nur isoliert ohne Rückfrage aus – {reason}",
+        "auto_sudo": "braucht Root-Rechte (Auto) – der Passwortdialog zeigt den Befehl",
+        "jail_escalate_root": "Lief isoliert und brauchte Root-Rechte. Ohne Isolation ausführen? (sudo fragt dann nach "
+                              "dem Passwort)",
+        "jail_escalate_net": "Lief isoliert ohne Netz („Lesen + Bearbeiten“) und brauchte das Internet. Ohne Isolation "
+                             "ausführen?",
         "jail_escalate": "Lief isoliert und scheiterte, weil der Befehl außerhalb von {allowed} schreiben wollte. "
                          "Ohne Isolation ausführen? (Er kann im erlaubten Bereich schon etwas geändert haben.)",
         "jail_declined": "[Im Käfig gescheitert: der Befehl wollte außerhalb von {allowed} schreiben; der Nutzer hat die "
@@ -334,10 +338,14 @@ TEXTS = {
         "sandbox_outside_read": "reads outside the working copy – the sandbox asks so nothing private gets into the "
                                 "container",
         "auto_full": "without root privileges (Auto)",
-        "auto_jail": "runs isolated (Auto): sees no credentials, writes only {where}",
+        "auto_jail": "runs isolated (Read + edit): no network, sees no credentials, writes only {where}",
         "auto_jail_where_project": "in the project folder and /tmp",
         "auto_jail_where_tmp": "in /tmp – your home folder is read-only meanwhile",
-        "auto_no_jail": "Auto only runs shell commands without asking when isolated – {reason}",
+        "auto_sudo": "needs root privileges (Auto) – the password dialog shows the command",
+        "jail_escalate_root": "Ran isolated and needed root privileges. Run it without isolation? (sudo then asks for "
+                              "the password)",
+        "jail_escalate_net": "Ran isolated without network (\u201cRead + edit\u201d) and needed the internet. Run it "
+                             "without isolation?",
         "jail_escalate": "Ran isolated and failed because the command wanted to write outside {allowed}. Run it without "
                          "isolation? (It may already have changed something in the allowed area.)",
         "jail_declined": "[Failed in the isolation: the command wanted to write outside {allowed}; the user declined "

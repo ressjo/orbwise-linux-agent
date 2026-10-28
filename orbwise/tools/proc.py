@@ -85,9 +85,10 @@ async def run(ctx: ToolContext, cmd: str | list[str], timeout: float, stream: bo
     """started: wird mit der PID des gestarteten Prozesses aufgerufen (Käfig: jail.register)."""
     text = cmd if isinstance(cmd, str) else " ".join(cmd)
     if _ASKPASS_RE.search(text):
-        # Root-Rechte über den Passwortdialog der Oberfläche (sudo -A → Orbwise-Askpass)
+        # Root-Rechte über den Passwortdialog der Oberfläche (sudo -A → Orbwise-Askpass); Auto-Modus ohne eigene
+        # Karte: dann immer fragen, nie das gemerkte Passwort
         from ..askpass import privileged_env
-        with privileged_env(text) as extra:
+        with privileged_env(text, use_cache=not getattr(ctx, "fresh_sudo", False)) as extra:
             return await _run(ctx, cmd, timeout, stream, cwd, extra, started)
     return await _run(ctx, cmd, timeout, stream, cwd, {}, started)
 
@@ -213,6 +214,13 @@ ROOT_DENIED_HINT = ("\n→ Root-Rechte wurden NICHT erteilt (Passwort abgebroche
                     "Nicht mit anderen Befehlen weiterprobieren oder Rechte prüfen – sag dem Nutzer Bescheid.")
 
 
+# Befehl brauchte Root, lief aber ohne sudo (pacman -S …, apt install …)
+NEEDS_ROOT_RE = re.compile(r"unless you are root|are you root\?|must be run as root|need to be root|"
+                           r"Could not open lock file .*Permission denied|unable to lock database", re.I)
+NEEDS_ROOT_HINT = ("\n→ Der Befehl braucht Root-Rechte: mit sudo voranstellen (Orbwise fragt dann nach dem Passwort) – "
+                   "Pakete besser mit install_package installieren (kann auch AUR).")
+
+
 def root_denied(output: str) -> bool:
     return bool(ROOT_DENIED_RE.search(output or ""))
 
@@ -221,4 +229,6 @@ def format_result(rc: int | None, output: str, limit: int) -> str:
     status = "Zeitüberschreitung" if rc is None else f"Exit-Code {rc}"
     body = clip_saved(output.strip(), limit) or "(keine Ausgabe)"
     hint = ROOT_DENIED_HINT if rc not in (None, 0) and root_denied(output) else ""
+    if not hint and rc not in (None, 0) and NEEDS_ROOT_RE.search(output or ""):
+        hint = NEEDS_ROOT_HINT
     return f"{status}\n{body}{hint}"

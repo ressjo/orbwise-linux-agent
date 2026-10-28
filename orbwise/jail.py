@@ -1,12 +1,13 @@
-"""Käfig für Shell-Befehle, die der Auto-Modus ohne Rückfrage ausführt (bubblewrap).
+"""Käfig für Shell-Befehle, die „Lesen + Bearbeiten“ ohne Rückfrage ausführt (bubblewrap).
 
 Die Sperrliste in tools/safety.py liest nur den Befehlstext – was `python3 -c …`, ein selbst geschriebenes Skript oder
 `npm test` danach tun, sieht sie nicht. Im Käfig ist das egal: das System ist nur lesbar, schreibbar sind nur der
 Projektordner (Coding) und ein eigenes /tmp, Zugangsdaten und Tokens sind unsichtbar, Session-Bus und Docker-Socket
-fehlen. Das Netz bleibt an (Paketinstallation, Dev-Server, Screenshots); damit ein eingesperrter Prozess Orbwise selbst
-nicht fernsteuern kann, lehnt der Server Verbindungen aus dem Käfig ab (peer_is_jailed).
+fehlen, und es gibt kein Netz. (Mit Netz – argv(net=True) – lehnt der Server Verbindungen aus dem Käfig zu Orbwise
+selbst ab, siehe peer_is_jailed.)
 
-Scheitert ein Befehl am Käfig (Read-only file system), fragt das Werkzeug, ob er ohne Isolation laufen darf.
+Scheitert ein Befehl am Käfig (schreibgeschützt, Root nötig, kein Netz), fragt das Werkzeug, ob er ohne Isolation laufen
+darf. Der Auto-Modus „Auto“ nutzt den Käfig nicht – dort läuft alles wie im Terminal, nur sudo fragt.
 """
 
 from __future__ import annotations
@@ -28,7 +29,14 @@ ENV_KEEP = re.compile(r"^(PATH|HOME|USER|LOGNAME|SHELL|LANG|LANGUAGE|LC_\w+|TZ|T
                       r"PYTHONPATH|VIRTUAL_ENV|NVM_DIR|NODE_PATH|GOPATH|GOROOT|CARGO_HOME|RUSTUP_HOME|JAVA_HOME|"
                       r"PNPM_HOME|BUN_INSTALL|DENO_INSTALL|XDG_DATA_DIRS|XDG_CONFIG_DIRS)$")
 ENV_SECRET = re.compile(r"(TOKEN|PASSW|SECRET|API_?KEY|PRIVATE|CREDENTIAL|AUTH)", re.I)
-DENIED = re.compile(r"Read-only file system|EROFS", re.I)
+DENIED = re.compile(r"Read-only file system|EROFS|Cannot connect to the Docker daemon|docker\.sock", re.I)
+# sudo/Paketmanager im Käfig (no_new_privs) – oder ein Befehl, der Root braucht
+ROOT_NEEDED = re.compile(r"sudo: (?:unable to open /etc/sudoers|PERM_SUDOERS|.*no new privileges)|"
+                         r"unless you are root|are you root\?|must be run as root|need to be root|"
+                         r"Could not open lock file .*Permission denied|unable to lock database", re.I)
+NET_NEEDED = re.compile(r"Could not resolve host|Temporary failure in name resolution|Name or service not known|"
+                        r"Network is unreachable|getaddrinfo|ENOTFOUND|EAI_AGAIN|ENETUNREACH|"
+                        r"Failed to establish a new connection|Could not connect to|Connection refused", re.I)
 
 _state: dict = {"checked": 0.0, "ok": False, "reason": ""}
 _jailed: set[int] = set()  # PIDs der von Orbwise gestarteten bwrap-Prozesse (für peer_is_jailed)
@@ -94,11 +102,11 @@ def env() -> dict[str, str]:
     return {**out, **QUIET_ENV, "TMPDIR": "/tmp"}
 
 
-def argv(command: str, cwd: str, writable: list[str], key: str = "") -> list[str]:
-    """bwrap-Aufruf, der command in bash im Käfig ausführt."""
+def argv(command: str, cwd: str, writable: list[str], key: str = "", net: bool = False) -> list[str]:
+    """bwrap-Aufruf, der command in bash im Käfig ausführt (net: mit Netz)."""
     binary = shutil.which(BWRAP) or BWRAP
     home = Path.home()
-    out = [binary, "--die-with-parent", "--new-session", "--unshare-all", "--share-net",
+    out = [binary, "--die-with-parent", "--new-session", "--unshare-all", *(["--share-net"] if net else []),
            "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
            "--bind", tmp_dir(key), "/tmp"]
     run_user = f"/run/user/{os.getuid()}"
@@ -128,9 +136,17 @@ def argv(command: str, cwd: str, writable: list[str], key: str = "") -> list[str
     return out
 
 
-def denied(output: str) -> bool:
-    """Ist der Befehl am Käfig gescheitert (Schreiben außerhalb der erlaubten Orte)?"""
-    return bool(DENIED.search(output or ""))
+def denied(output: str, net: bool = False) -> str | None:
+    """Ist der Befehl am Käfig gescheitert? → "write" (außerhalb schreiben), "root" (Root nötig), "net" (Netz nötig,
+    nur ohne Netz im Käfig) oder None."""
+    out = output or ""
+    if ROOT_NEEDED.search(out):
+        return "root"
+    if DENIED.search(out):
+        return "write"
+    if not net and NET_NEEDED.search(out):
+        return "net"
+    return None
 
 
 # ---------------------------------------------------------------- Orbwise selbst vor dem Käfig schützen
@@ -235,25 +251,30 @@ def _owner(pids: set[int], wanted: set[str]) -> bool | None:
 
 # ---------------------------------------------------------------- Ausführen (run_shell / shell)
 async def run(ctx, command: str, cwd: str, timeout: float, name: str) -> tuple[int | None, str]:
-    """Befehl im Käfig. Scheitert er daran, dass er außerhalb schreiben wollte, fragt Orbwise, ob er ohne Isolation
-    laufen darf – erst dann läuft er (noch einmal) ungeschützt."""
+    """Befehl im Käfig. Scheitert er daran (außerhalb schreiben, Root, Netz), fragt Orbwise, ob er ohne Isolation
+    laufen darf – erst dann läuft er (noch einmal) ungeschützt, mit sudo über den Passwortdialog."""
     from . import prompts
     from .tools import proc
+    from .tools.safety import apply_privilege
     cage = ctx.jail
-    rc, out = await proc.run(ctx, argv(command, cwd, cage["writable"], cage["key"]), timeout=timeout, cwd=cwd,
+    net = bool(cage.get("net"))
+    rc, out = await proc.run(ctx, argv(command, cwd, cage["writable"], cage["key"], net), timeout=timeout, cwd=cwd,
                              started=register)
-    if not rc or not denied(out):
+    kind = denied(out, net) if rc else None
+    if not kind:
         return rc, out
+    declined = "\n" + prompts.text(ctx.cfg, "jail_declined").format(allowed=cage["allowed"])
     if not ctx.confirm:
-        return rc, out + "\n" + prompts.text(ctx.cfg, "jail_declined").format(allowed=cage["allowed"])
-    reason = prompts.text(ctx.cfg, "jail_escalate").format(allowed=cage["allowed"])
+        return rc, out + declined
+    key = {"write": "jail_escalate", "root": "jail_escalate_root", "net": "jail_escalate_net"}[kind]
+    reason = prompts.text(ctx.cfg, key).format(allowed=cage["allowed"])
     if ctx.emit:
         await ctx.emit({"type": "state", "state": "confirm"})
     decision = await ctx.confirm(ctx.call_id, name, {"command": command}, reason)
     if isinstance(decision, tuple):
         decision = decision[0]
     if not decision:
-        return rc, out + "\n" + prompts.text(ctx.cfg, "jail_declined").format(allowed=cage["allowed"])
+        return rc, out + declined
     if ctx.emit:
         await ctx.emit({"type": "state", "state": "executing", "tool": name})
-    return await proc.run(ctx, command, timeout=timeout, cwd=cwd)
+    return await proc.run(ctx, apply_privilege(command, ctx.cfg.tools.privilege_cmd), timeout=timeout, cwd=cwd)

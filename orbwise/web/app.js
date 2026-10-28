@@ -245,12 +245,12 @@
     $("btn-auto").classList.toggle("files", S.autoMode === "files");
     $("btn-auto").classList.toggle("full", S.autoMode === "auto");
     $("auto-label").textContent = AUTO_LABEL[S.autoMode];
-    // Auto gibt Shell-Befehle nur im Käfig (bubblewrap) frei – fehlt er, fragen sie nach
-    const noJail = S.jail && !S.jail.ok && !S.root;
+    // „Lesen + Bearbeiten“ lässt Bauen/Tests im Käfig (bubblewrap) laufen – fehlt er, fragen sie nach
+    const noJail = S.jail && !S.jail.ok && !S.root && S.autoMode === "files";
     const hint = $("auto-jail-hint");
     if (hint) hint.classList.toggle("hidden", !noJail);
-    if (hint && noJail) hint.textContent = L("Ohne Isolation fragen Shell-Befehle auch bei Auto nach: ",
-      "Without isolation, shell commands ask in Auto too: ") + S.jail.reason;
+    if (hint && noJail) hint.textContent = L("Ohne Isolation fragen Bauen und Tests hier nach: ",
+      "Without isolation, builds and tests ask here: ") + S.jail.reason;
     $("btn-auto").classList.toggle("root", !!S.root);
     $("btn-auto").title = S.root
       ? L("Orbwise läuft als root – darum gibt der Auto-Modus nichts ohne Rückfrage frei. Besser als normaler Benutzer starten.",
@@ -2337,9 +2337,10 @@
     send({ type: "auto_mode", mode });
     toast({ off: L("Auto aus – jeder Befehl fragt vorher.", "Auto off – every command asks first."),
             read: L("Auto: nur lesen.", "Auto: read only."),
-            files: L("Auto: lesen und Dateien im Home ändern.", "Auto: read and change files in your home."),
-            auto: L("Auto: alles ohne Root – Löschen, sudo und Senden ins Netz fragen weiter.",
-                    "Auto: everything without root – deleting, sudo and sending over the network still ask.") }[mode]);
+            files: L("Auto: lesen und Dateien ändern – Bauen und Tests laufen isoliert ohne Netz.",
+                     "Auto: read and change files – builds and tests run isolated without network."),
+            auto: L("Auto: alles läuft – nur sudo fragt nach dem Passwort, Pushen und Mails senden fragen.",
+                    "Auto: everything runs – only sudo asks for the password, pushing and sending e-mail ask.") }[mode]);
     refresh();
   }
   $("btn-auto").onclick = (e) => { e.stopPropagation(); setAutoMenu(autoMenu.classList.contains("hidden")); };

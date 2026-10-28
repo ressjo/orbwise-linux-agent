@@ -39,6 +39,8 @@ class ToolContext:
     sandbox: dict | None = None
     # Auto-Modus: dieser Shell-Befehl läuft isoliert (siehe jail.py) – {"writable": [...], "key": Chat}
     jail: dict | None = None
+    # Auto-Modus: sudo ohne eigene Karte – dann nie das gemerkte Passwort, der Dialog ist die Rückfrage
+    fresh_sudo: bool = False
 
     def path(self, raw: str) -> Path:
         p = Path(os.path.expandvars(str(raw or ""))).expanduser()

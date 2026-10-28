@@ -104,8 +104,10 @@ def _params(text: str) -> list[str]:
     return values
 
 
-def find_leak(text: str, user_text: str = "", local_texts: list[str] | None = None) -> str | None:
-    """Grund, falls der ausgehende Text private Daten enthält (mit gekürztem Treffer) – sonst None."""
+def find_leak(text: str, user_text: str = "", local_texts: list[str] | None = None,
+              secrets_only: bool = False) -> str | None:
+    """Grund, falls der ausgehende Text private Daten enthält (mit gekürztem Treffer) – sonst None.
+    secrets_only (Auto-Modus): nur Zugangsdaten – Schlüssel, Tokens, Passwörter."""
     if not text:
         return None
     user = user_text or ""
@@ -119,6 +121,8 @@ def find_leak(text: str, user_text: str = "", local_texts: list[str] | None = No
         for m in pattern.finditer(text):
             if (r := hit(m.group(0), what())):
                 return r
+    if secrets_only:
+        return None
     for m in _IBAN.finditer(text.upper()):
         if _iban_ok(m.group(1)) and (r := hit(m.group(1), T("eine IBAN", "an IBAN"))):
             return r

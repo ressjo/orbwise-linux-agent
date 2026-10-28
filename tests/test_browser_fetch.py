@@ -48,6 +48,7 @@ def test_js_page_and_bot_block_fall_back_to_the_browser(cfg, memory, site, monke
         calls.append(url)
         return rendered
     monkeypatch.setattr(browser, "render", fake_render)
+    monkeypatch.setattr(browser, "ensure", lambda ctx: _found())
     ctx = ToolContext(cfg=cfg, memory=memory)
     out = run(fetch_page(ctx, site + "/", "text"))
     assert "Per Browser geladen" in out and "Inhalt nach JavaScript" in out
@@ -60,6 +61,10 @@ def test_js_page_and_bot_block_fall_back_to_the_browser(cfg, memory, site, monke
 
 async def _none():
     return None
+
+
+async def _found():
+    return "/usr/bin/chromium"
 
 
 SHELL = sorted(glob.glob("/opt/pw-browsers/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell"))

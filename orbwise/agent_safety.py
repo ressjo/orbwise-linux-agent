@@ -27,15 +27,15 @@ log = logging.getLogger(__name__)
 TAINT_SOURCES = {"mail_list", "mail_search", "mail_read", "mail_ask", "daily_briefing", "fetch_url", "webfetch",
                  "look_at_screen", "look_at_image", "screenshot"}  # Webseiten, Bildschirm, Bild: können Anweisungen enthalten
 
-# Auto-Modus „Auto“ gibt diese ohne Root frei (shell/write/edit: die Coding-Werkzeuge nach OpenCode)
-AUTO_TOOLS = ("run_shell", "ssh_run", "write_file", "edit_file", "shell", "write", "edit")
 SHELL_TOOLS = ("run_shell", "ssh_run", "shell")
 LOCAL_SHELLS = ("run_shell", "shell")  # laufen auf diesem Rechner – im Auto-Modus im Käfig (jail.py)
 # Sandbox (außer Auto „Aus“): diese Gruppen laufen ohne Rückfrage – Dateien nur in der Arbeitskopie, Lesen außerhalb
 # der Kopie (SANDBOX_READS) fragt
 SANDBOX_GROUPS = {"code", "todo_tools", "memory_tools"}
 SANDBOX_READS = ("read", "grep", "glob")
-ALWAYS_ASK = {"github_push", "github_clone"}  # fragen immer – auch im Auto-Modus „Auto“ und in der Sandbox
+ALWAYS_ASK = {"github_push", "github_clone"}  # fragen immer – auch in der Sandbox
+# Auto-Modus „Auto“: läuft alles ohne Rückfrage – außer Root (Passwortdialog), Pushen und Senden in deinem Namen
+AUTO_ASK = {"github_push", "mail_send"}
 FILE_TOOLS = ("write_file", "edit_file", "write", "edit")
 
 # Nach dem Lesen fremder Inhalte (Mail, Webseite, Bild) brauchen auch sonst sichere Tools dieser Gruppen eine
@@ -138,15 +138,17 @@ class SafetyMixin:
         if risk == CONFIRM and self.auto_mode == "files" and relaxed and self._file_edit_ok(name, args, cwd, project):
             risk, reason = SAFE, prompts.text(self.cfg, "auto_project" if project and name in FILE_TOOLS
                                               else "auto_files")
-        elif risk == CONFIRM and self.auto_mode == "auto" and relaxed and name in AUTO_TOOLS:
-            ok, why = self._auto_ok(name, args, cwd, project)
-            if ok and name in LOCAL_SHELLS:
-                risk, reason = self._jailed(ctx, project)
-            else:
-                risk, reason = (SAFE, prompts.text(self.cfg, "auto_full")) if ok else (risk, why or reason)
+        elif risk == CONFIRM and self.auto_mode == "files" and relaxed and name in LOCAL_SHELLS \
+                and not args.get("background") and self._auto_ok(name, args, cwd, project)[0]:
+            # Lesen + Bearbeiten: Bauen, Testen, Skripte laufen im Käfig – ohne Netz, schreiben nur im Projekt
+            risk, reason = self._jailed(ctx, project, reason)
+        elif risk == CONFIRM and self.auto_mode == "auto" and relaxed:
+            risk, reason = self._auto_full(name, args, ctx, reason)
         # Nach fremden Inhalten (Mail, Webseite, Bild, PDF) fragt alles nach, was etwas verändert oder startet –
-        # lesende Werkzeuge und rein lesende, lokale Shell-Befehle (echo, cd, ls …) laufen weiter
-        if risk == SAFE and getattr(self, "_tainted", False) and spec.group in TAINT_GUARDED \
+        # lesende Werkzeuge und rein lesende, lokale Shell-Befehle (echo, cd, ls …) laufen weiter. Im Auto-Modus
+        # „Auto“ nicht: dessen Risiko nimmt man bewusst in Kauf (wer das nicht will, nimmt „Lesen + Bearbeiten“).
+        if risk == SAFE and self.auto_mode != "auto" and getattr(self, "_tainted", False) \
+                and spec.group in TAINT_GUARDED \
                 and name not in TAINT_READ_OK \
                 and not (not getattr(ctx, "jail", None) and reason != prompts.text(self.cfg, "auto_full") and name in SHELL_TOOLS
                          and local_read_only(str(args.get("command") or ""))):
@@ -157,22 +159,49 @@ class SafetyMixin:
             leak = self._leak(name, args)
             if leak:
                 risk, reason = CONFIRM, leak + (f"; {reason}" if risk == CONFIRM and reason else "")
-        if name in ALWAYS_ASK and risk == SAFE:
+        asks = AUTO_ASK if self.auto_mode == "auto" and relaxed else ALWAYS_ASK
+        if name in asks and risk == SAFE:
             risk = CONFIRM
         if risk != SAFE:
             ctx.jail = None  # was du bestätigst, läuft wie gesehen – ohne Käfig
+            ctx.fresh_sudo = False
         return risk, reason
 
-    def _jailed(self, ctx: ToolContext, project: str | None) -> tuple[str, str]:
-        """Auto: Shell-Befehl ohne Rückfrage – aber nur im Käfig (bubblewrap). Ohne Käfig fragt er nach."""
+    def _auto_full(self, name: str, args: dict, ctx: ToolContext, reason: str) -> tuple[str, str]:
+        """Auto-Modus „Auto“: alles ohne Rückfrage – außer Root-Rechten, Pushen und Senden in deinem Namen.
+        sudo braucht keine eigene Karte: der Passwortdialog zeigt den Befehl und ist die Rückfrage."""
+        from .tools.safety import auto_full_check
+        if name in AUTO_ASK:
+            return CONFIRM, reason
+        if name not in SHELL_TOOLS:
+            return SAFE, prompts.text(self.cfg, "auto_full")
+        kind, why = auto_full_check(str(args.get("command") or ""))
+        if kind == "push":
+            return CONFIRM, why
+        if kind == "root":
+            if name in LOCAL_SHELLS and self._password_dialog():
+                ctx.fresh_sudo = True
+                return SAFE, prompts.text(self.cfg, "auto_sudo")
+            return CONFIRM, why
+        return SAFE, prompts.text(self.cfg, "auto_full")
+
+    def _password_dialog(self) -> bool:
+        """Fragt sudo hier über den Passwortdialog der Oberfläche (und ist jemand da, der ihn sieht)?"""
+        from . import askpass
+        broker = askpass.BROKER
+        return self.cfg.tools.privilege_cmd in ("dashboard", "orbwise") and broker is not None and broker.ready() \
+            and not askpass.REMOTE.get() and bool(getattr(broker, "has_ui", lambda: False)())
+
+    def _jailed(self, ctx: ToolContext, project: str | None, reason: str) -> tuple[str, str]:
+        """Lesen + Bearbeiten: Shell-Befehl ohne Rückfrage – aber im Käfig ohne Netz (bubblewrap). Ohne Käfig fragt er
+        wie bisher."""
         from . import jail
-        ok, why = jail.available()
-        if not ok:
-            return CONFIRM, prompts.text(self.cfg, "auto_no_jail").format(reason=why)
+        if not jail.available()[0]:
+            return CONFIRM, reason
         writable = ([project] if project else []) + list(getattr(self.cfg.tools, "jail_writable", []) or [])
         ctx.jail = {"writable": writable, "key": getattr(self.memory.conversation, "chat_id", "") or "tools",
-                    "where": prompts.text(self.cfg, "auto_jail_where_project" if project else "auto_jail_where_tmp"),
-                    "allowed": ", ".join([*writable, "/tmp"])}
+                    "net": False, "allowed": ", ".join([*writable, "/tmp"]),
+                    "where": prompts.text(self.cfg, "auto_jail_where_project" if project else "auto_jail_where_tmp")}
         return SAFE, prompts.text(self.cfg, "auto_jail").format(where=ctx.jail["where"])
 
     @staticmethod
@@ -204,7 +233,8 @@ class SafetyMixin:
         local = [m.get("full_content") or m.get("content") or "" for m in msgs
                  if m.get("role") == "tool" and m.get("tool_name") in LOCAL_DATA_TOOLS]
         local += [d.get("text") or "" for m in msgs for d in m.get("docs") or ()]  # angehängte PDFs
-        return find_leak(out, user if isinstance(user, str) else "", local)
+        return find_leak(out, user if isinstance(user, str) else "", local,
+                         secrets_only=getattr(self, "auto_mode", "") == "auto")
 
     def _runs_unasked(self, call: dict) -> bool:
         """Läuft dieser Aufruf ohne Rückfrage (und bringt keine fremden Inhalte)? Dann darf er parallel laufen."""

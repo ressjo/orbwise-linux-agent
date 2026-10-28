@@ -97,7 +97,7 @@ def test_web_page_counts_as_foreign_content(cfg, llm, memory):
 
 def test_reading_keeps_running_after_foreign_content(cfg, llm, memory):
     agent = Agent(cfg, llm, memory)
-    agent.auto_mode = "auto"
+    agent.auto_mode = "files"  # in Auto gilt der Schutz vor fremden Inhalten bewusst nicht
     agent._tainted = True  # z. B. nach einer Webseite oder einem PDF
     note = cfg.memory.dir / "notiz.txt"
     note.parent.mkdir(parents=True, exist_ok=True)

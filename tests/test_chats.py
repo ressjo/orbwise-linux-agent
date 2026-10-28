@@ -159,10 +159,12 @@ def test_switch_blocked_while_busy(client):
             await agent.lock.acquire()
 
         client.portal.call(hold)
+        agent._turn_open = True  # eine Antwort läuft wirklich (nur Nachbereiten würde abgewartet)
         try:
             r = client.post(f"/api/chats/{other}/activate")
-            assert r.status_code == 409 and "arbeitet" in r.json()["detail"]
+            assert r.status_code == 409 and "antwortet" in r.json()["detail"]
         finally:
+            agent._turn_open = False
             client.portal.call(lambda: _release(agent))
 
 

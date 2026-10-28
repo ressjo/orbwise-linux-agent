@@ -1067,17 +1067,18 @@ Orbwise can run commands on your system, so:
 - **Read-only commands** (`ls`, `df`, `systemctl status`, `grep`, …) run directly. While an e-mail, a fetched web page,
   an attached PDF or screen/image content is part of the chat (it could contain hidden instructions), every action
   that changes or starts something (writing files, memory, reminders, shell commands that change things, opening
-  websites or apps, …) needs confirmation – whatever the auto mode. If you trust that content, **Allow + stop asking
-  in this chat** on the card switches back to your auto mode for this chat until new outside content arrives. Reading and searching keep running (reading files, web search, fetching
+  websites or apps, …) needs confirmation – except in **Auto**, which accepts that risk. If you trust that content,
+  **Allow + stop asking in this chat** on the card switches back to your auto mode for this chat until new outside
+  content arrives. Reading and searching keep running (reading files, web search, fetching
   pages, purely local read-only commands like `cd`, `ls`, `echo`) – what leaves the machine is still checked by the
   data-leak guard.
 - **Data-leak guard:** whatever leaves the machine – web searches, fetched URLs, opened websites, `curl`/`wget`
   URLs and data – is checked first. Access keys/tokens, passwords, IBANs, card numbers, e-mail addresses, phone
   numbers, long encoded parameters and text copied from your own files, mails or documents (read in this chat) make
-  Orbwise ask, showing what it found (masked) – in every auto mode. Values you typed yourself in your last message
-  don't trigger it.
-- **Isolation:** what the Auto mode runs without asking runs in a bubblewrap cage – writable only in the project
-  folder and a private `/tmp`, without credentials or tokens, unable to reach Orbwise itself. → [Auto mode](#auto-mode)
+  Orbwise ask, showing what it found (masked) – in **Auto** only access keys, tokens and passwords. Values you typed
+  yourself in your last message don't trigger it.
+- **Isolation:** in *Read + edit files*, builds, tests and scripts run in a bubblewrap cage without network – writable
+  only in the project folder and a private `/tmp`, without credentials or tokens. → [Auto mode](#auto-mode)
 - **Blocklist:** `rm -rf /`, formatting or overwriting disks, fork bombs, `chmod -R … /` and similar are never run –
   not even after confirmation.
 - **Local only:** the server listens on `127.0.0.1` and checks the `Host` header and `Origin` – other websites
@@ -1109,30 +1110,38 @@ server keeps the setting for every open window, Telegram and routines.
   directly.
 - **Read + edit files** – also create, write, copy and move files in your home (`write_file`, `mkdir`, `cp`, `mv`,
   `tee`, `>`); never with root, never deleting, never hidden files (shell start files, autostart, `~/.ssh`,
-  `~/.config` …), launchers or credentials. In coding mode, changes inside the project folder run directly.
-- **Auto** – everything without root runs directly (`make`, `git commit`, `pip install --user` …), shell commands
-  **isolated** (see below). Still asking: deleting, `sudo`, shutting down, sending over the network (`git push`,
-  `ssh`, uploads), start-up files and credentials.
+  `~/.config` …), launchers or credentials. In coding mode, changes inside the project folder run directly. Builds,
+  tests and scripts (`make`, `npm test`, `python3 x.py` …) run **isolated without network** (see below). The safe
+  middle ground.
+- **Auto** – **everything runs without asking**, like in your own terminal: servers, `docker compose up`, package
+  managers without root, network, deleting, editing any file. Only three things ask:
+  - `sudo` (also `yay`/`paru`/`makepkg -si`, which call sudo themselves) – no extra card, just the **password
+    dialog**, which shows the command; a remembered password is not used for these;
+  - pushing (`git push`, *Push to GitHub*);
+  - sending e-mail in your name.
 
-**Isolation in Auto mode.** Looking at a command only shows what is written in it – what `python -c …`, a script the
-agent just wrote or `npm test` then do, it cannot see. So every shell command that Auto lets through without asking
-runs in a cage ([bubblewrap](https://github.com/containers/bubblewrap), installed by the installer):
+  The risk is deliberate: content from a web page or e-mail could make the model run something, and data can go out
+  over the network (the data-leak guard only stops access keys, tokens and passwords here). If you don't want that,
+  use **Read + edit files**.
+
+**Isolation in "Read + edit files".** Looking at a command only shows what is written in it – what `python -c …`, a
+script or `npm test` then do, it cannot see. So shell commands that this level lets through without asking run in a
+cage ([bubblewrap](https://github.com/containers/bubblewrap), installed by the installer):
 
 | In the cage | |
 |---|---|
 | Writable | coding: the project folder · tools mode: nothing in your home · both: a private `/tmp` per chat |
 | Read-only | the rest of the system and your home |
 | Invisible | `~/.ssh`, `~/.gnupg`, keyrings, browser profiles, cloud and Docker credentials, Orbwise's config, `.netrc` & co. |
-| Gone | environment variables with tokens/passwords/keys, the session D-Bus and `systemd --user`, the Docker socket |
-| Network | on (package installs, dev servers, screenshots) – but connections to Orbwise itself are refused, so a caged program cannot approve its own requests |
+| Gone | network, environment variables with tokens/passwords/keys, the session D-Bus and `systemd --user`, the Docker socket |
 
-If a command fails because it wanted to write elsewhere (e.g. `ffmpeg` writing to `~/Videos` from tools mode),
-Orbwise asks once whether it may run **without isolation** – the card shows the command. The activity panel marks
-caged commands with *isolated*. Read-only commands (positive list), commands you confirmed and the coding sandbox run
-as before. Without a working bubblewrap (missing, or user namespaces blocked, e.g. by Ubuntu's AppArmor setting)
-shell commands ask in Auto mode too; `orbwise doctor` and the Auto menu say why. `tools.jail_writable` adds folders
-that may be written without asking. Plan mode and untrusted content (mail, screen) still ask. If Orbwise runs as
-**root**, the upper two levels approve nothing (`orbwise doctor` warns).
+If a command fails because of the cage – it wanted to write elsewhere, needed root or the internet – Orbwise asks once
+whether it may run **without isolation** (with root: then the password dialog). The activity panel marks caged
+commands with *isolated*. Background jobs (servers) are not caged here – they ask. Without a working bubblewrap
+(missing, or user namespaces blocked, e.g. by Ubuntu's AppArmor setting) these commands simply ask as before;
+`orbwise doctor` and the Auto menu say why. `tools.jail_writable` adds folders that may be written without asking.
+
+Plan mode always asks. If Orbwise runs as **root**, the upper two levels approve nothing (`orbwise doctor` warns).
 
 ## AMD GPUs
 

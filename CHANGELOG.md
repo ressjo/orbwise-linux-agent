@@ -5,7 +5,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **Auto mode = only sudo asks.** Everything runs without asking, as in your own terminal – servers, Docker, network,
+  deleting. Only `sudo` (also `yay`/`paru`/`makepkg -si`) asks, through the password dialog alone (no extra card, no
+  remembered password), plus pushing and sending e-mail. No outside-content guard and only credentials in the
+  data-leak guard – a deliberate risk; *Read + edit files* is the careful choice.
+- **"Read + edit files" runs builds and tests isolated:** in a bubblewrap cage without network, writable only in the
+  project and a private `/tmp`; when a command needs to write elsewhere, root or the internet, Orbwise asks once to run
+  it without isolation.
+- **Chromium for hard web pages:** if none is installed, Orbwise downloads Google's chrome-headless-shell once to
+  `~/.local/share/orbwise/chromium` (no root; asks first outside Auto, a "no" is remembered).
+
 ### Fixed
+- **sudo failed silently in the cage** (e.g. installing a package via `yay`): the cage forbids it; Auto no longer
+  cages, yay/paru get the password dialog, and a package manager without `sudo` gets a hint.
+- **`curl -A "$UA" …` was flagged as "reads credentials"** – curl options are no longer taken for file names.
 - **Reload kept only the last 40 messages** – the whole chat is shown again.
 - **Live thinking slid out of view:** when the model thought again after text or a tool, the open thinking block sat
   above it; now it stays at the bottom while thinking and moves back to the top when collapsed.

@@ -431,6 +431,26 @@ def _ps_shows_env(args: list[str]) -> bool:
     return False
 
 
+_CURL_DATA = re.compile(r"^(-d|--data(-binary|-raw|-ascii|-urlencode)?|-F|--form(-string)?|--json)(=(.*))?$")
+_CURL_FILE = re.compile(r"^(-T|--upload-file|-K|--config|-E|--cert|--key|--cacert|--netrc-file)(=(.*))?$")
+
+
+def _curl_files(args: list[str]) -> list[str]:
+    """Welche lokalen Dateien liest curl? Nur @datei bei -d/-F/--json, -T, -K, Zertifikate/Schlüssel und file://-URLs –
+    Optionswerte wie -A "$UA", -H, -o oder -w sind keine Dateien."""
+    out: list[str] = []
+    for i, a in enumerate(args):
+        nxt = args[i + 1] if i + 1 < len(args) else ""
+        if (m := _CURL_DATA.match(a)):
+            value = m.group(5) if m.group(4) else nxt
+            out += [p.split(";")[0] for p in re.findall(r"[@<]([^\s,]+)", value or "")]
+        elif (m := _CURL_FILE.match(a)):
+            out.append(m.group(3) if m.group(2) else nxt)
+        elif a.lower().startswith("file://"):
+            out.append(a[7:])
+    return [p for p in out if p]
+
+
 def _prints_secrets(name: str, args: list[str], cwd: str) -> bool:
     if name == "printenv":
         return True
@@ -446,6 +466,8 @@ def _prints_secrets(name: str, args: list[str], cwd: str) -> bool:
             for a in args))
     if name not in READERS:
         return False
+    if name == "curl":
+        return _reads_secret(_curl_files(args), cwd, False)
     targets = [a for a in _operands(name, args) if a not in REDIRECTS and a != "<"]
     recursive = name == "rg" or (name in ("grep", "egrep", "fgrep") and any(
         a in RECURSIVE_FLAGS or (a.startswith("-") and not a.startswith("--") and set(a[1:]) & {"r", "R"})
@@ -588,6 +610,22 @@ _SEND_FLAGS = re.compile(r"^(-d\S*|--data\S*|-F\S*|--form\S*|-T\S*|--upload-file
                          r"--body-data|--body-file|--method)(=.*)?$", re.I)
 
 
+# Holen sich Root-Rechte selbst (rufen sudo intern auf) – wie sudo behandeln
+_SELF_ROOT = re.compile(r"(?<![\w./-])(yay|paru|pikaur|trizen|aura)(?![\w.-])|(?<![\w./-])makepkg\b[^;&|\n]*"
+                        r"(?:\s-\w*[si]\w*\b|--syncdeps|--install)")
+_GIT_PUSH = re.compile(r"(?<![\w./-])git\b[^;&|\n]*?\spush\b")
+
+
+def auto_full_check(command: str) -> tuple[str, str]:
+    """Auto-Modus „Auto“: nur Root und Pushen fragen. → ("ok" | "root" | "push", Grund)."""
+    scan = _scan_text(command.strip())
+    if _ROOT_WORD.search(scan) or _SELF_ROOT.search(scan):
+        return "root", T("braucht Root-Rechte", "needs root privileges")
+    if _GIT_PUSH.search(scan):
+        return "push", T("schickt Commits ins Internet (git push)", "pushes commits to the internet (git push)")
+    return "ok", ""
+
+
 def _git_sub(args: list[str]) -> str:
     i = 0
     while i < len(args):
@@ -694,7 +732,7 @@ def auto_shell_ok(command: str, cwd: str | None = None, _depth: int = 0) -> tupl
     for pattern, reason in WARN_PATTERNS:
         if pattern.search(scan):
             return False, reason() + still
-    if _ROOT_WORD.search(scan):
+    if _ROOT_WORD.search(scan) or _SELF_ROOT.search(scan):
         return False, root
     if SECRET_VARS.search(cmd) or re.search(r"\benviron\b", scan):
         return False, secrets
@@ -799,6 +837,7 @@ _SUDO_OWN_FLAGS = re.compile(r"\s+-[nSA]+\b")
 
 
 _PKEXEC_RE = re.compile(r"(^|[;&|(]\s*|\s)pkexec\s+")
+_AUR_RE = re.compile(r"(^|[;&|(]\s*)(yay|paru)\s+(?!.*--sudoflags)")
 
 
 def apply_privilege(command: str, privilege_cmd: str) -> str:
@@ -806,6 +845,8 @@ def apply_privilege(command: str, privilege_cmd: str) -> str:
     'pkexec' → grafischer Polkit-Dialog, 'sudo' → sudo -n (nur mit NOPASSWD-Regel)."""
     if privilege_cmd in ("dashboard", "orbwise"):
         command = _PKEXEC_RE.sub(lambda m: f"{m.group(1)}sudo ", command)
+        # yay/paru rufen sudo selbst auf – mit -A kommt auch dafür der Passwortdialog der Oberfläche
+        command = _AUR_RE.sub(lambda m: f"{m.group(1)}{m.group(2)} --sudoflags -A ", command)
         return _SUDO_RE.sub(lambda m: f"{m.group(1)}sudo -A{_SUDO_OWN_FLAGS.sub('', m.group(2))} ", command)
     if privilege_cmd == "pkexec":
         return _SUDO_RE.sub(lambda m: f"{m.group(1)}pkexec ", command)

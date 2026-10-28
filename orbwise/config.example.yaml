@@ -92,8 +92,8 @@ tools:
   # update_timeout: 3600   # seconds for a full system update
   # max_output_chars: 6000 # command output passed to the model is cut to this length
   max_steps: 25            # max. model steps (tool rounds) per request; then a summary + "continue"
-  # jail_writable: []      # Auto mode runs shell commands isolated (bubblewrap): only the project folder (coding) and
-                           # a private /tmp are writable – extra folders that may be written without asking
+  # jail_writable: []      # "Read + edit files" runs builds/tests isolated (bubblewrap, no network): only the project
+                           # folder (coding) and a private /tmp are writable – extra folders that may be written to
   disabled: []             # switch off tools or whole groups, e.g. [routine_tools, weather] – saves context
   extra: []                # thin wrappers that are off by default (ps, systemctl, df … – the model uses run_shell
                            # for them), switch back on: [sysadmin] or single ones like [list_directory, ssh_connect]

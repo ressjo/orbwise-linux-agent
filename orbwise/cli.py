@@ -273,10 +273,10 @@ def cmd_doctor(args) -> None:
                          "result pages are scraped (ddgs) – to avoid bot blocking set tools.brave_api_key"))
     from . import jail
     jail_ok, jail_why = jail.available(force=True)
-    line(jail_ok, T("Isolation für Auto (bubblewrap): Shell-Befehle ohne Rückfrage laufen im Käfig",
-                    "Isolation for Auto (bubblewrap): shell commands without asking run in a cage") if jail_ok
-         else T("Isolation für Auto (bubblewrap) fehlt – Shell-Befehle fragen auch bei Auto nach",
-                "Isolation for Auto (bubblewrap) missing – shell commands ask in Auto too"), jail_why)
+    line(jail_ok, T("Isolation für „Lesen + Bearbeiten“ (bubblewrap): Bauen und Tests laufen im Käfig ohne Netz",
+                    "Isolation for “Read + edit” (bubblewrap): builds and tests run caged without network") if jail_ok
+         else T("Isolation (bubblewrap) fehlt – bei „Lesen + Bearbeiten“ fragen Bauen und Tests nach",
+                "Isolation (bubblewrap) missing – in “Read + edit” builds and tests ask"), jail_why)
     print(T("Coding-Sandbox und GitHub:", "Coding sandbox and GitHub:"))
     from . import github
     from . import sandbox as sbx

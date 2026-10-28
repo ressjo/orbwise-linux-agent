@@ -239,7 +239,7 @@ def test_mail_protection_lasts_while_the_mail_is_in_the_chat(cfg, memory, imap):
         return False
 
     async def scenario():
-        agent.auto_mode = "auto"  # ohne Mail liefe mkdir ohne Rückfrage
+        agent.auto_mode = "files"  # ohne Mail liefe mkdir ohne Rückfrage (in Auto gilt der Schutz bewusst nicht)
         await agent.run('/tool mail_read {"uid": 4}', emit, confirm)
         await agent.run('/tool run_shell {"command": "mkdir -p ~/x"}', emit, confirm)  # neue Anfrage, gleicher Chat
         assert asked == ["run_shell"]

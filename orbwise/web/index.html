@@ -202,8 +202,8 @@
             <div class="chip-menu hidden" id="auto-menu" role="menu">
               <button type="button" role="menuitemradio" data-auto="off"><b>Aus</b><small>Jeder Shell-Befehl fragt vorher.</small></button>
               <button type="button" role="menuitemradio" data-auto="read"><b>Nur lesen</b><small>Lesende Befehle (ls, df, git status …) laufen ohne Rückfrage.</small></button>
-              <button type="button" role="menuitemradio" data-auto="files"><b>Lesen + Dateien bearbeiten</b><small>Dazu Dateien im eigenen Home anlegen und ändern. Löschen fragt weiter.</small></button>
-              <button type="button" role="menuitemradio" data-auto="auto"><b>Auto</b><small>Alles ohne Root – Shell-Befehle isoliert (nur Projekt bzw. /tmp schreibbar). Löschen, sudo, Senden ins Netz, Autostart und Zugangsdaten fragen weiter.</small></button>
+              <button type="button" role="menuitemradio" data-auto="files"><b>Lesen + Dateien bearbeiten</b><small>Dazu Dateien im Home ändern; Bauen und Tests laufen isoliert ohne Netz. Löschen, Netz und sudo fragen. Der sichere Mittelweg.</small></button>
+              <button type="button" role="menuitemradio" data-auto="auto"><b>Auto</b><small>Alles läuft ohne Rückfrage, auch Server, Docker und Netz. Nur sudo fragt nach dem Passwort, Pushen und Mails senden fragen. Risiko: Inhalte aus Webseiten/Mails könnten Befehle auslösen.</small></button>
               <p class="auto-hint hidden" id="auto-jail-hint"></p>
             </div>
           </div>

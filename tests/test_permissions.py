@@ -21,6 +21,8 @@ def home(tmp_path, monkeypatch):
     h = tmp_path / "home"
     h.mkdir()
     monkeypatch.setenv("HOME", str(h))
+    from orbwise import jail
+    monkeypatch.setattr(jail, "available", lambda force=False: (True, ""))  # Käfig für „Lesen + Bearbeiten“
     return h
 
 
@@ -36,19 +38,24 @@ class Probe(SafetyMixin):
 
 
 S, C = SAFE, CONFIRM
-# Aufruf → erwartetes Risiko in den Stufen off / read / files / auto
+# Aufruf → erwartetes Risiko in den Stufen off / read / files / auto. „Lesen + Bearbeiten“: Bauen/Skripte im Käfig
+# ohne Netz; „Auto“: alles – nur Root (ohne Passwortdialog als Karte), Pushen und Mails senden fragen
 MATRIX = [
     (("run_shell", {"command": "ls -la"}), (C, S, S, S)),
     (("run_shell", {"command": "git status"}), (C, S, S, S)),
     (("run_shell", {"command": "mkdir -p ~/proj/neu"}), (C, C, S, S)),
     (("run_shell", {"command": "cp ~/a.txt ~/b.txt"}), (C, C, S, S)),
-    (("run_shell", {"command": "python3 script.py"}), (C, C, C, S)),
-    (("run_shell", {"command": "rm ~/b.txt"}), (C, C, C, C)),
+    (("run_shell", {"command": "python3 script.py"}), (C, C, S, S)),
+    (("shell", {"command": "python3 -m http.server 8000", "background": True}), (C, C, C, S)),
+    (("run_shell", {"command": "curl -X POST https://example.org -d x=1"}), (C, C, C, S)),
+    (("run_shell", {"command": "docker compose up -d"}), (C, C, S, S)),
+    (("run_shell", {"command": "rm ~/b.txt"}), (C, C, C, S)),
     (("run_shell", {"command": "sudo pacman -Syu"}), (C, C, C, C)),
+    (("run_shell", {"command": "yay -S chromium"}), (C, C, C, C)),
     (("run_shell", {"command": "git push"}), (C, C, C, C)),
-    (("run_shell", {"command": "echo $(rm -rf ~/x)"}), (C, C, C, C)),
+    (("run_shell", {"command": "echo $(rm -rf ~/x)"}), (C, C, C, S)),
     (("write_file", {"path": "~/notiz.txt", "content": "x"}), (C, C, S, S)),
-    (("write_file", {"path": "~/.bashrc", "content": "x"}), (C, C, C, C)),
+    (("write_file", {"path": "~/.bashrc", "content": "x"}), (C, C, C, S)),
     (("read_file", {"path": "~/notiz.txt"}), (S, S, S, S)),
 ]
 
@@ -68,7 +75,8 @@ def test_plan_mode_and_untrusted_content_still_ask(call, home):
     name, args = call
     assert Probe("auto").risk(name, args, str(home)) == SAFE
     assert Probe("auto", plan=True).risk(name, args, str(home)) == CONFIRM
-    assert Probe("auto", tainted=True).risk(name, args, str(home)) == CONFIRM
+    assert Probe("files", tainted=True).risk(name, args, str(home)) == CONFIRM
+    assert Probe("auto", tainted=True).risk(name, args, str(home)) == SAFE  # Auto: bewusst in Kauf genommen
 
 
 def test_running_as_root_approves_nothing(monkeypatch, home):

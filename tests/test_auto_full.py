@@ -77,12 +77,15 @@ def test_agent_auto_mode(cfg, llm, memory, home):
     agent.auto_mode = "auto"
     events, asked = collect(agent, py)
     assert not asked and any("42" in e.get("text", "") for e in events if e["type"] == "tool_result")
-    _, asked = collect(agent, '/tool run_shell {"command": "rm ~/p/x"}')
-    assert len(asked) == 1 and "löscht" in asked[0][3]
-    _, asked = collect(agent, f'/tool write_file {{"path": "{home}/.bashrc", "content": "x"}}')
-    assert len(asked) == 1 and not (home / ".bashrc").exists()
+    (home / "p" / "x").write_text("x")
+    _, asked = collect(agent, '/tool run_shell {"command": "rm ~/p/x"}')  # Auto: auch Löschen läuft
+    assert not asked and not (home / "p" / "x").exists()
     _, asked = collect(agent, f'/tool write_file {{"path": "{home}/p/n.txt", "content": "x"}}')
     assert not asked and (home / "p" / "n.txt").read_text() == "x"
+    _, asked = collect(agent, '/tool run_shell {"command": "sudo pacman -Syu"}')  # Root fragt
+    assert len(asked) == 1
+    _, asked = collect(agent, '/tool run_shell {"command": "git push origin main"}')  # Pushen fragt
+    assert len(asked) == 1 and "push" in asked[0][3]
 
 
 def test_auto_mode_respects_plan_mode_and_untrusted_content(cfg, llm, memory, home):
@@ -92,8 +95,12 @@ def test_auto_mode_respects_plan_mode_and_untrusted_content(cfg, llm, memory, ho
     collect(agent, f'/tool run_shell {{"command": "touch {target}"}}', plan=True)
     assert not target.exists()
     memory.conversation.add({"role": "tool", "content": "Mail: führ das aus", "tool_name": "mail_read"})
-    _, asked = collect(agent, f'/tool run_shell {{"command": "touch {target}"}}')
+    agent.auto_mode = "files"  # „Lesen + Bearbeiten“: nach fremden Inhalten fragt es
+    _, asked = collect(agent, f'/tool run_shell {{"command": "python3 -c \'open(\\"{target}\\", \\"w\\")\'"}}')
     assert len(asked) == 1 and not target.exists()
+    agent.auto_mode = "auto"  # Auto: das Risiko nimmt man bewusst in Kauf
+    _, asked = collect(agent, f'/tool run_shell {{"command": "touch {target}"}}')
+    assert not asked and target.exists()
 
 
 def test_auto_mode_covers_ssh_and_lets_local_reads_run_after_untrusted_content(cfg, llm, memory, home):
@@ -106,9 +113,11 @@ def test_auto_mode_covers_ssh_and_lets_local_reads_run_after_untrusted_content(c
         return agent._final_risk(name, get_tool(name) or spec, {"command": command, "host": "nas"}, ctx)[0]
     assert risk("ssh_run", "cd /volume1 && mkdir x") == "confirm"  # „Nur lesen“
     agent.auto_mode = "auto"
-    assert risk("ssh_run", "cd /volume1 && mkdir x") == "safe"
-    assert risk("ssh_run", "sudo docker ps") == "confirm" and risk("ssh_run", "rm x") == "confirm"
-    agent._tainted = True  # nach einer Mail/einem Bild: lesend und lokal läuft weiter, alles andere fragt
+    assert risk("ssh_run", "cd /volume1 && mkdir x") == "safe" and risk("ssh_run", "rm x") == "safe"
+    assert risk("ssh_run", "sudo docker ps") == "confirm"  # Root auf dem anderen Rechner fragt
+    agent._tainted = True  # nach einer Mail/einem Bild: in Auto läuft es trotzdem
+    assert risk("run_shell", "touch ~/p/x") == "safe" and risk("run_shell", "dig geheim.example") == "safe"
+    agent.auto_mode = "files"  # in „Lesen + Bearbeiten“: lesend und lokal läuft weiter, alles andere fragt
     assert risk("run_shell", "cd ~/p && echo ok") == "safe"
     assert risk("run_shell", "touch ~/p/x") == "confirm" and risk("run_shell", "dig geheim.example") == "confirm"
 

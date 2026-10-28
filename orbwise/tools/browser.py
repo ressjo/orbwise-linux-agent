@@ -9,8 +9,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import platform
+import re
 import shutil
+import stat
 import tempfile
+import zipfile
 from pathlib import Path
 
 from ..lang import T
@@ -23,8 +27,100 @@ UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chr
 TIMEOUT = 45
 
 
+# Fehlt Chromium, holt Orbwise sich Googles „chrome-headless-shell“ (Chrome for Testing) – ohne Root, nur für sich
+CFT_URL = "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json"
+
+
+def own_dir() -> Path:
+    return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "orbwise" / "chromium"
+
+
+def _declined_file() -> Path:
+    return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local" / "state") / "orbwise" / "chromium-declined"
+
+
+def _own_binary() -> str | None:
+    exe = own_dir() / "chrome-headless-shell-linux64" / "chrome-headless-shell"
+    return str(exe) if exe.is_file() and os.access(exe, os.X_OK) else None
+
+
 def binary() -> str | None:
-    return next((b for b in (shutil.which(n) for n in BROWSERS) if b), None)
+    return next((b for b in (shutil.which(n) for n in BROWSERS) if b), None) or _own_binary()
+
+
+async def _download(url: str, target: Path, progress) -> None:
+    import httpx
+    async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+        async with client.stream("GET", url) as r:
+            r.raise_for_status()
+            total, done, shown = int(r.headers.get("content-length") or 0), 0, 0
+            with open(target, "wb") as f:
+                async for chunk in r.aiter_bytes(1 << 20):
+                    f.write(chunk)
+                    done += len(chunk)
+                    if total and done * 10 // total > shown:
+                        shown = done * 10 // total
+                        await progress(f"{shown * 10} % ")
+
+
+def _unpack(archive: Path, dest: Path) -> None:
+    """Zip entpacken – mit den Ausführungsrechten aus dem Archiv (zipfile übernimmt sie nicht von selbst)."""
+    with zipfile.ZipFile(archive) as z:
+        for info in z.infolist():
+            path = Path(z.extract(info, dest))
+            mode = info.external_attr >> 16
+            if mode & 0o111:
+                path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+
+async def ensure(ctx: ToolContext) -> str | None:
+    """Chromium da? Sonst einmal fragen (im Auto-Modus nicht) und chrome-headless-shell herunterladen. Eine Ablehnung
+    wird gemerkt. Liefert den Pfad oder None."""
+    if (exe := binary()):
+        return exe
+    if platform.machine() not in ("x86_64", "AMD64") or _declined_file().exists():
+        return None
+    if getattr(ctx.agent, "auto_mode", "") != "auto":
+        if not ctx.confirm:
+            return None
+        decision = await ctx.confirm(ctx.call_id, "chromium_download", {"target": str(own_dir())}, T(
+            "Für Webseiten, die sich nicht direkt lesen lassen: Chromium (headless, ~100 MB, von Google) nach "
+            f"{own_dir()} herunterladen – ohne Root, nur für Orbwise.",
+            "For web pages that can't be read directly: download Chromium (headless, ~100 MB, from Google) to "
+            f"{own_dir()} – no root, only for Orbwise."))
+        if not (decision[0] if isinstance(decision, tuple) else decision):
+            _declined_file().parent.mkdir(parents=True, exist_ok=True)
+            _declined_file().write_text("1\n", encoding="utf-8")
+            return None
+    import httpx
+    try:
+        await ctx.output(T("Lade Chromium herunter … ", "Downloading Chromium … "))
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+            info = (await client.get(CFT_URL)).json()
+        url = next(d["url"] for d in info["channels"]["Stable"]["downloads"]["chrome-headless-shell"]
+                   if d["platform"] == "linux64")
+        dest = own_dir()
+        dest.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="orbwise-chromium-", dir=dest) as tmp:
+            archive = Path(tmp) / "chrome.zip"
+            await _download(url, archive, ctx.output)
+            shutil.rmtree(dest / "chrome-headless-shell-linux64", ignore_errors=True)
+            await asyncio.to_thread(_unpack, archive, dest)
+    except (httpx.HTTPError, OSError, KeyError, StopIteration, ValueError, zipfile.BadZipFile) as e:
+        log.warning("Chromium-Download fehlgeschlagen: %s", e)
+        await ctx.output(T(f"\nDownload fehlgeschlagen: {e}\n", f"\nDownload failed: {e}\n"))
+        return None
+    exe = _own_binary()
+    if exe:
+        rc, out = await _run([exe, "--version"], stderr=True)
+        if rc != 0:  # meist fehlen Systembibliotheken (libnss3, libatk …)
+            text = out.decode(errors="replace")
+            missing = ", ".join(sorted(set(re.findall(r"(lib[\w.+-]+\.so[\w.]*)", text)))) or text[-200:]
+            await ctx.output(T(f"\nChromium startet nicht – fehlende Bibliotheken: {missing}\n",
+                               f"\nChromium does not start – missing libraries: {missing}\n"))
+            return None
+        await ctx.output(T("fertig.\n", "done.\n"))
+    return exe
 
 
 def _argv(exe: str, profile: str, extra: list[str], url: str) -> list[str]:
@@ -34,8 +130,9 @@ def _argv(exe: str, profile: str, extra: list[str], url: str) -> list[str]:
             *(["--no-sandbox"] if root else []), *extra, url]
 
 
-async def _run(argv: list[str]) -> tuple[int | None, bytes]:
-    p = await asyncio.create_subprocess_exec(*argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+async def _run(argv: list[str], stderr: bool = False) -> tuple[int | None, bytes]:
+    p = await asyncio.create_subprocess_exec(*argv, stdout=asyncio.subprocess.PIPE,
+                                             stderr=asyncio.subprocess.STDOUT if stderr else asyncio.subprocess.DEVNULL,
                                              start_new_session=True)
     try:
         out, _ = await asyncio.wait_for(p.communicate(), TIMEOUT)

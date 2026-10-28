@@ -631,7 +631,7 @@ async def code_shell(
         prefix = sandbox.exec_argv(binary, ctx.sandbox["name"], cwd, command, None if background else limit)
     elif ctx.jail and background:  # Auto ohne Rückfrage: auch Hintergrund-Jobs im Käfig (siehe jail.py)
         from .. import jail
-        prefix = jail.argv(command, cwd, ctx.jail["writable"], ctx.jail["key"])
+        prefix = jail.argv(command, cwd, ctx.jail["writable"], ctx.jail["key"], bool(ctx.jail.get("net")))
     elif ctx.jail:
         from .. import jail
         rc, out = await jail.run(ctx, command, cwd, limit, "shell")
@@ -776,7 +776,8 @@ async def _shot_bytes(ctx: ToolContext, url: str, width: int, height: int) -> by
                 await client.get(url)
         except httpx.HTTPError:
             raise RuntimeError(_no_server(url)) from None
-    binary = next((b for b in (shutil.which(n) for n in BROWSERS) if b), None)
+    from . import browser
+    binary = await browser.ensure(ctx)  # System-Chromium oder Orbwises eigenes (lädt es bei Bedarf)
     if not binary:
         raise RuntimeError("Kein Chromium/Chrome gefunden – z. B. `sudo apt install chromium` (oder die Sandbox "
                            "nutzen, dort ist er dabei).")

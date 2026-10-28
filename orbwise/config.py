@@ -150,7 +150,7 @@ class ToolsConfig(BaseModel):
     extra: list[str] = Field(default_factory=list)
     # so viele Modellschritte (Tool-Runden) darf eine Aufgabe höchstens brauchen
     max_steps: int = 25
-    # Auto-Modus: Shell-Befehle ohne Rückfrage laufen isoliert (bubblewrap) – zusätzlich schreibbare Ordner
+    # „Lesen + Bearbeiten“: Bauen/Tests laufen isoliert ohne Netz (bubblewrap) – zusätzlich schreibbare Ordner
     jail_writable: list[str] = Field(default_factory=list)
     update_timeout: int = 3600
     max_output_chars: int = 6000

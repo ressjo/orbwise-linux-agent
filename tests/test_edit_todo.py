@@ -68,10 +68,10 @@ def test_edit_follows_auto_modes(cfg, llm, memory, home):
     assert not collect(agent, call) and f.read_text() == "Hallo Orbwise\n"
     rc = home / ".bashrc"
     rc.write_text("alias a=b\n")
-    for mode in ("files", "auto"):
-        agent.auto_mode = mode
-        hidden = "/tool edit_file " + json.dumps({"path": str(rc), "old_text": "a=b", "new_text": "a=c"})
-        assert len(collect(agent, hidden)) == 1  # Startdatei fragt weiter
+    hidden = "/tool edit_file " + json.dumps({"path": str(rc), "old_text": "a=b", "new_text": "a=c"})
+    assert len(collect(agent, hidden)) == 1  # „Lesen + Bearbeiten“: Startdatei fragt weiter
+    agent.auto_mode = "auto"
+    assert not collect(agent, hidden) and "a=c" in rc.read_text()  # Auto: alles außer Root, Pushen, Senden
 
 
 def test_todo_list_lives_in_the_answer_and_survives_compaction(cfg, llm, memory):

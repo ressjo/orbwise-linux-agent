@@ -123,13 +123,15 @@ class AskpassBroker:
         return bool(self.helper and self.helper.exists())
 
     @contextlib.contextmanager
-    def grant(self, command: str):
-        """Umgebung für genau einen privilegierten Befehl; das Token verfällt danach."""
+    def grant(self, command: str, use_cache: bool = True):
+        """Umgebung für genau einen privilegierten Befehl; das Token verfällt danach. use_cache=False: das gemerkte
+        Passwort gilt nicht – der Dialog erscheint auf jeden Fall (Auto-Modus: er ist dort die einzige Rückfrage)."""
         if not self.ready():
             yield {}
             return
         token = secrets.token_urlsafe(32)
-        info = {"uses": 0, "command": command, "local": not REMOTE.get(), "from_cache": False, "candidate": None}
+        info = {"uses": 0, "command": command, "local": not REMOTE.get(), "from_cache": False, "candidate": None,
+                "no_cache": not use_cache}
         self.tokens[token] = info
         try:
             yield {"SUDO_ASKPASS": str(self.helper), "ORBWISE_ASKPASS_URL": self.url, "ORBWISE_ASKPASS_TOKEN": token}
@@ -197,7 +199,7 @@ class AskpassBroker:
             return info["secret"]
         if info is None or info["uses"] >= MAX_USES:
             return None
-        cached = self._cached[0] if info["local"] and self.cached_until() else None
+        cached = self._cached[0] if info["local"] and not info.get("no_cache") and self.cached_until() else None
         if cached is not None and info["uses"] == 0:  # gemerktes Passwort, ohne erneut zu fragen
             info["uses"], info["from_cache"] = 1, True
             return cached
@@ -244,9 +246,9 @@ BROKER: AskpassBroker | None = None
 
 
 @contextlib.contextmanager
-def privileged_env(command: str):
+def privileged_env(command: str, use_cache: bool = True):
     if BROKER is None:
         yield {}
     else:
-        with BROKER.grant(command) as env:
+        with BROKER.grant(command, use_cache) as env:
             yield env
