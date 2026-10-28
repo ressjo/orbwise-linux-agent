@@ -630,6 +630,7 @@ textarea.ui-dialog-input { height: auto; padding: 9px 12px; resize: vertical; }
 .chip-menu button:disabled { opacity: .55; cursor: default; background: none; }
 .chip-menu button.on { background: var(--accent-soft); }
 .chip-menu button.on b::after { content: " ✓"; color: var(--accent); }
+.chip-menu .auto-hint { font-size: var(--fs-xs); color: var(--muted); padding: 8px 12px 4px; border-top: 1px solid var(--border); margin-top: 4px; max-width: 320px; }
 .chip-menu .think-source { font-size: var(--fs-xs); color: var(--muted); padding: 8px 12px 4px; border-top: 1px solid var(--border); margin-top: 4px; cursor: help; }
 .chip-menu b { font-size: var(--fs-base); font-weight: 600; }
 .chip-menu small { font-size: var(--fs-sm); color: var(--muted); line-height: 1.35; }

@@ -267,9 +267,9 @@ TEXTS = {
         "jail_declined": "[Im Käfig gescheitert: der Befehl wollte außerhalb von {allowed} schreiben; der Nutzer hat die "
                          "Ausführung ohne Isolation abgelehnt.]",
         "auto_root": "Orbwise läuft als root – Auto gibt darum nichts frei",
-        "tainted_confirm": "Nach dem Lesen einer E-Mail, Webseite, eines PDFs oder Bildschirm-/Bildinhalts fragt alles nach, "
-                           "was etwas verändert oder startet (Lesen und Suchen laufen weiter) – Schutz vor versteckten "
-                           "Anweisungen. Nur erlauben, wenn du diese Aktion selbst verlangt hast.",
+        "tainted_confirm": "Im Chat steht Inhalt aus einer E-Mail, Webseite, einem PDF oder Bild – er könnte versteckte "
+                           "Anweisungen enthalten. Darum fragt alles nach, was etwas verändert, auch im Auto-Modus "
+                           "(Lesen und Suchen laufen weiter). Nur erlauben, wenn du das selbst verlangt hast.",
         "plan_mode": "PLANMODUS: Führe noch nichts aus, was etwas verändert. Du darfst mit lesenden Werkzeugen "
                      "nachsehen (Systeminfo, Dateien, Pakete suchen, Status …), um den Plan konkret zu machen. "
                      "Antworte dann NUR mit dem Plan als Markdown: Überschrift „## Plan“, darunter nummerierte "
@@ -343,9 +343,9 @@ TEXTS = {
         "jail_declined": "[Failed in the isolation: the command wanted to write outside {allowed}; the user declined "
                          "running it without isolation.]",
         "auto_root": "Orbwise runs as root – so Auto approves nothing",
-        "tainted_confirm": "After reading an e-mail, web page, PDF or screen/image content, everything that changes or "
-                           "starts something asks first (reading and searching keep running) – protection against "
-                           "hidden instructions. Only allow it if you asked for this action yourself.",
+        "tainted_confirm": "This chat contains content from an e-mail, web page, PDF or image – it could hold hidden "
+                           "instructions. So everything that changes something asks first, also in Auto mode (reading "
+                           "and searching keep running). Only allow it if you asked for this yourself.",
         "plan_mode": "PLAN MODE: Do not run anything that changes something yet. You may look things up with "
                      "read-only tools (system info, files, package search, status …) to make the plan concrete. "
                      "Then answer ONLY with the plan in Markdown: heading “## Plan”, then numbered steps – for each "

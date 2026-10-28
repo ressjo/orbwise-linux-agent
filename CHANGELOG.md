@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **"New chat" did nothing** (and other buttons stopped updating the page): a hint in the Auto menu shared a CSS
+  class with the thinking menu, which removed it – every later UI update failed. Chat switches right after an answer
+  now also wait for the clean-up (journal, search index) instead of being refused.
+- **Auto mode seemed ignored in the same chat:** after a web page, e-mail, PDF or image, everything that changes
+  something asks – in every auto mode, as long as that content is in the chat. The card now says so clearly and offers
+  **Allow + stop asking in this chat** (asks again when new outside content arrives).
+
 ### Changed
 - **Auto mode isolates shell commands (bubblewrap).** What Auto runs without asking now runs in a cage: only the
   project folder (coding) and a private `/tmp` are writable, the rest of the system and your home read-only;

@@ -247,8 +247,9 @@
     $("auto-label").textContent = AUTO_LABEL[S.autoMode];
     // Auto gibt Shell-Befehle nur im Käfig (bubblewrap) frei – fehlt er, fragen sie nach
     const noJail = S.jail && !S.jail.ok && !S.root;
-    $("auto-jail-hint").classList.toggle("hidden", !noJail);
-    if (noJail) $("auto-jail-hint").textContent = L("Ohne Isolation fragen Shell-Befehle auch bei Auto nach: ",
+    const hint = $("auto-jail-hint");
+    if (hint) hint.classList.toggle("hidden", !noJail);
+    if (hint && noJail) hint.textContent = L("Ohne Isolation fragen Shell-Befehle auch bei Auto nach: ",
       "Without isolation, shell commands ask in Auto too: ") + S.jail.reason;
     $("btn-auto").classList.toggle("root", !!S.root);
     $("btn-auto").title = S.root
@@ -1888,6 +1889,7 @@
     else cmd.textContent = ev.name === "run_shell" || ev.name === "shell"
       ? (ev.args.workdir ? `(${ev.args.workdir}) ` : "") + ev.args.command : `${ev.name}(${JSON.stringify(ev.args, null, 2)})`;
     $("confirm-reason").textContent = ev.reason && !editable.length ? L("Grund: ", "Reason: ") + ev.reason : "";
+    $("confirm-trust").classList.toggle("hidden", !ev.trustable || !!editable.length);
     $("confirm-voice").textContent = editable.length ? L("Senden nur per Klick – „Nein“ bricht ab.", "Send only by click – “no” cancels.")
       : A.micReady ? L("oder sag „Ja“ bzw. „Nein“", "or say “yes” or “no”") : "";
     $("confirm-voice").classList.remove("listening");
@@ -1930,7 +1932,7 @@
     }
   }
 
-  function answerConfirm(approved) {
+  function answerConfirm(approved, trust = false) {
     if (!S.confirm) return;
     const editing = !$("confirm-form").classList.contains("hidden");
     const args = editing && approved ? editedFields() : null;
@@ -1941,12 +1943,16 @@
       toast(L("Bitte einen Empfänger eintragen.", "Please enter a recipient."));
       return;
     }
-    send(args ? { type: "confirm", id: S.confirm.id, approved, args } : { type: "confirm", id: S.confirm.id, approved });
+    send(args ? { type: "confirm", id: S.confirm.id, approved, args }
+      : { type: "confirm", id: S.confirm.id, approved, ...(trust ? { trust: true } : {}) });
+    if (trust) toast(L("In diesem Chat fragt fremder Inhalt nicht mehr nach – bis neuer dazukommt.",
+      "Outside content no longer asks in this chat – until new content arrives."));
     const act = acts[S.confirm.id];
     if (act && approved) { act.classList.remove("waiting"); act._start = performance.now(); act.querySelector(".act-status").textContent = ""; }
     closeConfirm();
   }
   $("confirm-yes").onclick = () => answerConfirm(true);
+  $("confirm-trust").onclick = () => answerConfirm(true, true);
   $("confirm-no").onclick = () => answerConfirm(false);
 
   // ---------------------------------------------------------------- Mikrofon

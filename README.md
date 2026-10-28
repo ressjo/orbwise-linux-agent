@@ -1067,7 +1067,8 @@ Orbwise can run commands on your system, so:
 - **Read-only commands** (`ls`, `df`, `systemctl status`, `grep`, …) run directly. While an e-mail, a fetched web page,
   an attached PDF or screen/image content is part of the chat (it could contain hidden instructions), every action
   that changes or starts something (writing files, memory, reminders, shell commands that change things, opening
-  websites or apps, …) needs confirmation. Reading and searching keep running (reading files, web search, fetching
+  websites or apps, …) needs confirmation – whatever the auto mode. If you trust that content, **Allow + stop asking
+  in this chat** on the card switches back to your auto mode for this chat until new outside content arrives. Reading and searching keep running (reading files, web search, fetching
   pages, purely local read-only commands like `cd`, `ls`, `echo`) – what leaves the machine is still checked by the
   data-leak guard.
 - **Data-leak guard:** whatever leaves the machine – web searches, fetched URLs, opened websites, `curl`/`wget`

@@ -546,6 +546,15 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
             finally:
                 self._think, self._think_level, self._plan, self._approved_plan = None, None, False, ""
 
+    def trust_chat(self) -> None:
+        """„In diesem Chat nicht mehr fragen“: fremde Inhalte (Mail, Webseite, PDF, Bild), die bis jetzt im Chat stehen,
+        lösen keine Rückfragen mehr aus – es gilt wieder der eingestellte Modus. Kommt danach Neues dazu, fragt es
+        wieder."""
+        conv = self.memory.conversation
+        conv.meta["trusted_from"] = len(conv.history)
+        conv.save()
+        self._tainted = False
+
     async def compact_now(self, emit: Emit, focus: str = "") -> bool:
         """„/compact [Fokus]“: den offenen Chat jetzt zusammenfassen (wie Claude Code)."""
         async with self.lock:
@@ -583,10 +592,11 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         self._turn_stamp = prompts.note_stamp(self.cfg, now)
         conv = self.memory.conversation
         # Steht noch Mail-Text (oder ein angehängtes PDF) im Prompt, kann er auch in späteren Anfragen wirken – dann
-        # bleibt der Schutz an
-        self._tainted = any(m.get("docs") or m.get("role") == "tool" and is_taint_source(
+        # bleibt der Schutz an. Ausnahme: was vor „Chat vertrauen“ kam (trust_chat) – Neues danach schützt wieder.
+        trusted = int(conv.meta.get("trusted_from") or 0)
+        self._tainted = any((m := conv.history[i]).get("docs") or m.get("role") == "tool" and is_taint_source(
                                 m.get("tool_name", ""), m.get("full_content") or m.get("content") or "")
-                            for m in conv.epoch_messages())
+                            for i in conv.epoch_indices() if i >= trusted)
         start_len = len(conv.history)
         await emit({"type": "state", "state": "thinking"})
         self._turn_memories = await self._memories_for(user_text)

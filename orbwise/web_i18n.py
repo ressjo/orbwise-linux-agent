@@ -201,6 +201,8 @@ HTML_EN = [
     ('id="boot-sub">Orbwise startet …<', 'id="boot-sub">Orbwise is starting …<'),
     ('>Startet von selbst, sobald alles geladen ist<', '>Starts by itself once everything has loaded<'),
     ('Abbrechen <kbd>', 'Cancel <kbd>'),
+    ('title="Fremde Inhalte, die bis jetzt in diesem Chat stehen, lösen keine Rückfragen mehr aus – es gilt wieder dein Auto-Modus. Neue fremde Inhalte fragen wieder.">Erlauben + in diesem Chat nicht mehr fragen',
+     'title="Outside content that is in this chat so far no longer causes confirmations – your auto mode applies again. New outside content asks again.">Allow + stop asking in this chat'),
     ('Ausführen <kbd>', 'Run <kbd>'),
     ('oder sag „Ja“ bzw. „Nein“', 'or say “yes” or “no”'),
     ('Root-Rechte benötigt', 'Root privileges required'),

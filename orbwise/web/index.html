@@ -204,7 +204,7 @@
               <button type="button" role="menuitemradio" data-auto="read"><b>Nur lesen</b><small>Lesende Befehle (ls, df, git status …) laufen ohne Rückfrage.</small></button>
               <button type="button" role="menuitemradio" data-auto="files"><b>Lesen + Dateien bearbeiten</b><small>Dazu Dateien im eigenen Home anlegen und ändern. Löschen fragt weiter.</small></button>
               <button type="button" role="menuitemradio" data-auto="auto"><b>Auto</b><small>Alles ohne Root – Shell-Befehle isoliert (nur Projekt bzw. /tmp schreibbar). Löschen, sudo, Senden ins Netz, Autostart und Zugangsdaten fragen weiter.</small></button>
-              <p class="think-source hidden" id="auto-jail-hint"></p>
+              <p class="auto-hint hidden" id="auto-jail-hint"></p>
             </div>
           </div>
           <div class="chip-split" id="think-wrap">
@@ -469,6 +469,7 @@
       <p class="confirm-reason" id="confirm-reason"></p>
       <div class="modal-actions">
         <button class="btn deny" id="confirm-no">Abbrechen <kbd>Esc</kbd></button>
+        <button class="btn hidden" id="confirm-trust" title="Fremde Inhalte, die bis jetzt in diesem Chat stehen, lösen keine Rückfragen mehr aus – es gilt wieder dein Auto-Modus. Neue fremde Inhalte fragen wieder.">Erlauben + in diesem Chat nicht mehr fragen</button>
         <button class="btn approve" id="confirm-yes">Ausführen <kbd>Enter</kbd></button>
       </div>
       <div class="confirm-voice" id="confirm-voice">oder sag „Ja“ bzw. „Nein“</div>

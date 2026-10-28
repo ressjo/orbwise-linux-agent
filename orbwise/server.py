@@ -244,8 +244,11 @@ class Hub:
         editable = list(spec.editable) if spec else []
         if editable:
             self.editable_pending.add(call_id)
+        # Rückfrage nur wegen fremder Inhalte im Chat? Dann bietet die Karte „in diesem Chat nicht mehr fragen“ an
+        trustable = prompts.text(self.cfg, "tainted_confirm") in (reason or "")
         await self.broadcast({"type": "confirm_request", "id": call_id, "name": name, "args": args,
-                              "reason": reason, "summary": describe_call(name, args, self.cfg), "editable": editable})
+                              "reason": reason, "summary": describe_call(name, args, self.cfg), "editable": editable,
+                              **({"trustable": True} if trustable else {})})
         self.speaker.say(spoken_confirm(name, args, self.cfg))
         try:
             # zum Bearbeiten (z. B. einer Mail) mehr Zeit lassen
@@ -1513,6 +1516,20 @@ def create_app(cfg: Config) -> FastAPI:
         if agent.busy():
             raise HTTPException(409, "Orbwise arbeitet gerade – bitte kurz warten oder STOP drücken")
 
+    async def settle(timeout: float = 90) -> None:
+        """Vor einem Chatwechsel: läuft eine Antwort, sofort ablehnen. Hält nur das Nachbereiten der letzten Antwort
+        (Tagebuch, Suchindex, Platz schaffen) oder ein Modellvorgang den Agenten, darauf warten – die Oberfläche
+        meldet dann schon „bereit“, ein Klick auf „Neuer Chat“ soll nicht ins Leere gehen."""
+        if getattr(agent, "_turn_open", False):
+            raise HTTPException(409, T("Orbwise antwortet gerade – erst abwarten oder STOP drücken.",
+                                       "Orbwise is answering – wait for it or press STOP."))
+        deadline = time.monotonic() + timeout
+        while agent.busy():
+            if getattr(agent, "_turn_open", False) or time.monotonic() > deadline:
+                raise HTTPException(409, T("Orbwise arbeitet gerade – bitte kurz warten oder STOP drücken.",
+                                           "Orbwise is busy – please wait a moment or press STOP."))
+            await asyncio.sleep(0.1)
+
     def settings_info() -> dict:
         """Was der Server gerade anwendet – alle Fenster zeigen dasselbe (Handy und PC, Telegram nutzt es auch).
         think: None, solange noch keine Oberfläche es gesetzt hat; root: Auto-Erleichterungen sind dann aus."""
@@ -1575,7 +1592,7 @@ def create_app(cfg: Config) -> FastAPI:
         mode = str((await request.json()).get("mode", ""))
         if mode not in ("tools", "coding"):
             raise HTTPException(400, "Unbekannter Modus")
-        not_busy()
+        await settle()
         old = mode_info()["mode"]
         if isinstance(llm, LLMRouter) and old != mode and old not in mode_models():
             remember_mode_model(old, llm.active)  # damit der Rückweg wieder das bisherige Modell nimmt
@@ -1645,7 +1662,7 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.post("/api/chats")
     async def chat_new():
-        not_busy()
+        await settle()
         memory.new_chat()
         await chat_switched()
         return {"id": memory.active.chat_id}
@@ -1653,7 +1670,7 @@ def create_app(cfg: Config) -> FastAPI:
     @app.post("/api/chats/{chat_id}/activate")
     async def chat_activate(chat_id: str):
         chat_or_404(chat_id)
-        not_busy()
+        await settle()
         memory.switch_chat(chat_id)
         await chat_switched()
         return {"id": chat_id}
@@ -1681,7 +1698,7 @@ def create_app(cfg: Config) -> FastAPI:
         chat_or_404(chat_id)
         was_active = chat_id == memory.active.chat_id
         if was_active or chat_id == memory.conversation.chat_id:
-            not_busy()  # weder den offenen Chat noch den einer laufenden Routine/Telegram-Anfrage
+            await settle()  # weder den offenen Chat noch den einer laufenden Routine/Telegram-Anfrage
         from . import sandbox as sbx
         from . import workspace
         await asyncio.to_thread(sbx.remove, cfg, sbx.container_name(chat_id))  # Sandbox des Chats wegräumen
@@ -1923,6 +1940,8 @@ def create_app(cfg: Config) -> FastAPI:
                     await hub.submit(str(data.get("text", "")), images=names)
                 elif t == "confirm":
                     changes = data.get("args") if isinstance(data.get("args"), dict) else None
+                    if data.get("trust") and data.get("approved") and str(data.get("id")) in hub.pending:
+                        hub.agent.trust_chat()  # fremde Inhalte bis hierher: wieder der eingestellte Modus
                     hub.resolve(str(data.get("id")), bool(data.get("approved")), changes)
                 elif t == "question_answer":  # Antwort auf question (None/leer = abgebrochen)
                     answers = data.get("answers") if isinstance(data.get("answers"), list) else None
