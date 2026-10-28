@@ -934,7 +934,7 @@
       el.className = "thought-log";
       el.innerHTML = "<summary></summary><pre></pre>";
       a.el.insertBefore(el, a.el.querySelector(".tools") || a.el.querySelector(".body"));  // zuerst gedacht, dann gehandelt
-      t = this.byMsg[id] = { el, pre: el.querySelector("pre"), text: "", ms: 0, since: 0, queued: false, own: false, auto: false };
+      t = this.byMsg[id] = { el, pre: el.querySelector("pre"), text: "", ms: 0, since: 0, queued: false, own: false, auto: false, msg: a };
       // Hat der Nutzer selbst auf- oder zugeklappt, bleibt es so
       el.addEventListener("toggle", () => { if (t.auto) t.auto = false; else t.own = true; });
       return t;
@@ -953,6 +953,8 @@
       if (!text) return;
       const t = this.block(id);
       if (!t.since) {  // (wieder) am Denken
+        // solange gedacht wird, steht der Block ganz unten – nach Text oder Werkzeug sonst oben außer Sicht
+        t.msg.el.insertBefore(t.el, t.msg.live && t.msg.live.parentNode === t.msg.el ? t.msg.live : null);
         t.since = performance.now();
         t.el.classList.add("live");
         this.summary(t);
@@ -982,6 +984,7 @@
       t.el.classList.remove("live");
       this.summary(t);
       this.setOpen(t, false);
+      t.msg.el.insertBefore(t.el, t.msg.el.querySelector(".tools"));  // zugeklappt wieder oben: zuerst gedacht, dann gehandelt
     },
     finish(id) {
       const t = this.byMsg[id];

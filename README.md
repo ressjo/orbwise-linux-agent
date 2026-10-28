@@ -60,7 +60,7 @@ What Orbwise can do for you – each line links to the details.
 |---|---|
 | **System** | Updates (pacman/yay/paru, apt), packages, services and logs, processes, network, disk clean-up, shutdown – any shell command, with confirmation where it matters |
 | **Files & NAS** | Find files by name or content, read and write them, open them in the right app – also on a mounted NAS |
-| **Web** | Search (Brave Search API, SearXNG or ddgs), read pages, open websites → [Web search](#web-search) |
+| **Web** | Search (Brave Search API, SearXNG or ddgs), read pages – JavaScript pages and bot blocks via headless Chromium, with a screenshot only Orbwise sees – open websites → [Web search](#web-search) |
 | **Servers** | Docker via Portainer (check and pull new images, update stacks) and SSH to other machines → [Docker](#docker-via-portainer) · [SSH](#ssh-nas-servers) |
 | **Smart home** | Lights, heating, covers and sensors through Home Assistant → [Home Assistant](#home-assistant) |
 | **Documents** | Paperless-ngx: search, ask about contents, tag and file → [Paperless](#paperless-ngx) |

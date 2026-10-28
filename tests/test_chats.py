@@ -248,3 +248,13 @@ def test_wake_phrase_from_the_model_name():
     from orbwise.config import Config, wake_phrase
     assert Config().assistant_name == "Orbwise"
     assert wake_phrase("hey_jarvis_v0.1") == "Hey Jarvis" and wake_phrase("/m/hey_mycroft.onnx") == "Hey Mycroft"
+
+
+def test_history_returns_the_whole_chat_after_a_reload(client):
+    with client:
+        conv = client.app.state.memory.active
+        for i in range(60):  # früher kamen nur die letzten 40 Nachrichten zurück
+            conv.add({"role": "user", "content": f"Frage {i}"})
+            conv.add({"role": "assistant", "content": f"Antwort {i}"})
+        msgs = client.get("/api/history").json()["messages"]
+        assert len(msgs) == 120 and msgs[0]["content"] == "Frage 0"

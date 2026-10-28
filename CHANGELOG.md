@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- **Reload kept only the last 40 messages** – the whole chat is shown again.
+- **Live thinking slid out of view:** when the model thought again after text or a tool, the open thinking block sat
+  above it; now it stays at the bottom while thinking and moves back to the top when collapsed.
+- **Activity panel showed no tools** (same cause as "New chat": the failing UI update).
 - **"New chat" did nothing** (and other buttons stopped updating the page): a hint in the Auto menu shared a CSS
   class with the thinking menu, which removed it – every later UI update failed. Chat switches right after an answer
   now also wait for the clean-up (journal, search index) instead of being refused.

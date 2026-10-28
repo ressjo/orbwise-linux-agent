@@ -13,6 +13,7 @@ from urllib.parse import quote_plus
 
 import httpx
 
+from ..lang import T
 from . import proc
 from .registry import ToolContext, tool
 
@@ -232,9 +233,11 @@ async def fetch_page(ctx: ToolContext, url: str, fmt: str = "text") -> str:
         async with httpx.AsyncClient(timeout=25, follow_redirects=True, headers={"User-Agent": UA}) as client:
             r = await client.get(url)
     except httpx.HTTPError as e:
-        return f"Abruf fehlgeschlagen: {e}"
-    if r.status_code >= 400:
+        return await _with_browser(ctx, url, fmt, f"Abruf fehlgeschlagen: {e}")
+    if r.status_code in (404, 410):
         return f"Abruf fehlgeschlagen: HTTP {r.status_code}"
+    if r.status_code >= 400:  # oft eine Bot-Sperre (403, 429, 503) – ein echter Browser kommt meist durch
+        return await _with_browser(ctx, url, fmt, f"Abruf fehlgeschlagen: HTTP {r.status_code}")
     ctype = r.headers.get("content-type", "")
     if "html" not in ctype and "text" not in ctype and "json" not in ctype:
         return f"Kein Textinhalt ({ctype})."
@@ -246,4 +249,22 @@ async def fetch_page(ctx: ToolContext, url: str, fmt: str = "text") -> str:
                                            include_formatting=True, include_tables=True) or ""
         else:
             text = await asyncio.to_thread(trafilatura.extract, r.text, include_links=False) or ""
+        if len(text.strip()) < MIN_TEXT:  # Seite baut ihren Inhalt erst per JavaScript auf
+            return await _with_browser(ctx, url, fmt, text.strip() or "(kein lesbarer Text gefunden)")
     return proc.clip_saved(text.strip() or "(kein lesbarer Text gefunden)", ctx.limit(), "webseite")
+
+
+MIN_TEXT = 200  # weniger lesbarer Text → mit Chromium nachladen
+
+
+async def _with_browser(ctx: ToolContext, url: str, fmt: str, fallback: str) -> str:
+    """Einfacher Abruf gescheitert oder leer: Seite mit headless Chromium rendern (siehe browser.py)."""
+    from . import browser
+    if ctx.output:
+        await ctx.output(T("Lade die Seite mit dem Browser …\n", "Loading the page with the browser …\n"))
+    try:
+        text = await browser.browse(ctx, url, fmt)
+    except Exception as e:  # noqa: BLE001 – dann bleibt es beim Ergebnis des einfachen Abrufs
+        log.info("Browser-Abruf fehlgeschlagen: %s", e)
+        text = None
+    return proc.clip_saved(text, ctx.limit(), "webseite") if text else fallback

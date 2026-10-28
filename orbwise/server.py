@@ -1162,13 +1162,13 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.get("/api/history")
     async def history():
-        """Der ganze sichtbare Chat (die letzten 40 Nachrichten) – auch komprimierte Teile; dazu, wo eine
+        """Der ganze sichtbare Chat – alle Nachrichten, auch komprimierte Teile; dazu, wo eine
         Komprimierung stattfand (Trenner mit aufklappbarer Zusammenfassung)."""
         from . import attachments
         conv = memory.active
         shown = [(i, m) for i, m in enumerate(conv.history)
                  if m["role"] in ("user", "assistant")
-                 and (m.get("content") or m.get("attachments") or m.get("docs") or m.get("shots"))][-40:]
+                 and (m.get("content") or m.get("attachments") or m.get("docs") or m.get("shots"))]
         epochs = []
         for ep in conv.epochs[1:]:
             at = next((pos for pos, (i, _) in enumerate(shown) if i >= ep.get("start", 0)), None)
