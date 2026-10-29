@@ -380,6 +380,9 @@
       case "context":
         showContext(ev);
         return;
+      case "usage":  // Token dieses Chats (Sitzung) – nach jedem Modellschritt
+        if (!ev.routine) { S.usage = ev; renderTokenLine(); }
+        return;
       case "state":
         if (ev.routine) orb.addSatellite("rt:" + ev.routine, "⟳ " + ev.routine.toUpperCase());
         if (ev.state === "idle") {  // abgebrochene Werkzeuge nicht hängen lassen
@@ -2882,8 +2885,40 @@
   function kTok(n) {
     return n >= 1000 ? `${fmt(n / 1000, n >= 10000 ? 0 : 1)}k` : String(n);
   }
+  // Zeile unter der Eingabe: Kontext jetzt, wie viele Token des Fensters im Grafikspeicher bzw. RAM liegen (KV-Cache),
+  // und die Token der ganzen Sitzung (dieses Chats). Ohne Angaben bleibt der Hinweistext des Modus.
+  function renderTokenLine() {
+    const el = document.querySelector(".composer-hint");
+    if (!el) return;
+    const c = S.ctx, u = S.usage, m = lastMem, hintText = (MODE_TEXT[S.mode] || MODE_TEXT.tools).hint;
+    const parts = [], tips = [];
+    if (c && c.window) {
+      const used = c.real || c.tokens || c.used || 0;
+      parts.push(L(`Kontext ${kTok(used)} / ${ctxLabel(c.window)}`, `Context ${kTok(used)} / ${ctxLabel(c.window)}`));
+      tips.push(L(`Kontext: ${used} von ${c.window} Token des Kontextfensters sind gerade belegt.`,
+                  `Context: ${used} of ${c.window} tokens of the context window are in use right now.`));
+      if (m && m.available && m.kv_vram_share != null) {
+        const vram = Math.round(c.window * m.kv_vram_share), ram = c.window - vram;
+        parts.push(L(`${ctxLabel(vram)} im VRAM · ${ctxLabel(ram)} im RAM`, `${ctxLabel(vram)} in VRAM · ${ctxLabel(ram)} in RAM`));
+        tips.push(L(`Platz für ${vram} Token im Grafikspeicher und ${ram} im RAM (KV-Cache des Kontextfensters) – was im RAM liegt, ist langsamer.`,
+                    `Room for ${vram} tokens in VRAM and ${ram} in RAM (KV cache of the context window) – what is in RAM is slower.`));
+      }
+    }
+    if (u && (u.read || u.written)) {
+      parts.push(L(`Sitzung ${kTok(u.read + u.written)} Token`, `Session ${kTok(u.read + u.written)} tokens`));
+      tips.push(L(`Sitzung (dieser Chat): ${u.read} Token gelesen, ${u.written} geschrieben, ${u.cached} aus dem Cache übernommen, ${u.requests} Anfragen ans Modell.`,
+                  `Session (this chat): ${u.read} tokens read, ${u.written} written, ${u.cached} reused from the cache, ${u.requests} model requests.`));
+    }
+    el.textContent = parts.length ? parts.join(" · ") : hintText;
+    el.title = parts.length ? [...tips, "", hintText].join("\n") : "";
+  }
+
   function showContext(c) {
     if (!c || !c.window) return;
+    S.ctx = c;
+    if (c.usage && !c.routine) S.usage = c.usage;
+    if (!lastMem) loadCtxMemory();
+    renderTokenLine();
     // Feste Grenze: das Kontextfenster des Modells. Vorne die echte Prompt-Größe laut Server, sonst die Schätzung
     // (beide in echten Token) – so wandert die Grenze nicht mehr mit Reserve, Denkmodus oder gelernter Schätzung.
     const used = c.real || c.tokens || c.used;
@@ -3097,6 +3132,7 @@
     return r.verdict ? L("passt", "fits") : "";
   }
   function showMemory(m) {
+    renderTokenLine();
     const box = $("tele-mem");
     if (!m || (!m.available && !m.reason)) { box.hidden = true; return; }  // Demo: nichts zu zeigen
     box.hidden = false;
@@ -5153,7 +5189,7 @@
     renderSandboxChip();
     markModeTabs();
     $("input").placeholder = MODE_TEXT[S.mode].placeholder;
-    document.querySelector(".composer-hint").textContent = MODE_TEXT[S.mode].hint;
+    renderTokenLine();
     const chip = $("project-chip");
     chip.classList.toggle("unset", !S.project);
     $("project-label").textContent = S.project ? S.project.replace(/^\/home\/[^/]+/, "~") : L("Projektordner wählen", "Choose project folder");
@@ -5519,6 +5555,8 @@
       const dividers = {};
       for (const ep of h.epochs || []) dividers[ep.at] = ep;
       S.turns = h.turns || 0;
+      S.usage = h.usage || null;
+      renderTokenLine();
       h.messages.forEach((m, i) => {
         if (dividers[i]) { chat.appendChild(compactDivider(dividers[i].summary, dividers[i].ts)); }
         if (m.goal_nudge) { addSystem(L("↻ weiter am Ziel", "↻ continuing with the goal")); return; }

@@ -1193,7 +1193,7 @@ def create_app(cfg: Config) -> FastAPI:
                               **({"images": m["shots"]} if m.get("shots") else {}),
                               **({"files": [attachments.doc_info(d) for d in m["docs"]]} if m.get("docs") else {})}
                              for i, m in shown],
-                "turns": max(turns.values(), default=0), "epochs": epochs}
+                "turns": max(turns.values(), default=0), "epochs": epochs, "usage": agent.chat_usage(conv)}
 
     @app.post("/api/chats/active/revert")
     async def revert_turn(request: Request):

@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **Token line under the input:** instead of the static hint it shows the context in use (e.g. *Context 12k / 64k*),
+  how many tokens of the window fit in VRAM and in RAM (KV cache) and the tokens of this chat session (read +
+  written; the tooltip lists read, written, reused from the cache and the number of model requests). Kept per chat.
 - **Several GPUs:** Orbwise detects all cards and counts their memory together (recommendations, context of new
   models with a buffer per card, telemetry with each card in the tooltip). The model page gets a **GPUs** section:
   automatic split by free VRAM or a custom share per card (`--tensor-split`, 0 % = not used), kept per model.

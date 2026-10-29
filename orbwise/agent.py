@@ -369,6 +369,20 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
         }
         return messages
 
+    def _count_usage(self, stats: dict) -> None:
+        """Token dieses Chats mitzählen (im Chat gespeichert): neu gelesen, aus dem Cache übernommen, geschrieben."""
+        meta = self.memory.conversation.meta
+        u = meta.setdefault("usage", {"read": 0, "cached": 0, "written": 0, "requests": 0})
+        u["read"] = u.get("read", 0) + int(stats.get("prompt_tokens") or 0)
+        u["cached"] = u.get("cached", 0) + int(stats.get("prompt_cached") or 0)
+        u["written"] = u.get("written", 0) + int(stats.get("tokens") or 0)
+        u["requests"] = u.get("requests", 0) + 1
+
+    def chat_usage(self, conv=None) -> dict:
+        u = dict(((conv or self.memory.conversation).meta.get("usage")) or {})
+        return {"read": u.get("read", 0), "cached": u.get("cached", 0), "written": u.get("written", 0),
+                "requests": u.get("requests", 0)}
+
     def model_window(self) -> int:
         """Kontextfenster des aktiven Modells (vom Server gemeldet, sonst aus der Config)."""
         num_ctx = getattr(self.llm, "context_size", None)
@@ -924,13 +938,15 @@ class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMix
                                        if stats.get(k) is not None})
                         if stats.get("tps"):
                             await emit({"type": "llm_stats", **stats})
+                        self._count_usage(stats)
+                        await emit({"type": "usage", **self.chat_usage()})
                         total = prompt_size(stats, (self.last_context or {}).get("used", 0))
                         if self.last_context is not None and total:
                             self.last_context["real"] = total
                             if stats.get("prompt_cached") is not None:
                                 self.last_context["cached"] = stats["prompt_cached"]
                             self.learn_tokens(self.last_context.get("used", 0), total)
-                            await emit({"type": "context", **self.last_context})
+                            await emit({"type": "context", **self.last_context, "usage": self.chat_usage()})
             except LLMError:  # z. B. Kontext zu voll – die Zeile in der Aktivität nicht ewig „läuft“ lassen
                 current = ""
                 await phase("done", error=True, seconds=round(time.monotonic() - started, 1))
