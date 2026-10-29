@@ -387,6 +387,7 @@
         return;
       case "usage":  // Token dieses Chats (Sitzung) – nach jedem Modellschritt
         if (!ev.routine) { S.usage = ev; renderTokenLine(); }
+        if (Date.now() - (T.memAt || 0) > 5000) { T.memAt = Date.now(); loadCtxMemory(); }  // Prompt-Cache ändert sich
         return;
       case "state":
         if (ev.routine) orb.addSatellite("rt:" + ev.routine, "⟳ " + ev.routine.toUpperCase());
@@ -2906,13 +2907,21 @@
       parts.push(L(`Kontext ${kTok(used)} / ${ctxLabel(c.window)}`, `Context ${kTok(used)} / ${ctxLabel(c.window)}`));
       tips.push(L(`Kontext: ${used} von ${c.window} Token des Kontextfensters sind gerade belegt.`,
                   `Context: ${used} of ${c.window} tokens of the context window are in use right now.`));
-      if (m && m.available && m.kv_vram_share != null) {
-        const vram = Math.round(c.window * m.kv_vram_share), ram = c.window - vram;
-        const tok = (n) => (n ? ctxLabel(n) : "0");
-        parts.push(L(`KV-Cache ${tok(vram)} im VRAM · ${tok(ram)} im RAM`, `KV cache ${tok(vram)} in VRAM · ${tok(ram)} in RAM`));
-        tips.push(L(`KV-Cache (Arbeitsspeicher des Modells für das Kontextfenster): Platz für ${vram} Token im Grafikspeicher und ${ram} im RAM – was im RAM liegt, ist langsamer. (Nicht der Prompt-Cache von llama-server, der fertig gelesene Chats im RAM aufhebt.)`,
-                    `KV cache (the model's working memory for the context window): room for ${vram} tokens in VRAM and ${ram} in RAM – what is in RAM is slower. (Not llama-server's prompt cache, which keeps already read chats in RAM.)`));
+      // KV-Cache nur, wenn davon etwas im (langsamen) RAM liegt – sonst sagt es nichts
+      if (m && m.available && m.kv_vram_share != null && m.kv_vram_share < 0.99) {
+        const ram = c.window - Math.round(c.window * m.kv_vram_share);
+        parts.push(L(`KV-Cache ${ctxLabel(ram)} im RAM (langsam)`, `KV cache ${ctxLabel(ram)} in RAM (slow)`));
+        tips.push(L(`Vom Arbeitsspeicher des Modells für das Kontextfenster (KV-Cache) liegen ${ram} Token im RAM statt im Grafikspeicher – das bremst. Ein kleineres Kontextfenster passt ganz in den VRAM.`,
+                    `Of the model's working memory for the context window (KV cache), ${ram} tokens are in RAM instead of VRAM – that slows it down. A smaller context window fits fully in VRAM.`));
       }
+    }
+    const pc = m && m.prompt_cache;
+    if (pc && pc.prompts) {  // llama-server hebt fertig gelesene Chats im RAM auf (--cache-ram)
+      const gbTxt = (mib) => fmt(mib / 1024, mib >= 10240 ? 0 : 1);
+      parts.push(L(`Prompt-Cache ${pc.prompts} ${pc.prompts === 1 ? "Chat" : "Chats"} · ${gbTxt(pc.mib)}/${gbTxt(pc.limit_mib)} GB im RAM`,
+                   `Prompt cache ${pc.prompts} ${pc.prompts === 1 ? "chat" : "chats"} · ${gbTxt(pc.mib)}/${gbTxt(pc.limit_mib)} GB in RAM`));
+      tips.push(L(`Prompt-Cache: llama-server hebt ${pc.prompts} fertig gelesene Chats (${pc.tokens} Token) im RAM auf – nach Chatwechsel, Routine oder Telegram muss er sie nicht neu einlesen. Belegt ${Math.round(pc.mib)} von ${Math.round(pc.limit_mib)} MiB (--cache-ram).`,
+                  `Prompt cache: llama-server keeps ${pc.prompts} already read chats (${pc.tokens} tokens) in RAM – after a chat switch, routine or Telegram it doesn't have to read them again. Uses ${Math.round(pc.mib)} of ${Math.round(pc.limit_mib)} MiB (--cache-ram).`));
     }
     if (u && (u.read || u.written)) {
       parts.push(L(`Sitzung ${kTok(u.read + u.written)} Token`, `Session ${kTok(u.read + u.written)} tokens`));

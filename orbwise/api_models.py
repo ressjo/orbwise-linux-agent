@@ -474,11 +474,26 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
         if not isinstance(llm, LLMRouter):
             return {"available": False}
         info, reason = await llm.memory_info()
+        cache = await asyncio.to_thread(prompt_cache) if llm.profile.server is not None else None
         if not info:
             return {"available": False, "profile": llm.active, "ctx": llm.context_size, "reason": reason,
-                    "managed": llm.profile.server is not None, "backend": llm.profile.backend}
+                    "managed": llm.profile.server is not None, "backend": llm.profile.backend, "prompt_cache": cache}
         return {"available": True, "profile": llm.active, "backend": llm.profile.backend,
-                **llm_memory.summary(info), "recommend": llm_memory.recommend(info, gpu), "gpu": gpu}
+                **llm_memory.summary(info), "recommend": llm_memory.recommend(info, gpu), "gpu": gpu,
+                "prompt_cache": cache}
+
+    def prompt_cache() -> dict | None:
+        """Prompt-Cache des laufenden llama-server im RAM – aus dessen Log (die API meldet ihn nicht)."""
+        from . import llm_memory
+        from .llm_router import _log_path
+        try:
+            with open(_log_path(), "rb") as f:
+                f.seek(0, 2)
+                f.seek(max(0, f.tell() - 300_000))
+                text = f.read().decode(errors="replace")
+        except OSError:
+            return None
+        return llm_memory.prompt_cache(text)
 
     @app.post("/api/context/test")
     async def context_test(quick: bool = False):

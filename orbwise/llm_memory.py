@@ -236,3 +236,30 @@ def estimate_from_gguf(path: str, ctx: int, command: str = "", env: dict | None 
             "kv_vram": 0 if kv_in_ram else int(kv * share), "kv_ram": kv if kv_in_ram else int(kv * (1 - share)),
             "model_vram": int(size * share), "model_ram": int(size * (1 - share)),
             "model_ram_offload": int(size * (1 - share))}
+
+
+# ---------------------------------------------------------------- Prompt-Cache im RAM (llama-server --cache-ram)
+# llama-server hebt fertig gelesene Prompts (Chats) im RAM auf und meldet nach jeder Anfrage im Log:
+#   srv  update:  - cache state: 3 prompts, 1234.567 MiB (limits: 8192.000 MiB, …)
+#   srv  update:    - prompt 0x…:   12345 tokens, checkpoints:  2,   456.789 MiB
+_CACHE_STATE = re.compile(r"cache state:\s*(\d+)\s+prompts?,\s*([\d.]+)\s*MiB\s*\(limits?:\s*([\d.]+)\s*MiB")
+_CACHE_PROMPT = re.compile(r"-\s*prompt\s+\S+:\s*(\d+)\s+tokens")
+
+
+def prompt_cache(log_text: str) -> dict | None:
+    """Letzter Stand des Prompt-Caches des laufenden Servers: {prompts, mib, limit_mib, tokens} – None, wenn der Server
+    (noch) nichts gemeldet hat (älteres llama.cpp, kein --cache-ram)."""
+    text = (log_text or "").rsplit("===== Starte:", 1)[-1]  # nur der laufende Server, nicht ein Stand vor dem Neustart
+    last = None
+    for m in _CACHE_STATE.finditer(text):
+        last = m
+    if not last:
+        return None
+    tokens = 0
+    for line in text[last.end():].splitlines()[1:]:
+        hit = _CACHE_PROMPT.search(line)
+        if not hit:
+            break
+        tokens += int(hit.group(1))
+    return {"prompts": int(last.group(1)), "mib": float(last.group(2)), "limit_mib": float(last.group(3)),
+            "tokens": tokens}

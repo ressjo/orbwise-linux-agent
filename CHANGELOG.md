@@ -12,7 +12,8 @@ All notable changes to this project are documented here. The format follows
   chat and fixes confirmed findings and failing checks automatically (re-checking, up to two rounds).
 
 ### Changed
-- **Token line:** the VRAM/RAM part is labelled *KV cache* (and shows "0" instead of "0k").
+- **Token line:** shows llama-server's **prompt cache in RAM** (`--cache-ram`: how many already read chats it keeps,
+  GB used of the limit – read from the server log); the KV cache only appears when part of it spills into RAM.
 - **Activity panel:** the newest step is at the top of its group; the "context in memory" tile with the green bar is
   gone (the line under the input shows it); with several GPUs the GPU and VRAM tiles show one row per card (GPU 1,
   GPU 2 …); tokens/s and the context tile now update live while the model thinks, too.
