@@ -39,21 +39,28 @@ def _push_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
         repo = github.repo_of(github.sandbox_origin(ctx.sandbox))
     else:
         repo = github.remote_repo(path) if path else None
+    if not repo and args.get("repo"):
+        return CONFIRM, f"verbindet das Projekt mit github.com/{args['repo']} (origin) und lädt es hoch"
     branch = args.get("branch") or "den aktuellen Branch"
     return CONFIRM, f"lädt {branch} nach github.com/{repo or '?'} hoch"
 
 
 @tool("Lädt den aktuellen Branch des Projekts (in der Sandbox: der Arbeitskopie) zu GitHub hoch (git push -u origin). "
       "Vorher mit git committen – oder message angeben, dann werden alle Änderungen vorher committet. Liefert den "
-      "Link, um einen Pull Request zu erstellen.", risk=_push_risk, enabled=_connected)
+      "Link, um einen Pull Request zu erstellen. Hat das Projekt noch kein GitHub-Repo (kein origin), repo angeben: "
+      "dann wird es damit verbunden (notfalls git init und erster Commit) und hochgeladen.",
+      risk=_push_risk, enabled=_connected)
 async def github_push(
     ctx: ToolContext,
     branch: Annotated[str, "Optional: Branch (Standard: der aktuelle)"] = "",
     message: Annotated[str, "Optional: Commit-Nachricht – committet vorher alle Änderungen"] = "",
+    repo: Annotated[str, "Optional: owner/name eines (leeren) Repos, falls das Projekt noch keins hat"] = "",
 ) -> str:
     path = ctx.cwd
     if not path:
         return "Kein Projektordner gewählt."
+    if repo.strip() and not (github.sandbox_origin(ctx.sandbox) if ctx.sandbox else github.remote_repo(path)):
+        return await _connect(ctx, repo, message)
     if ctx.sandbox:
         return await _push_sandbox(ctx, ctx.sandbox, branch, message)
     try:
@@ -90,3 +97,28 @@ async def _push_sandbox(ctx: ToolContext, sb: dict, branch: str, message: str) -
     if res.get("compare"):
         return f"Branch {res['branch']} ist auf GitHub: {res['url']}\nPull Request erstellen: {res['compare']}"
     return f"Branch {res['branch']} wurde gepusht."
+
+
+async def _connect(ctx: ToolContext, repo: str, message: str) -> str:
+    """Projekt ohne origin mit einem Repo verbinden und hochladen (siehe github.connect_and_push)."""
+    agent = ctx.agent
+    project = (agent.real_project() if agent is not None else None) or (ctx.sandbox or {}).get("project") or ctx.cwd
+    identity = None
+    try:
+        identity = await github.user(ctx.cfg)
+    except Exception:  # noqa: BLE001 – dann die git-Identität des Rechners
+        pass
+    try:
+        out = await asyncio.to_thread(github.connect_and_push, ctx.cfg, project, repo, ctx.sandbox, message, identity)
+    except (github.GitHubError, OSError) as e:
+        return f"Verbinden/Push fehlgeschlagen: {e}"
+    finally:
+        if ctx.sandbox and agent is not None:
+            agent.memory.conversation.save()
+    text = f"Projekt ist mit github.com/{out.get('repo') or repo} verbunden, Branch {out['branch']} ist hochgeladen"
+    if out.get("files"):
+        text += f" (erster Commit mit {out['files']} Dateien)"
+    if out.get("skipped"):
+        text += ". Nicht committet, weil Zugangsdaten: " + ", ".join(out["skipped"])
+    return text + (f"\n{out['url']}" if out.get("url") else "")
+

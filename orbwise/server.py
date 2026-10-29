@@ -1318,7 +1318,7 @@ def create_app(cfg: Config) -> FastAPI:
         from . import github
         path = agent.project_dir() if memory.mode == "coding" else None
         if not path:
-            return {"path": "", "repo": None, "branch": None, "sandbox": False}
+            return {"path": "", "repo": None, "branch": None, "sandbox": False, "has_commits": False}
 
         sb = agent.sandbox_state()
 
@@ -1335,7 +1335,9 @@ def create_app(cfg: Config) -> FastAPI:
                 branch = None
             return repo, branch
         repo, branch = await asyncio.to_thread(read)
-        return {"path": path, "repo": repo, "branch": branch or None, "sandbox": bool(sb)}
+        real = agent.real_project() or path
+        commits = await asyncio.to_thread(lambda: github.is_repo(real) and github.has_commits(real))
+        return {"path": path, "repo": repo, "branch": branch or None, "sandbox": bool(sb), "has_commits": commits}
 
     @app.get("/api/sandbox")
     async def sandbox_get():
@@ -1458,6 +1460,33 @@ def create_app(cfg: Config) -> FastAPI:
             return await asyncio.to_thread(github.push, cfg, path)
         except (github.GitHubError, OSError) as e:
             raise HTTPException(400, str(e)) from e
+
+    @app.post("/api/github/connect")
+    async def github_connect(request: Request):
+        """„Zu GitHub pushen“ ohne origin: Projekt mit einem (leeren) Repo verbinden – notfalls git init und erster
+        Commit – und hochladen. Der Klick im Dialog ist die Freigabe."""
+        from . import github
+        coding_chat()
+        not_busy()
+        project = agent.real_project()
+        if not project:
+            raise HTTPException(409, T("Kein Projektordner gewählt.", "No project folder chosen."))
+        data = await request.json()
+        sb = agent.sandbox_state()
+        identity = None
+        try:
+            identity = await github.user(cfg)
+        except Exception as e:  # noqa: BLE001 – dann die git-Identität des Rechners
+            log.info("GitHub-Konto nicht abrufbar: %s", e)
+        try:
+            out = await asyncio.to_thread(github.connect_and_push, cfg, project, str(data.get("repo", "")), sb,
+                                          str(data.get("message") or ""), identity)
+        except (github.GitHubError, OSError) as e:
+            raise HTTPException(400, str(e)) from e
+        finally:
+            if sb:
+                memory.conversation.save()  # gemerktes origin der Arbeitskopie
+        return out
 
     @app.post("/api/jobs/{job_id}/stop")
     async def stop_job(job_id: str):

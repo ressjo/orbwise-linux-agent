@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Push to GitHub from the project menu**, also for projects without a GitHub repo yet: pick one of your (freshly
+  created, empty) repos, Orbwise adds it as `origin` (never re-points an existing one), runs `git init` and a first
+  commit if needed – files with credentials like `.env` or keys stay out and are reported – and pushes. Works for the
+  sandbox working copy too; the `github_push` tool takes an optional `repo` for the same in chat.
 - **Code check (🛡 Check, `/review`)** in coding mode: runs the project's tests/linters/type check and security
   scanners (ruff, bandit, semgrep, gitleaks, shellcheck – new in sandbox image `:4`) in the sandbox, then reviews with
   fresh eyes in separate passes (bugs, security, structure), has a sceptical pass prove every finding, reports in the

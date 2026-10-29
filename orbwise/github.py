@@ -268,3 +268,95 @@ def _links(branch: str, repo: str | None) -> dict:
         out["url"] = f"https://github.com/{repo}/tree/{branch}"
         out["compare"] = f"https://github.com/{repo}/compare/{branch}?expand=1"
     return out
+
+
+# ---------------------------------------------------------------- Projekt nachträglich mit einem Repo verbinden
+def has_commits(path: str) -> bool:
+    try:
+        git(["rev-parse", "--verify", "--quiet", "HEAD"], cwd=path)
+        return True
+    except (GitHubError, OSError, subprocess.SubprocessError):
+        return False
+
+
+def is_repo(path: str) -> bool:
+    try:
+        return git(["rev-parse", "--show-toplevel"], cwd=path).strip() == str(Path(path).resolve())
+    except (GitHubError, OSError, subprocess.SubprocessError):
+        return False
+
+
+def connect(path: str, full_name: str) -> dict:
+    """Projektordner mit owner/name verbinden: notfalls `git init`, dann origin eintragen. Ein anderes origin wird nie
+    still umgebogen."""
+    full_name = _repo_name(full_name)
+    url = repo_url(full_name)
+    if not is_repo(path):
+        git(["init", "-q", "-b", "main"], cwd=path)
+    try:
+        current = git(["config", "--get", "remote.origin.url"], cwd=path).strip()
+    except GitHubError:
+        current = ""
+    if current and repo_of(current) != full_name:
+        raise GitHubError(f"Das Projekt hat schon das Remote origin {current} – erst von Hand ändern "
+                          f"(git remote set-url origin {url}).")
+    if not current:
+        git(["remote", "add", "origin", url], cwd=path)
+    return {"repo": full_name, "branch": current_branch(path) if has_commits(path) else "main"}
+
+
+def first_commit(path: str, message: str = "", identity: dict | None = None) -> dict:
+    """Alles committen, was noch nicht im Repo ist (.gitignore gilt) – Dateien mit Zugangsdaten (.env, Schlüssel …)
+    bleiben draußen und werden gemeldet. Liefert {committed, files, skipped}."""
+    from .tools.secretpaths import is_secret_path
+    git(["add", "-A"], cwd=path)
+    staged = [n for n in git(["diff", "--cached", "--name-only", "-z"], cwd=path).split("\0") if n]
+    skipped = [n for n in staged if is_secret_path(Path(path) / n)]
+    if skipped:
+        unstage = ["reset", "-q", "--"] if has_commits(path) else ["rm", "-q", "--cached", "--"]
+        git([*unstage, *skipped], cwd=path)
+    files = len(staged) - len(skipped)
+    if not files:
+        return {"committed": False, "files": 0, "skipped": skipped}
+    ident = []
+    try:
+        has_ident = bool(git(["config", "user.email"], cwd=path).strip())
+    except GitHubError:
+        has_ident = False
+    if identity and not has_ident:
+        ident = ["-c", f"user.name={identity.get('name') or identity.get('login') or 'Orbwise'}",
+                 "-c", f"user.email={identity.get('email') or 'orbwise@localhost'}"]
+    git([*ident, "commit", "-q", "-m", message.strip() or "Erster Commit"], cwd=path)
+    return {"committed": True, "files": files, "skipped": skipped}
+
+
+
+def connect_and_push(cfg: Any, project: str, full_name: str, sb: dict | None = None, message: str = "",
+                     identity: dict | None = None) -> dict:
+    """Projekt mit einem (meist frisch angelegten, leeren) Repo verbinden und hochladen. Ohne Commit wird vorher alles
+    als erster Commit festgehalten. Mit Sandbox geht der Branch der Arbeitskopie hoch; ihr gemerktes origin
+    (sb["origin"]) wird gesetzt – speichern muss der Aufrufer."""
+    if sb:
+        from . import workspace
+        if workspace._git_dir(sb["path"]) is None:
+            raise GitHubError("Die Arbeitskopie der Sandbox ist kein Git-Repo – erst „In Projekt übernehmen“, die "
+                              "Sandbox beenden und dann verbinden.")
+    info = connect(project, full_name)
+    commit = {"committed": False, "files": 0, "skipped": []}
+    try:
+        if sb:
+            sb["origin"] = repo_url(info["repo"])
+            out = push_from_copy(cfg, sb["path"], sb["origin"])
+        else:
+            if not has_commits(project):
+                commit = first_commit(project, message, identity)
+                if not commit["committed"]:
+                    raise GitHubError("Im Projekt ist nichts zum Hochladen (leer oder alles in .gitignore).")
+            out = push(cfg, project)
+    except GitHubError as e:
+        if "fetch first" in str(e) or "non-fast-forward" in str(e):
+            raise GitHubError(f"github.com/{info['repo']} ist nicht leer – dort liegt schon etwas, das hier fehlt "
+                              "(z. B. eine README). Erst holen und zusammenführen: git pull origin <branch> "
+                              "--allow-unrelated-histories.") from e
+        raise
+    return {**out, **_links(out["branch"], info["repo"]), "files": commit["files"], "skipped": commit["skipped"]}

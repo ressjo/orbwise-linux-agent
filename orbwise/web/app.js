@@ -5291,6 +5291,11 @@
     e.stopPropagation();
     sandboxMenu.classList.add("hidden");
     projectMenu.classList.toggle("hidden");
+    const p = S.projectInfo, small = projectMenu.querySelector('[data-project="push"] small');
+    small.textContent = !S.project ? L("Erst einen Projektordner wählen.", "Choose a project folder first.")
+      : p && p.repo ? L(`Branch ${p.branch || "–"} nach github.com/${p.repo}`, `Branch ${p.branch || "–"} to github.com/${p.repo}`)
+      : L("Noch kein GitHub-Repo – mit einem deiner (leeren) Repos verbinden und hochladen.",
+          "No GitHub repo yet – connect to one of your (empty) repos and upload.");
   };
   document.addEventListener("click", (e) => {
     if (!e.target.closest("#project-wrap")) projectMenu.classList.add("hidden");
@@ -5305,6 +5310,13 @@
       .catch(() => {});  // Fehler zeigt api() schon an
   };
   projectMenu.querySelector('[data-project="github"]').onclick = () => { projectMenu.classList.add("hidden"); openGithub(); };
+  // Zu GitHub pushen: mit origin der normale Push, sonst erst mit einem (leeren) Repo verbinden
+  projectMenu.querySelector('[data-project="push"]').onclick = () => {
+    projectMenu.classList.add("hidden");
+    if (!S.project) { toast(L("Erst einen Projektordner wählen.", "Choose a project folder first.")); return; }
+    if (S.projectInfo && S.projectInfo.repo) pushGithub();
+    else openGithub("connect");
+  };
 
   // GitHub-Repo und Branch im Projekt-Chip (bei Sandbox: die der Arbeitskopie)
   let projectInfoSeq = 0;
@@ -5314,6 +5326,7 @@
     let p;
     try { p = await getJSON("/api/project"); } catch { return; }
     if (seq !== projectInfoSeq || !p.path) return;
+    S.projectInfo = p;
     const label = $("project-label"), badge = $("project-branch"), chip = $("project-chip");
     const folder = S.project.replace(/\/+$/, "").split("/").pop();
     label.textContent = p.repo || (p.branch ? folder : S.project.replace(/^\/home\/[^/]+/, "~"));
@@ -5325,9 +5338,11 @@
   }
 
   let ghTimer = null;
-  async function openGithub() {
+  async function openGithub(mode = "clone") {
     openSheet("github");
     const status = $("gh-status"), list = $("gh-repos"), search = $("gh-search");
+    const connect = mode === "connect";
+    $("sheet-github").querySelector("h2").textContent = connect ? L("Mit GitHub verbinden", "Connect to GitHub") : L("Von GitHub klonen", "Clone from GitHub");
     list.innerHTML = "";
     status.textContent = L("Verbinde mit GitHub …", "Connecting to GitHub …");
     let st;
@@ -5344,8 +5359,11 @@
       return;
     }
     const src = { gh: "GitHub-CLI", env: L("Umgebungsvariable", "environment variable"), config: "Config" }[st.source] || st.source;
-    status.textContent = L(`Angemeldet als @${st.login} (${src}) · geklont wird nach ${st.clone_dir}`,
-                           `Signed in as @${st.login} (${src}) · clones go to ${st.clone_dir}`);
+    status.textContent = connect
+      ? L(`Angemeldet als @${st.login} (${src}) · wähle das Repo, in das das Projekt hochgeladen wird – am besten ein frisch angelegtes, leeres.`,
+          `Signed in as @${st.login} (${src}) · pick the repo to upload the project to – ideally a freshly created, empty one.`)
+      : L(`Angemeldet als @${st.login} (${src}) · geklont wird nach ${st.clone_dir}`,
+          `Signed in as @${st.login} (${src}) · clones go to ${st.clone_dir}`);
     const load = async () => {
       list.innerHTML = `<li class="empty">${L("Lade Repos …", "Loading repos …")}</li>`;
       try {
@@ -5358,7 +5376,7 @@
           li.querySelector("small").textContent = repo.description || "";
           li.querySelector(".gh-meta").textContent = (repo.private ? L("privat", "private") : L("öffentlich", "public"))
             + (repo.pushed_at ? " · " + new Date(repo.pushed_at).toLocaleDateString(LOCALE) : "");
-          li.querySelector("button").onclick = () => openRepo(repo, li);
+          li.querySelector("button").onclick = () => connect ? connectRepo(repo, li) : openRepo(repo, li);
           list.appendChild(li);
         }
       } catch { list.innerHTML = `<li class="empty">${L("Repos nicht ladbar.", "Could not load repos.")}</li>`; }
@@ -5397,6 +5415,26 @@
     }
     select.value = repo.default_branch;
     select.disabled = false;
+  }
+  // Projekt ohne GitHub-Repo: mit dem gewählten verbinden (origin), notfalls git init + erster Commit, dann pushen
+  async function connectRepo(repo, li) {
+    const p = S.projectInfo || {};
+    const steps = p.sandbox ? L(`Hochgeladen wird der Branch der Sandbox-Arbeitskopie (${p.branch || "–"}).`, `The sandbox working copy's branch (${p.branch || "–"}) is uploaded.`)
+      : p.has_commits ? L(`Hochgeladen wird der Branch ${p.branch || "–"} mit allen Commits – nicht Committetes bleibt lokal.`, `Branch ${p.branch || "–"} is uploaded with all commits – uncommitted work stays local.`)
+      : L("Das Projekt hat noch keinen Commit: Alle Dateien (ohne .gitignore und ohne Zugangsdaten wie .env oder Schlüssel) werden als „Erster Commit“ festgehalten.",
+          "The project has no commit yet: all files (except .gitignore'd ones and credentials like .env or keys) are recorded as \"First commit\".");
+    if (!await ask(L(`Projekt mit github.com/${repo.full_name} verbinden und hochladen?\n\n${steps}`, `Connect the project to github.com/${repo.full_name} and upload it?\n\n${steps}`),
+                   { ok: L("Verbinden und hochladen", "Connect and upload") })) return;
+    li.classList.add("busy");
+    li.querySelector(".gh-meta").textContent = L("lade hoch …", "uploading …");
+    try {
+      const r = await api("POST", "/api/github/connect", { repo: repo.full_name, message: L("Erster Commit", "First commit") });
+      closeSheet();
+      let text = L(`Verbunden – Branch ${r.branch} ist auf GitHub.`, `Connected – branch ${r.branch} is on GitHub.`);
+      if (r.skipped && r.skipped.length) text += " " + L(`Nicht hochgeladen (Zugangsdaten): ${r.skipped.join(", ")}`, `Not uploaded (credentials): ${r.skipped.join(", ")}`);
+      toastLink(text, r.url, L("Ansehen", "View"));
+      loadProjectInfo();
+    } catch { li.classList.remove("busy"); li.querySelector(".gh-meta").textContent = L("fehlgeschlagen", "failed"); }
   }
   async function cloneRepo(name, branch, li) {
     li.classList.add("busy");

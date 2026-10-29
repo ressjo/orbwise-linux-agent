@@ -57,6 +57,9 @@ HTML_EN = [
      '<b>Choose folder …</b><small>Use a folder on this PC as the project.</small>'),
     ('<b>Von GitHub klonen …</b><small>Eines deiner Repos klonen und als Projekt nehmen.</small>',
      '<b>Clone from GitHub …</b><small>Clone one of your repos and use it as the project.</small>'),
+    ('<b>Zu GitHub pushen …</b><small>Den aktuellen Branch hochladen – oder das Projekt mit einem leeren Repo '
+     'verbinden.</small>',
+     '<b>Push to GitHub …</b><small>Upload the current branch – or connect the project to an empty repo.</small>'),
     ('title="Sandbox: Befehle laufen in einem Container auf einer Arbeitskopie"',
      'title="Sandbox: commands run in a container on a working copy"'),
     ('aria-label="Von GitHub klonen">', 'aria-label="Clone from GitHub">'),
