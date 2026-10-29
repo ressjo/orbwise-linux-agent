@@ -162,3 +162,44 @@ def test_slash_review_starts_the_check(cfg, monkeypatch):
         import time
         time.sleep(0.2)
         assert calls == [False, True, False]
+
+
+def test_stop_ends_the_check_with_the_state_so_far(cfg, llm, memory, caged, monkeypatch):
+    """„Stoppen“ in der Aktivität während „Sicherheit“: Struktur und Gegenprüfung entfallen, der Fund aus „Fehler“
+    steht als nicht gegengeprüft im Bericht, nichts wird automatisch behoben."""
+    import asyncio
+    seen = []
+    agent = Agent(cfg, llm, memory)
+
+    async def fake(self, ctx, kind, description, task):
+        seen.append(task)
+        if "Sicherheit:" in task:
+            assert self.stop_review()
+            await asyncio.sleep(30)  # wird abgebrochen
+        return json.dumps([{"severity": "hoch", "file": "calc.py", "line": 2, "title": "add subtrahiert",
+                            "why": "a - b"}])
+    monkeypatch.setattr(Agent, "run_subagent", fake)
+    events = []
+
+    async def emit(ev):
+        events.append(ev)
+
+    async def confirm(*a):
+        return True
+    result = run(asyncio.wait_for(agent.code_review(emit, confirm), 20))
+    assert result["fix"] == "" and len(seen) == 2  # Fehler + Sicherheit, keine Struktur, keine Gegenprüfung
+    report = memory.conversation.history[-1]["content"]
+    assert "gestoppt" in report and "nicht gegengeprüft" in report and "add subtrahiert" in report
+    stopped = [e for e in events if e["type"] == "tool_result" and e["status"] == "denied"]
+    assert len(stopped) == 1 and stopped[0]["text"] == "gestoppt"
+    assert not agent.stop_review()  # danach läuft nichts mehr
+
+
+def test_stop_without_a_running_check(cfg, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from orbwise.server import create_app
+    monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
+        assert client.post("/api/review/stop").json() == {"stopped": False}

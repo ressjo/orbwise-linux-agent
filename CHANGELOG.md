@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Code check:** the chat shows the current step ("Code check: Security") instead of "waiting for the model", and
+  every running step has a **Stop** button in the activity panel – it ends the check with a report of the state so far
+  (findings marked as not verified) and fixes nothing automatically.
 - **Push to GitHub from the project menu**, also for projects without a GitHub repo yet: pick one of your (freshly
   created, empty) repos, Orbwise adds it as `origin` (never re-points an existing one), runs `git init` and a first
   commit if needed – files with credentials like `.env` or keys stay out and are reported – and pushes. Works for the

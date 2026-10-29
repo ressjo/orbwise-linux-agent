@@ -1506,12 +1506,12 @@
       setBar(live.querySelector(".act-bar i"), ev);
       live._start = performance.now();
       live.querySelector(".ls").textContent = "";
-      live.querySelector(".lt").textContent = ev.calls && ev.calls.length
+      live.querySelector(".lt").textContent = a.reviewStep ? reviewText(a) : ev.calls && ev.calls.length
         ? L(`führt ${ev.calls.join(", ")} aus`, `running ${ev.calls.join(", ")}`) : L("gleich weiter", "continuing");
       return;
     }
     if (live._phase !== ev.id) { live._phase = ev.id; live._start = performance.now(); live.querySelector(".ls").textContent = ""; }
-    const text = phaseText(ev);
+    const text = a.reviewStep ? reviewText(a, phaseText(ev)) : phaseText(ev);
     live.querySelector(".lt").textContent = text;
     live.dataset.phase = ev.phase;
     setBar(live.querySelector(".act-bar i"), ev);
@@ -1648,6 +1648,7 @@
     }
     if (ev.risk === "blocked") el.querySelector(".act-status").textContent = STATUS_TEXT.blocked;
     acts[ev.id] = el;
+    if (ev.name === "code_review") reviewStep(el, ev);
 
     const a = !ev.routine && S.currentMsg && assistants[S.currentMsg];
     if (a) {  // über der Nachricht nur der aktuelle Aufruf – die früheren stehen in der Aktivität
@@ -1671,6 +1672,31 @@
     }
   }
 
+  // Code-Check: Schritt in der Live-Zeile der Antwort („Code-Check: Sicherheit“) und „Stoppen“ in der Aktivität
+  function reviewStep(el, ev) {
+    el.dataset.review = "1";
+    const stop = document.createElement("button");
+    stop.type = "button";
+    stop.className = "btn small ghost act-stop";
+    stop.textContent = L("Stoppen", "Stop");
+    stop.title = L("Code-Check hier beenden – Bericht mit dem Stand bis dahin, ohne automatisches Beheben.",
+                   "End the code check here – report with the state so far, no automatic fixing.");
+    stop.onclick = (e) => {
+      e.stopPropagation();
+      stop.disabled = true;
+      api("POST", "/api/review/stop").catch(() => {});
+    };
+    el.querySelector(".act-state").prepend(stop);
+    const a = S.currentMsg && assistants[S.currentMsg];
+    if (!a) return;
+    a.reviewStep = String((ev.args && ev.args.step) || "").replace(/^(Durchgang|Pass): /, "");
+    const live = a.live;
+    live._start = performance.now();
+    live.querySelector(".ls").textContent = "";
+    live.querySelector(".lt").textContent = reviewText(a);
+  }
+  const reviewText = (a, more) => L("Code-Check: ", "Code check: ") + a.reviewStep + (more ? " · " + more : "");
+
   function toolOutput(ev) {
     const el = acts[ev.id];
     if (!el) return;
@@ -1688,7 +1714,9 @@
     const el = acts[ev.id];
     if (el) {
       el.classList.remove("waiting");
+      el.querySelector(".act-stop")?.remove();
       finishStep(el, ev.status);
+      if (el.dataset.review && ev.status === "denied") el.querySelector(".act-status").textContent = L("gestoppt", "stopped");
       const out = el.querySelector(".act-out");
       if (!out.textContent.trim() || ev.status !== "ok") out.textContent = ev.text;
       delete acts[ev.id];

@@ -355,7 +355,7 @@ class Hub:
             result = await self.agent.code_review(self.emit, self.confirm, full, think=self.think)
             rounds = max(0, self.cfg.coding.review_rounds)
             for round_ in range(1, rounds + 1):
-                if not result.get("fix"):
+                if not result.get("fix") or self.agent.review_stopped():
                     break
                 await self.broadcast({"type": "user", "text": result["fix"], "source": "review", "images": [],
                                       "files": []})
@@ -1487,6 +1487,11 @@ def create_app(cfg: Config) -> FastAPI:
             if sb:
                 memory.conversation.save()  # gemerktes origin der Arbeitskopie
         return out
+
+    @app.post("/api/review/stop")
+    async def review_stop():
+        """„Stoppen“ am laufenden Code-Check-Schritt in der Aktivität."""
+        return {"stopped": agent.stop_review()}
 
     @app.post("/api/jobs/{job_id}/stop")
     async def stop_job(job_id: str):

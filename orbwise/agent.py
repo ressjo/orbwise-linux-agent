@@ -142,6 +142,10 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
         # Sprache der gewählten Stimme, wenn sie nicht die der Oberfläche ist – dann antwortet Orbwise in ihr
         self.reply_language: str | None = None
         self._plan = False  # Planmodus: nur lesen, am Ende einen Plan vorlegen
+        # Code-Check (agent_review.py): läuft er, hat der Nutzer ihn gestoppt, welcher Schritt läuft gerade
+        self._review_running = False
+        self._review_stop = False
+        self._review_task: asyncio.Future | None = None
         # gelernte Einlese-Geschwindigkeit je Modell (Token/s) – in state.json gemerkt, damit sie nach einem Neustart
         # gleich bekannt ist (entscheidet mit, ob alle Werkzeuge mitgehen)
         self._state_path = cfg.memory.dir.parent / "state.json"

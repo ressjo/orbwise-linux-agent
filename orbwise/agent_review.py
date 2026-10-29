@@ -35,6 +35,10 @@ MAX_CANDIDATES = 15
 FULL_FILES = 80  # „ganzes Projekt“: so viele Quelldateien höchstens in der Liste
 SOURCE = re.compile(r"\.(py|js|jsx|ts|tsx|mjs|cjs|go|rs|java|kt|rb|php|c|h|cc|cpp|hpp|cs|swift|sh|bash|sql|vue|svelte|"
                     r"html|css|scss|ya?ml|toml|json)$", re.I)
+class ReviewStopped(Exception):
+    """Der Nutzer hat den Code-Check in der Aktivität gestoppt."""
+
+
 SKIP_DIRS = re.compile(r"(^|/)(node_modules|vendor|dist|build|\.venv|venv|__pycache__|\.git|target|coverage)/")
 
 
@@ -91,15 +95,50 @@ class ReviewMixin:
             self._plan, self._approved_plan = False, ""
             self._set_think(think)
             await self._fit_think()
+            self._review_stop, self._review_running = False, True
             try:
                 return await self._review(emit, confirm, full)
             finally:
                 self._think, self._think_level = None, None
+                self._review_running = False
 
     async def code_recheck(self, emit, confirm, previous: dict, round_: int, last: bool = False) -> dict:
         """Nach dem Beheben: nur die festen Prüfungen erneut. → wie code_review (fix leer = alles grün)."""
         async with self.lock:
-            return await self._recheck(emit, confirm, previous, round_, last)
+            self._review_running = True
+            try:
+                return await self._recheck(emit, confirm, previous, round_, last)
+            finally:
+                self._review_running = False
+
+    def stop_review(self) -> bool:
+        """„Stoppen“ in der Aktivität: laufenden Schritt abbrechen, restliche Durchgänge auslassen, Bericht mit dem
+        Stand bis dahin – ohne automatisches Beheben. False, wenn gerade kein Code-Check läuft."""
+        if not self._review_running:
+            return False
+        self._review_stop = True
+        task = self._review_task
+        if task is not None and not task.done():
+            task.cancel()
+        return True
+
+    def review_stopped(self) -> bool:
+        return self._review_stop
+
+    async def _stoppable(self, coro):
+        """Einen Schritt so laufen lassen, dass stop_review ihn abbrechen kann (→ ReviewStopped). Ein Abbruch von
+        außen (STOP für alles) geht unverändert weiter."""
+        task = asyncio.ensure_future(coro)
+        self._review_task = task
+        try:
+            return await task
+        except asyncio.CancelledError:
+            current = asyncio.current_task()
+            if self.review_stopped() and not (current and current.cancelling()):
+                raise ReviewStopped from None
+            raise
+        finally:
+            self._review_task = None
 
     async def _review(self, emit, confirm, full: bool) -> dict:
         en = self.cfg.language == "en"
@@ -142,11 +181,18 @@ class ReviewMixin:
         checks = await self._review_checks(emit, sb, binary, files)
         findings: list[dict] = []
         for focus in FOCUSES:
+            if self.review_stopped():
+                break
             findings += await self._review_pass(emit, confirm, sb, focus, files, diff, checks)
         order = {"high": 0, "medium": 1, "low": 2}
         findings.sort(key=lambda f: order[f["severity"]])
         candidates = findings[:MAX_CANDIDATES]
-        verified = await self._review_verify(emit, confirm, sb, candidates) if candidates else []
+        verified = await self._review_verify(emit, confirm, sb, candidates) \
+            if candidates and not self.review_stopped() else []
+        if self.review_stopped():  # Stand bis dahin, nichts gegengeprüft und nichts automatisch beheben
+            report = self._review_report(scope, files, checks, [], len(findings), en, unverified=findings)
+            await self._review_post(emit, msg_id, report)
+            return {"fix": "", "files": files, "checks": checks}
         report = self._review_report(scope, files, checks, verified, len(findings), en)
         await self._review_post(emit, msg_id, report)
         failing = [c for c in checks if c["status"] == "fail"]
@@ -163,6 +209,10 @@ class ReviewMixin:
         await emit({"type": "assistant_start", "id": msg_id, "plan": False})
         binary = await sandbox.ensure_running(self.cfg, sb)
         checks = await self._review_checks(emit, sb, binary, previous.get("files") or [])
+        if self.review_stopped():
+            await self._review_post(emit, msg_id, T("⏹ Code-Check gestoppt – mit /review geht es von vorn los.",
+                                                    "⏹ Code check stopped – /review starts over."))
+            return {"fix": "", "files": previous.get("files"), "checks": checks}
         failing = [c for c in checks if c["status"] == "fail"]
         lines = [self._check_line(c) for c in checks]
         head = T(f"Prüfungen nach dem Beheben (Runde {round_}):", f"Checks after fixing (round {round_}):")
@@ -188,6 +238,10 @@ class ReviewMixin:
     @staticmethod
     async def _review_done(emit, sid: str, text: str, ok: bool) -> None:
         await emit({"type": "tool_result", "id": sid, "status": "ok" if ok else "error", "text": text})
+
+    @staticmethod
+    async def _review_halted(emit, sid: str) -> None:
+        await emit({"type": "tool_result", "id": sid, "status": "denied", "text": T("gestoppt", "stopped")})
 
     async def _review_post(self, emit, msg_id: str, text: str) -> dict:
         await emit({"type": "token", "id": msg_id, "text": text})
@@ -240,8 +294,12 @@ class ReviewMixin:
 
     async def _review_checks(self, emit, sb: dict, binary: str, files: list[str]) -> list[dict]:
         sid = await self._review_step(emit, T("Tests, Linter und Scanner", "Tests, linters and scanners"))
-        rc, out = await self._sb_run(emit, sid, sb, binary, review_checks.build_script(files),
-                                     review_checks.TIMEOUT * 4)
+        try:
+            rc, out = await self._stoppable(self._sb_run(emit, sid, sb, binary, review_checks.build_script(files),
+                                                         review_checks.TIMEOUT * 4))
+        except ReviewStopped:
+            await self._review_halted(emit, sid)
+            return []
         checks = review_checks.parse(out)
         bad = [c for c in checks if c["status"] == "fail"]
         await self._review_done(emit, sid, " · ".join(self._check_line(c, short=True) for c in checks)
@@ -276,7 +334,10 @@ class ReviewMixin:
         ctx = ToolContext(cfg=self.cfg, memory=self.memory, emit=emit, call_id=sid, cwd=sb["path"], confirm=confirm,
                           sandbox=sb, agent=self, output_chars=self.output_chars())
         try:
-            answer = await self.run_subagent(ctx, "explore", label, task)
+            answer = await self._stoppable(self.run_subagent(ctx, "explore", label, task))
+        except ReviewStopped:
+            await self._review_halted(emit, sid)
+            return []
         except Exception as e:  # noqa: BLE001 – ein Durchgang darf scheitern, die anderen laufen weiter
             log.warning("Review-Durchgang %s fehlgeschlagen: %s", focus, e)
             await self._review_done(emit, sid, str(e), False)
@@ -293,7 +354,10 @@ class ReviewMixin:
         ctx = ToolContext(cfg=self.cfg, memory=self.memory, emit=emit, call_id=sid, cwd=sb["path"], confirm=confirm,
                           sandbox=sb, agent=self, output_chars=self.output_chars())
         try:
-            answer = await self.run_subagent(ctx, "explore", T("Gegenprüfung", "Verification"), task)
+            answer = await self._stoppable(self.run_subagent(ctx, "explore", T("Gegenprüfung", "Verification"), task))
+        except ReviewStopped:
+            await self._review_halted(emit, sid)
+            return []
         except Exception as e:  # noqa: BLE001
             log.warning("Gegenprüfung fehlgeschlagen: %s", e)
             await self._review_done(emit, sid, str(e), False)
@@ -304,18 +368,28 @@ class ReviewMixin:
         return verified
 
     def _review_report(self, scope: str, files: list[str], checks: list[dict], verified: list[dict], total: int,
-                       en: bool) -> str:
+                       en: bool, unverified: list[dict] | None = None) -> str:
+        """unverified (nicht None): Check wurde gestoppt – diese Funde sind nicht gegengeprüft, nichts wird behoben."""
         out = [f"## {T('Code-Check', 'Code check')}",
                T(f"Geprüft: {scope} – {len(files)} Dateien.", f"Checked: {scope} – {len(files)} files."), ""]
+        if unverified is not None:
+            out += [T("⏹ **Vorzeitig gestoppt** – hier der Stand bis dahin. Nichts wird automatisch behoben; mit "
+                      "/review geht es von vorn los.", "⏹ **Stopped early** – this is the state so far. Nothing is "
+                      "fixed automatically; /review starts over."), ""]
+            if checks:
+                out += [f"**{T('Prüfungen', 'Checks')}**", *[self._check_line(c) for c in checks], ""]
+            if unverified:
+                out.append(f"**{T('Mögliche Funde – nicht gegengeprüft', 'Possible findings – not verified')} "
+                           f"({len(unverified)})**")
+                out += [self._finding_line(f, en) for f in unverified]
+            else:
+                out.append(T("Bis dahin keine möglichen Funde.", "No possible findings so far."))
+            return "\n".join(out).strip()
         if checks:
             out += [f"**{T('Prüfungen', 'Checks')}**", *[self._check_line(c) for c in checks], ""]
         if verified:
             out.append(f"**{T('Bestätigte Funde', 'Confirmed findings')} ({len(verified)})**")
-            for f in verified:
-                where = f"`{f['file']}:{f['line']}`" if f["line"] else f"`{f['file']}`"
-                focus = FOCUS_LABEL[f["focus"]][1 if en else 0]
-                out.append(f"- {SEV_ICON[f['severity']]} {where} · {focus} – **{f['title']}**  \n  {f['why']}"
-                           + (f"  \n  → {f['fix']}" if f["fix"] else ""))
+            out += [self._finding_line(f, en) for f in verified]
             out.append("")
         else:
             out += [T("Keine bestätigten Funde.", "No confirmed findings."), ""]
@@ -328,6 +402,13 @@ class ReviewMixin:
             out.append(T("Ich behebe das jetzt in der Sandbox und prüfe danach erneut.",
                          "I am fixing this in the sandbox now and will check again afterwards."))
         return "\n".join(out).strip()
+
+    @staticmethod
+    def _finding_line(f: dict, en: bool) -> str:
+        where = f"`{f['file']}:{f['line']}`" if f["line"] else f"`{f['file']}`"
+        focus = FOCUS_LABEL[f["focus"]][1 if en else 0]
+        return (f"- {SEV_ICON[f['severity']]} {where} · {focus} – **{f['title']}**  \n  {f['why']}"
+                + (f"  \n  → {f['fix']}" if f["fix"] else ""))
 
     def _fix_prompt(self, checks: list[dict], failing: list[dict], todo: list[dict]) -> str:
         en = self.cfg.language == "en"
