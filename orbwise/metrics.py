@@ -32,6 +32,28 @@ def _read(path: Path) -> str | None:
         return None
 
 
+def combine(gpus: list[dict]) -> dict | None:
+    """Mehrere Karten als eine Kachel: Speicher und Leistung zusammen, Auslastung und Temperatur der stärksten;
+    die einzelnen Karten stehen in "gpus" (Tooltip)."""
+    if not gpus:
+        return None
+    if len(gpus) == 1:
+        return gpus[0]
+
+    def total(key):
+        vals = [g[key] for g in gpus if g.get(key) is not None]
+        return sum(vals) if vals else None
+
+    def most(key):
+        vals = [g[key] for g in gpus if g.get(key) is not None]
+        return max(vals) if vals else None
+    names = [g["name"] for g in gpus]
+    return {"vendor": gpus[0]["vendor"],
+            "name": f"{len(names)}× {names[0]}" if len(set(names)) == 1 else " + ".join(names),
+            "util": most("util"), "vram_used": total("vram_used"), "vram_total": total("vram_total"),
+            "power": total("power"), "temp": most("temp"), "gpus": gpus}
+
+
 def nvidia_gpu(runner=subprocess.run) -> dict | None:
     if not shutil.which("nvidia-smi"):
         return None
@@ -58,17 +80,25 @@ def nvidia_gpu(runner=subprocess.run) -> dict | None:
             "power": _num(parts[4]),
             "temp": _num(parts[5]),
         })
-    return max(gpus, key=lambda g: g["vram_total"] or 0) if gpus else None
+    return combine(gpus)
 
 
 def amd_gpu(root: Path = DRM_ROOT) -> dict | None:
-    best, best_total = None, 0
+    """Alle AMD-Karten ab 2 GB (die im Prozessor eingebaute Grafik zählt nicht) – zusammengefasst wie bei NVIDIA."""
+    cards = []
     for dev in sorted(root.glob("card*/device")):
         total = _num(_read(dev / "mem_info_vram_total") or "")
-        if total and total > best_total and (dev / "gpu_busy_percent").exists():
-            best, best_total = dev, total
-    if not best:
-        return None
+        if total and total >= 2 * 1024 ** 3 and (dev / "gpu_busy_percent").exists() and dev.resolve() not in cards:
+            cards.append(dev.resolve())
+    if not cards:  # nur kleine Karten: die größte (wie bisher)
+        small = [(d, _num(_read(d / "mem_info_vram_total") or "") or 0) for d in sorted(root.glob("card*/device"))
+                 if (d / "gpu_busy_percent").exists()]
+        cards = [max(small, key=lambda x: x[1])[0]] if small else []
+    return combine([_amd_card(dev) for dev in cards])
+
+
+def _amd_card(best: Path) -> dict:
+    best_total = _num(_read(best / "mem_info_vram_total") or "")
     power = temp = None
     for hw in sorted(best.glob("hwmon/hwmon*")):
         for name in ("power1_average", "power1_input"):

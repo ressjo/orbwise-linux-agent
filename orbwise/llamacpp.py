@@ -667,14 +667,14 @@ def label_for(path: Path) -> str:
     return name[:-5] if name.lower().endswith(".gguf") else name
 
 
-def pick_context(gguf: Path, extra_bytes: int, vram_gb: float) -> tuple[int, bool]:
+def pick_context(gguf: Path, extra_bytes: int, vram_gb: float, gpus: int = 1) -> tuple[int, bool]:
     """(Kontextgröße, Embeddings lieber auf der CPU?) – die größte Stufe, bei der Modell + KV-Cache + Bildmodul +
-    ~1 GB Puffer in den Grafikspeicher passen und die das Modell kennt."""
+    ~1 GB Puffer je Grafikkarte in den (gemeinsamen) Grafikspeicher passen und die das Modell kennt."""
     from .llm_memory import estimate_from_gguf, gguf_metadata
     model = sum(p.stat().st_size for p in shards(gguf) if p.exists())
     if vram_gb <= 0:
         return 8192, False
-    budget = vram_gb * 1024 ** 3 * 0.95 - 1024 ** 3 - extra_bytes
+    budget = vram_gb * 1024 ** 3 * 0.95 - max(1, gpus) * 1024 ** 3 - extra_bytes
     try:
         train = next((int(v) for k, v in gguf_metadata(str(gguf)).items() if k.endswith(".context_length")), 0)
     except Exception:  # noqa: BLE001 – unbekannte Datei: ohne Obergrenze
@@ -735,7 +735,7 @@ def unique_name(base: str, taken) -> str:
 
 def make_profile(cfg, name: str, gguf: Path, mmproj: Path | None, gpu: dict, port: int) -> dict:
     ctx, cpu_embed = pick_context(gguf, mmproj.stat().st_size if mmproj and mmproj.exists() else 0,
-                                  float(gpu.get("vram_gb") or 0))
+                                  float(gpu.get("vram_gb") or 0), len(gpu.get("gpus") or []) or 1)
     key = secrets.token_hex(16)  # llama-server erlaubt Anfragen von jeder Webseite (CORS *) – nur mit Schlüssel
     command = f"{_tilde(binary(cfg))} -m {_tilde(gguf)}"
     if mmproj:

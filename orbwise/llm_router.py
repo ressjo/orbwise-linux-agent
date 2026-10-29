@@ -263,6 +263,37 @@ UBATCH_SIZES = (512, 1024, 2048)
 _BATCH_FLAGS = re.compile(r"\s+(?:-ub|--ubatch-size|-b|--batch-size)\s+\d+")
 
 
+# ---------------------------------------------------------------- Mehrere Grafikkarten
+# Ohne Angabe verteilt llama.cpp das Modell nach freiem Grafikspeicher auf alle Karten. Eigene Anteile (in %, 0 = Karte
+# nicht nutzen) gehen per --tensor-split; die Reihenfolge der Karten ist die von nvidia-smi (CUDA_DEVICE_ORDER).
+_GPU_FLAGS = re.compile(r"\s+(?:-ts|--tensor-split|-mg|--main-gpu|-sm|--split-mode)\s+\S+")
+
+
+def gpu_split_of(command: str) -> list[int] | None:
+    """Eigene Aufteilung (Prozent je Karte) aus dem Startbefehl – None = automatisch."""
+    m = re.findall(r"(?:^|\s)(?:-ts|--tensor-split)\s+([\d.,]+)", command)
+    if m:
+        parts = [float(x or 0) for x in m[-1].split(",")]
+        total = sum(parts) or 1
+        return [round(x * 100 / total) for x in parts]
+    one = re.findall(r"(?:^|\s)(?:-sm|--split-mode)\s+none", command)
+    mg = re.findall(r"(?:^|\s)(?:-mg|--main-gpu)\s+(\d+)", command)
+    if one and mg:  # nur eine Karte
+        return [100 if i == int(mg[-1]) else 0 for i in range(int(mg[-1]) + 1)]
+    return None
+
+
+def gpu_flags(split: list[int] | None) -> str:
+    """Startoptionen zur Aufteilung; eine einzige Karte → nur sie (-sm none -mg i)."""
+    if not split:
+        return ""
+    used = [i for i, x in enumerate(split) if x > 0]
+    if len(used) == 1:
+        return f" --split-mode none --main-gpu {used[0]}"
+    main = max(range(len(split)), key=lambda i: split[i])
+    return f" --split-mode layer --tensor-split {','.join(str(int(x)) for x in split)} --main-gpu {main}"
+
+
 def ubatch_of(command: str) -> int:
     m = re.findall(r"(?:^|\s)(?:-ub|--ubatch-size)\s+(\d+)", command)
     return int(m[-1]) if m else 512
@@ -411,6 +442,9 @@ class LLMRouter:
         for name, n in (saved.get("ubatch") or {}).items():
             if name in self.profiles and n in UBATCH_SIZES and self.profiles[name].server:
                 self._apply_ubatch(name, n)
+        for name, split in (saved.get("gpu_split") or {}).items():
+            if name in self.profiles and self.profiles[name].server and (split is None or isinstance(split, list)):
+                self._apply_gpus(name, split)
         for name, mode in (saved.get("speculative") or {}).items():
             if name in self.profiles and mode in SPEC_MODES and self.profiles[name].server:
                 try:
@@ -777,6 +811,28 @@ class LLMRouter:
             self._apply_ubatch(name, n)  # meldet den Grund
         await self._reconfigure(name, lambda: self._apply_ubatch(name, n), "ubatch", n, progress)
 
+    def _apply_gpus(self, name: str, split: list[int] | None) -> None:
+        """Aufteilung auf die Grafikkarten setzen (wirkt beim nächsten Start); None = automatisch."""
+        p = self.profiles[name]
+        if not p.server:
+            raise LLMError(T("Die Aufteilung auf Grafikkarten geht nur mit llama.cpp – Ollama verteilt selbst.",
+                             "Splitting across GPUs only works with llama.cpp – Ollama splits by itself."))
+        command = _GPU_FLAGS.sub("", p.server.command) + gpu_flags(split)
+        env = {**(p.server.env or {}), "CUDA_DEVICE_ORDER": "PCI_BUS_ID"}
+        p.server = p.server.model_copy(update={"command": command, "env": env})
+        self.servers.pop(name, None)  # neuer Startbefehl
+
+    async def set_gpus(self, name: str, split: list[int] | None, progress: Progress | None = None) -> None:
+        """Aufteilung ändern und merken; beim aktiven Profil startet der Server neu."""
+        if name not in self.profiles:
+            raise LLMError(f"Unbekanntes Profil '{name}'")
+        if split is not None and (not split or any(x < 0 or x > 100 for x in split) or not any(split)):
+            raise LLMError(T("Aufteilung bitte als Anteile von 0 bis 100 je Karte, mindestens eine über 0.",
+                             "Split please as shares from 0 to 100 per GPU, at least one above 0."))
+        if not self.profiles[name].server:
+            self._apply_gpus(name, split)  # meldet den Grund
+        await self._reconfigure(name, lambda: self._apply_gpus(name, split), "gpu_split", split, progress)
+
     def _apply_spec(self, name: str, mode: str) -> None:
         """Spekulatives Decoding eines eigenen llama-server setzen (wirkt beim nächsten Start)."""
         p = self.profiles[name]
@@ -962,11 +1018,12 @@ class LLMRouter:
         """Startoptionen für die Modellseite (nur bei einem eigenen llama-server einstellbar)."""
         if not p.server:
             return {"kv": None, "kv_settable": False, "kv_options": [], "ubatch": None, "ubatch_settable": False,
-                    "spec": "off", "spec_options": spec_options(None)}
+                    "spec": "off", "spec_options": spec_options(None), "gpu_split": None, "gpu_split_settable": False}
         return {"kv": cache_type(p.server.command, p.server.env), "kv_settable": True,
                 "kv_options": kv_types(p.server.command, p.server.env),
                 "ubatch": ubatch_of(p.server.command), "ubatch_settable": True,
-                "spec": spec_mode(p.server.command), "spec_options": spec_options(p.server)}
+                "spec": spec_mode(p.server.command), "spec_options": spec_options(p.server),
+                "gpu_split": gpu_split_of(p.server.command), "gpu_split_settable": True}
 
     async def close(self) -> None:
         for server in self.servers.values():

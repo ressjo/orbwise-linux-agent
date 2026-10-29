@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Changed
+- **Several GPUs:** Orbwise detects all cards and counts their memory together (recommendations, context of new
+  models with a buffer per card, telemetry with each card in the tooltip). The model page gets a **GPUs** section:
+  automatic split by free VRAM or a custom share per card (`--tensor-split`, 0 % = not used), kept per model.
 - **Auto mode = only sudo asks.** Everything runs without asking, as in your own terminal – servers, Docker, network,
   deleting. Only `sudo` (also `yay`/`paru`/`makepkg -si`) asks, through the password dialog alone (no extra card, no
   remembered password), plus pushing and sending e-mail. No outside-content guard and only credentials in the

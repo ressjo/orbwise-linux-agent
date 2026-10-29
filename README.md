@@ -461,6 +461,19 @@ read, so a new topic no longer forces the whole chat to be read again; the step-
 
 </details>
 
+### Several GPUs
+
+With two (or more) graphics cards Orbwise counts their memory together: the model page shows e.g. *2× RTX 3090 ·
+48 GB*, model recommendations and the context size of new models use the shared memory (with a buffer per card), and
+the telemetry tiles add the cards up (hover for each card). llama.cpp splits the model's layers across all cards –
+so bigger models or a bigger context fit.
+
+**Models → a llama.cpp model → GPUs:** *Automatic* (default) lets llama.cpp split by free VRAM. *Custom split* sets a
+share per card (`--tensor-split`, card order as in `nvidia-smi`); 0 % leaves a card out – one card alone is fastest
+when the model fits on it. The setting is kept per model and restarts its server. After adding a card, raise the
+context of existing models on the model page. Two NVIDIA cards use the CUDA build; mixing AMD and NVIDIA needs the
+Vulkan build. Ollama models split by themselves.
+
 ### Faster prompt processing: batch size
 
 <details>

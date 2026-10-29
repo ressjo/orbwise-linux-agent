@@ -2994,9 +2994,13 @@
     const g = m.gpu;
     const gb = (b) => (b === null || b === undefined ? null : b / 1024 ** 3);
     if (g) {
-      setTile("gpu", g.util, { pct: g.util, digits: 0, sub: g.temp !== null && g.temp !== undefined ? `${fmt(g.temp, 0)} °C` : "", title: g.name });
+      // mehrere Karten: zusammengefasst, im Tooltip jede einzeln
+      const each = (g.gpus || []).map((c, i) => `GPU ${i} · ${c.name}: ${fmt(c.util, 0)} % · ${fmt(gb(c.vram_used))}/${fmt(gb(c.vram_total))} GB`
+        + (c.temp !== null && c.temp !== undefined ? ` · ${fmt(c.temp, 0)} °C` : "")).join("\n");
+      const title = each ? `${g.name}\n${each}` : g.name;
+      setTile("gpu", g.util, { pct: g.util, digits: 0, sub: g.temp !== null && g.temp !== undefined ? `${fmt(g.temp, 0)} °C` : "", title });
       const vp = g.vram_total ? (100 * g.vram_used) / g.vram_total : null;
-      setTile("vram", gb(g.vram_used), { pct: vp, sub: `${L("von", "of")} ${fmt(gb(g.vram_total))} GB`, title: g.name });
+      setTile("vram", gb(g.vram_used), { pct: vp, sub: `${L("von", "of")} ${fmt(gb(g.vram_total))} GB`, title });
       setTile("power", g.power, { digits: 0, sub: g.name ? g.name.replace(/^(NVIDIA|AMD)\s+/i, "") : "", title: g.name });
       pushSpark("gpu", g.util);
       pushSpark("vram", gb(g.vram_used));
@@ -3360,6 +3364,7 @@
       <section class="md-sec md-ctx"><div class="md-sec-head"><h4></h4>
         <div class="seg md-mode"><button type="button" data-m="tools">Tools</button><button type="button" data-m="coding">Coding</button></div></div>
         <div class="ctx-now"></div><div class="ctx-opts"></div><p class="set-hint"></p></section>
+      <section class="md-sec md-gpus"><div class="md-sec-head"><h4></h4></div><div class="ctx-opts gpu-mode"></div><div class="gpu-rows"></div><p class="set-hint"></p></section>
       <section class="md-sec md-perf"><div class="md-sec-head"><h4></h4></div><div class="batch-stats"></div><div class="tune-slot"></div><p class="set-hint"></p></section>
       <section class="md-sec md-smp"><div class="md-sec-head"><h4></h4></div><div class="smp"></div></section>
       <details class="md-adv"><summary></summary>
@@ -3439,6 +3444,9 @@
     adv.open = !!MP.advOpen;
     adv.ontoggle = () => { MP.advOpen = adv.open; };
     renderKvSettings(box.querySelector(".md-kv"), p);
+    const gpus = ((MP.data && MP.data.gpu) || {}).gpus || [];
+    if (p.managed && p.gpu_split_settable && gpus.length > 1) renderGpus(box.querySelector(".md-gpus"), p, gpus);
+    else box.querySelector(".md-gpus").remove();
     if (p.managed) {
       renderBatch(box.querySelector(".md-batch"), p);
       renderSpec(box.querySelector(".md-spec"), p);
@@ -3590,6 +3598,72 @@
         L('sudo systemctl edit ollama → Environment="OLLAMA_FLASH_ATTENTION=1" "OLLAMA_KV_CACHE_TYPE=q8_0", dann sudo systemctl restart ollama.',
           'sudo systemctl edit ollama → Environment="OLLAMA_FLASH_ATTENTION=1" "OLLAMA_KV_CACHE_TYPE=q8_0", then sudo systemctl restart ollama.'));
     }
+  }
+
+  // Mehrere Grafikkarten: automatisch (llama.cpp verteilt nach freiem Speicher) oder eigene Anteile je Karte
+  function renderGpus(sec, p, gpus) {
+    sec.querySelector("h4").textContent = L("Grafikkarten", "GPUs");
+    const total = gpus.reduce((n, g) => n + (g.vram_gb || 0), 0);
+    const own = Array.isArray(p.gpu_split) ? gpus.map((_, i) => p.gpu_split[i] || 0) : null;
+    const fair = gpus.map((g) => Math.round((g.vram_gb || 0) * 100 / (total || 1)));
+    const shares = (own || fair).slice();
+    const mode = sec.querySelector(".gpu-mode"), rows = sec.querySelector(".gpu-rows");
+    const send = async (split) => {
+      sec.querySelectorAll("button, input").forEach((x) => { x.disabled = true; });
+      if (p.active) toast(L("Modell-Server startet mit der neuen Aufteilung neu …", "Restarting the model server with the new split …"));
+      try {
+        await api("POST", `/api/models/${encodeURIComponent(p.name)}/gpus`, { split });
+        toast(split ? L("Eigene Aufteilung gespeichert.", "Custom split saved.")
+          : L("Automatische Aufteilung nach freiem Grafikspeicher.", "Automatic split by free VRAM."));
+      } catch { /* Meldung kommt von api() */ }
+      await loadCtxMemory();
+      refreshModelViews();
+    };
+    const opt = (label, note, on, click) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "ctx-opt" + (on ? " on" : "");
+      b.innerHTML = "<span></span><small></small>";
+      b.querySelector("span").textContent = label;
+      b.querySelector("small").textContent = note;
+      b.disabled = !!MP.data.switching;
+      b.onclick = click;
+      mode.appendChild(b);
+    };
+    opt(L("Automatisch", "Automatic"), L(`alle Karten · ${total.toFixed(0)} GB zusammen`, `all GPUs · ${total.toFixed(0)} GB together`),
+      !own, () => { if (own) send(null); });
+    opt(L("Eigene Aufteilung", "Custom split"), L("Anteil je Karte, 0 % = nicht nutzen", "share per GPU, 0 % = don't use"),
+      !!own, () => rows.classList.remove("hidden"));
+    rows.classList.toggle("hidden", !own);
+    gpus.forEach((g, i) => {
+      const row = document.createElement("label");
+      row.className = "gpu-row";
+      row.innerHTML = `<span class="gpu-name"></span><input type="range" min="0" max="100" step="5"><b></b>`;
+      row.querySelector(".gpu-name").textContent = `GPU ${g.index} · ${g.name} · ${g.vram_gb} GB`;
+      const input = row.querySelector("input"), out = row.querySelector("b");
+      input.value = shares[i];
+      out.textContent = `${shares[i]} %`;
+      input.oninput = () => { shares[i] = Number(input.value); out.textContent = `${shares[i]} %`; };
+      rows.appendChild(row);
+    });
+    const apply = document.createElement("button");
+    apply.type = "button";
+    apply.className = "btn small";
+    apply.textContent = L("Übernehmen", "Apply");
+    apply.onclick = () => {
+      if (!shares.some((x) => x > 0)) { toast(L("Mindestens eine Karte braucht einen Anteil über 0 %.", "At least one GPU needs a share above 0 %.")); return; }
+      send(shares);
+    };
+    rows.appendChild(apply);
+    hint(sec.querySelector(".set-hint"),
+      L("Das Modell wird auf die Karten verteilt – so passen größere Modelle oder mehr Kontext. ", "The model is split across the GPUs – so bigger models or more context fit. ") + restartNote(p),
+      L("Automatisch verteilt llama.cpp die Schichten nach freiem Grafikspeicher. Eigene Anteile helfen, wenn eine Karte "
+        + "zusätzlich den Bildschirm treibt (ihr weniger geben) oder eine Karte deutlich langsamer ist. Mit mehr gemeinsamem "
+        + "Speicher kannst du oben einen größeren Kontext wählen. Eine einzelne Karte (die andere auf 0 %) ist am schnellsten, "
+        + "wenn das Modell allein hineinpasst.",
+        "Automatically llama.cpp splits the layers by free VRAM. Custom shares help when one GPU also drives the display "
+        + "(give it less) or one GPU is much slower. With more shared memory you can choose a bigger context above. A single "
+        + "GPU (the other at 0 %) is fastest when the model fits on it alone."));
   }
 
   // Batch-Größe (-ub): größer = lange Eingaben (Werkzeuge, Dateien, PDFs) werden schneller eingelesen, kostet VRAM

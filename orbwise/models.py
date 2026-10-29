@@ -124,26 +124,51 @@ def fit_need(need_gb: float, vram_gb: float) -> str:
 
 # ---------------------------------------------------------------- GPU-Erkennung
 
-def detect_gpu() -> dict:
-    """{'vendor': 'nvidia'|'amd'|'none', 'name': str, 'vram_gb': float}"""
+def detect_gpus() -> list[dict]:
+    """Alle Grafikkarten: [{'index', 'vendor', 'name', 'vram_gb'}] – NVIDIA über nvidia-smi, AMD aus sysfs (Karten unter
+    2 GB, meist die im Prozessor eingebaute Grafik, zählen nicht)."""
     if shutil.which("nvidia-smi"):
         try:
-            out = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+            out = subprocess.run(["nvidia-smi", "--query-gpu=index,name,memory.total", "--format=csv,noheader,nounits"],
                                  capture_output=True, text=True, timeout=10).stdout.strip().splitlines()
-            if out:
-                name, mib = [x.strip() for x in out[0].rsplit(",", 1)]
-                return {"vendor": "nvidia", "name": name, "vram_gb": round(float(mib) / 1024, 1)}
+            gpus = []
+            for line in out:
+                idx, rest = line.split(",", 1)
+                name, mib = [x.strip() for x in rest.rsplit(",", 1)]
+                gpus.append({"index": int(idx), "vendor": "nvidia", "name": name, "vram_gb": round(float(mib) / 1024, 1)})
+            if gpus:
+                return gpus
         except (OSError, ValueError, subprocess.SubprocessError):
             pass
-    best = 0
-    for f in Path("/sys/class/drm").glob("card*/device/mem_info_vram_total"):
+    gpus = []
+    cards = sorted(Path("/sys/class/drm").glob("card*/device/mem_info_vram_total"),
+                   key=lambda f: int(re.sub(r"\D", "", f.parent.parent.name) or 0))
+    for f in cards:
         try:
-            best = max(best, int(f.read_text().strip()))
+            total = int(f.read_text().strip())
         except (OSError, ValueError):
-            pass
-    if best:
-        return {"vendor": "amd", "name": _amd_name(), "vram_gb": round(best / 1024 ** 3, 1)}
-    return {"vendor": "none", "name": "", "vram_gb": 0.0}
+            continue
+        if total >= 2 * 1024 ** 3:
+            gpus.append({"index": len(gpus), "vendor": "amd", "name": _amd_name(), "vram_gb": round(total / 1024 ** 3, 1)})
+    return gpus
+
+
+def gpu_label(gpus: list[dict]) -> str:
+    """„RTX 3090“, „2× RTX 3090“ oder „RTX 3090 + RTX 3060“."""
+    names = [g["name"] for g in gpus]
+    if len(names) > 1 and len(set(names)) == 1:
+        return f"{len(names)}× {names[0]}"
+    return " + ".join(names)
+
+
+def detect_gpu() -> dict:
+    """{'vendor': 'nvidia'|'amd'|'none', 'name': str, 'vram_gb': float, 'gpus': [...]} – bei mehreren Karten zählt der
+    gemeinsame Grafikspeicher (llama.cpp verteilt das Modell auf alle)."""
+    gpus = detect_gpus()
+    if not gpus:
+        return {"vendor": "none", "name": "", "vram_gb": 0.0, "gpus": []}
+    return {"vendor": gpus[0]["vendor"], "name": gpu_label(gpus),
+            "vram_gb": round(sum(g["vram_gb"] for g in gpus), 1), "gpus": gpus}
 
 
 def _amd_name() -> str:

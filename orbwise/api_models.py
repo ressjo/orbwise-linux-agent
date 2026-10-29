@@ -601,6 +601,28 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
         agent.forget_prefill(name)  # die alte Geschwindigkeit gilt nicht mehr – die nächste Antwort misst neu
         return {"ok": True, "ubatch": size}
 
+    @app.post("/api/models/{name}/gpus")
+    async def set_model_gpus(name: str, request: Request):
+        """Aufteilung auf mehrere Grafikkarten: {split: [Prozent je Karte] | null (automatisch nach freiem Speicher)}."""
+        router_profile(name)
+        raw = (await request.json()).get("split")
+        try:
+            split = None if raw is None else [int(x) for x in raw]
+        except (TypeError, ValueError):
+            raise HTTPException(400, "split bitte als Liste von Zahlen oder null") from None
+        if split is not None and len(split) != len((await gpu_info()).get("gpus") or []):
+            raise HTTPException(400, T("Bitte für jede Grafikkarte einen Anteil angeben.",
+                                       "Please give a share for every GPU."))
+        if not llm.profiles[name].server:
+            raise HTTPException(400, T("Die Aufteilung auf Grafikkarten geht nur mit llama.cpp – Ollama verteilt selbst.",
+                                       "Splitting across GPUs only works with llama.cpp – Ollama splits by itself."))
+        try:
+            await restart_with(name, lambda: llm.set_gpus(name, split, model_progress), show_context=True)
+        except LLMError as e:
+            raise HTTPException(400, str(e)) from e
+        agent.forget_prefill(name)
+        return {"ok": True, "split": split}
+
     @app.post("/api/models/{name}/tune")
     async def tune_model(name: str):
         """Schnellste verlustfreie llama.cpp-Einstellung messen (Build, Batch-Größe) – siehe llamacpp_tune.py."""
