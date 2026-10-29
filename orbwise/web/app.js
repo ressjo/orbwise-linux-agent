@@ -2908,9 +2908,10 @@
                   `Context: ${used} of ${c.window} tokens of the context window are in use right now.`));
       if (m && m.available && m.kv_vram_share != null) {
         const vram = Math.round(c.window * m.kv_vram_share), ram = c.window - vram;
-        parts.push(L(`${ctxLabel(vram)} im VRAM · ${ctxLabel(ram)} im RAM`, `${ctxLabel(vram)} in VRAM · ${ctxLabel(ram)} in RAM`));
-        tips.push(L(`Platz für ${vram} Token im Grafikspeicher und ${ram} im RAM (KV-Cache des Kontextfensters) – was im RAM liegt, ist langsamer.`,
-                    `Room for ${vram} tokens in VRAM and ${ram} in RAM (KV cache of the context window) – what is in RAM is slower.`));
+        const tok = (n) => (n ? ctxLabel(n) : "0");
+        parts.push(L(`KV-Cache ${tok(vram)} im VRAM · ${tok(ram)} im RAM`, `KV cache ${tok(vram)} in VRAM · ${tok(ram)} in RAM`));
+        tips.push(L(`KV-Cache (Arbeitsspeicher des Modells für das Kontextfenster): Platz für ${vram} Token im Grafikspeicher und ${ram} im RAM – was im RAM liegt, ist langsamer. (Nicht der Prompt-Cache von llama-server, der fertig gelesene Chats im RAM aufhebt.)`,
+                    `KV cache (the model's working memory for the context window): room for ${vram} tokens in VRAM and ${ram} in RAM – what is in RAM is slower. (Not llama-server's prompt cache, which keeps already read chats in RAM.)`));
       }
     }
     if (u && (u.read || u.written)) {
