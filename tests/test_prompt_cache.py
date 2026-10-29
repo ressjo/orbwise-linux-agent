@@ -35,6 +35,10 @@ def test_memory_endpoint_reports_the_prompt_cache(cfg, tmp_path, monkeypatch):
     log = tmp_path / "orbwise-llm.log"
     log.write_text(LOG)
     monkeypatch.setattr(llm_router, "_log_path", lambda: log)
+
+    async def no_start(self, progress=None):  # kein echter llama-server – sein Start schriebe ins Log
+        return None
+    monkeypatch.setattr(llm_router.LLMRouter, "start", no_start)
     monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
     monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
     cfg.llm = LLMConfig(profiles={"big": ProfileConfig(backend="openai", base_url="http://127.0.0.1:9/v1", model="a",
