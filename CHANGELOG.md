@@ -12,6 +12,9 @@ All notable changes to this project are documented here. The format follows
   chat and fixes confirmed findings and failing checks automatically (re-checking, up to two rounds).
 
 ### Changed
+- **Activity panel:** the newest step is at the top of its group; the "context in memory" tile with the green bar is
+  gone (the line under the input shows it); with several GPUs the GPU and VRAM tiles show one row per card (GPU 1,
+  GPU 2 …); tokens/s and the context tile now update live while the model thinks, too.
 - **Token line under the input:** instead of the static hint it shows the context in use (e.g. *Context 12k / 64k*),
   how many tokens of the window fit in VRAM and in RAM (KV cache) and the tokens of this chat session (read +
   written; the tooltip lists read, written, reused from the cache and the number of model requests). Kept per chat.

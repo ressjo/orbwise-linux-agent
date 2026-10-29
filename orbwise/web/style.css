@@ -1396,3 +1396,17 @@ button.file-chip:hover { border-color: var(--accent-line); }
 .goal-chip .goal-stop:hover { color: var(--danger); background: var(--surface-3); }
 .goal-nudge { margin: 6px 0; color: var(--muted); font-size: var(--fs-sm); }
 @keyframes goal-pulse { 50% { opacity: .35; } }
+
+/* Mehrere Grafikkarten: je Karte eine Zeile in der GPU- und VRAM-Kachel */
+.tele.dual .tele-value, .tele.dual .tele-bar, .tele.dual .tele-spark { display: none; }
+.tele-dual { display: grid; gap: 5px; margin: 4px 0 2px; }
+.td-row { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 6px; row-gap: 2px;
+  font-size: var(--fs-xs); font-variant-numeric: tabular-nums; }
+.td-row .td-v { justify-self: end; white-space: nowrap; }
+.td-row .td-bar { grid-column: 1 / -1; grid-row: 2; }
+.td-l { color: var(--muted); }
+.td-v { font-family: var(--mono); color: var(--text); }
+.td-bar { height: 4px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
+.td-bar i { display: block; height: 100%; background: var(--accent); }
+.td-row.warn .td-bar i { background: var(--warn); }
+.td-row.crit .td-bar i { background: var(--danger); }

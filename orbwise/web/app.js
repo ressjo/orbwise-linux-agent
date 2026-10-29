@@ -425,11 +425,14 @@
         appendToken(ev.id, ev.text);
         orb.token();
         T.tokenTimes.push(performance.now());
+        T.streamed = (T.streamed || 0) + 1;
         Thought.collapse(ev.id);  // das Modell gibt aus → Gedankengang zuklappen
         return;  // Zustand ändert sich pro Token nicht – kein refresh() nötig
       case "reasoning":
         // Denkkette: als aufgeklappter Block in der Antwort, zu beim ersten ausgegebenen Token
         Thought.add(ev.id, ev.text || "");
+        T.tokenTimes.push(performance.now());  // Token/s und Kontext laufen auch beim Denken mit
+        T.streamed = (T.streamed || 0) + 1;
         orb.token();  // Denk-Puls folgt auch dem Gedankengang
         return;
       case "segment_end":
@@ -1287,7 +1290,7 @@
       let subs = parent.querySelector(":scope > .act-subs");
       if (!subs) { subs = document.createElement("div"); subs.className = "act-subs"; parent.insertBefore(subs, parent.querySelector(".act-details")); }
       subs.appendChild(el);
-    } else stepsFor(routine).appendChild(el);
+    } else stepsFor(routine).prepend(el);  // neueste Aktivität oben – nicht suchen müssen
     if (!phaseTimer) phaseTimer = setInterval(tickPhases, 1000);
     return el;
   }
@@ -2896,7 +2899,7 @@
   function renderTokenLine() {
     const el = document.querySelector(".composer-hint");
     if (!el) return;
-    const c = S.ctx, u = S.usage, m = lastMem, hintText = (MODE_TEXT[S.mode] || MODE_TEXT.tools).hint;
+    const c = S.ctxLive || S.ctx, u = S.usage, m = lastMem, hintText = (MODE_TEXT[S.mode] || MODE_TEXT.tools).hint;
     const parts = [], tips = [];
     if (c && c.window) {
       const used = c.real || c.tokens || c.used || 0;
@@ -2919,11 +2922,16 @@
     el.title = parts.length ? [...tips, "", hintText].join("\n") : "";
   }
 
-  function showContext(c) {
+  function showContext(c, live = false) {
     if (!c || !c.window) return;
-    S.ctx = c;
-    if (c.usage && !c.routine) S.usage = c.usage;
-    if (!lastMem) loadCtxMemory();
+    if (live) S.ctxLive = c;
+    else {  // neuer Stand vom Server: ab hier zählen die gestreamten Token neu
+      S.ctx = c;
+      S.ctxLive = null;
+      T.streamed = 0;
+      if (c.usage && !c.routine) S.usage = c.usage;
+      if (!lastMem) loadCtxMemory();
+    }
     renderTokenLine();
     // Feste Grenze: das Kontextfenster des Modells. Vorne die echte Prompt-Größe laut Server, sonst die Schätzung
     // (beide in echten Token) – so wandert die Grenze nicht mehr mit Reserve, Denkmodus oder gelernter Schätzung.
@@ -3000,6 +3008,30 @@
     if (title) el.title = title;
   }
 
+  // Mehrere Grafikkarten: in der Kachel je Karte eine Zeile mit Balken (rows = null → normale Kachel)
+  function setDual(key, rows) {
+    const el = $("tele-" + key);
+    if (!el) return;
+    let box = el.querySelector(".tele-dual");
+    el.classList.toggle("dual", !!rows);
+    if (!rows) { if (box) box.remove(); return; }
+    if (!box || box.children.length !== rows.length) {
+      if (box) box.remove();
+      box = document.createElement("div");
+      box.className = "tele-dual";
+      box.innerHTML = rows.map(() => `<div class="td-row"><span class="td-l"></span><span class="td-bar"><i></i></span><span class="td-v"></span></div>`).join("");
+      el.insertBefore(box, el.querySelector(".tele-sub"));
+    }
+    rows.forEach((r, i) => {
+      const row = box.children[i];
+      row.querySelector(".td-l").textContent = r.label;
+      row.querySelector(".td-v").textContent = r.text;
+      row.querySelector(".td-bar i").style.width = `${Math.min(100, Math.max(0, r.pct || 0))}%`;
+      row.classList.toggle("warn", r.pct >= 80 && r.pct < 95);
+      row.classList.toggle("crit", r.pct >= 95);
+    });
+  }
+
   function pushSpark(key, value) {
     if (value === null || value === undefined) return;
     const arr = (T.spark[key] = T.spark[key] || []);
@@ -3043,11 +3075,19 @@
       const vp = g.vram_total ? (100 * g.vram_used) / g.vram_total : null;
       setTile("vram", gb(g.vram_used), { pct: vp, sub: `${L("von", "of")} ${fmt(gb(g.vram_total))} GB`, title });
       setTile("power", g.power, { digits: 0, sub: g.name ? g.name.replace(/^(NVIDIA|AMD)\s+/i, "") : "", title: g.name });
+      const cards = g.gpus && g.gpus.length > 1 ? g.gpus : null;
+      setDual("gpu", cards && cards.map((c, i) => ({ label: `GPU ${i + 1}`, pct: c.util, text: `${fmt(c.util, 0)} %` })));
+      setDual("vram", cards && cards.map((c, i) => {
+        const pct = c.vram_total ? (100 * c.vram_used) / c.vram_total : null;
+        return { label: `GPU ${i + 1}`, pct, text: `${fmt(gb(c.vram_used), 1)}/${fmt(gb(c.vram_total), 0)}` };
+      }));
       pushSpark("gpu", g.util);
       pushSpark("vram", gb(g.vram_used));
       pushSpark("power", g.power);
     } else {
       setTile("gpu", null, { sub: L("keine GPU", "no GPU"), title: L("keine GPU erkannt", "no GPU detected") });
+      setDual("gpu", null);
+      setDual("vram", null);
       setTile("vram", null);
       setTile("power", null);
     }
@@ -3108,6 +3148,10 @@
       const live = T.tokenTimes.length / Math.max(span, 0.25);
       setTile("tps", live, { sub: "live" });
     }
+    if (streaming && S.ctx && T.streamed) {  // Kontext wächst mit dem, was gerade gestreamt wird (auch Gedanken)
+      const base = S.ctx.real || S.ctx.tokens || S.ctx.used || 0;
+      showContext({ ...S.ctx, real: base + T.streamed, tokens: null }, true);
+    }
   }, 500);
   setTile("tps", null, { sub: L("wartet auf Antwort", "waiting for an answer") });
 
@@ -3140,6 +3184,7 @@
   function showMemory(m) {
     renderTokenLine();
     const box = $("tele-mem");
+    if (!box) return;  // Kachel „Kontext im Speicher“ gibt es nicht mehr – die Zeile unter der Eingabe zeigt es
     if (!m || (!m.available && !m.reason)) { box.hidden = true; return; }  // Demo: nichts zu zeigen
     box.hidden = false;
     if (!m.available) {  // echtes Modell, aber keine Angaben – den Grund nennen statt still zu verschwinden
