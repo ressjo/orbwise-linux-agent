@@ -299,6 +299,13 @@ class Hub:
             text = await self.goal_command(goal_cmd.group(2).strip())
             if not text:
                 return
+        review = re.match(r"^/(review|check|prüfen|pruefen)\b\s*(.*)$", text, re.I | re.S)
+        if review and source != "voice":  # 🛡 Code-Check: prüfen, berichten, beheben, erneut prüfen
+            full = review.group(2).strip().lower() in ("all", "alles", "ganz", "projekt", "full")
+            task = asyncio.create_task(self.review(full))
+            self.tasks.add(task)
+            task.add_done_callback(self.tasks.discard)
+            return
         command = re.match(r"^/(compact|komprimieren)\b\s*(.*)$", text, re.I | re.S)
         if command and source != "voice":  # wie in Claude Code: /compact [worauf es ankommt]
             task = asyncio.create_task(self.compact(command.group(2)))
@@ -338,6 +345,30 @@ class Hub:
         task = asyncio.create_task(self._run(text, self.plan_mode if plan is None else plan, approved_plan, images))
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
+
+    async def review(self, full: bool = False) -> None:
+        """Code-Check: Bericht, danach bestätigte Funde und fehlschlagende Prüfungen beheben lassen und erneut prüfen
+        – höchstens coding.review_rounds Runden (siehe agent_review.py)."""
+        label = T("🛡 Code-Check", "🛡 Code check") + (T(" (ganzes Projekt)", " (whole project)") if full else "")
+        await self.broadcast({"type": "user", "text": label, "source": "review", "images": [], "files": []})
+        try:
+            result = await self.agent.code_review(self.emit, self.confirm, full, think=self.think)
+            rounds = max(0, self.cfg.coding.review_rounds)
+            for round_ in range(1, rounds + 1):
+                if not result.get("fix"):
+                    break
+                await self.broadcast({"type": "user", "text": result["fix"], "source": "review", "images": [],
+                                      "files": []})
+                await self.agent.run(result["fix"], self.emit, self.confirm, think=self.think)
+                result = await self.agent.code_recheck(self.emit, self.confirm, result, round_, round_ == rounds)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:  # noqa: BLE001
+            log.exception("Code-Check fehlgeschlagen")
+            await self.emit({"type": "error", "text": T(f"Code-Check fehlgeschlagen: {e}", f"Code check failed: {e}")})
+        finally:
+            if not self.agent.busy():
+                await self.broadcast({"type": "state", "state": "idle"})
 
     async def _run(self, text: str, plan: bool = False, approved_plan: str = "",
                    images: list[str] | None = None) -> None:

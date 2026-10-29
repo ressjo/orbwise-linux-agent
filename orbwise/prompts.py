@@ -900,3 +900,73 @@ def with_summary(cfg, note: str, summary: str) -> str:
 
 def strip_context_note(text: str) -> str:
     return _NOTE_RE.sub("", text or "", count=1)
+
+
+# ---------------------------------------------------------------- Code-Check (Reviewer mit frischem Blick)
+# Ein Thema je Durchgang (kleine Modelle sind fokussiert besser), danach ein skeptischer Prüfer, der jeden Fund am Code
+# belegen muss – das filtert erfundene Funde, die größte Schwäche eines Selbst-Reviews.
+REVIEW = {
+    "de": {
+        "bugs": "Fehler und Logik: falsches Verhalten, Randfälle (leer, None/null, 0, Fehlerfälle), unbehandelte "
+                "Ausnahmen, Ressourcen, die nicht freigegeben werden, Nebenläufigkeit, falsche Nutzung von APIs, Tests, "
+                "die das Falsche prüfen",
+        "security": "Sicherheit: Injection (SQL, Shell, Pfade, Templates), fehlende Eingabeprüfung, unsichere "
+                    "Deserialisierung, Geheimnisse im Code, schwache Kryptografie oder Zufallszahlen, fehlende "
+                    "Berechtigungsprüfung, XSS/CSRF, unsichere Voreinstellungen",
+        "structure": "Struktur und Wartbarkeit: doppelter Code, zu lange oder verschachtelte Funktionen, irreführende "
+                     "Namen, toter Code, neue Logik ohne Test, Abweichung von den Mustern des Projekts – nur, was einen "
+                     "echten Unterschied macht, keine Stilvorlieben",
+        "pass": "Du bist Code-Reviewer mit frischem Blick – den Code hat jemand anderes geschrieben. Prüfe NUR auf "
+                "{focus}.\n\nProjekt: {project}\nZu prüfende Dateien:\n{files}\n\n{diff}{checks}"
+                "Lies die betroffenen Stellen und ihr Umfeld (Aufrufer, Tests) mit read und grep, bevor du urteilst. "
+                "Melde nur echte, konkrete Probleme mit Datei und Zeile, die du im Code siehst – keine Vermutungen, "
+                "höchstens 8, die wichtigsten zuerst.\n\nAntworte am Ende NUR mit JSON (ohne Text davor):\n"
+                '[{{"severity": "hoch|mittel|niedrig", "file": "pfad", "line": 12, "title": "kurz", '
+                '"why": "warum das ein Problem ist, mit Bezug auf den Code", "fix": "wie beheben"}}]\n'
+                "Ist nichts zu melden: []",
+        "verify": "Du prüfst Funde eines Code-Reviews skeptisch – viele Funde solcher Reviews sind falsch. Prüfe JEDEN "
+                  "Fund am Code: lies die Stelle (read/grep); wo es hilft, beweise es mit einem Befehl (shell, z. B. "
+                  "ein kleiner Test oder Aufruf). Bestätige nur, was du im Code belegen kannst; im Zweifel verwerfen.\n\n"
+                  "Funde:\n{findings}\n\nAntworte am Ende NUR mit JSON (ohne Text davor):\n"
+                  '[{{"id": 1, "verdict": "bestätigt|verworfen", "reason": "Beleg oder warum falsch"}}]',
+        "fix": "🛡 Code-Check: Behebe die bestätigten Funde unten in der Sandbox – mit kleinen, gezielten Änderungen, "
+               "ohne Unbeteiligtes umzubauen; für Fehler, wo sinnvoll, mit einem Test, der ihn zeigt. Danach führe "
+               "diese Prüfungen erneut aus und behebe, was noch fehlschlägt:\n{commands}\nMelde am Ende kurz, was du "
+               "geändert hast.\n\n{findings}",
+        "fix_again": "🛡 Code-Check, Runde {round}: Diese Prüfungen schlagen nach deinen Änderungen noch fehl – "
+                     "behebe die Ursache (nicht die Prüfung abschalten) und führe sie erneut aus:\n\n{failing}",
+    },
+    "en": {
+        "bugs": "bugs and logic: wrong behaviour, edge cases (empty, None/null, 0, error paths), unhandled exceptions, "
+                "resources that are not released, concurrency, wrong API use, tests that check the wrong thing",
+        "security": "security: injection (SQL, shell, paths, templates), missing input validation, unsafe "
+                    "deserialisation, secrets in code, weak crypto or randomness, missing authorisation checks, "
+                    "XSS/CSRF, unsafe defaults",
+        "structure": "structure and maintainability: duplicated code, overly long or nested functions, misleading "
+                     "names, dead code, new logic without a test, deviation from the project's patterns – only what "
+                     "makes a real difference, no style preferences",
+        "pass": "You are a code reviewer with fresh eyes – somebody else wrote this code. Check ONLY for {focus}.\n\n"
+                "Project: {project}\nFiles to check:\n{files}\n\n{diff}{checks}"
+                "Read the affected places and their surroundings (callers, tests) with read and grep before you judge. "
+                "Report only real, concrete problems with file and line that you can see in the code – no guesses, "
+                "at most 8, most important first.\n\nFinish with JSON ONLY (no text before it):\n"
+                '[{{"severity": "high|medium|low", "file": "path", "line": 12, "title": "short", '
+                '"why": "why this is a problem, referring to the code", "fix": "how to fix it"}}]\n'
+                "If there is nothing to report: []",
+        "verify": "You check the findings of a code review sceptically – many findings of such reviews are wrong. Check "
+                  "EVERY finding against the code: read the place (read/grep); where it helps, prove it with a command "
+                  "(shell, e.g. a small test or call). Confirm only what you can prove in the code; reject when in "
+                  "doubt.\n\nFindings:\n{findings}\n\nFinish with JSON ONLY (no text before it):\n"
+                  '[{{"id": 1, "verdict": "confirmed|rejected", "reason": "proof or why it is wrong"}}]',
+        "fix": "🛡 Code check: fix the confirmed findings below in the sandbox – with small, targeted changes, without "
+               "rebuilding unrelated code; for bugs, where it makes sense, with a test that shows it. Then run these "
+               "checks again and fix what still fails:\n{commands}\nFinally report briefly what you changed.\n\n"
+               "{findings}",
+        "fix_again": "🛡 Code check, round {round}: these checks still fail after your changes – fix the cause (do not "
+                     "switch the check off) and run them again:\n\n{failing}",
+    },
+}
+
+
+def review_text(cfg, key: str) -> str:
+    return REVIEW[lang_of(cfg)][key]

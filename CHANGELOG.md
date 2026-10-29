@@ -5,6 +5,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Code check (🛡 Check, `/review`)** in coding mode: runs the project's tests/linters/type check and security
+  scanners (ruff, bandit, semgrep, gitleaks, shellcheck – new in sandbox image `:4`) in the sandbox, then reviews with
+  fresh eyes in separate passes (bugs, security, structure), has a sceptical pass prove every finding, reports in the
+  chat and fixes confirmed findings and failing checks automatically (re-checking, up to two rounds).
+
 ### Changed
 - **Token line under the input:** instead of the static hint it shows the context in use (e.g. *Context 12k / 64k*),
   how many tokens of the window fit in VRAM and in RAM (KV cache) and the tokens of this chat session (read +

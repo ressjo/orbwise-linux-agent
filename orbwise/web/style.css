@@ -334,11 +334,14 @@ textarea.ui-dialog-input { height: auto; padding: 9px 12px; resize: vertical; }
 @media (max-width: 900px) { .branch-badge { display: none !important; } }
 .head-split + .head-split .project-chip { margin-left: 6px; }
 .chip-menu.head-menu { top: calc(100% + 8px); bottom: auto; left: 10px; right: auto; width: 320px; }
+#review-menu.chip-menu.head-menu { left: auto; right: 0; }  /* rechts in der Leiste: nicht über den Rand */
 .sandbox-chip.unset em { font-family: inherit; color: var(--muted); }
 .sandbox-chip em { font-family: inherit; }
 .sandbox-chip .i { color: var(--muted); }
 .sandbox-chip.on { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent); }
 .sandbox-chip.on .i { color: var(--accent); }
+.review-chip em { font-family: inherit; }
+.review-chip .i { color: var(--muted); }
 .chip-menu .sb-status { display: flex; flex-direction: column; gap: 2px; padding: 8px 11px 10px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
 .chip-menu .sb-status b { font-family: var(--mono); font-size: var(--fs-sm); font-weight: 500; }
 .chip-menu button.danger b { color: var(--danger); }

@@ -187,6 +187,7 @@ coding:                    # Coding mode (works like OpenCode 2: read/edit/grep/
   # instructions: [AGENTS.md, CLAUDE.md]   # first file found in the project folder goes into the system prompt
   # goal_max_steps: 300     # goal mode (/goal <goal>): works without "continue" – at most this many tool steps …
   # goal_max_minutes: 120   # … or minutes, then it pauses ("/goal continue" carries on)
+  # review_rounds: 2        # code check (🛡 Check, /review): at most this many "fix → check again" rounds
 
 sandbox:                   # CODING: run the agent's commands in a container on a working copy (like Claude on the web)
   engine: auto             # auto (podman, else docker) | podman | docker – install: sudo apt install podman

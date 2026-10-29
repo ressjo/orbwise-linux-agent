@@ -25,7 +25,7 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-DEFAULT_IMAGE = "orbwise-sandbox:3"
+DEFAULT_IMAGE = "orbwise-sandbox:4"
 CONTAINERFILE = Path(__file__).parent / "sandbox_image" / "Containerfile"
 # „Docker im Container“: nur falls das Standardprofil verschachtelte User-Namespaces verhindert (siehe containers_test)
 SECCOMP_NESTED = Path(__file__).parent / "sandbox_image" / "seccomp-nested.json"
@@ -116,7 +116,7 @@ def image_ready(binary: str, name: str) -> bool:
 
 
 async def build_image(binary: str, progress: Callable[[str], Awaitable[None]] | None = None) -> None:
-    """orbwise-sandbox:3 aus sandbox_image/Containerfile bauen (einmalig, einige Minuten)."""
+    """orbwise-sandbox:4 aus sandbox_image/Containerfile bauen (einmalig, einige Minuten)."""
     # --network=host: der Bau (nur apt-get mit dem eigenen Containerfile) braucht kein eigenes Container-Netz – so
     # klappt er auch, wenn pasta/slirp4netns kein /dev/net/tun bekommen
     proc = await asyncio.create_subprocess_exec(

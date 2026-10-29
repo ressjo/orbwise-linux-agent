@@ -451,6 +451,8 @@ class CodingConfig(BaseModel):
     instructions: list[str] = Field(default_factory=lambda: ["AGENTS.md", "CLAUDE.md"])
     # Ziel-Modus (/goal): arbeitet ohne „mach weiter“ – höchstens so viele Werkzeug-Schritte bzw. Minuten
     goal_max_steps: int = 300
+    # Code-Check (🛡): so viele Runden „beheben → erneut prüfen“ höchstens
+    review_rounds: int = 2
     goal_max_minutes: int = 120
 
     @field_validator("subagent_steps", "max_jobs")
@@ -467,7 +469,7 @@ class CodingConfig(BaseModel):
 class SandboxConfig(BaseModel):
     # Coding-Sandbox: Befehle laufen in einem Container (Podman bevorzugt, sonst Docker) auf einer Arbeitskopie
     engine: str = "auto"            # auto | podman | docker
-    image: str = ""                 # leer = orbwise-sandbox:3 (wird beim ersten Einschalten gebaut)
+    image: str = ""                 # leer = orbwise-sandbox:4 (wird beim ersten Einschalten gebaut)
     memory: str = "4g"
     cpus: float = 2.0
     network: bool = True            # Standard für neue Sandboxen (je Chat umschaltbar)

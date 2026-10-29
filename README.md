@@ -949,7 +949,7 @@ writing outside the copy, and pushing to GitHub; the leak guard keeps watching w
   the Chromium/Chrome on your machine. The image appears under the answer (see the
   [screenshot above](#what-makes-it-different)); if the loaded model sees images, it also gets a description to check
   its work.
-- The default image `orbwise-sandbox:3` (Debian with git, Python, Node, build tools, ripgrep, Chromium for screenshots, Podman) is built on first use;
+- The default image `orbwise-sandbox:4` (Debian with git, Python, Node, build tools, ripgrep, Chromium for screenshots, Podman, and for the code check ruff, bandit, semgrep, gitleaks, shellcheck) is built on first use;
   `sandbox.image` takes any other image (e.g. `python:3.12`). Install Podman with `sudo apt install podman`.
   If Podman is installed but not usable, the error says why (e.g. missing `subuid` ranges, with the fix) instead of
   Docker's “cannot connect to the Docker daemon”. On btrfs Podman may need `fuse-overlayfs` (`mount_program` in
@@ -990,6 +990,27 @@ Sign in once with the GitHub CLI (`gh auth login`) – Orbwise uses its token �
   a link to **create the pull request** on GitHub. The token is handed to git only for that one call (via
   `GIT_ASKPASS`) and never written into `.git/config`.
 - `orbwise doctor` shows the container engine and the GitHub account.
+
+### Code check (🛡 Check)
+
+**Check** next to the sandbox chip (or `/review`, `/review all` for the whole project) reviews the project – as well as
+a local model can review its own code:
+
+1. **Hard facts first** – in the sandbox (turned on if needed): the project's tests, linter and type check (pytest,
+   `npm test`/`lint`/`typecheck`, `tsc`, `make test`, `cargo test`, `go test`) plus scanners from the sandbox image:
+   ruff, bandit, semgrep, gitleaks (secrets in code), shellcheck. What they find is real.
+2. **Fresh eyes** – one sub-agent per topic (bugs and logic · security · structure), each with an empty context: it
+   sees the code and the changes, not the reasoning from the chat, so it doesn't just nod its own work through.
+3. **Sceptical verification** – a second pass has to prove every finding in the code (read it, or show it with a small
+   command or test); unproven findings are dropped. This filters out invented findings, the biggest weakness of a
+   self-review.
+4. **Report and fix** – the report (severity, `file:line`, why, fix) lands in the chat; confirmed findings and failing
+   checks are then fixed in the sandbox and the checks run again, up to `coding.review_rounds` (2) rounds. Your
+   project folder stays untouched until you apply the changes.
+
+By default it checks what changed in the sandbox – or, if nothing did, what is open since the last commit or the last
+commit itself; *Check the whole project* reviews all source files (much slower with a local model). Older sandboxes
+(image `:3`) skip the scanners – end the sandbox and turn it on again to get image `:4`.
 
 ### Goal mode (/goal)
 

@@ -1,5 +1,5 @@
 # Orbwise-Sandbox für den Coding-Modus: ein schlankes Debian mit dem, was man zum Bauen und Testen meist braucht.
-# Wird beim ersten Einschalten der Sandbox gebaut (orbwise-sandbox:3). Eigenes Image: sandbox.image in der Config.
+# Wird beim ersten Einschalten der Sandbox gebaut (orbwise-sandbox:4). Eigenes Image: sandbox.image in der Config.
 FROM docker.io/library/debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8 PIP_BREAK_SYSTEM_PACKAGES=1
@@ -11,7 +11,16 @@ RUN apt-get update \
       nodejs npm \
       chromium fonts-dejavu-core \
       podman podman-compose fuse-overlayfs uidmap slirp4netns catatonit \
+      shellcheck \
  && rm -rf /var/lib/apt/lists/*
+
+# Code-Check: Linter und Sicherheits-Scanner – ihre Funde sind echt, das Modell muss nicht raten. Scheitert ein
+# Download, fehlt nur diese Prüfung (der Code-Check überspringt sie)
+RUN pip install --no-cache-dir ruff bandit semgrep || true
+ARG GITLEAKS=8.21.2
+RUN arch=$(dpkg --print-architecture | sed 's/amd64/x64/') \
+ && curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS}/gitleaks_${GITLEAKS}_linux_${arch}.tar.gz" \
+    | tar -xz -C /usr/local/bin gitleaks || true
 
 # „Docker im Container“ (nur wenn der Nutzer es je Chat erlaubt): docker/podman laufen als builder – rootless, in
 # einem eigenen User-Namespace, mit dem Netz der Sandbox

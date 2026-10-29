@@ -54,6 +54,7 @@
       <symbol id="i-code" viewBox="0 0 24 24"><path d="m8 7-5 5 5 5M16 7l5 5-5 5M13.5 4l-3 16"/></symbol>
       <symbol id="i-github" viewBox="0 0 24 24"><path d="M9 19c-4 1.3-4-2-6-2.5M15 21v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12 12 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"/></symbol>
       <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.5 3 8.3 7 10 4-1.7 7-5.5 7-10V6Z"/></symbol>
+      <symbol id="i-shield-check" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.5 3 8.3 7 10 4-1.7 7-5.5 7-10V6Z"/><path d="m9 12 2.2 2.2L15.5 10"/></symbol>
       <symbol id="i-branch" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="7" r="2"/><path d="M6 7v10M18 9c0 5-6 4-12 8"/></symbol>
       <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></symbol>
       <symbol id="i-plan" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11"/><path d="m3.5 6 1 1 2-2M3.5 12l1 1 2-2M3.5 18l1 1 2-2"/></symbol>
@@ -124,6 +125,13 @@
         <div class="chip-split head-split" id="sandbox-wrap">
           <button class="project-chip sandbox-chip coding-only" id="sandbox-chip" aria-haspopup="menu" title="Sandbox: Befehle laufen in einem Container auf einer Arbeitskopie"><svg class="i"><use href="#i-shield"/></svg><em id="sandbox-label">Sandbox</em></button>
           <div class="chip-menu head-menu hidden" id="sandbox-menu" role="menu"></div>
+        </div>
+        <div class="chip-split head-split" id="review-wrap">
+          <button class="project-chip review-chip coding-only" id="review-chip" aria-haspopup="menu" title="Code-Check: das Projekt in der Sandbox prüfen – Tests, Linter, Sicherheits-Scanner und ein Review mit frischem Blick; bestätigte Funde werden behoben"><svg class="i"><use href="#i-shield-check"/></svg><em>Prüfen</em></button>
+          <div class="chip-menu head-menu hidden" id="review-menu" role="menu">
+            <button type="button" role="menuitem" data-review=""><b>Änderungen prüfen</b><small>Was sich in der Sandbox bzw. seit dem letzten Commit geändert hat – schnell und gründlich.</small></button>
+            <button type="button" role="menuitem" data-review="all"><b>Ganzes Projekt prüfen</b><small>Alle Quelldateien – dauert mit einem lokalen Modell deutlich länger.</small></button>
+          </div>
         </div>
         <div class="head-actions">
           <button class="model-chip" id="pill-llm" title="Sprachmodell wechseln"><i></i><svg class="i"><use href="#i-chip"/></svg><em>–</em><svg class="i caret"><use href="#i-chevron"/></svg></button>

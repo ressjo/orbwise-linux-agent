@@ -27,6 +27,7 @@ from pathlib import Path
 from . import prompts
 from .agent_code import CodingMixin
 from .agent_compact import CompactMixin
+from .agent_review import ReviewMixin
 from .agent_safety import TAINT_SOURCES, SafetyMixin, is_taint_source  # noqa: F401 – auch für Aufrufer
 from .agent_speed import SpeedMixin
 from .agent_tools import CODING_GROUPS, CODING_ONLY, ToolSelectionMixin  # noqa: F401
@@ -124,7 +125,7 @@ class ThinkFilter:
         return rest
 
 
-class Agent(CompactMixin, CodingMixin, ToolSelectionMixin, SafetyMixin, SpeedMixin):
+class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMixin, SpeedMixin):
     def __init__(self, cfg: Config, llm, memory: Memory):
         self.cfg = cfg
         self.llm = llm

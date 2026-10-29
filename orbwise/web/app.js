@@ -380,6 +380,11 @@
       case "context":
         showContext(ev);
         return;
+      case "sandbox_state":  // z. B. der Code-Check hat die Sandbox eingeschaltet
+        S.sandbox = ev.sandbox || null;
+        renderSandboxChip();
+        loadProjectInfo();
+        return;
       case "usage":  // Token dieses Chats (Sitzung) – nach jedem Modellschritt
         if (!ev.routine) { S.usage = ev; renderTokenLine(); }
         return;
@@ -1188,6 +1193,7 @@
 
   const TOOL_LABELS = {
     web_search: ["Websuche", "Web search"], fetch_url: ["Webseite lesen", "Read web page"],
+    code_review: ["Code-Check", "Code check"],
     open_website: ["Webseite öffnen", "Open website"], run_shell: ["Befehl", "Command"], ssh_run: ["Befehl per SSH", "SSH command"],
     read_file: ["Datei lesen", "Read file"], write_file: ["Datei schreiben", "Write file"], edit_file: ["Datei ändern", "Edit file"],
     list_directory: ["Ordner anzeigen", "List folder"], find_files: ["Dateien suchen", "Find files"],
@@ -1226,7 +1232,7 @@
   const toolIcon = (ev) => (ev.group === "code" ? CODE_ICONS[ev.name] : ACT_ICONS[ev.group]) || "bolt";
   // das aussagekräftigste Argument als Kurzinfo hinter dem Namen
   function keyArg(args) {
-    for (const k of ["command", "query", "path", "url", "pattern", "description", "text", "name", "topic", "title", "q"]) {
+    for (const k of ["command", "query", "path", "url", "pattern", "description", "text", "name", "topic", "title", "q", "step"]) {
       const v = args && args[k];
       if (typeof v === "string" && v.trim()) {
         const one = v.replace(/\s+/g, " ").trim();
@@ -5359,6 +5365,22 @@
                         `Sandbox: commands run in the container (${S.sandbox.engine}), branch ${S.sandbox.branch || "–"}`)
       : L("Sandbox: Befehle laufen in einem Container auf einer Arbeitskopie", "Sandbox: commands run in a container on a working copy");
   }
+  // 🛡 Code-Check: Änderungen bzw. ganzes Projekt in der Sandbox prüfen (Server: /review, siehe agent_review.py)
+  const reviewMenu = $("review-menu");
+  $("review-chip").onclick = (e) => {
+    e.stopPropagation();
+    if (!S.project) { toast(L("Erst einen Projektordner wählen.", "Choose a project folder first.")); return; }
+    reviewMenu.classList.toggle("hidden");
+  };
+  reviewMenu.querySelectorAll("[data-review]").forEach((b) => {
+    b.onclick = (e) => {
+      e.stopPropagation();
+      reviewMenu.classList.add("hidden");
+      if (["thinking", "executing", "confirm"].includes(S.serverState)) { toast(L("Erst die laufende Antwort abwarten.", "Wait for the running answer first.")); return; }
+      send({ type: "user_message", text: b.dataset.review ? "/review all" : "/review" });
+    };
+  });
+  document.addEventListener("click", (e) => { if (!e.target.closest("#review-wrap")) reviewMenu.classList.add("hidden"); });
   $("sandbox-chip").onclick = async (e) => {
     e.stopPropagation();
     projectMenu.classList.add("hidden");
