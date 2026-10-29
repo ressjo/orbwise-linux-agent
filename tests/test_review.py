@@ -125,7 +125,10 @@ def test_review_reports_only_proven_findings_and_asks_to_fix_them(cfg, llm, memo
     # nach dem Beheben: nur die festen Prüfungen erneut
     status = {c["name"]: c["status"] for c in result["checks"]}
     assert status.get("pytest") == "fail" and "Python-Tests" in result["fix"]  # echter Testfehler im Auftrag
-    (Path(caged["path"]) / "calc.py").write_text("def add(a, b):\n    return a + b\n")  # „behoben“
+    fixed = Path(caged["path"]) / "calc.py"
+    fixed.write_text("def add(a, b):\n    return a + b  # behoben\n")  # andere Größe: kein veralteter Bytecode
+    for cache in Path(caged["path"]).rglob("__pycache__"):
+        __import__("shutil").rmtree(cache)
     again = run(agent.code_recheck(emit, confirm, result, 1, last=True))
     assert again["fix"] == "" and {c["name"]: c["status"] for c in again["checks"]}["pytest"] == "ok"
     assert "grün" in memory.conversation.history[-1]["content"]

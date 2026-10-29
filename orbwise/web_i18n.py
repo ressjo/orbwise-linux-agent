@@ -183,7 +183,6 @@ HTML_EN = [
      'id="btn-sudo-forget">Vergessen<',
      '<b>Root password</b><em>not remembered</em><button type="button" class="btn-link hidden" '
      'id="btn-sudo-forget">Forget<'),
-    ('<span class="tele-label">Kontext im Speicher</span>', '<span class="tele-label">Context in memory</span>'),
     ('<b>Denkmodus</b><small>Gründlicher, dafür langsamer.</small>',
      '<b>Thinking mode</b><small>More thorough, but slower.</small>'),
     ('data-mirror="btn-tts">Aus<', 'data-mirror="btn-tts">Off<'),
