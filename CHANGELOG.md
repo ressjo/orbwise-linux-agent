@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Version and update in the web UI:** the bottom of the sidebar shows the installed version (version · date ·
+  commit). Orbwise checks for updates at most every 3 hours; *Update available (n)* lists what changed and updates
+  with one click – git pull, dependencies, restart (also as a systemd user service), then the page reloads itself.
 - **Adding models, LM-Studio-style:** the *Add* tab opens with trending GGUF models from Hugging Face that fit your
   video memory (deduplicated across uploaders) instead of only a fixed list; search runs while you type, sorted by
   downloads, trend, likes or last update, with a *fits my memory* filter. Every model shows parameters, architecture,
@@ -56,6 +59,8 @@ All notable changes to this project are documented here. The format follows
   `~/.local/share/orbwise/chromium` (no root; asks first outside Auto, a "no" is remembered).
 
 ### Fixed
+- **`orbwise update` did not restart a running server** since the access token: it asked `/api/status`, which now
+  needs the token, and took the server for stopped. It now asks the token-free `/api/alive`.
 - **Image mode with several GPUs:** since the multi-GPU change the image engine took the *sum* of all cards' VRAM, so
   on e.g. 2×12 GB it kept the language model loaded and skipped `--offload-to-cpu` – the image model then had no room
   on the one card sd-server runs on. It now goes by the biggest single card. A seed of 0 is no longer turned into a

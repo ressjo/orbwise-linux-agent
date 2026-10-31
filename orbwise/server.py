@@ -12,6 +12,7 @@ import os
 import re
 import secrets
 import shutil
+import subprocess
 import time
 import uuid
 from datetime import datetime
@@ -1039,6 +1040,57 @@ def create_app(cfg: Config) -> FastAPI:
     async def alive():
         """Lebenszeichen ohne Token – für den Starter (orbwise-open), bevor er die Oberfläche öffnet."""
         return {"ok": True}
+
+    # ---------- Version und Update aus der Oberfläche ----------
+    update_state: dict = {"checked": 0.0, "info": None, "running": False}
+
+    @app.get("/api/update")
+    async def update_info(check: bool = False, force: bool = False):
+        """Installierter Stand; mit check=1 auch, ob es einen neueren gibt (git fetch höchstens alle 3 Stunden)."""
+        from . import update as upd
+        if not check:
+            return {**await asyncio.to_thread(upd.details), "running": update_state["running"]}
+        fresh = time.monotonic() - update_state["checked"] < 3 * 3600
+        if force or not fresh or update_state["info"] is None:
+            update_state["info"] = await asyncio.to_thread(upd.check)
+            update_state["checked"] = time.monotonic()
+        return {**update_state["info"], "running": update_state["running"]}
+
+    @app.post("/api/update")
+    async def update_start():
+        """Update laden (git pull, Abhängigkeiten) und Orbwise neu starten – Fortschritt per WebSocket
+        (update_progress, update_done). Nicht, während Orbwise antwortet oder ein Bild rechnet."""
+        from . import update as upd
+        if update_state["running"]:
+            raise HTTPException(409, T("Das Update läuft schon.", "The update is already running."))
+        if agent.busy() or images.lock.locked():
+            raise HTTPException(409, T("Orbwise arbeitet gerade – erst abwarten, dann aktualisieren.",
+                                       "Orbwise is busy – wait, then update."))
+        update_state["running"] = True
+        loop = asyncio.get_running_loop()
+        lines: list[str] = []
+
+        def out(line: str) -> None:
+            lines.append(line)
+            asyncio.run_coroutine_threadsafe(hub.broadcast({"type": "update_progress", "text": line}), loop)
+
+        async def run() -> None:
+            restart: list[Path] = []
+            try:
+                code = await asyncio.to_thread(upd.update, None, cfg.port, subprocess.run,
+                                               lambda port, root: restart.append(root), out)
+            except Exception as e:  # noqa: BLE001 – melden statt hängen lassen
+                log.exception("Update fehlgeschlagen")
+                code, lines[:] = 1, [*lines, str(e)]
+            update_state["running"] = False
+            update_state["info"] = None  # beim nächsten Blick neu prüfen
+            await hub.broadcast({"type": "update_done", "ok": code == 0, "restart": bool(restart),
+                                 "text": "\n".join(lines[-12:])})
+            if restart:
+                await asyncio.sleep(1)  # Meldung noch zustellen
+                await asyncio.to_thread(upd.restart_self, cfg.port, restart[0])
+        background.append(asyncio.create_task(run()))
+        return {"started": True}
 
     @app.get("/api/startup")
     async def startup_state():

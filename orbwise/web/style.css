@@ -253,6 +253,19 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
 .app.side-collapsed .side-chats, .app.side-collapsed .nav-item span { display: none; }
 .app.side-collapsed .new-chat { width: 40px; padding: 0; justify-content: center; }
 .app.side-collapsed .side-nav { margin-top: auto; }
+/* Version unten in der Seitenleiste; mit Update ein Punkt in Akzentfarbe */
+.side-version { display: flex; align-items: center; gap: 7px; margin-top: 6px; padding: 4px 10px; min-height: 26px; border: 0;
+  background: none; border-radius: var(--radius-sm); color: var(--faint); font-size: var(--fs-xs); text-align: left; cursor: pointer;
+  font-variant-numeric: tabular-nums; }
+.side-version .sv-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.side-version:hover { background: var(--surface-3); color: var(--text-2); }
+.side-version.has-update { color: var(--accent); font-weight: 500; }
+.sv-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+.app.side-collapsed .side-version { width: 40px; justify-content: center; padding: 4px 0; }
+.app.side-collapsed .side-version .sv-text { display: none; }
+#btn-menu { position: relative; }
+#btn-menu.has-update::after { content: ""; position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent); }
 .app.side-collapsed .nav-item { width: 40px; padding: 0; justify-content: center; }
 .app.side-collapsed .side-head { padding: 2px 0 6px; flex-direction: column; }
 

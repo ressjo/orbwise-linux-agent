@@ -130,6 +130,13 @@ header `X-Orbwise-Token`. The OpenAI-compatible API (`/v1`) keeps its own key.
 
 ### Updating
 
+The version is shown at the bottom of the sidebar (version · date · commit). Orbwise checks for a newer version at
+most every 3 hours (`git fetch`, no password prompts); when there is one, the line turns into **Update available (n)**
+– on the phone a dot appears on the menu button. Click it to see what changed and **Update now**: Orbwise pulls the
+update, refreshes the dependencies, restarts itself (as a systemd user service via `systemctl --user restart`) and the
+page reloads with the new version. It refuses while Orbwise is answering or drawing an image, and when the project
+folder has local changes. In a terminal the same is:
+
 ```bash
 orbwise update
 ```
