@@ -142,15 +142,14 @@ def cmd_doctor(args) -> None:
                         "one is better for the prompt cache: start llama-server with -np 1"))
     print(T("Sprache:", "Voice:"))
     from .voice.listen import WakeWordFactory, WhisperSTT
-    from .voice.pocket import BY_NAME, language_name
+    from .voice.pocket import language_name
     from .voice.tts import TTS
     stt = WhisperSTT(cfg.voice)
     line(stt.available(), T("faster-whisper (Spracherkennung)", "faster-whisper (speech recognition)"), "uv sync --extra voice")
     tts = TTS(cfg.voice, cfg.memory.dir.parent, cfg.memory.dir.parent / "state.json")
-    version = tts.pocket.describe()["version"]
-    line(tts.available(), f"Pocket TTS {version} · {BY_NAME[tts.voice].label} · "
-         f"{language_name(tts.reply_language, cfg.language == 'en')}",
-         tts.error and f"{tts.error} – orbwise voice install " + T("(sonst spricht der Browser)", "(else the browser speaks)"))
+    fix = "orbwise voice install" if tts.is_piper(tts.voice) else "orbwise voice install pocket"
+    line(tts.available(), f"{tts.label_of(tts.voice)} · {language_name(tts.reply_language, cfg.language == 'en')}",
+         tts.error and f"{tts.error} – {fix} " + T("(sonst spricht der Browser)", "(else the browser speaks)"))
     wake = WakeWordFactory(cfg.voice)
     line(wake.available(), f"Wake-Word '{cfg.voice.wakeword_model}'", wake.error or "")
     print(T("Desktop (Dateien/Programme öffnen):", "Desktop (opening files/apps):"))
@@ -672,30 +671,42 @@ def _finish_add(args, state: Path, name: str, shown: str, base: str, headers: di
 
 
 def cmd_voice(args) -> None:
-    """Sprachausgabe (Pocket TTS) installieren und das Modell schon laden – oder wieder entfernen."""
-    from .voice import pocket
+    """Sprachausgabe installieren (Standard: Piper mit der Stimme der Sprache) und schon einmal sprechen lassen – oder
+    wieder entfernen. `pocket` als Zusatz: Pocket TTS statt Piper."""
+    from .voice import piper, pocket
     from .voice.tts import TTS
     cfg = load_config()
     if not config_path().exists() and env("LANG") in ("de", "en"):  # Installer: noch keine Config
         cfg.voice.language = env("LANG")
     data = cfg.memory.dir.parent
+    use_pocket = args.engine == "pocket"
     if args.action == "remove":
-        mb = pocket.remove(data) / 1e6
-        print(T(f"✔ Pocket TTS entfernt ({mb:.0f} MB frei).", f"✔ Pocket TTS removed ({mb:.0f} MB freed)."))
+        mb = (pocket.remove(data) if use_pocket else piper.remove(data)) / 1e6
+        name = "Pocket TTS" if use_pocket else "Piper"
+        print(T(f"✔ {name} entfernt ({mb:.0f} MB frei).", f"✔ {name} removed ({mb:.0f} MB freed)."))
         return
-    if not pocket.install(data):
-        sys.exit(1)
     tts = TTS(cfg.voice, data, data / "state.json")
-    print(T("Lade Sprachmodell und Stimme (beim ersten Mal einige hundert MB) …",
-            "Downloading the speech model and voice (a few hundred MB the first time) …"))
+    if use_pocket:
+        if not pocket.install(data):
+            sys.exit(1)
+        voice = pocket.NATIVE.get(tts.base_language, "alba")
+        tts.select(voice)
+        print(T("Lade Sprachmodell und Stimme (beim ersten Mal einige hundert MB) …",
+                "Downloading the speech model and voice (a few hundred MB the first time) …"))
+    else:
+        voice_id = tts.piper_id(tts.voice) if tts.is_piper(tts.voice) else piper.NATIVE.get(tts.base_language, "en_US-lessac-high")
+        if not piper.install(data) or not piper.download_voice(data, voice_id):
+            sys.exit(1)
+        tts.select("piper:" + voice_id)
     try:
-        tts.synth(pocket.SAMPLES.get(tts.reply_language, pocket.SAMPLES["en"]))
-        print(T("✔ Pocket TTS ist bereit.", "✔ Pocket TTS is ready."))
+        sample = pocket.SAMPLES.get(tts.reply_language, pocket.SAMPLES["en"]) + " 1.234,5 € am 31.10. um 14:30 Uhr."
+        tts.synth(sample)
+        print(T(f"✔ {tts.label_of(tts.voice)} ist bereit.", f"✔ {tts.label_of(tts.voice)} is ready."))
     except Exception as e:  # noqa: BLE001
-        print(T(f"✘ Pocket TTS startet nicht: {e}", f"✘ Pocket TTS does not start: {e}"))
+        print(T(f"✘ Sprachausgabe startet nicht: {e}", f"✘ Speech output does not start: {e}"))
         sys.exit(1)
     finally:
-        tts.pocket.stop()
+        tts.stop()
 
 
 def cmd_update(args) -> None:
@@ -794,9 +805,11 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("context-test", help=T("Kontextfenster mit dem aktiven Modell prüfen (Größe, Cache, Füllung)",
                                               "check the context window with the active model (size, cache, fill)"))
     p.add_argument("--quick", action="store_true", help=T("ohne das Fenster ganz zu füllen", "without filling the window"))
-    p = sub.add_parser("voice", help=T("Sprachausgabe Pocket TTS installieren (install) oder entfernen (remove)",
-                                       "install (install) or remove (remove) the Pocket TTS speech output"))
+    p = sub.add_parser("voice", help=T("Sprachausgabe installieren (install) oder entfernen (remove) – Piper, mit "
+                                         "„pocket“ Pocket TTS", "install (install) or remove (remove) the speech output – "
+                                         "Piper, with “pocket” Pocket TTS"))
     p.add_argument("action", choices=["install", "remove"])
+    p.add_argument("engine", nargs="?", choices=["piper", "pocket"], default="piper")
     sub.add_parser("update", help=T("Auf den neuesten Stand bringen (git pull, Abhängigkeiten, Neustart)",
                                     "update (git pull, dependencies, restart)"))
     sub.add_parser("version", help=T("Installierte Version anzeigen", "show the installed version"))

@@ -197,9 +197,9 @@ rm -f "$CHOICE_FILE"
 ollama pull bge-m3   # Embeddings fürs Gedächtnis
 
 # ---------------------------------------------------------------- Voice
-say "$(t "Installiere die Sprachausgabe Pocket TTS" "Installing the Pocket TTS speech output")"
-uv run orbwise voice install || echo "$(t "⚠ Pocket TTS nicht eingerichtet – später: orbwise voice install (bis dahin spricht der Browser)" \
-  "⚠ Pocket TTS not set up – later: orbwise voice install (until then the browser speaks)")"
+say "$(t "Installiere die Sprachausgabe Piper (CPU)" "Installing the Piper speech output (CPU)")"
+uv run orbwise voice install || echo "$(t "⚠ Piper nicht eingerichtet – später: orbwise voice install (bis dahin spricht der Browser)" \
+  "⚠ Piper not set up – later: orbwise voice install (until then the browser speaks)")"
 
 say "Downloading the wake word model and Whisper"
 uv run python -c "import openwakeword.utils as u; u.download_models(['hey_jarvis'])"

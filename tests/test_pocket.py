@@ -199,14 +199,14 @@ def test_server_crash_is_reported(tmp_path):
 def test_tts_remembers_voice_and_language(cfg, tmp_path, monkeypatch):
     path = tmp_path / "state.json"
     tts = TTS(cfg.voice, tmp_path, path)
-    assert tts.voice == "juergen" and tts.reply_language == "de"
-    assert not tts.available() and "nicht installiert" in tts.error
+    assert tts.voice == "piper:de_DE-thorsten-high" and tts.reply_language == "de"  # Piper ist Standard
+    assert not tts.available() and "Piper ist nicht installiert" in tts.error
     warmed = []
     monkeypatch.setattr(pocket.PocketTTS, "warm", lambda self, voice: warmed.append((voice, self.language)))
     assert not tts.select("gibtsnicht") and not tts.select("alba", "kl")
     assert tts.select("alba", "en") and tts.reply_language == "en" and tts.pocket.language == "en"
     assert warmed == []  # nicht installiert → nichts zu starten
-    assert state.load(path)["tts"] == {"voice": "alba", "languages": {"alba": "en"}}
+    assert state.load(path)["tts"] == {"voice": "alba", "languages": {"alba": "en"}, "piper_default": True}
     assert tts.select("juergen") and tts.reply_language == "de"  # jede Stimme behält ihre Sprache
     assert tts.select("alba") and tts.reply_language == "en"
     assert tts.select("alba", "de") and state.load(path)["tts"]["languages"] == {}  # Standard wird nicht gespeichert
@@ -227,6 +227,7 @@ def test_tts_remembers_voice_and_language(cfg, tmp_path, monkeypatch):
 def test_speaker_sends_language(cfg, tmp_path, monkeypatch):
     from conftest import run
     tts = TTS(cfg.voice, tmp_path, tmp_path / "state.json")
+    tts.voice = "juergen"
     tts.languages["juergen"] = "en"
     monkeypatch.setattr(tts, "available", lambda: True)
     monkeypatch.setattr(tts, "synth", lambda text: b"WAV")
@@ -286,7 +287,8 @@ def client(cfg, tmp_path, monkeypatch):
 
 def test_pocket_endpoints(client, tmp_path, monkeypatch):
     data = client.get("/api/voices").json()
-    assert data["pocket"]["installed"] is False and data["current"] == "juergen" and data["language"] == "de"
+    assert data["pocket"]["installed"] is False and data["current"] == "piper:de_DE-thorsten-high"
+    assert data["language"] == "de" and data["engine"] == "piper"
     assert data["voices"][0]["name"] == "juergen" and {"code": "en", "label": "Englisch"} in data["languages"]
     assert client.get("/api/voices/juergen/preview").status_code == 404
 
@@ -347,9 +349,12 @@ def test_voice_language_changes_answers(cfg, tmp_path, monkeypatch):
         prompts.set_spoken_language(None)
 
 
-def test_former_piper_users_get_pocket(cfg, tmp_path, monkeypatch):
-    """Wer Piper-Stimmen hatte: beim Start löschen und Pocket TTS gleich einrichten."""
+def test_old_piper_voice_folder_is_cleaned_and_piper_set_up(cfg, tmp_path, monkeypatch):
+    """Stimmen der früheren Piper-Einbindung (<data>/voices) werden gelöscht; Piper (jetzt <data>/piper) richtet sich
+    beim Start selbst ein, weil es Standard ist."""
     import time
+
+    from orbwise.voice import piper
     monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
     monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
     cfg.voice.enabled = True
@@ -357,12 +362,11 @@ def test_former_piper_users_get_pocket(cfg, tmp_path, monkeypatch):
     voices.mkdir()
     (voices / "de_DE-thorsten-high.onnx").write_bytes(b"x" * 10)
     installed = []
-    monkeypatch.setattr(pocket, "cpu_supported", lambda cpuinfo=None: True)
-    monkeypatch.setattr(pocket, "install", lambda data_dir, out: installed.append(data_dir) or False)
+    monkeypatch.setattr(piper, "install", lambda data_dir, out: installed.append(data_dir) or False)
     from orbwise.server import create_app
     with TestClient(create_app(cfg), base_url="http://localhost:8765"):
         for _ in range(100):
-            if installed:
+            if installed and not voices.exists():
                 break
             time.sleep(0.02)
     assert installed == [tmp_path] and not voices.exists()
