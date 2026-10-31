@@ -1500,6 +1500,24 @@ def create_app(cfg: Config) -> FastAPI:
     async def memory_facts():
         return [{"fact": f, "day": d} for f, d in memory.scoped_facts(memory.active).list()]
 
+    @app.post("/api/memory/facts/delete")
+    async def memory_fact_delete(request: Request):
+        """Einen Fakt aus dem Gedächtnis des offenen Chats löschen (genau diesen, nicht per Suchtext)."""
+        fact = str((await request.json()).get("fact") or "")
+        if not await memory.forget_fact(fact, memory.active):
+            raise HTTPException(404, T("Diesen Fakt gibt es nicht (mehr).", "This fact does not exist (anymore)."))
+        agent._cache_owner = None  # Systemprompt enthält die Fakten – beim nächsten Mal neu einlesen
+        return {"ok": True}
+
+    @app.delete("/api/memory/day/{day}")
+    async def memory_day_delete(day: str):
+        """Tagebuch eines Tages vergessen (Protokoll, Zusammenfassung, Suchindex) – Fakten und Chats bleiben."""
+        if not valid_day(day):
+            raise HTTPException(400, "ungültiges Datum")
+        if not await asyncio.to_thread(memory.forget_day, day, memory.active):
+            raise HTTPException(404, T("Für diesen Tag gibt es keine Einträge.", "There are no entries for this day."))
+        return {"ok": True}
+
     @app.get("/api/history")
     async def history():
         """Der ganze sichtbare Chat – alle Nachrichten, auch komprimierte Teile; dazu, wo eine

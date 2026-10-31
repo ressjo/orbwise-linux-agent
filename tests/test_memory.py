@@ -155,3 +155,46 @@ def test_empty_day_and_old_summaries_do_not_loop(memory):
     memory.journal.append("Du", "Alt", datetime(2026, 9, 19, 9, 0, 0))
     memory.summaries.write("2026-09-19", "- alt")
     assert "2026-09-19" not in memory.days_needing_summary(include_today=True)
+
+
+def test_delete_exactly_one_fact_from_the_ui(memory):
+    run(memory.remember("Der Nutzer mag dunkle Themes."))
+    run(memory.remember("Der Nutzer mag dunkle Schokolade."))
+    assert run(memory.forget_fact("Der Nutzer mag dunkle Themes."))  # genau dieser – nicht alle mit „dunkle“
+    assert [f for f, _ in memory.facts.list()] == ["Der Nutzer mag dunkle Schokolade."]
+    assert not run(memory.forget_fact("gibt es nicht"))
+    hits = run(memory.retrieve("Themes"))
+    assert not any("Themes" in h.text for h in hits)  # auch aus dem Suchindex
+
+
+def test_delete_a_day_forgets_log_summary_and_index_but_keeps_facts(memory):
+    memory.journal.append("Du", "Mein Lieblingsessen ist Lasagne", datetime(2026, 9, 20, 10, 0, 0))
+    run(memory.index.add("journal", "2026-09-20", "chat:a", "Mein Lieblingsessen ist Lasagne"))
+    run(memory.index.add("journal", "2026-09-21", "chat:b", "Lasagne gibt es morgen wieder"))
+    memory.summaries.write("2026-09-20", "Es ging um Lasagne.")
+    run(memory.remember("Der Nutzer isst gern Lasagne."))
+    assert memory.forget_day("2026-09-20")
+    assert "2026-09-20" not in memory.journal.days() and memory.summaries.read("2026-09-20") is None
+    texts = [h.text for h in run(memory.retrieve("Lasagne"))]
+    assert "Mein Lieblingsessen ist Lasagne" not in texts and "Lasagne gibt es morgen wieder" in texts
+    assert "Der Nutzer isst gern Lasagne." in [f for f, _ in memory.facts.list()]  # Fakten bleiben
+    assert not memory.forget_day("2026-09-20") and not memory.forget_day("../../etc")
+
+
+def test_memory_delete_api(cfg, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from orbwise.server import create_app
+    monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
+        memory = client.app.state.memory
+        run(memory.remember("Der Nutzer heißt Kim."))
+        memory.journal.append("Du", "Hallo", datetime(2026, 9, 20, 10, 0, 0))
+        assert client.post("/api/memory/facts/delete", json={"fact": "Kim"}).status_code == 404  # nur exakt
+        assert client.post("/api/memory/facts/delete", json={"fact": "Der Nutzer heißt Kim."}).json() == {"ok": True}
+        assert client.get("/api/memory/facts").json() == []
+        assert client.delete("/api/memory/day/2026-09-20").json() == {"ok": True}
+        assert client.get("/api/memory/days").json() == []
+        assert client.delete("/api/memory/day/2026-09-20").status_code == 404
+        assert client.delete("/api/memory/day/kaputt").status_code == 400

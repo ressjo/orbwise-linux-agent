@@ -6413,13 +6413,30 @@
           + L(" – getrennt von den normalen Chats.", " – separate from the regular chats.")
         : L("Gedächtnis der normalen Chats – Coding-Projekte haben je ein eigenes.",
           "Memory of the regular chats – coding projects each have their own.");
+      const del = (title) => `<button type="button" class="mem-del" title="${title}" aria-label="${title}">${ico("trash")}</button>`;
       $("facts").innerHTML = facts.length
-        ? facts.map((f) => `<li>${escapeHtml(f.fact)}<small>${f.day}</small></li>`).join("")
+        ? facts.map((f, i) => `<li data-i="${i}"><span class="mem-text">${escapeHtml(f.fact)}<small>${f.day}</small></span>${del(L("Fakt löschen", "Delete fact"))}</li>`).join("")
         : `<li class="empty">${L("Noch keine Fakten gespeichert.", "No facts stored yet.")}</li>`;
+      $("facts").querySelectorAll("li[data-i] .mem-del").forEach((b) => {
+        const f = facts[Number(b.closest("li").dataset.i)];
+        b.onclick = async () => {
+          if (!await ask(L(`Diesen Fakt vergessen?\n\n„${f.fact}“`, `Forget this fact?\n\n“${f.fact}”`), { ok: L("Löschen", "Delete"), danger: true })) return;
+          try { await api("POST", "/api/memory/facts/delete", { fact: f.fact }); toast(L("Fakt gelöscht.", "Fact deleted.")); loadMemory(); } catch {}
+        };
+      });
       $("days").innerHTML = days.length
-        ? days.map((d) => `<li><button data-day="${d.day}">${formatDay(d.day)}<span>${d.summary ? L("Zusammenfassung", "Summary") : L("Protokoll", "Log")}</span></button></li>`).join("")
+        ? days.map((d) => `<li><button class="mem-day" data-day="${d.day}">${formatDay(d.day)}<span>${d.summary ? L("Zusammenfassung", "Summary") : L("Protokoll", "Log")}</span></button>${del(L("Tag löschen", "Delete day"))}</li>`).join("")
         : `<li class="empty">${L("Noch keine Einträge.", "No entries yet.")}</li>`;
-      $("days").querySelectorAll("button").forEach((b) => (b.onclick = () => openDay(b.dataset.day)));
+      $("days").querySelectorAll(".mem-day").forEach((b) => (b.onclick = () => openDay(b.dataset.day)));
+      $("days").querySelectorAll(".mem-del").forEach((b) => {
+        const day = b.closest("li").querySelector(".mem-day").dataset.day;
+        b.onclick = async () => {
+          if (!await ask(L(`Tagebuch vom ${formatDay(day)} löschen?\n\nProtokoll und Zusammenfassung dieses Tages werden vergessen. Gelernte Fakten und die Chats in der Seitenleiste bleiben.`,
+                           `Delete the journal of ${formatDay(day)}?\n\nThat day's log and summary are forgotten. Learned facts and the chats in the sidebar stay.`),
+                         { ok: L("Löschen", "Delete"), danger: true })) return;
+          try { await api("DELETE", "/api/memory/day/" + day); toast(L("Tag gelöscht.", "Day deleted.")); loadMemory(); } catch {}
+        };
+      });
     } catch (err) {
       toast(L("Gedächtnis nicht ladbar: ", "Could not load memory: ") + err.message);
     }

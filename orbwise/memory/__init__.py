@@ -23,7 +23,7 @@ from pathlib import Path
 from ..config import MemoryConfig
 from .chats import ChatStore, chat_mode
 from .context import Conversation, est_tokens
-from .files import Facts, Journal, Summaries, day_str, digest
+from .files import Facts, Journal, Summaries, day_str, digest, valid_day
 from .index import Hit, MemoryIndex, split_text
 
 log = logging.getLogger(__name__)
@@ -316,6 +316,38 @@ class Memory:
             self.index.delete_source(self._fact_slot(pid)[1])
             await self.reindex_facts(pid)
         return removed
+
+    async def forget_fact(self, fact: str, conv: Conversation | None = None) -> bool:
+        """Genau einen Fakt des Gedächtnisses von conv (Tools oder Coding-Projekt) löschen – aus der Oberfläche."""
+        pid = self.scope_id(conv)
+        if not self.facts_of(pid).remove_exact(fact):
+            return False
+        self.index.delete_source(self._fact_slot(pid)[1])
+        await self.reindex_facts(pid)
+        return True
+
+    def forget_day(self, day: str, conv: Conversation | None = None) -> bool:
+        """Tagebuch eines Tages vergessen: Protokoll, Tageszusammenfassung und ihre Einträge im Suchindex. Gelernte
+        Fakten und die Chats selbst bleiben."""
+        if not valid_day(day):
+            return False
+        pid = self.scope_id(conv)
+        path = self.journal_of(pid).path(day)
+        existed = path.exists()
+        path.unlink(missing_ok=True)
+        fact_kind = self._fact_slot(pid)[0]
+        kinds = tuple(k for k in self.kinds_of(pid) if k != fact_kind)
+        try:
+            self.index.delete_day(kinds, day)
+        except Exception as e:  # noqa: BLE001 – der Index ist nur ein Cache
+            log.warning("Suchindex für %s nicht bereinigt (%s) – wird neu aufgebaut", day, e)
+            self.index.needs_rebuild = True
+        if pid is None and self.summaries.read(day) is not None:
+            existed = True
+            self.summaries.delete(day)
+            with contextlib.suppress(Exception):
+                self.index.delete_source(f"summary:{day}")
+        return existed
 
     async def reindex_facts(self, pid: str | None = None) -> None:
         kind, source = self._fact_slot(pid)
