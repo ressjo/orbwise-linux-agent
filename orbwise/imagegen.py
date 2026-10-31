@@ -348,6 +348,15 @@ class ImageEngine:
             await self.server.ensure_running(say)
         except Exception as e:  # noqa: BLE001 – Sprachmodell zurückholen, Fehler weitergeben
             await self._release_now()
+            text = str(e)
+            if re.search(r"get sd version from file failed|new_sd_ctx_t failed|unknown (model|architecture)", text):
+                hint = T("sd-server erkennt diese Modelldatei nicht – entweder kennt dein sd-server die "
+                         "Modellgeneration noch nicht (Bildmodelle → sd-server aktualisieren) oder das Modell wurde "
+                         "mit falschen Bauteilen geladen (Bildmodelle → löschen und neu laden). ",
+                         "sd-server does not recognise this model file – either your sd-server does not know this "
+                         "model generation yet (Image models → update sd-server) or the model was set up with the wrong "
+                         "parts (Image models → delete and download again). ")
+                raise ImageError(hint + T("Details: ", "Details: ") + text[-600:]) from e
             raise ImageError(T(f"Bildserver startet nicht: {e}", f"Image server does not start: {e}")) from e
 
     async def enter(self) -> bool:

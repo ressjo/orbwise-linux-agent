@@ -1173,7 +1173,10 @@ details.card[open] > summary .caret { transform: rotate(180deg); }
 /* Bildmodelle: Bild-Variante der Modell-Seite (#mp-image) */
 .mp-imaging .mp-bar-row, .mp-imaging .mp-headinfo { display: none; }
 #mp-image > * { max-width: 980px; }
-.ivm-intro { margin: 8px 0 12px; }
+.ivm-intro { margin: 8px 0 8px; }
+.ivm-runtime { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; font-size: var(--fs-sm); color: var(--muted); }
+.ivm-runtime:empty { display: none; }
+.ivm-card .hf-warn { grid-column: 1 / -1; }
 .ivm-section { margin-top: 14px; }
 .ivm-body { display: grid; gap: 8px; }
 .ivm-installing { display: grid; gap: 6px; padding: 10px 12px; margin-bottom: 8px; border: 1px solid var(--image);

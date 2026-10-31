@@ -704,8 +704,9 @@ if they are not there yet and starts the model with the family's options and ste
 video models and unknown families are shown as *not supported*, with the reason.
 
 The new FLUX.2 klein models look up their GGUF repository on Hugging Face when downloading (most downloads first),
-because their uploaders still change; they need a recent `sd-server` build (delete `~/orbwise-image/bin` to fetch the
-newest one).
+because their uploaders still change; they need a recent `sd-server` build – the image model page shows its version
+and **Update** fetches the newest one. If a model file is not recognised when the image server starts, Orbwise says
+whether the sd-server is too old or the model was set up with the wrong parts.
 
 Files another model also uses (FLUX's VAE is shared with Z-Image) are stored once and stay when one of them is
 deleted. In a terminal: `orbwise model add qwen-image` (or `z-image-turbo`, `flux-schnell`, `flux2-klein-4b`,

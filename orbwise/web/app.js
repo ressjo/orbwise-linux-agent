@@ -5547,7 +5547,7 @@
       panel.innerHTML = `<form class="mp-search ivm-search" autocomplete="off"><svg class="i"><use href="#i-search"/></svg>
           <input type="search" spellcheck="false"><button type="submit" class="btn primary small"></button></form>
         <div class="hf-tools"><select class="hf-sort"></select></div>
-        <p class="set-hint ivm-intro"></p><div class="ivm-installing hidden"></div><div class="ivm-body"></div>`;
+        <p class="set-hint ivm-intro"></p><div class="ivm-runtime"></div><div class="ivm-installing hidden"></div><div class="ivm-body"></div>`;
       const form = panel.querySelector("form"), q = form.querySelector("input"), sort = panel.querySelector(".hf-sort");
       q.placeholder = L("Alle Text-zu-Bild-Modelle auf Hugging Face durchsuchen (z. B. flux, juggernaut xl, dreamshaper)",
                         "Search all text-to-image models on Hugging Face (e.g. flux, juggernaut xl, dreamshaper)");
@@ -5569,8 +5569,28 @@
     panel.querySelector(".ivm-intro").textContent = (d.vram_gb ? L(`Grafikkarte: ${d.vram_gb} GB · `, `GPU: ${d.vram_gb} GB · `) : "")
       + L("Immer nur ein Modell ist geladen; wechseln geht auch oben am Modell-Menü. ", "Only one model is loaded at a time; you can also switch at the model menu at the top. ")
       + L(`Dateien in ${d.dir}.`, `Files in ${d.dir}.`) + (installed.length ? "" : " " + L("Noch kein Bildmodell installiert.", "No image model installed yet."));
+    renderRuntime();
     renderInstalling();
     renderImageBody();
+  }
+  // sd-server (rechnet die eigenen Bildmodelle): Version und Aktualisieren – neuere Modelle brauchen oft einen neueren
+  function renderRuntime() {
+    const box = $("mp-image").querySelector(".ivm-runtime");
+    const rt = (IM.data && IM.data.runtime) || {};
+    if (!box || !rt.installed) { if (box) box.innerHTML = ""; return; }
+    box.innerHTML = `<span></span><button type="button" class="btn small"></button>`;
+    box.querySelector("span").textContent = "sd-server " + (rt.version || L("(Version unbekannt)", "(version unknown)"));
+    const b = box.querySelector("button");
+    b.textContent = rt.updating ? L("aktualisiert …", "updating …") : L("Aktualisieren", "Update");
+    b.disabled = !!rt.updating;
+    b.title = L("Neuesten Build von stable-diffusion.cpp laden – neuere Bildmodelle (z. B. FLUX.2 klein) brauchen ihn oft",
+                "Download the newest stable-diffusion.cpp build – newer image models (e.g. FLUX.2 klein) often need it");
+    b.onclick = async () => {
+      b.disabled = true; b.textContent = L("aktualisiert …", "updating …");
+      try { const r = await api("POST", "/api/image/runtime/update"); toast(r.text || L("sd-server aktualisiert.", "sd-server updated.")); }
+      catch { /* Meldung kommt von api() */ }
+      loadImageModels();
+    };
   }
   function renderInstalling() {
     const box = $("mp-image").querySelector(".ivm-installing");
@@ -5720,6 +5740,13 @@
     if (m.edit) tag(L("kann bearbeiten", "can edit"));
     if (m.new) tag(L("neu", "new"));
     card.querySelector(".ivm-note").textContent = m.note;
+    if (m.misfiled) {  // früher falsch eingeordnet (z. B. klein als FLUX.1) – startet mit falschen Bauteilen
+      const w = document.createElement("div");
+      w.className = "hf-warn";
+      w.textContent = L(`Falsch eingeordnet – das ist ein ${m.misfiled}-Modell und startet so nicht. Bitte löschen und über die Suche neu laden.`,
+                        `Misfiled – this is a ${m.misfiled} model and does not start like this. Please delete it and download it again via the search.`);
+      card.appendChild(w);
+    }
     const meta = card.querySelector(".ivm-meta");
     const fit = document.createElement("span");
     fit.className = "fit-" + m.fit;
