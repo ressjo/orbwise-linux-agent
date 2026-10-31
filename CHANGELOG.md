@@ -41,6 +41,11 @@ All notable changes to this project are documented here. The format follows
   `~/.local/share/orbwise/chromium` (no root; asks first outside Auto, a "no" is remembered).
 
 ### Fixed
+- **Push to GitHub from the sandbox** landed only an empty branch: the push took the branch of the working copy as
+  committed, while the agent's changes were still uncommitted. Open changes are now committed first (in the
+  container); without new commits nothing is pushed instead of creating an empty branch.
+- **One branch per chat:** a sandbox switched on again (or started by the code check) reuses the chat's earlier
+  `orbwise/…` branch instead of creating a second one named after the changed chat title.
 - **sudo failed silently in the cage** (e.g. installing a package via `yay`): the cage forbids it; Auto no longer
   cages, yay/paru get the password dialog, and a package manager without `sudo` gets a hint.
 - **`curl -A "$UA" …` was flagged as "reads credentials"** – curl options are no longer taken for file names.

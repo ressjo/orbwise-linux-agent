@@ -1454,11 +1454,14 @@ def create_app(cfg: Config) -> FastAPI:
         if not path:
             raise HTTPException(409, T("Kein Projektordner gewählt.", "No project folder chosen."))
         sb = agent.sandbox_state()
+        from . import sandbox as sbx
         try:
-            if sb:
-                return await asyncio.to_thread(github.push_from_copy, cfg, sb["path"], github.sandbox_origin(sb))
+            if sb:  # offene Änderungen der Arbeitskopie zuerst committen – sonst käme nur ein leerer Branch an
+                await sbx.commit_all(cfg, sb, str(memory.active.meta.get("title") or ""))
+                return await asyncio.to_thread(github.push_from_copy, cfg, sb["path"], github.sandbox_origin(sb), "",
+                                               sb.get("project") or "")
             return await asyncio.to_thread(github.push, cfg, path)
-        except (github.GitHubError, OSError) as e:
+        except (github.GitHubError, sbx.SandboxError, OSError) as e:
             raise HTTPException(400, str(e)) from e
 
     @app.post("/api/github/connect")
@@ -1478,10 +1481,14 @@ def create_app(cfg: Config) -> FastAPI:
             identity = await github.user(cfg)
         except Exception as e:  # noqa: BLE001 – dann die git-Identität des Rechners
             log.info("GitHub-Konto nicht abrufbar: %s", e)
+        from . import sandbox as sbx
         try:
+            from . import workspace
+            if sb and workspace._git_dir(sb["path"]) is not None:
+                await sbx.commit_all(cfg, sb, str(memory.active.meta.get("title") or data.get("message") or ""))
             out = await asyncio.to_thread(github.connect_and_push, cfg, project, str(data.get("repo", "")), sb,
                                           str(data.get("message") or ""), identity)
-        except (github.GitHubError, OSError) as e:
+        except (github.GitHubError, sbx.SandboxError, OSError) as e:
             raise HTTPException(400, str(e)) from e
         finally:
             if sb:
