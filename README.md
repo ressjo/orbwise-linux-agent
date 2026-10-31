@@ -110,7 +110,7 @@ The installer
 1. installs the system packages (Ollama with the right GPU backend, `uv`, `fd`, `ripgrep`, `plocate`, `xdg-utils`, …),
 2. sets up the Python environment (`uv sync --extra voice`),
 3. pulls the chosen model (recommendation: ≥ 22 GB → `qwen3:30b`, ≥ 12 GB → `qwen3:14b`, ≥ 6 GB → `qwen3:8b`, otherwise `qwen3:4b`) together with `bge-m3` (embeddings) – if a download fails you can pick another model,
-4. installs the speech output Pocket TTS with its model and voice (`orbwise voice install`), the wake word model and Whisper,
+4. installs the speech output Piper with the voice of your language (`orbwise voice install`), the wake word model and Whisper,
 5. creates `~/.config/orbwise/config.yaml`, an **Orbwise** entry in the application menu and an autostart entry.
 
 Then:
@@ -575,9 +575,18 @@ continues without further thinking, with the thoughts so far (the activity shows
 
 ## Voice & voice effect
 
-Orbwise speaks with [Kyutai's Pocket TTS](https://github.com/kyutai-labs/pocket-tts) – natural-sounding, on the CPU.
-The installer sets it up (`orbwise voice install`); otherwise **Settings → Voice → Install Pocket TTS** does. It is a
-ready-made program (a few MB, no Python or PyTorch; checksum verified) in `~/.local/share/orbwise/pocket-tts/`; on
+Orbwise speaks with **[Piper](https://github.com/OHF-Voice/piper1-gpl)** by default – fast on the CPU (no video
+memory), and it reads numbers, dates and times itself through espeak-ng. The installer sets it up (`orbwise voice
+install`), otherwise Orbwise does on its first start. Piper is GPL-3.0, so it never runs inside Orbwise: it gets its
+own Python environment (`~/.local/share/orbwise/piper/venv`, `piper-tts` from PyPI) and runs as a local server on the
+CPU that Orbwise talks to. Voices come from [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices)
+(20–110 MB each) – German: *Thorsten* (recommended), *Thorsten (lively)*, *Kerstin*, *Ramona*, *Eva* …; English:
+*Lessac*, *Ryan*, *Amy*, *Alba*; and French, Spanish, Italian, Portuguese, Dutch. **Settings → Voice** downloads,
+selects, previews and deletes them; a Piper voice speaks exactly its language, which is then the answer language.
+[Listen to samples](https://rhasspy.github.io/piper-samples/).
+
+**Pocket TTS** ([Kyutai](https://github.com/kyutai-labs/pocket-tts)) remains as an alternative in the same menu – more
+natural sound, but weaker with numbers (`orbwise voice install pocket`). It is a ready-made program (a few MB, no Python or PyTorch; checksum verified) in `~/.local/share/orbwise/pocket-tts/`; on
 its first start it fetches the model for the language (~100M parameters) and the voice from Hugging Face – a few
 hundred MB, cached in `~/.cache/huggingface`. It runs as a small local server (int8, 4 CPU threads, faster than real
 time on a desktop CPU). Until it is installed, or if it fails, the browser speaks.
@@ -1308,7 +1317,7 @@ orbwise model llamacpp --update # newest llama.cpp build for models from Hugging
 orbwise model add qwen-image   # image model (also z-image-turbo, flux-schnell, sdxl) – or in the image view
 orbwise model remove <name>    # remove a downloaded model from the list
 orbwise context-test [--quick] # check the context window with the active model (Orbwise must be running)
-orbwise voice install          # install the speech output Pocket TTS and fetch its model (remove: orbwise voice remove)
+orbwise voice install          # install the speech output Piper with your language's voice (pocket: Pocket TTS; remove: orbwise voice remove)
 orbwise update                 # update (git pull, dependencies, restart)
 orbwise version                # show the installed version
 orbwise reindex                # rebuild the search index from the Markdown files
@@ -1324,7 +1333,7 @@ orbwise init-config            # create the example configuration
 | The orb stays "OFFLINE" | Is `orbwise serve` running? Log: `~/.local/state/orbwise.log` |
 | "Ollama not reachable" | `sudo systemctl enable --now ollama` |
 | Context: "shortened", slow answers, the window seems smaller | `orbwise context-test` (or Models → model → *Diagnostics* → *Test context*): checks whether the server really runs with the configured window, KV cache in VRAM, token estimate, prompt cache (same prompt and follow-up), a prompt up to the compaction point (the model must still repeat a code word from its start) and overflow detection. `--quick` skips the two slow fill checks |
-| No natural voice (the browser speaks) | `orbwise doctor` → Pocket TTS missing? `orbwise voice install`; its log: `~/.local/share/orbwise/pocket-tts/server.log` |
+| No natural voice (the browser speaks) | `orbwise doctor` → Piper missing? `orbwise voice install`; its log: `~/.local/share/orbwise/piper/server.log` (Pocket TTS: `…/pocket-tts/server.log`) |
 | Microphone doesn't work | Open `http://localhost:8765` (not the IP), check the browser's microphone permission |
 | Wake word triggers too often/rarely | Adjust `voice.wakeword_threshold` (0.3–0.7) |
 | No password field appears | The dashboard must be open; `orbwise doctor` checks the askpass helper |

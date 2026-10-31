@@ -56,6 +56,11 @@ All notable changes to this project are documented here. The format follows
   chat and fixes confirmed findings and failing checks automatically (re-checking, up to two rounds).
 
 ### Changed
+- **Piper is the speech output again (default), Pocket TTS stays selectable:** Piper reads numbers, dates and times
+  itself (espeak-ng) and is fast on the CPU – no video memory. It runs in its own Python environment as a local
+  server (GPL-3.0, never inside Orbwise), sets itself up on first start with the voice of your language (German:
+  Thorsten), and *Settings → Voice* downloads, selects, previews and deletes voices; Pocket TTS is in the same menu.
+  Users who had a Pocket voice are moved to Piper once; choosing Pocket again sticks.
 - **Token line:** shows llama-server's **prompt cache in RAM** (`--cache-ram`: how many already read chats it keeps,
   GB used of the limit – read from the server log); the KV cache only appears when part of it spills into RAM.
 - **Activity panel:** the newest step is at the top of its group; the "context in memory" tile with the green bar is

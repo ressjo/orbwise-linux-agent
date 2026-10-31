@@ -962,6 +962,14 @@ details.card[open] > summary .caret { transform: rotate(180deg); }
 .fx-hint { color: var(--muted); font-size: var(--fs-md); margin: 8px 2px 0; }
 .vm-pocket-head { display: flex; justify-content: space-between; align-items: baseline; }
 .vm-pocket-head a { color: var(--accent); font-size: var(--fs-sm); letter-spacing: 0; text-decoration: none; }
+/* Stimme: weitere Sprachen / Pocket TTS aufklappbar, Fortschritt beim Laden einer Piper-Stimme */
+.vm-more { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+.vm-more > summary { cursor: pointer; font-size: var(--fs-md); font-weight: 600; color: var(--text-2); padding: 6px 2px; }
+.vm-pocket { border-top: 1px solid var(--border); padding-top: 8px; }
+.vm-progress { display: flex; align-items: center; gap: 10px; margin: 4px 0 8px; font-size: var(--fs-sm); color: var(--text-2); }
+.vm-progress .iv-bar { flex: 1; }
+.vm-progress span { max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mm-hint.bad { color: var(--danger); }
 .voice-menu .mi-note { font-size: var(--fs-sm); color: var(--muted); margin-top: 3px; }
 .voice-lang { width: 118px; flex: none; padding: 0 6px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
   background: var(--bg-2); color: var(--text); font-size: var(--fs-md); cursor: pointer; }
