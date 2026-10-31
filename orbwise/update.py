@@ -7,6 +7,7 @@ Projektordners und werden dabei nicht angefasst.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -26,8 +27,8 @@ def project_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def _git(root: Path, *args: str, runner: Runner = subprocess.run) -> subprocess.CompletedProcess:
-    return runner(["git", "-C", str(root), *args], capture_output=True, text=True)
+def _git(root: Path, *args: str, runner: Runner = subprocess.run, **kw) -> subprocess.CompletedProcess:
+    return runner(["git", "-C", str(root), *args], capture_output=True, text=True, **kw)
 
 
 def version(root: Path | None = None, runner: Runner = subprocess.run) -> str:
@@ -38,9 +39,81 @@ def version(root: Path | None = None, runner: Runner = subprocess.run) -> str:
     return r.stdout.strip() or T("unbekannt", "unknown")
 
 
-def server_running(port: int) -> bool:
+def package_version(root: Path | None = None) -> str:
+    """Versionsnummer aus pyproject.toml (z. B. 0.1.0)."""
     try:
-        return httpx.get(f"http://127.0.0.1:{port}/api/status", timeout=2,
+        text = ((root or project_root()) / "pyproject.toml").read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.M)
+    return m.group(1) if m else ""
+
+
+def details(root: Path | None = None, runner: Runner = subprocess.run) -> dict:
+    """Installierter Stand für die Oberfläche: Version, Commit, Datum, Branch."""
+    root = root or project_root()
+    out = {"version": package_version(root), "git": False, "commit": "", "date": "", "subject": "", "branch": ""}
+    if not (root / ".git").exists() or not shutil.which("git"):
+        return out
+    r = _git(root, "log", "-1", "--format=%h%x1f%cs%x1f%s", runner=runner)
+    parts = r.stdout.strip().split("\x1f")
+    if len(parts) == 3:
+        out.update(git=True, commit=parts[0], date=parts[1], subject=parts[2])
+    out["branch"] = _git(root, "rev-parse", "--abbrev-ref", "HEAD", runner=runner).stdout.strip()
+    return out
+
+
+# git fetch ohne Rückfragen (kein Passwort-Prompt, ssh ohne Eingabe) und mit Zeitlimit
+FETCH_ENV = {"GIT_TERMINAL_PROMPT": "0", "GIT_SSH_COMMAND": "ssh -o BatchMode=yes -o ConnectTimeout=10"}
+
+
+def check(root: Path | None = None, runner: Runner = subprocess.run, fetch: bool = True) -> dict:
+    """Gibt es einen neueren Stand? → details + behind (Anzahl), changes (Commit-Titel), can_update, reason."""
+    root = root or project_root()
+    info = {**details(root, runner), "behind": 0, "changes": [], "can_update": False, "reason": "", "error": ""}
+    if not info["git"]:
+        info["reason"] = T("kein Git-Checkout – Update nur über scripts/bootstrap.sh",
+                           "not a git checkout – update via scripts/bootstrap.sh")
+        return info
+    branch = info["branch"]
+    if branch in ("", "HEAD"):
+        info["reason"] = T("kein Branch ausgecheckt", "no branch checked out")
+        return info
+    if fetch:
+        try:
+            r = _git(root, "fetch", "--quiet", "origin", branch, runner=runner, timeout=45,
+                     env={**os.environ, **FETCH_ENV})
+        except subprocess.TimeoutExpired:
+            info["error"] = T("Zeitüberschreitung beim Abrufen", "timed out while fetching")
+            return info
+        if r.returncode != 0:
+            info["error"] = (r.stderr or r.stdout).strip().splitlines()[-1:][0] if (r.stderr or r.stdout).strip() \
+                else T("Abrufen fehlgeschlagen", "fetch failed")
+            return info
+    remote = f"origin/{branch}"
+    counted = _git(root, "rev-list", "--count", f"HEAD..{remote}", runner=runner)
+    if counted.returncode != 0:
+        info["error"] = T(f"{remote} nicht gefunden", f"{remote} not found")
+        return info
+    info["behind"] = int(counted.stdout.strip() or 0)
+    if info["behind"]:
+        log = _git(root, "log", "--format=%s", "-n", "30", f"HEAD..{remote}", runner=runner).stdout
+        info["changes"] = [line for line in log.splitlines() if line.strip()]
+    dirty = _git(root, "status", "--porcelain", "--untracked-files=no", runner=runner).stdout.strip()
+    ff = _git(root, "merge-base", "--is-ancestor", "HEAD", remote, runner=runner).returncode == 0
+    if dirty:
+        info["reason"] = T("lokale Änderungen im Projektordner – erst sichern (git stash)",
+                           "local changes in the project folder – save them first (git stash)")
+    elif not ff:
+        info["reason"] = T("der lokale Stand weicht vom Server ab – von Hand zusammenführen",
+                           "the local version differs from the server – merge by hand")
+    info["can_update"] = bool(info["behind"]) and not dirty and ff
+    return info
+
+
+def server_running(port: int) -> bool:
+    try:  # /api/alive braucht kein Zugangs-Token (web_auth.py)
+        return httpx.get(f"http://127.0.0.1:{port}/api/alive", timeout=2,
                          headers={"Host": f"localhost:{port}"}).status_code == 200
     except httpx.HTTPError:
         return False
@@ -55,6 +128,51 @@ def _is_server(pid: int) -> bool:
         return True  # ohne /proc: wie bisher dem pgrep-Treffer glauben
     names = [os.path.basename(a.decode(errors="replace")) for a in args]
     return any(n == "orbwise" and i + 1 < len(names) and names[i + 1] == "serve" for i, n in enumerate(names))
+
+
+def systemd_unit() -> str | None:
+    """Läuft Orbwise als systemd-Dienst? Dann den Namen der Unit (aus /proc/self/cgroup)."""
+    if not os.environ.get("INVOCATION_ID"):
+        return None
+    try:
+        text = Path("/proc/self/cgroup").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    m = re.search(r"/([^/\n]+\.service)\s*$", text, re.M)
+    return m.group(1) if m else None
+
+
+def restart_self(port: int, root: Path) -> None:
+    """Neustart aus dem laufenden Server heraus (nach einem Update aus der Oberfläche): als systemd-Dienst über
+    systemctl, sonst startet ein kleiner Helfer `orbwise serve`, sobald der Port frei ist – dann beendet sich dieser
+    Prozess sauber (SIGTERM: Modell-Server usw. werden gestoppt)."""
+    unit = systemd_unit()
+    if unit and shutil.which("systemctl"):
+        subprocess.Popen(["systemctl", "--user", "--no-block", "restart", unit], start_new_session=True,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return
+    launcher = Path.home() / ".local/bin/orbwise"
+    cmd = [str(launcher)] if launcher.exists() else [str(root / ".venv/bin/orbwise")]
+    log_dir = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state"))
+    log_dir.mkdir(parents=True, exist_ok=True)
+    helper = (
+        "import socket, subprocess, sys, time\n"
+        "for _ in range(240):\n"
+        "    s = socket.socket()\n"
+        "    try:\n"
+        f"        s.connect(('127.0.0.1', {int(port)}))\n"
+        "    except OSError:\n"
+        "        break\n"
+        "    finally:\n"
+        "        s.close()\n"
+        "    time.sleep(0.25)\n"
+        f"log = open({str(log_dir / 'orbwise.log')!r}, 'ab')\n"
+        f"subprocess.Popen({[*cmd, 'serve']!r}, stdout=log, stderr=log, stdin=subprocess.DEVNULL, "
+        f"start_new_session=True, cwd={str(Path.home())!r})\n"
+    )
+    subprocess.Popen([sys.executable, "-c", helper], start_new_session=True, stdin=subprocess.DEVNULL,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    os.kill(os.getpid(), signal.SIGTERM)
 
 
 def stop_servers(port: int) -> int:

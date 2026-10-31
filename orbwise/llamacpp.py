@@ -557,9 +557,40 @@ def use_flavor(cfg, flavor: str) -> dict:
     return data
 
 
+# ---------------------------------------------------------------- Kennt dieses llama.cpp die Architektur?
+_ARCH_CACHE: dict[tuple, bool] = {}
+
+
+def supports_arch(cfg, arch: str) -> bool | None:
+    """Kennt das installierte llama.cpp diese Modell-Architektur (z. B. „qwen3moe“)? Die Namen stehen als Text in
+    libllama bzw. llama-server – gesucht wird dort, ohne etwas auszuführen. None = unbekannt (kein llama.cpp, keine
+    Architektur angegeben)."""
+    arch = (arch or "").strip().lower()
+    if not arch or not re.fullmatch(r"[a-z0-9_.-]{2,40}", arch):
+        return None
+    folder = root(cfg) / "current"
+    files = [f for f in [folder / "llama-server", *sorted(folder.glob("libllama*.so*"))] if f.is_file()]
+    if not files:
+        return None
+    key = (arch, *((str(f), f.stat().st_mtime_ns) for f in files))
+    if key not in _ARCH_CACHE:
+        needle = arch.encode() + b"\0"
+        found = False
+        for f in files:
+            try:
+                if needle in f.read_bytes():
+                    found = True
+                    break
+            except OSError:
+                continue
+        _ARCH_CACHE[key] = found
+    return _ARCH_CACHE[key]
+
+
 # ---------------------------------------------------------------- Modelldateien laden
 def _auth(url: str) -> dict:
-    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+    from .models import hf_token
+    token = hf_token()
     host = urlparse(url).hostname or ""
     return {"Authorization": f"Bearer {token}"} if token and host.endswith("huggingface.co") else {}
 
@@ -586,9 +617,10 @@ async def fetch(url: str, target: Path, progress: Callable[[int], Awaitable[None
                 return
             if r.status_code in (401, 403):
                 raise ValueError(T("Hugging Face verlangt eine Anmeldung für dieses Modell (zugangsbeschränkt) – "
-                                   "Token als HF_TOKEN setzen oder ein anderes Repo wählen.",
-                                   "Hugging Face requires a login for this model (gated) – set HF_TOKEN or pick "
-                                   "another repo."))
+                                   "Token unter Einstellungen → Allgemein → Hugging Face eintragen (Lizenz auf der Modellseite akzeptieren) "
+                                   "oder ein anderes Repo wählen.",
+                                   "Hugging Face requires a login for this model (gated) – enter a token under Settings → General → "
+                                   "Hugging Face (accept the license on the model page) or pick another repo."))
             r.raise_for_status()
             if have and r.status_code != 206:
                 have = 0  # Server kann nicht fortsetzen

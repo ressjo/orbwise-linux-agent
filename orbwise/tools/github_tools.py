@@ -4,7 +4,6 @@ Beides fragt vorher; Pushen auch im Auto-Modus „Auto“ (siehe agent_safety.AL
 from __future__ import annotations
 
 import asyncio
-import shlex
 from typing import Annotated
 
 from .. import github
@@ -78,20 +77,13 @@ async def github_push(
 
 
 async def _push_sandbox(ctx: ToolContext, sb: dict, branch: str, message: str) -> str:
-    """Sandbox: committen im Container, pushen auf dem Host aus einem frischen Repo (Hooks der Kopie laufen nie)."""
+    """Sandbox: offene Änderungen im Container committen, pushen auf dem Host aus einem frischen Repo (Hooks der Kopie
+    laufen nie)."""
     from .. import sandbox
-    path = sb["path"]
     try:
-        if message.strip():
-            binary = await sandbox.ensure_running(ctx.cfg, sb)
-            cmd = f"git add -A && (git diff --cached --quiet || git commit -q -m {shlex.quote(message.strip())})"
-            proc = await asyncio.create_subprocess_exec(*sandbox.exec_argv(binary, sb["name"], path, cmd, 120),
-                                                        stdout=asyncio.subprocess.PIPE,
-                                                        stderr=asyncio.subprocess.STDOUT)
-            out, _ = await proc.communicate()
-            if proc.returncode:
-                return "Commit fehlgeschlagen: " + out.decode(errors="replace").strip()[-600:]
-        res = await asyncio.to_thread(github.push_from_copy, ctx.cfg, path, github.sandbox_origin(sb), branch)
+        await sandbox.commit_all(ctx.cfg, sb, message)
+        res = await asyncio.to_thread(github.push_from_copy, ctx.cfg, sb["path"], github.sandbox_origin(sb), branch,
+                                      sb.get("project") or "")
     except (github.GitHubError, sandbox.SandboxError, OSError) as e:
         return f"Push fehlgeschlagen: {e}"
     if res.get("compare"):
@@ -109,8 +101,11 @@ async def _connect(ctx: ToolContext, repo: str, message: str) -> str:
     except Exception:  # noqa: BLE001 – dann die git-Identität des Rechners
         pass
     try:
+        if ctx.sandbox:
+            from .. import sandbox
+            await sandbox.commit_all(ctx.cfg, ctx.sandbox, message)
         out = await asyncio.to_thread(github.connect_and_push, ctx.cfg, project, repo, ctx.sandbox, message, identity)
-    except (github.GitHubError, OSError) as e:
+    except Exception as e:  # noqa: BLE001 – GitHubError, SandboxError, OSError
         return f"Verbinden/Push fehlgeschlagen: {e}"
     finally:
         if ctx.sandbox and agent is not None:

@@ -417,7 +417,9 @@ def test_push_from_the_copy_never_runs_its_hooks_or_config(cfg, llm, memory, rep
         f.write(f"[core]\n\tfsmonitor = {evil}\n[remote \"origin\"]\n\turl = {other}\n")
     # Commit läuft im Container (hier: fake_engine führt ihn aus – Hooks dort sind die Sache des Containers)
     commits = []
-    monkeypatch.setattr(sandbox, "exec_argv", lambda b, n, w, c, t=None: commits.append(c) or ["true"])
+    safe = ["git", "-C", str(ws), "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"]
+    monkeypatch.setattr(sandbox, "exec_argv", lambda b, n, w, c, t=None: commits.append(c) or
+                        [*safe, "commit", "-q", "--allow-empty", "-m", "arbeit"])
     from orbwise.tools import github_tools
     from orbwise.tools.registry import ToolContext
     ctx = ToolContext(cfg=cfg, memory=memory, cwd=str(ws), sandbox=sb)
@@ -617,3 +619,41 @@ def test_leftover_copy_without_git_is_replaced(repo):
     (ws / "node_modules_rest").write_text("alt")
     state = workspace.create("chat1", str(repo))
     assert (ws / ".git").is_dir() and not (ws / "node_modules_rest").exists() and state["branch"]
+
+
+@git_missing
+def test_push_button_commits_open_changes_first_and_keeps_one_branch(cfg, repo, data, fake_engine, monkeypatch):
+    """„Zu GitHub pushen“ nach dem Arbeiten in der Sandbox: die (nicht committeten) Änderungen kommen auf GitHub an,
+    ohne Änderungen wird nichts gepusht, und eine neue Sandbox im selben Chat nimmt denselben Branch."""
+    from fastapi.testclient import TestClient
+
+    from orbwise import server
+    remote = data / "remote.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+    sh(repo, "remote", "set-url", "origin", str(remote))
+    sh(repo, "add", "-A")
+    sh(repo, "commit", "-qm", "stand")
+    cfg.github.token = "t"
+    monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    with TestClient(server.create_app(cfg), base_url="http://localhost:8765") as client:
+        client.post("/api/mode", json={"mode": "coding"})
+        chat = client.get("/api/history").json()["chat"]["id"]
+        client.post(f"/api/chats/{chat}/project", json={"path": str(repo)})
+        memory = client.app.state.hub.agent.memory
+        st = client.post("/api/sandbox", json={"enabled": True}).json()
+        branch = st["branch"]
+        r = client.post("/api/github/push")
+        assert r.status_code == 400 and "nichts zu pushen" in r.json()["detail"]  # ohne Änderungen kein leerer Branch
+        assert not sh(remote, "branch").strip()
+        (Path(st["path"]) / "fix.py").write_text("ok\n")
+        r = client.post("/api/github/push")
+        assert r.status_code == 200, r.text
+        assert r.json()["branch"] == branch
+        assert sh(remote, "show", f"{branch}:fix.py") == "ok\n"
+        client.post("/api/sandbox/apply", json={})
+        client.post("/api/sandbox", json={"enabled": False})
+        memory.active.meta["title"] = "Ganz anderer Titel"
+        st2 = client.post("/api/sandbox", json={"enabled": True}).json()
+        assert st2["branch"] == branch
+    asyncio.set_event_loop(asyncio.new_event_loop())

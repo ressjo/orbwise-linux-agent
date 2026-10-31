@@ -1,4 +1,4 @@
-"""Kommandozeile: orbwise [serve|doctor|model|context-test|update|version|reindex|summarize|init-config]"""
+"""Kommandozeile: orbwise [serve|open|doctor|model|context-test|update|version|reindex|summarize|init-config]"""
 
 from __future__ import annotations
 
@@ -11,10 +11,24 @@ import sys
 import webbrowser
 from pathlib import Path
 
+from . import web_auth
 from .config import config_path, env, load_config
 from .lang import T, set_lang
 
 EXAMPLE_CONFIG = Path(__file__).parent / "config.example.yaml"
+
+
+def cmd_open(args) -> None:
+    """Oberfläche im Browser öffnen – angemeldet über einen Einmal-Link (siehe web_auth.py)."""
+    cfg = load_config(skills=False)
+    url = web_auth.open_url(cfg.port)
+    if "code=" not in url:
+        print(T("Orbwise läuft nicht oder das Token fehlt – erst „orbwise serve“ starten.",
+                "Orbwise is not running or the token is missing – start “orbwise serve” first."), file=sys.stderr)
+    if args.print:
+        print(url)
+        return
+    webbrowser.open(url)
 
 
 def cmd_serve(args) -> None:
@@ -32,9 +46,12 @@ def cmd_serve(args) -> None:
         logging.getLogger("orbwise").warning("ACHTUNG: %s", warning)
     app = create_app(cfg)
     url = f"http://localhost:{cfg.port}"
-    print(T("Orbwise läuft auf ", "Orbwise is running at ") + url)
-    if args.open:
-        webbrowser.open(url)
+    print(T("Orbwise läuft auf ", "Orbwise is running at ") + url
+          + T(" – öffnen mit: orbwise open", " – open with: orbwise open"))
+    if args.open:  # Einmal-Link (meldet den Browser an), kurz nachdem der Server angenommen hat
+        import threading
+        link = app.state.open_url(120)
+        threading.Timer(1.5, webbrowser.open, args=(link,)).start()
     uvicorn.run(app, host=cfg.host, port=cfg.port, log_level="info" if args.verbose else "warning")
 
 
@@ -132,15 +149,14 @@ def cmd_doctor(args) -> None:
                         "one is better for the prompt cache: start llama-server with -np 1"))
     print(T("Sprache:", "Voice:"))
     from .voice.listen import WakeWordFactory, WhisperSTT
-    from .voice.pocket import BY_NAME, language_name
+    from .voice.pocket import language_name
     from .voice.tts import TTS
     stt = WhisperSTT(cfg.voice)
     line(stt.available(), T("faster-whisper (Spracherkennung)", "faster-whisper (speech recognition)"), "uv sync --extra voice")
     tts = TTS(cfg.voice, cfg.memory.dir.parent, cfg.memory.dir.parent / "state.json")
-    version = tts.pocket.describe()["version"]
-    line(tts.available(), f"Pocket TTS {version} · {BY_NAME[tts.voice].label} · "
-         f"{language_name(tts.reply_language, cfg.language == 'en')}",
-         tts.error and f"{tts.error} – orbwise voice install " + T("(sonst spricht der Browser)", "(else the browser speaks)"))
+    fix = "orbwise voice install" if tts.is_piper(tts.voice) else "orbwise voice install pocket"
+    line(tts.available(), f"{tts.label_of(tts.voice)} · {language_name(tts.reply_language, cfg.language == 'en')}",
+         tts.error and f"{tts.error} – {fix} " + T("(sonst spricht der Browser)", "(else the browser speaks)"))
     wake = WakeWordFactory(cfg.voice)
     line(wake.available(), f"Wake-Word '{cfg.voice.wakeword_model}'", wake.error or "")
     print(T("Desktop (Dateien/Programme öffnen):", "Desktop (opening files/apps):"))
@@ -231,19 +247,25 @@ def cmd_doctor(args) -> None:
     from . import imagegen_setup
     image_root = imagegen_setup.image_dir(cfg)
     if not imagegen_setup.server_binary(image_root).exists() and not imagegen_setup.manifest(image_root):
-        print(T("  – nicht eingerichtet", "  – not set up") + " (orbwise model add qwen-image)")
+        print(T("  – nicht eingerichtet", "  – not set up") + " (" + T("im Bild-Modus unter „Bildmodelle“ oder ",
+              "in image mode under “Image models” or ") + "orbwise model add qwen-image)")
     else:
         binary = imagegen_setup.server_binary(image_root)
         missing_bin = llamacpp.missing_libs(binary, str(binary.parent)) if binary.exists() else ["sd-server"]
         line(not missing_bin, f"sd-server ({binary})", T("fehlt: ", "missing: ") + ", ".join(missing_bin)
              + " – " + T("Vulkan-Treiber installieren (z. B. vulkan-radeon / mesa-vulkan-drivers)",
                          "install the Vulkan driver (e.g. vulkan-radeon / mesa-vulkan-drivers)"))
-        paths = imagegen_setup.model_paths(image_root)
-        for role in ("diffusion", "llm", "vae", "vision"):
-            p = paths.get(role)
-            if p or role != "vision":
-                line(bool(p and p.exists()), f"{role}: {p.name if p else '?'}" + (
-                    f" ({p.stat().st_size / 1e9:.1f} GB)" if p and p.exists() else ""), "orbwise model add qwen-image")
+        active = imagegen_setup.active_id(image_root)
+        for model_id in imagegen_setup.manifest(image_root).get("models", {}):
+            spec = imagegen_setup.spec_of(image_root, model_id)
+            print(f"  {'▶' if model_id == active else ' '} {spec.label if spec else model_id}")
+            paths = imagegen_setup.model_paths(image_root, model_id)
+            for role in (spec.flags if spec else paths):
+                p = paths.get(role)
+                if p or (spec and role in spec.required):
+                    line(bool(p and p.exists()), f"  {role}: {p.name if p else '?'}" + (
+                        f" ({p.stat().st_size / 1e9:.1f} GB)" if p and p.exists() else ""),
+                        f"orbwise model add {model_id}")
     print("SSH:")
     from .tools.ssh import ssh_status
     sh = ssh_status()
@@ -439,7 +461,7 @@ def cmd_model(args) -> None:
         return cmd_model_manage(args, cfg, state)
     router = LLMRouter(cfg.llm, state_path=state)
     base = f"http://127.0.0.1:{cfg.port}"
-    headers = {"Host": f"localhost:{cfg.port}"}
+    headers = web_auth.headers(cfg.port)
     if not args.name:
         for info in router.describe():
             star = "▶" if info["active"] else " "
@@ -519,7 +541,7 @@ def cmd_model_manage(args, cfg, state: Path) -> None:
     from . import models as mdl
 
     base = f"http://127.0.0.1:{cfg.port}"
-    headers = {"Host": f"localhost:{cfg.port}"}
+    headers = web_auth.headers(cfg.port)
     if args.name == "choose":
         vram = args.vram if args.vram is not None else mdl.detect_gpu()["vram_gb"]
         if not sys.stdin.isatty():
@@ -535,9 +557,10 @@ def cmd_model_manage(args, cfg, state: Path) -> None:
         if not args.tag:
             print(T("Welches Modell? orbwise model remove <name>", "Which model? orbwise model remove <name>"))
             sys.exit(1)
-        if args.tag.strip().lower() == "qwen-image":
-            from . import imagegen_setup
-            freed = imagegen_setup.remove(cfg)
+        from . import imagegen_setup
+        if args.tag.strip().lower() in imagegen_setup.BY_ID or args.tag.strip().lower() in \
+                imagegen_setup.manifest(imagegen_setup.image_dir(cfg)).get("models", {}):  # Bildmodell
+            freed = imagegen_setup.remove_model(cfg, args.tag.strip().lower())
             print(T(f"✔ Bildmodell gelöscht ({freed / 1e9:.1f} GB frei).", f"✔ Image model deleted ({freed / 1e9:.1f} GB freed)."))
             return
         tag = mdl.unregister_model(state, args.tag)
@@ -565,9 +588,9 @@ def cmd_model_manage(args, cfg, state: Path) -> None:
     if not tag:
         print(T("Ungültiger Modellname.", "Invalid model name."))
         sys.exit(1)
-    if tag == "qwen-image":  # Bild-Modus: stable-diffusion.cpp + Qwen-Image-2.1
-        from . import imagegen_setup
-        if not imagegen_setup.install(gpu, cfg):
+    from . import imagegen_setup
+    if tag in imagegen_setup.BY_ID:  # Bild-Modus: stable-diffusion.cpp + Bildmodell (qwen-image, z-image-turbo …)
+        if not imagegen_setup.install(gpu, cfg, model_id=tag):
             sys.exit(1)
         return
     if mdl.is_hf(tag):  # Hugging Face → Datei nach ~/models, läuft mit llama.cpp
@@ -655,30 +678,42 @@ def _finish_add(args, state: Path, name: str, shown: str, base: str, headers: di
 
 
 def cmd_voice(args) -> None:
-    """Sprachausgabe (Pocket TTS) installieren und das Modell schon laden – oder wieder entfernen."""
-    from .voice import pocket
+    """Sprachausgabe installieren (Standard: Piper mit der Stimme der Sprache) und schon einmal sprechen lassen – oder
+    wieder entfernen. `pocket` als Zusatz: Pocket TTS statt Piper."""
+    from .voice import piper, pocket
     from .voice.tts import TTS
     cfg = load_config()
     if not config_path().exists() and env("LANG") in ("de", "en"):  # Installer: noch keine Config
         cfg.voice.language = env("LANG")
     data = cfg.memory.dir.parent
+    use_pocket = args.engine == "pocket"
     if args.action == "remove":
-        mb = pocket.remove(data) / 1e6
-        print(T(f"✔ Pocket TTS entfernt ({mb:.0f} MB frei).", f"✔ Pocket TTS removed ({mb:.0f} MB freed)."))
+        mb = (pocket.remove(data) if use_pocket else piper.remove(data)) / 1e6
+        name = "Pocket TTS" if use_pocket else "Piper"
+        print(T(f"✔ {name} entfernt ({mb:.0f} MB frei).", f"✔ {name} removed ({mb:.0f} MB freed)."))
         return
-    if not pocket.install(data):
-        sys.exit(1)
     tts = TTS(cfg.voice, data, data / "state.json")
-    print(T("Lade Sprachmodell und Stimme (beim ersten Mal einige hundert MB) …",
-            "Downloading the speech model and voice (a few hundred MB the first time) …"))
+    if use_pocket:
+        if not pocket.install(data):
+            sys.exit(1)
+        voice = pocket.NATIVE.get(tts.base_language, "alba")
+        tts.select(voice)
+        print(T("Lade Sprachmodell und Stimme (beim ersten Mal einige hundert MB) …",
+                "Downloading the speech model and voice (a few hundred MB the first time) …"))
+    else:
+        voice_id = tts.piper_id(tts.voice) if tts.is_piper(tts.voice) else piper.NATIVE.get(tts.base_language, "en_US-lessac-high")
+        if not piper.install(data) or not piper.download_voice(data, voice_id):
+            sys.exit(1)
+        tts.select("piper:" + voice_id)
     try:
-        tts.synth(pocket.SAMPLES.get(tts.reply_language, pocket.SAMPLES["en"]))
-        print(T("✔ Pocket TTS ist bereit.", "✔ Pocket TTS is ready."))
+        sample = pocket.SAMPLES.get(tts.reply_language, pocket.SAMPLES["en"]) + " 1.234,5 € am 31.10. um 14:30 Uhr."
+        tts.synth(sample)
+        print(T(f"✔ {tts.label_of(tts.voice)} ist bereit.", f"✔ {tts.label_of(tts.voice)} is ready."))
     except Exception as e:  # noqa: BLE001
-        print(T(f"✘ Pocket TTS startet nicht: {e}", f"✘ Pocket TTS does not start: {e}"))
+        print(T(f"✘ Sprachausgabe startet nicht: {e}", f"✘ Speech output does not start: {e}"))
         sys.exit(1)
     finally:
-        tts.pocket.stop()
+        tts.stop()
 
 
 def cmd_update(args) -> None:
@@ -698,7 +733,7 @@ def cmd_context_test(args) -> None:
           if not args.quick else T("Kontext-Schnelltest läuft …", "Quick context test running …"), flush=True)
     try:
         r = httpx.post(f"http://127.0.0.1:{cfg.port}/api/context/test", params={"quick": args.quick},
-                       headers={"Host": f"localhost:{cfg.port}"}, timeout=3600)
+                       headers=web_auth.headers(cfg.port), timeout=3600)
     except httpx.ConnectError:
         sys.exit(T("Orbwise läuft nicht – erst starten (orbwise serve), dann den Test wiederholen.",
                    "Orbwise is not running – start it (orbwise serve), then run the test again."))
@@ -760,10 +795,12 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("serve", help=T("Server starten (Standard)", "start the server (default)"))
     p.add_argument("--open", action="store_true", help=T("Browser öffnen", "open the browser"))
     p.add_argument("-v", "--verbose", action="store_true")
+    p = sub.add_parser("open", help=T("Oberfläche im Browser öffnen (angemeldet)", "open the web UI (signed in)"))
+    p.add_argument("--print", action="store_true", help=T("nur den Einmal-Link ausgeben", "only print the one-time link"))
     sub.add_parser("doctor", help=T("Installation prüfen", "check the installation"))
     p = sub.add_parser("model", help=T("Modelle anzeigen, umschalten, laden (add) oder entfernen (remove)",
                                        "list, switch, download (add) or remove (remove) models"))
-    p.add_argument("name", nargs="?", help=T("Profilname zum Umschalten – oder add / remove / search (auch: add qwen-image)",
+    p.add_argument("name", nargs="?", help=T("Profilname zum Umschalten – oder add / remove / search (Bildmodelle: add qwen-image, z-image-turbo, flux-schnell, sdxl)",
                                              "profile to switch to – or add / remove / search"))
     p.add_argument("tag", nargs="*", help=T("bei add: Ollama-Name oder Hugging-Face-Link · bei search: Suchbegriff",
                                             "with add: Ollama name or Hugging Face link · with search: search term"))
@@ -775,9 +812,11 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("context-test", help=T("Kontextfenster mit dem aktiven Modell prüfen (Größe, Cache, Füllung)",
                                               "check the context window with the active model (size, cache, fill)"))
     p.add_argument("--quick", action="store_true", help=T("ohne das Fenster ganz zu füllen", "without filling the window"))
-    p = sub.add_parser("voice", help=T("Sprachausgabe Pocket TTS installieren (install) oder entfernen (remove)",
-                                       "install (install) or remove (remove) the Pocket TTS speech output"))
+    p = sub.add_parser("voice", help=T("Sprachausgabe installieren (install) oder entfernen (remove) – Piper, mit "
+                                         "„pocket“ Pocket TTS", "install (install) or remove (remove) the speech output – "
+                                         "Piper, with “pocket” Pocket TTS"))
     p.add_argument("action", choices=["install", "remove"])
+    p.add_argument("engine", nargs="?", choices=["piper", "pocket"], default="piper")
     sub.add_parser("update", help=T("Auf den neuesten Stand bringen (git pull, Abhängigkeiten, Neustart)",
                                     "update (git pull, dependencies, restart)"))
     sub.add_parser("stop", help=T("Laufenden Orbwise-Server beenden (auch einen im Hintergrund)",
@@ -800,7 +839,7 @@ def main(argv: list[str] | None = None) -> None:
         logging.getLogger(noisy).setLevel(logging.WARNING)
     if args.cmd is None:
         args = parser.parse_args(["serve", *(argv or sys.argv[1:])])
-    {"serve": cmd_serve, "stop": cmd_stop, "doctor": cmd_doctor, "update": cmd_update, "model": cmd_model, "version": cmd_version,
+    {"serve": cmd_serve, "open": cmd_open, "stop": cmd_stop, "doctor": cmd_doctor, "update": cmd_update, "model": cmd_model, "version": cmd_version,
      "reindex": cmd_reindex, "summarize": cmd_summarize, "init-config": cmd_init_config,
      "context-test": cmd_context_test, "voice": cmd_voice, "skills": cmd_skills}[args.cmd](args)
 

@@ -240,10 +240,11 @@ def push(cfg: Any, path: str, branch: str = "") -> dict:
     return _links(branch, repo)
 
 
-def push_from_copy(cfg: Any, ws: str, origin: str, branch: str = "") -> dict:
+def push_from_copy(cfg: Any, ws: str, origin: str, branch: str = "", project: str = "") -> dict:
     """Push aus der Sandbox-Arbeitskopie, ohne git in deren .git laufen zu lassen: Hooks, core.fsmonitor oder ein
     umgebogenes Remote dort stammen womöglich vom Agenten im Container. Der Branch wird in ein frisches Repo geholt
-    (nur Objekte) und von dort zur gemerkten URL gepusht."""
+    (nur Objekte) und von dort zur gemerkten URL gepusht. Mit project: hat der Branch keinen Commit, den das Projekt
+    nicht schon hat, wird nichts gepusht (sonst entstünde auf GitHub ein Branch ohne Änderungen)."""
     from . import workspace
     branch = branch.strip() or workspace.head_branch(ws) or ""
     if not branch:
@@ -258,6 +259,15 @@ def push_from_copy(cfg: Any, ws: str, origin: str, branch: str = "") -> dict:
     with tempfile.TemporaryDirectory(prefix="orbwise-push-") as tmp:
         git(["init", "-q", "--bare", tmp])
         git([*workspace.SAFE_GIT, "fetch", "-q", "--no-tags", str(gd), f"+{ref}:{ref}"], cwd=tmp)
+        if project and has_commits(project):
+            git(["fetch", "-q", "--no-tags", str(Path(project).resolve()), "+HEAD:refs/orbwise/base"], cwd=tmp)
+            try:
+                git(["merge-base", "--is-ancestor", ref, "refs/orbwise/base"], cwd=tmp)
+                nothing_new = True
+            except GitHubError:
+                nothing_new = False
+            if nothing_new:
+                raise GitHubError(f"Auf {branch} gibt es keine neuen Commits – nichts zu pushen.")
         git([*workspace.SAFE_GIT, "push", origin, f"{ref}:{ref}"], cwd=tmp, tok=token(cfg), timeout=300)
     return _links(branch, repo_of(origin))
 

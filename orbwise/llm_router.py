@@ -462,6 +462,12 @@ class LLMRouter:
         for name, raw in added_profiles(self.state_path).items():
             if name in self.profiles:
                 continue
+            if isinstance(raw, dict) and raw.get("api_key_ref"):  # eigenes Backend: Schlüssel aus dem Schlüsselbund
+                try:
+                    from . import keystore
+                    raw = {**raw, "api_key": keystore.get("llm_api_key:" + name)}
+                except Exception as e:  # noqa: BLE001 – ohne Schlüssel weiter (der Server meldet es dann)
+                    log.warning("API-Schlüssel für '%s' nicht lesbar: %s", name, e)
             try:
                 extra = self.cfg.model_copy(update={"profiles": {name: ProfileConfig.model_validate(raw)}})
             except ValueError as e:
@@ -745,6 +751,12 @@ class LLMRouter:
         return await self.client.chat(messages)
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
+        if self.gpu_borrowed and not self.ollama.embed_on_cpu:  # Bild-Modus hat den Grafikspeicher: auf der CPU
+            self.ollama.embed_on_cpu = True
+            try:
+                return await self.ollama.embed(texts)
+            finally:
+                self.ollama.embed_on_cpu = self.profile.embed_on_cpu
         return await self.ollama.embed(texts)
 
     async def status(self) -> dict:

@@ -289,8 +289,10 @@
       if (!S.historyLoaded) loadHistory();
       loadChats();  // Seitenleiste gleich füllen (vorher erst nach NEU oder der ersten Antwort)
       renderBoot();
+      loadVersion(true);  // Version unten in der Seitenleiste; der Server fragt höchstens alle 3 Stunden nach Updates
     };
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
+      if (ev.code === 4401) { signedOut(); return; }  // Zugangs-Token fehlt/abgelaufen → Anmeldeseite
       if (S.shutdown) { showShutdown(); return; }  // „Beenden“: nicht neu verbinden
       S.connected = false; S.prewarm = null;
       S.recording = false;
@@ -384,12 +386,19 @@
         if (ev.context) showContext(ev.context);
         applyMode(ev);
         // Bildmodus nur innerhalb desselben Serverlaufs wiederherstellen – nach einem Neustart von Orbwise: leerer Chat
+        if (UPD.restarting && ev.boot && ev.boot !== store.get("boot", "")) { store.set("boot", ev.boot); location.reload(); return; }  // neue Version läuft
         if (ev.boot && ev.boot !== store.get("boot", "")) { store.set("boot", ev.boot); store.set("view", "chat"); }
         else if (store.get("view", "chat") === "image" && !IV.open) setTimeout(openImageView, 0);
         applySettings(ev, true);
         loadThinkCaps();
         loadChats();  // Chats des aktuellen Modus
         break;
+      case "update_progress":
+        UPD.running = true; UPD.line = ev.text || ""; renderVersion();
+        return;
+      case "update_done":
+        updateDone(ev);
+        return;
       case "settings_sync":  // ein anderes Fenster (oder dieses) hat Denken/Auto-Modus geändert
         applySettings(ev, false);
         return;
@@ -534,6 +543,16 @@
         break;
       case "image_error":
         if (IV.open) imageError(ev);
+        break;
+      case "image_install":
+        imageInstallEvent(ev);
+        break;
+      case "piper_progress":
+        piperProgress(ev);
+        break;
+      case "image_llm_unloaded":
+        if (IV.open) toast(L("Sprachmodell entladen – der Grafikspeicher gehört jetzt dem Bildmodell.",
+                             "Language model unloaded – the video memory now belongs to the image model."));
         break;
       case "password_done":
         closePassword(ev.id);
@@ -2139,6 +2158,8 @@
       if (!$("day-modal").classList.contains("hidden")) { $("day-modal").classList.add("hidden"); return; }
       if (closeSheet()) return;
       if (app.classList.contains("side-open")) { app.classList.remove("side-open"); $("scrim").classList.add("hidden"); return; }
+      // schmales Fenster: die Aktivität liegt über dem Chat – Esc schließt sie wie die anderen Einblendungen
+      if (app.classList.contains("drawer-open") && window.innerWidth < 900) { setDrawer(false, true); return; }
       send({ type: "stop" });
       stopSpeech(true);
       return;
@@ -2481,7 +2502,12 @@
     if (name === "planner") loadPlanner();
     if (name === "memory") loadMemory();
     if (name === "settings") showSection(section || "general");
-    if (name === "models") renderModelsPage();
+    if (name === "models") {
+      IMS.q = ""; IMS.repo = "";  // Bildmodelle: beim Öffnen die Übersicht, nicht die letzte Suche
+      const box = document.querySelector("#mp-image .ivm-search input");
+      if (box) box.value = "";
+      renderModelsPage();
+    }
   }
   function closeSheet() {
     if (!openSheetName) return false;
@@ -2497,6 +2523,45 @@
     if (section === "voice") openVoiceMenu();
     if (section === "status") loadStatus();
     if (section === "skills") loadSkills();
+    if (section === "general") renderHfToken();
+  }
+
+  // Hugging-Face-Token (für zugangsbeschränkte Modelle wie Llama oder Gemma) – liegt im Schlüsselbund
+  async function renderHfToken() {
+    const row = $("set-hf");
+    let st = { set: false, source: "saved" };
+    try { st = await getJSON("/api/hf/token"); } catch { /* offline: Formular trotzdem zeigen */ }
+    row.innerHTML = `<div><b></b><small></small></div><form class="hf-token"><input type="password" autocomplete="off" spellcheck="false">
+      <button type="submit" class="btn small"></button></form>`;
+    row.querySelector("b").textContent = "Hugging Face";
+    const small = row.querySelector("small");
+    small.textContent = st.source === "env" ? L("Token kommt aus der Umgebung (HF_TOKEN).", "Token comes from the environment (HF_TOKEN).")
+      : st.set ? L("Token gespeichert – zugangsbeschränkte Modelle lassen sich laden (Lizenz auf der Modellseite akzeptieren).",
+                   "Token saved – gated models can be downloaded (accept the license on the model page).")
+      : L("Nur für zugangsbeschränkte Modelle (z. B. Llama, Gemma): Token mit Leserecht von huggingface.co/settings/tokens.",
+          "Only for gated models (e.g. Llama, Gemma): a read token from huggingface.co/settings/tokens.");
+    const form = row.querySelector("form");
+    const input = form.querySelector("input");
+    const btn = form.querySelector("button");
+    form.classList.toggle("hidden", st.source === "env");
+    input.placeholder = st.set ? "hf_••••••••" : "hf_…";
+    btn.textContent = st.set ? L("Ersetzen", "Replace") : L("Speichern", "Save");
+    if (st.set && st.source !== "env") {
+      const del = document.createElement("button");
+      del.type = "button"; del.className = "btn small"; del.textContent = L("Entfernen", "Remove");
+      del.onclick = async () => { try { await api("POST", "/api/hf/token", { token: "" }); renderHfToken(); } catch {} };
+      form.appendChild(del);
+    }
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      if (!input.value.trim()) return;
+      btn.disabled = true;
+      try {
+        const r = await api("POST", "/api/hf/token", { token: input.value.trim() });
+        toast(r.user ? L(`Angemeldet als ${r.user}.`, `Signed in as ${r.user}.`) : L("Token gespeichert.", "Token saved."));
+        renderHfToken();
+      } catch { btn.disabled = false; }
+    };
   }
 
   // ---------------------------------------------------------------- Skills: einrichten, an-/abschalten
@@ -2806,53 +2871,100 @@
     const list = $("voice-list");
     let data;
     try { data = await getJSON("/api/voices"); } catch { toast(L("Stimmen nicht ladbar", "Could not load voices")); return; }
-    list.innerHTML = `<div class="mm-title vm-pocket-head"><span>${L("Stimme wählen", "Choose voice")}</span>
-      <a href="https://kyutai.org/pocket-tts" target="_blank" rel="noopener">${L("Probehören ↗", "Listen ↗")}</a></div>`;
-    list.querySelector("a").onclick = (e) => e.stopPropagation();
-    const note = (text) => {
-      list.insertAdjacentHTML("beforeend", `<div class="mm-hint"></div>`);
-      list.lastElementChild.textContent = text;
+    VM.data = data;
+    voiceLanguages = data.languages || [];
+    list.innerHTML = "";
+    const note = (box, text, cls = "") => {
+      const d = document.createElement("div");
+      d.className = "mm-hint " + cls;
+      d.textContent = text;
+      box.appendChild(d);
+      return d;
     };
     voiceMenu.classList.remove("hidden");
     if (!data.available) {
-      note(L("Sprachausgabe ist deaktiviert (voice.enabled) – es spricht der Browser.", "Speech output is disabled (voice.enabled) – the browser speaks instead."));
+      note(list, L("Sprachausgabe ist deaktiviert (voice.enabled) – es spricht der Browser.", "Speech output is disabled (voice.enabled) – the browser speaks instead."));
       return;
     }
+    // ---- Piper (empfohlen)
+    const pp = data.piper || {};
+    const head = document.createElement("div");
+    head.className = "mm-title vm-pocket-head";
+    head.innerHTML = `<span></span><a href="https://rhasspy.github.io/piper-samples/" target="_blank" rel="noopener"></a>`;
+    head.querySelector("span").textContent = L("Piper – empfohlen", "Piper – recommended");
+    head.querySelector("a").textContent = L("Probehören ↗", "Listen ↗");
+    head.querySelector("a").onclick = (e) => e.stopPropagation();
+    list.appendChild(head);
+    note(list, L("Schnell auf der CPU (kein Grafikspeicher), liest Zahlen, Datum und Uhrzeit richtig. Eine Stimme spricht genau ihre Sprache; Laden richtet Piper beim ersten Mal ein (~60 MB) und lädt die Stimme (20–110 MB).",
+                 "Fast on the CPU (no video memory), reads numbers, dates and times correctly. A voice speaks exactly its language; downloading sets up Piper the first time (~60 MB) and fetches the voice (20–110 MB)."));
+    if (pp.state === "error" && pp.error && data.engine === "piper") note(list, L("Fehler: ", "Error: ") + pp.error, "bad");
+    const prog = document.createElement("div");
+    prog.className = "vm-progress hidden";
+    prog.innerHTML = `<div class="iv-bar"><i></i></div><span></span><button type="button" class="btn small"></button>`;
+    prog.querySelector("button").textContent = L("Abbrechen", "Cancel");
+    prog.querySelector("button").onclick = (e) => { e.stopPropagation(); api("DELETE", "/api/piper/download").catch(() => {}); };
+    list.appendChild(prog);
+    VM.progress = prog;
+    if (pp.downloading) piperProgress({ voice: pp.downloading, text: L("lädt …", "downloading …") });
+    const mine = (pp.voices || []).filter((v) => v.language === data.language || v.language === (EN ? "en" : "de"));
+    const others = (pp.voices || []).filter((v) => !mine.includes(v));
+    for (const v of mine) list.appendChild(piperRow(v, pp));
+    if (others.length) {
+      const more = document.createElement("details");
+      more.className = "vm-more";
+      more.innerHTML = `<summary></summary>`;
+      more.querySelector("summary").textContent = L("Weitere Sprachen", "More languages");
+      more.onclick = (e) => e.stopPropagation();
+      for (const v of others) more.appendChild(piperRow(v, pp));
+      list.appendChild(more);
+    }
+    if (pp.installed) {
+      const rm = document.createElement("button");
+      rm.className = "model-item add";
+      rm.textContent = L("Piper mit allen Stimmen entfernen", "Remove Piper with all voices");
+      rm.onclick = async (e) => {
+        e.stopPropagation();
+        if (data.engine === "piper") { toast(L("Piper ist gerade aktiv – erst eine Pocket-Stimme wählen.", "Piper is active – choose a Pocket voice first.")); return; }
+        if (!await ask(L("Piper mit allen Stimmen löschen?", "Delete Piper with all voices?"))) return;
+        try { const r = await api("DELETE", "/api/piper"); toast(L(`✔ Piper entfernt (${r.freed_mb} MB frei)`, `✔ Piper removed (${r.freed_mb} MB freed)`)); openVoiceMenu(); } catch {}
+      };
+      list.appendChild(rm);
+    }
+    // ---- Pocket TTS (aufklappbar)
     const pk = data.pocket || {};
+    const box = document.createElement("details");
+    box.className = "vm-more vm-pocket";
+    box.open = data.engine === "pocket";
+    box.innerHTML = `<summary></summary>`;
+    box.querySelector("summary").textContent = L("Pocket TTS – natürlicher Klang, liest Zahlen schlechter", "Pocket TTS – natural sound, weaker with numbers");
+    box.onclick = (e) => e.stopPropagation();
+    list.appendChild(box);
     if (!pk.installed) {
-      if (!pk.supported) { note(L("Pocket TTS braucht eine CPU mit AVX2 (x86-64) oder ARM64 – es spricht der Browser.", "Pocket TTS needs a CPU with AVX2 (x86-64) or ARM64 – the browser speaks instead.")); return; }
+      if (!pk.supported) { note(box, L("Pocket TTS braucht eine CPU mit AVX2 (x86-64) oder ARM64.", "Pocket TTS needs a CPU with AVX2 (x86-64) or ARM64.")); return; }
       const b = document.createElement("button");
       b.className = "model-item add";
       b.innerHTML = `<div>${L("Pocket TTS installieren", "Install Pocket TTS")}</div><div class="mi-note"></div>`;
-      b.querySelector(".mi-note").textContent = L(
-        "Natürliche Sprachausgabe auf der CPU. Programm wenige MB, beim ersten Start lädt es Modell und Stimme (einige hundert MB). Bis dahin spricht der Browser.",
-        "Natural speech output on the CPU. The program is a few MB; on first start it downloads the model and voice (a few hundred MB). Until then the browser speaks.");
+      b.querySelector(".mi-note").textContent = L("Programm wenige MB, beim ersten Start lädt es Modell und Stimme (einige hundert MB).",
+                                                 "The program is a few MB; on first start it downloads the model and voice (a few hundred MB).");
       b.onclick = async (e) => {
         e.stopPropagation();
         b.disabled = true;
         b.querySelector(".mi-note").textContent = L("Lade Pocket TTS …", "Downloading Pocket TTS …");
-        try {
-          await api("POST", "/api/pocket/install");
-          toast(L("✔ Pocket TTS installiert – das Modell wird jetzt geladen", "✔ Pocket TTS installed – loading the model now"));
-          loadStatus();
-          openVoiceMenu();
-        } catch { b.disabled = false; b.querySelector(".mi-note").textContent = L("Nochmal versuchen?", "Try again?"); }
+        try { await api("POST", "/api/pocket/install"); toast(L("✔ Pocket TTS installiert", "✔ Pocket TTS installed")); loadStatus(); openVoiceMenu(); }
+        catch { b.disabled = false; b.querySelector(".mi-note").textContent = L("Nochmal versuchen?", "Try again?"); }
       };
-      list.appendChild(b);
+      box.appendChild(b);
       return;
     }
-    if (pk.state === "starting") {
-      note(L("Startet … beim ersten Mal werden Modell und Stimme heruntergeladen.", "Starting … the first time, the model and voice are downloaded."));
-    } else if (pk.state === "error" && pk.error) {
-      note(L("Fehler: ", "Error: ") + pk.error + L(" – solange spricht der Browser.", " – the browser speaks meanwhile."));
-    }
-    for (const v of data.voices) list.appendChild(voiceRow(v, data.languages));
+    if (pk.state === "starting") note(box, L("Startet … beim ersten Mal werden Modell und Stimme heruntergeladen.", "Starting … the first time, the model and voice are downloaded."));
+    else if (pk.state === "error" && pk.error) note(box, L("Fehler: ", "Error: ") + pk.error);
+    for (const v of data.voices) box.appendChild(voiceRow(v, data.languages));
     const rm = document.createElement("button");
     rm.className = "model-item add";
     rm.textContent = L("Pocket TTS entfernen", "Remove Pocket TTS");
     rm.onclick = async (e) => {
       e.stopPropagation();
-      if (!await ask(L("Pocket TTS mit Modell und Stimmen löschen? Danach spricht der Browser.", "Delete Pocket TTS with its model and voices? The browser speaks afterwards."))) return;
+      if (!await ask(L("Pocket TTS mit Modell und Stimmen löschen?", "Delete Pocket TTS with its model and voices?"))) return;
       try {
         const r = await api("DELETE", "/api/pocket");
         toast(L(`✔ Pocket TTS entfernt (${r.freed_mb} MB frei)`, `✔ Pocket TTS removed (${r.freed_mb} MB freed)`));
@@ -2860,12 +2972,62 @@
         openVoiceMenu();
       } catch { /* Meldung kommt von api() */ }
     };
-    list.appendChild(rm);
-    // solange der Server startet, die Anzeige nachziehen (nur solange das Menü sichtbar ist)
+    box.appendChild(rm);
     clearTimeout(pocketPoll);
-    if (pk.state === "starting") {
-      pocketPoll = setTimeout(() => { if (voiceMenu.offsetParent) openVoiceMenu(); }, 3000);
+    if (pk.state === "starting") pocketPoll = setTimeout(() => { if (voiceMenu.offsetParent) openVoiceMenu(); }, 3000);
+  }
+  const VM = { data: null, progress: null };
+  function piperRow(v, pp) {
+    const b = document.createElement("button");
+    b.className = "model-item" + (v.current ? " active" : "");
+    b.innerHTML = `<div class="mi-head"><span class="mi-name"></span><span class="mi-tag"></span></div><div class="mi-sub"></div>`;
+    b.querySelector(".mi-name").textContent = `${v.label} · ${langLabel(v.language)}`;
+    const busy = pp.downloading === v.id;
+    b.querySelector(".mi-tag").textContent = v.current ? L("Aktiv", "Active") : busy ? L("lädt …", "loading …")
+      : v.downloaded ? (v.male ? L("männlich", "male") : L("weiblich", "female")) : L(`Laden · ~${v.size_mb} MB`, `Download · ~${v.size_mb} MB`);
+    b.querySelector(".mi-sub").textContent = [v.note, v.quality, v.recommended ? L("empfohlen", "recommended") : ""].filter(Boolean).join(" · ");
+    b.onclick = async (e) => {
+      e.stopPropagation();
+      if (v.current) return;
+      if (v.downloaded) return chooseVoice({ name: v.name, label: v.label }, null);
+      try { await api("POST", `/api/piper/voices/${encodeURIComponent(v.id)}`); piperProgress({ voice: v.id, text: L("startet …", "starting …") }); } catch {}
+    };
+    const row = document.createElement("div");
+    row.className = "model-row";
+    row.append(b);
+    if (v.downloaded) {
+      const play = document.createElement("button");
+      play.className = "model-del voice-play";
+      play.innerHTML = ico("play");
+      play.title = L("Anhören", "Preview");
+      play.onclick = (e) => { e.stopPropagation(); previewVoice(v.name); };
+      row.append(play);
+      if (!v.current) {
+        const del = document.createElement("button");
+        del.className = "model-del";
+        del.innerHTML = ico("trash");
+        del.title = L("Stimme löschen", "Delete voice");
+        del.onclick = async (e) => {
+          e.stopPropagation();
+          try { const r = await api("DELETE", `/api/piper/voices/${encodeURIComponent(v.id)}`); toast(L(`Stimme gelöscht (${r.freed_mb} MB frei)`, `Voice deleted (${r.freed_mb} MB freed)`)); openVoiceMenu(); } catch {}
+        };
+        row.append(del);
+      }
     }
+    return row;
+  }
+  function piperProgress(ev) {
+    const p = VM.progress;
+    if (ev.done) {
+      if (ev.ok) toast(L("Stimme geladen und aktiv.", "Voice downloaded and active."));
+      else toast(L("Stimme nicht geladen – ", "Voice not downloaded – ") + L("Details im Protokoll.", "see the log."));
+      if (voiceMenu.offsetParent) openVoiceMenu();
+      return;
+    }
+    if (!p || !p.isConnected) return;
+    p.classList.remove("hidden");
+    p.querySelector("i").style.width = (ev.pct || 0) + "%";
+    p.querySelector("span").textContent = ev.text || "";
   }
 
   async function chooseVoice(v, language) {
@@ -3290,6 +3452,16 @@
     openSheet("models");
   }
   async function renderModelsPage() {
+    const imaging = IV.open;  // im Bild-Modus: nur die Bildmodelle
+    $("mp-title").textContent = imaging ? L("Bildmodelle", "Image models") : L("Modelle", "Models");
+    $("sheet-models").classList.toggle("mp-imaging", imaging);
+    $("mp-image").classList.toggle("hidden", !imaging);
+    if (imaging) {
+      ["mp-mine", "mp-add", "mp-api", "mp-pulls"].forEach((id) => $(id).classList.add("hidden"));
+      await loadImageModels();
+      renderImageModels();
+      return;
+    }
     try { MP.data = await getJSON("/api/models"); } catch { toast(L("Modelle nicht ladbar", "Could not load models")); return; }
     renderModelsHead();
     renderPulls();
@@ -3305,8 +3477,8 @@
     b.onclick = () => { MP.tab = b.dataset.mtab; renderModelsPage(); };
   });
   // nach Wechsel, Download oder Änderung neu zeichnen – Eingaben im Hinzufügen-Reiter bleiben stehen
-  function refreshModelViews() {
-    if (openSheetName === "models") renderModelsPage();
+  async function refreshModelViews() {
+    if (openSheetName === "models") await renderModelsPage();
   }
 
   // Kopf: Grafikkarte mit Belegung (live aus den Metriken) und llama.cpp-Version
@@ -4132,12 +4304,103 @@
     } catch { /* Meldung kommt von api() */ }
   }
 
-  // ---- Reiter „Hinzufügen“: Hugging Face (Suche, Link, Pfad), Dateien in ~/models, Vorauswahl
+  // ---- Eigenes Backend (Experten): ein Server, den Orbwise nicht startet – Sprachmodell (OpenAI-kompatibel) oder Bild
+  function backendForm(image) {
+    const box = document.createElement("details");
+    box.className = "ext-backend";
+    box.innerHTML = `<summary></summary><p class="set-hint"></p>
+      <div class="ext-grid">
+        <label class="ext-kind hidden"><span></span><select name="kind"></select></label>
+        <label><span></span><input name="label" type="text" spellcheck="false"></label>
+        <label class="ext-wide"><span></span><input name="base_url" type="url" spellcheck="false"></label>
+        <label><span></span><input name="api_key" type="password" autocomplete="off" spellcheck="false"></label>
+        <label><span></span><input name="model" type="text" list="" spellcheck="false"><datalist></datalist></label>
+        <label class="ext-ctx"><span></span><input name="context" type="number" min="1024" step="1024"></label>
+      </div>
+      <div class="ext-actions"><button type="button" class="btn small ext-probe"></button>
+        <button type="button" class="btn primary small ext-save"></button><span class="ext-state"></span></div>`;
+    const f = (n) => box.querySelector(`[name="${n}"]`);
+    const label = (n, de, en) => { f(n).closest("label").querySelector("span").textContent = L(de, en); };
+    box.querySelector("summary").textContent = L("Eigenes Backend (für Experten)", "Own backend (experts)");
+    box.querySelector(".set-hint").textContent = image
+      ? L("Einen Bildserver nutzen, der schon läuft – Orbwise startet und lädt dort nichts, rechnet nicht selbst und gibt keinen Grafikspeicher frei. Größe, Schritte und Seed werden mitgeschickt, soweit die Schnittstelle sie kennt.",
+          "Use an image server that is already running – Orbwise starts and loads nothing there, does not compute itself and frees no video memory. Size, steps and seed are sent as far as the interface knows them.")
+      : L("Einen beliebigen OpenAI-kompatiblen Server nutzen (z. B. Strata, vLLM, LM Studio, llama-server auf einem anderen Rechner). Orbwise startet dort nichts – Kontextfenster, KV-Cache und Grafikkarten legt der Server fest. Das Kontextfenster hier sagt Orbwise nur, wie viel hineinpasst (leer: der Server meldet es oder der Standard gilt).",
+          "Use any OpenAI-compatible server (e.g. Strata, vLLM, LM Studio, llama-server on another machine). Orbwise starts nothing there – context window, KV cache and GPUs are up to the server. The context window here only tells Orbwise how much fits (empty: the server reports it or the default applies).");
+    if (image) {
+      box.querySelector(".ext-kind").classList.remove("hidden");
+      label("kind", "Schnittstelle", "Interface");
+      for (const [v, t] of [["openai", "OpenAI Images API (/v1/images/generations)"], ["a1111", "Automatic1111 / Forge (/sdapi/v1/txt2img)"],
+                             ["sdcpp", "stable-diffusion.cpp sd-server (/sdcpp/v1)"]]) f("kind").add(new Option(t, v));
+      box.querySelector(".ext-ctx").classList.add("hidden");
+    }
+    label("label", "Name", "Name");
+    label("base_url", "Adresse", "Address");
+    label("api_key", "API-Schlüssel (optional)", "API key (optional)");
+    label("model", image ? "Modell (optional)" : "Modell", image ? "Model (optional)" : "Model");
+    label("context", "Kontextfenster (optional, Token)", "Context window (optional, tokens)");
+    const hintUrl = () => {
+      f("base_url").placeholder = image ? { openai: "http://localhost:8000/v1", a1111: "http://localhost:7860", sdcpp: "http://localhost:1234" }[f("kind").value]
+        : "http://localhost:8000/v1";
+    };
+    hintUrl();
+    f("label").placeholder = image ? L("z. B. Forge im Keller", "e.g. Forge in the basement") : "z. B. Strata";
+    f("model").placeholder = image ? L("leer: Standard des Servers", "empty: the server's default") : L("„Verbindung prüfen“ füllt die Auswahl", "“Test connection” fills the list");
+    const listId = "ext-models-" + (image ? "img" : "llm");
+    box.querySelector("datalist").id = listId;
+    f("model").setAttribute("list", listId);
+    const state = box.querySelector(".ext-state");
+    const values = () => Object.fromEntries(["kind", "label", "base_url", "api_key", "model", "context"].map((n) => [n, f(n).value.trim()]));
+    if (image) f("kind").onchange = hintUrl;
+    box.querySelector(".ext-probe").textContent = L("Verbindung prüfen", "Test connection");
+    box.querySelector(".ext-save").textContent = L("Hinzufügen und nutzen", "Add and use");
+    box.querySelector(".ext-probe").onclick = async () => {
+      state.textContent = L("prüfe …", "testing …"); state.className = "ext-state";
+      let r;
+      try { r = await api("POST", image ? "/api/image/backend/probe" : "/api/models/external/probe", values()); } catch { state.textContent = ""; return; }
+      if (!image && r.base_url && r.base_url !== f("base_url").value.trim()) f("base_url").value = r.base_url;  // /v1 ergänzt
+      const dl = box.querySelector("datalist");
+      dl.innerHTML = "";
+      for (const m of r.models || []) dl.appendChild(new Option(m, m));
+      if (r.ok && !f("model").value && (r.models || []).length === 1) f("model").value = r.models[0];
+      state.className = "ext-state " + (r.ok ? "ok" : "bad");
+      state.textContent = r.ok ? L(`✔ erreichbar${r.models.length ? ` · ${r.models.length} Modell(e)` : ""}`, `✔ reachable${r.models.length ? ` · ${r.models.length} model(s)` : ""}`)
+        : "✘ " + r.error;
+    };
+    box.querySelector(".ext-save").onclick = async () => {
+      const v = values();
+      if (!v.label || !v.base_url || (!image && !v.model)) {
+        toast(image ? L("Bitte Name und Adresse angeben.", "Please give a name and an address.")
+          : L("Bitte Name, Adresse und Modell angeben.", "Please give a name, an address and a model.")); return;
+      }
+      try {
+        if (image) {
+          await api("POST", "/api/image/backend", v);
+          toast(L(`Bild-Backend „${v.label}“ ist aktiv.`, `Image backend “${v.label}” is active.`));
+          f("api_key").value = "";
+          if (IV.open) openImageView(); else loadImageModels();
+        } else {
+          const r = await api("POST", "/api/models/external", v);
+          f("api_key").value = "";
+          toast(L(`„${v.label}“ angelegt – wird geladen …`, `“${v.label}” added – loading …`));
+          MP.tab = "mine"; MP.sel = r.name;  // gleich in „Meine Modelle“ zeigen
+          await refreshModelViews();
+          const p = (MP.data && MP.data.profiles || []).find((x) => x.name === r.name) || { name: r.name, label: v.label };
+          activateModel(p);
+        }
+      } catch { /* Meldung kommt von api() */ }
+    };
+    return box;
+  }
+
+  // ---- Reiter „Hinzufügen“: Hugging Face (Vorschläge, Live-Suche, Link, Pfad), Dateien in ~/models, Vorauswahl
+  const HF = { q: "", sort: "downloads", fitOnly: false, timer: 0, seq: 0 };
   async function renderAddTab() {
     const box = $("mp-add");
     box.innerHTML = `
       <form class="mp-search" autocomplete="off"><svg class="i"><use href="#i-search"/></svg><input type="search" spellcheck="false">
         <button type="submit" class="btn primary small"></button></form>
+      <div class="hf-tools"><select class="hf-sort"></select><label class="hf-fit"><input type="checkbox"> <span></span></label></div>
       <p class="set-hint mp-search-hint"></p>
       <div class="mm-hf mp-hf"></div>
       <div class="mp-add-cols"><section class="mp-col mp-disk"></section><section class="mp-col mp-presets"></section></div>`;
@@ -4145,16 +4408,97 @@
     const q = form.querySelector("input");
     q.placeholder = L("Hugging Face durchsuchen, Link oder Pfad zu einer .gguf einfügen (z. B. qwen3.6 27b)",
                       "Search Hugging Face, paste a link or a path to a .gguf (e.g. qwen3.6 27b)");
+    q.value = HF.q;
     form.querySelector("button").textContent = L("Suchen", "Search");
+    const sort = box.querySelector(".hf-sort");
+    for (const [v, de, en] of [["downloads", "Meiste Downloads", "Most downloads"], ["trending", "Gerade beliebt", "Trending"],
+                               ["likes", "Meiste Likes", "Most likes"], ["updated", "Zuletzt aktualisiert", "Recently updated"]])
+      sort.add(new Option(L(de, en), v));
+    sort.value = HF.sort;
+    const fitBox = box.querySelector(".hf-fit input");
+    fitBox.checked = HF.fitOnly;
+    box.querySelector(".hf-fit span").textContent = L("nur was in meinen Speicher passt", "only what fits my memory");
     const hf = box.querySelector(".mp-hf");
-    form.onsubmit = (e) => {
-      e.preventDefault();
+    const run = (now) => {
+      clearTimeout(HF.timer);
       const text = q.value.trim();
-      if (/^[~/].*\.gguf$/i.test(text)) { addLocal(text); return; }  // Pfad zu einer eigenen GGUF-Datei
-      hfSearch(text, hf);
+      HF.q = text;
+      if (/^[~/].*\.gguf$/i.test(text)) { if (now) addLocal(text); return; }  // Pfad zu einer eigenen GGUF-Datei
+      HF.timer = setTimeout(() => (text.length >= 2 ? hfSearch(text, hf) : hfSuggest(hf)), now ? 0 : 400);
     };
+    form.onsubmit = (e) => { e.preventDefault(); run(true); };
+    q.addEventListener("input", () => run(false));  // Ergebnisse schon beim Tippen
+    sort.onchange = () => { HF.sort = sort.value; run(true); };
+    fitBox.onchange = () => { HF.fitOnly = fitBox.checked; run(true); };
+    run(true);
     localModels(box.querySelector(".mp-disk"));
     renderPresets(box.querySelector(".mp-presets"));
+    box.appendChild(backendForm(false));
+  }
+
+  const kCtx = (n) => (n >= 1024 ? `${Math.round(n / 1024)}k` : String(n || ""));
+  // Kurzinfos eines Modells als kleine Marken: 27B · qwen3 · 128k · Bild · Werkzeuge · Lizenz · gesperrt
+  function hfBadges(r) {
+    const wrap = document.createElement("div");
+    wrap.className = "hf-badges";
+    const add = (text, cls, title) => {
+      const b = document.createElement("span");
+      b.className = "hf-badge" + (cls ? " " + cls : "");
+      b.textContent = text;
+      if (title) b.title = title;
+      wrap.appendChild(b);
+    };
+    if (r.params_b) add(`${r.params_b >= 10 ? Math.round(r.params_b) : r.params_b}B`, "", L("Parameter", "Parameters"));
+    if (r.arch) add(r.arch, r.supported === false ? "warn" : "", r.supported === false
+      ? L("Diese Architektur kennt dein llama.cpp noch nicht – erst aktualisieren", "Your llama.cpp does not know this architecture yet – update it first")
+      : L("Architektur", "Architecture"));
+    if (r.context) add(kCtx(r.context), "", L("Maximaler Kontext laut Modell", "Maximum context according to the model"));
+    if (r.vision) add(L("Bild", "Vision"), "", L("Versteht Bilder (Bildmodul wird mitgeladen)", "Understands images (vision module is downloaded too)"));
+    if (r.tools) add(L("Werkzeuge", "Tools"), "", L("Die Chat-Vorlage kennt Werkzeug-Aufrufe", "The chat template supports tool calls"));
+    if (r.license) add(r.license, "muted", L("Lizenz", "License"));
+    if (r.gated) add(L("🔒 Zugang nötig", "🔒 Gated"), "warn", L("Lizenz auf Hugging Face akzeptieren und ein Token eintragen", "Accept the license on Hugging Face and enter a token"));
+    return wrap;
+  }
+  function hfResult(r) {
+    const mark = document.createElement("span");
+    mark.className = "fit-" + (r.fit || "tight");
+    mark.textContent = r.fit ? FIT_MARKS[r.fit] + " " : "";
+    const [owner, name] = r.repo.split("/");
+    const stats = [r.downloads ? L(`${r.downloads.toLocaleString(LOCALE)} Downloads`, `${r.downloads.toLocaleString(LOCALE)} downloads`) : "",
+                   r.likes ? `♥ ${r.likes.toLocaleString(LOCALE)}` : "", r.updated ? L(`aktualisiert ${r.updated}`, `updated ${r.updated}`) : ""]
+      .filter(Boolean).join(" · ");
+    const b = hfItem([mark, document.createTextNode(name || r.repo)], r.est_gb ? `~${r.est_gb} GB (Q4)` : "",
+                     `${owner}${stats ? " · " + stats : ""}`);
+    b.appendChild(hfBadges(r));
+    b.onclick = () => hfQuants(r.repo, $("mp-add").querySelector(".mp-hf"));
+    return b;
+  }
+  function hfList(box, title, results, extra) {
+    box.innerHTML = "";
+    const head = document.createElement("div");
+    head.className = "mp-hf-title hf-head";
+    head.textContent = title;
+    if (extra) head.appendChild(extra);
+    box.appendChild(head);
+    const shown = HF.fitOnly ? results.filter((r) => r.fit !== "big") : results;
+    for (const r of shown) box.appendChild(hfResult(r));
+    if (!shown.length) box.insertAdjacentHTML("beforeend", `<div class="mm-hint">${results.length
+      ? L("Nichts davon passt in deinen Speicher – Filter ausschalten, um alles zu sehen.", "None of these fits your memory – turn the filter off to see all.")
+      : L("Nichts gefunden – kürzeren Begriff versuchen (z. B. nur „qwen3.6“).", "Nothing found – try a shorter term (e.g. just “qwen3.6”).")}</div>`);
+  }
+
+  async function hfSuggest(box, refresh = false) {
+    const seq = ++HF.seq;
+    box.innerHTML = `<div class="mm-hint">${L("Lade Vorschläge von Hugging Face …", "Loading suggestions from Hugging Face …")}</div>`;
+    let data;
+    try { data = await getJSON("/api/models/hf/suggest" + (refresh ? "?refresh=1" : "")); }
+    catch { if (seq === HF.seq) box.innerHTML = `<div class="mm-hint">${L("Hugging Face nicht erreichbar – unten die feste Vorauswahl.", "Hugging Face not reachable – see the presets below.")}</div>`; return; }
+    if (seq !== HF.seq) return;  // inzwischen getippt
+    const again = document.createElement("button");
+    again.type = "button"; again.className = "btn-link"; again.textContent = L("neu laden", "reload");
+    again.onclick = () => hfSuggest(box, true);
+    hfList(box, L("Gerade beliebt auf Hugging Face – passend für deinen Speicher", "Trending on Hugging Face – fitting your memory"),
+           data.results, again);
   }
 
   async function renderPresets(box) {
@@ -4207,45 +4551,57 @@
 
   async function hfSearch(text, box) {
     text = text.trim();
-    if (!text) { box.innerHTML = ""; return; }
+    if (!text) return hfSuggest(box);
+    const seq = ++HF.seq;
     box.innerHTML = `<div class="mm-hint">${L("Suche auf Hugging Face …", "Searching Hugging Face …")}</div>`;
     let data;
-    try { data = await getJSON("/api/models/hf/search?q=" + encodeURIComponent(text)); }
-    catch { box.innerHTML = `<div class="mm-hint">${L("Hugging Face nicht erreichbar.", "Hugging Face not reachable.")}</div>`; return; }
-    box.innerHTML = "";
-    if (!data.results.length) {
-      box.innerHTML = `<div class="mm-hint">${L("Nichts gefunden – kürzeren Begriff versuchen (z. B. nur „qwen3.6“).",
-                                                "Nothing found – try a shorter term (e.g. just “qwen3.6”).")}</div>`;
-      return;
-    }
+    try { data = await getJSON(`/api/models/hf/search?q=${encodeURIComponent(text)}&sort=${HF.sort}`); }
+    catch { if (seq === HF.seq) box.innerHTML = `<div class="mm-hint">${L("Hugging Face nicht erreichbar.", "Hugging Face not reachable.")}</div>`; return; }
+    if (seq !== HF.seq) return;  // inzwischen weitergetippt
     if (data.results.length === 1 && data.results[0].tag) {  // Link auf eine bestimmte Datei
       const r = data.results[0];
       return hfQuants(r.repo, box, r.tag);
     }
-    if (data.results.length === 1) return hfQuants(data.results[0].repo, box);
-    for (const r of data.results) {
-      const b = hfItem([document.createTextNode(r.repo)], r.downloads ? L(`${r.downloads.toLocaleString(LOCALE)} Downloads`, `${r.downloads.toLocaleString(LOCALE)} downloads`) : "",
-                       L("GGUF · Quantisierung wählen →", "GGUF · choose quantization →"));
-      b.onclick = () => hfQuants(r.repo, box);
-      box.appendChild(b);
-    }
+    if (data.results.length === 1 && !data.results[0].downloads && !data.results[0].arch) return hfQuants(data.results[0].repo, box);  // Link aufs Repo
+    hfList(box, L(`Ergebnisse für „${text}“`, `Results for “${text}”`), data.results);
   }
 
   async function hfQuants(repo, box, only) {
+    ++HF.seq;
     box.innerHTML = `<div class="mm-hint">${L("Lade Dateiliste …", "Loading file list …")}</div>`;
     let data;
     try { data = await api("GET", "/api/models/hf/quants?repo=" + encodeURIComponent(repo)); }
     catch { box.innerHTML = ""; return; }
     box.innerHTML = "";
-    const title = document.createElement("div");
-    title.className = "mp-hf-title";
-    title.textContent = repo;
-    box.appendChild(title);
+    const head = document.createElement("div");
+    head.className = "hf-detail";
+    head.innerHTML = `<div class="hf-detail-top"><button type="button" class="btn-link hf-back"></button>
+      <a class="hf-link" target="_blank" rel="noopener"></a></div><div class="mp-hf-title"></div><div class="hf-warn hidden"></div>`;
+    head.querySelector(".hf-back").textContent = "← " + L("zurück", "back");
+    head.querySelector(".hf-back").onclick = () => (HF.q.length >= 2 ? hfSearch(HF.q, box) : hfSuggest(box));
+    const link = head.querySelector(".hf-link");
+    link.href = `https://huggingface.co/${repo}`;
+    link.textContent = L("Auf Hugging Face ansehen ↗", "View on Hugging Face ↗");
+    head.querySelector(".mp-hf-title").textContent = repo;
+    const info = data.info || {};
+    if (info.repo) head.appendChild(hfBadges(info));
+    const warn = head.querySelector(".hf-warn");
+    const warnings = [];
+    if (info.gated) warnings.push(info.hf_token
+      ? L("Zugangsbeschränkt: Lizenz auf der Hugging-Face-Seite akzeptieren, dann klappt der Download mit deinem Token.",
+          "Gated: accept the license on the Hugging Face page, then the download works with your token.")
+      : L("Zugangsbeschränkt: Lizenz auf der Hugging-Face-Seite akzeptieren und unter Einstellungen → Allgemein → Hugging Face ein Token eintragen.",
+          "Gated: accept the license on the Hugging Face page and enter a token under Settings → General → Hugging Face."));
+    if (info.supported === false) warnings.push(L(`Dein llama.cpp kennt die Architektur „${info.arch}“ noch nicht – oben unter llama.cpp aktualisieren, sonst startet das Modell nicht.`,
+                                                 `Your llama.cpp does not know the “${info.arch}” architecture yet – update llama.cpp above, otherwise the model will not start.`));
+    if (warnings.length) { warn.textContent = warnings.join(" "); warn.classList.remove("hidden"); }
+    box.appendChild(head);
     const items = only ? data.quants.filter((x) => x.tag.toLowerCase() === only.toLowerCase()) : data.quants;
     if (!items.length) {
       box.insertAdjacentHTML("beforeend", `<div class="mm-hint">${L("Keine GGUF-Datei in diesem Repo.", "No GGUF file in this repo.")}</div>`);
       return;
     }
+    const vram = data.gpu && data.gpu.vram_gb;
     for (const x of items) {
       const mark = document.createElement("span");
       mark.className = "fit-" + x.fit;
@@ -4256,7 +4612,22 @@
                          : x.recommended ? L("Empfohlen", "Recommended") : "",
                        `~${x.download_gb} GB · ${L("braucht", "needs")} ~${x.vram_gb} GB VRAM`
                          + (x.parts > 1 ? ` · ${x.parts} ${L("Teile", "parts")}` : "")
-                         + (x.mmproj ? L(" · + Bildmodul", " · + vision") : ""));
+                         + (x.mmproj ? L(" · + Bildmodul", " · + vision") : ""),
+                       x.note || "");
+      if (vram) {  // Balken: wie viel vom Grafikspeicher die Variante belegt – und was an Kontext daneben passt
+        const bar = document.createElement("div");
+        bar.className = "hf-vram";
+        bar.innerHTML = `<div class="hf-vram-bar"><i></i></div><span></span>`;
+        const i = bar.querySelector("i");
+        i.style.width = Math.min(100, x.vram_pct || 0) + "%";
+        i.className = "fit-" + x.fit;
+        bar.querySelector("span").textContent = x.fit === "ok"
+          ? L(`${x.vram_pct} % von ${vram} GB · ≈ ${kCtx(x.ctx)} Kontext`, `${x.vram_pct} % of ${vram} GB · ≈ ${kCtx(x.ctx)} context`)
+          : x.fit === "tight" ? L("teils im Arbeitsspeicher – langsamer", "partly in system RAM – slower")
+          : L("zu groß für den Grafikspeicher", "too big for the video memory");
+        if (x.fit === "ok" && !x.ctx) bar.querySelector("span").textContent = L(`${x.vram_pct} % von ${vram} GB · kaum Platz für Kontext`, `${x.vram_pct} % of ${vram} GB · little room for context`);
+        b.appendChild(bar);
+      }
       b.disabled = pulling;
       b.onclick = () => startPull(x.tag, `${repo} ${x.quant}`, x.fit);
       box.appendChild(b);
@@ -4480,6 +4851,19 @@
   $("pill-llm").onclick = async (e) => {
     e.stopPropagation();
     const anchor = $("pill-llm");
+    if (IV.open) {  // Bild-Modus: nur die Bildmodelle
+      await loadImageModels();
+      const d = IM.data;
+      const items = (d ? d.models.filter((m) => m.installed) : []).map((m) => ({
+        icon: m.active ? "check" : "image", label: m.label, checked: m.active,
+        sub: [`${m.disk_gb} GB`, L(`${m.steps} Schritte`, `${m.steps} steps`), m.edit ? L("kann bearbeiten", "can edit") : ""].filter(Boolean).join(" · "),
+        run: () => { if (!m.active) activateImageModel(m.id); },
+      }));
+      if (items.length) items.push({ sep: true });
+      items.push({ icon: "settings", label: L("Bildmodelle verwalten …", "Manage image models …"), run: () => openSheet("models") });
+      popMenu(anchor, items);
+      return;
+    }
     let data;
     try { data = await getJSON("/api/models"); } catch { openModelsPage("mine"); return; }
     const items = data.profiles.map((p) => ({
@@ -4804,8 +5188,13 @@
     } catch { out.textContent = L("Vorschau fehlgeschlagen", "Preview failed"); }
   };
 
+  // Nicht (mehr) angemeldet (Cookie gelöscht, Token neu): einmal neu laden – der Server zeigt die Anmeldeseite
+  function signedOut() {
+    if (!signedOut.done) { signedOut.done = true; location.reload(); }
+  }
   async function getJSON(url) {
     const r = await fetch(url);
+    if (r.status === 401) signedOut();
     if (!r.ok) throw new Error(r.status);
     return r.json();
   }
@@ -4829,7 +5218,8 @@
       // „Lade Modell“ nach dem Start stehen, bis man neu lädt
       if (l.switching && asked > S.modelDoneAt) { S.modelSwitching = S.modelSwitching || l.switching; refresh(); }
       else if (!l.switching && S.modelSwitching && asked > S.modelDoneAt) { S.modelSwitching = null; refresh(); }
-      setPill("pill-llm", l.switching ? "warn" : l.unloaded ? "off" : !l.online ? "bad" : l.model_available ? "ok" : "warn",
+      if (IV.open) renderImagePill();  // Bild-Modus: die Pille zeigt das Bildmodell
+      else setPill("pill-llm", l.switching ? "warn" : l.unloaded ? "off" : !l.online ? "bad" : l.model_available ? "ok" : "warn",
         l.switching ? L("lädt …", "loading …") : l.unloaded ? `${l.label || l.model} · ${L("entladen", "unloaded")}` : !l.online ? `${l.label || l.model} offline` : l.model_available ? name : l.model + L(" fehlt", " missing"));
       const v = st.voice;
       const vCls = v.stt && v.tts ? "ok" : v.stt || v.tts ? "warn" : "bad";
@@ -4852,6 +5242,7 @@
   async function api(method, url, body) {
     const r = await fetch(url, { method, headers: body ? { "Content-Type": "application/json" } : {},
                                  body: body ? JSON.stringify(body) : undefined });
+    if (r.status === 401) signedOut();
     if (!r.ok) {
       let msg = `${L("Fehler", "Error")} ${r.status}`;
       try { msg = (await r.json()).detail || msg; } catch { /* egal */ }
@@ -5067,6 +5458,7 @@
     $("iv-go").textContent = L("Erzeugen", "Generate");
   }
   async function openImageView() {
+    if (!IV.open) api("POST", "/api/image/enter").catch(() => {});  // Sprachmodell raus – Bildmodell lädt beim ersten Bild
     IV.open = true;
     store.set("view", "image");
     app.classList.add("imaging");
@@ -5074,13 +5466,20 @@
     ivText();
     try { IV.status = await getJSON("/api/image/status"); } catch { IV.status = null; }
     const st = IV.status || {};
-    $("iv-setup").classList.toggle("hidden", !!st.available);
     $("iv-form").classList.toggle("hidden", !st.available);
-    if (!st.available) {
-      $("iv-setup").innerHTML = L(
-        "<b>Bild-Modus einrichten</b><br>Einmal im Terminal: <code>orbwise model add qwen-image</code> – lädt stable-diffusion.cpp und Qwen-Image-2.1 (je nach Grafikkarte ~10–15 GB). Danach Orbwise neu laden.",
-        "<b>Set up image mode</b><br>Once in a terminal: <code>orbwise model add qwen-image</code> – downloads stable-diffusion.cpp and Qwen-Image-2.1 (~10–15 GB depending on the GPU). Then reload Orbwise.");
-    } else {
+    $("iv-setup").classList.toggle("hidden", !!st.available);
+    if (!st.available) {  // noch kein Bildmodell: Hinweis mit Knopf zur Verwaltung
+      $("iv-setup").innerHTML = `<b></b><span></span><div><button type="button" class="btn primary"></button></div>`;
+      $("iv-setup").querySelector("b").textContent = L("Noch kein Bildmodell installiert", "No image model installed yet");
+      $("iv-setup").querySelector("span").textContent = L(
+        "Wähle eins aus – z. B. Z-Image Turbo (schnell, ~6 GB) oder Qwen-Image (kann Bilder bearbeiten). Orbwise lädt es von Hugging Face; danach geht es hier los.",
+        "Pick one – e.g. Z-Image Turbo (fast, ~6 GB) or Qwen-Image (can edit pictures). Orbwise downloads it from Hugging Face; then you can start here.");
+      const go = $("iv-setup").querySelector("button");
+      go.textContent = L("Bildmodell auswählen …", "Choose an image model …");
+      go.onclick = () => openSheet("models");
+    }
+    await loadImageModels();
+    if (st.available) {
       const sel = $("iv-size");
       if (!sel.options.length) {
         for (const k of st.sizes || ["1:1"]) sel.add(new Option(SIZE_LABEL[k] || k, k));
@@ -5094,8 +5493,8 @@
         if (!res.value) res.value = "1";
         const [w, h] = store.get("iv.custom", [1280, 704]);
         $("iv-w").value = w; $("iv-h").value = h;
-        $("iv-steps").value = store.get("iv.steps", st.steps || 20);
       }
+      $("iv-steps").value = store.get("iv.steps." + st.model, st.steps || 20);  // Schritte je Bildmodell
       updateDims();
       $("iv-upload-label").classList.toggle("hidden", !st.can_edit);
       setImageBusy(!!st.busy);
@@ -5109,6 +5508,9 @@
     app.classList.remove("imaging");
     markModeTabs();
     api("POST", "/api/image/release").catch(() => {});  // Sprachmodell zurück in den Grafikspeicher
+    $("pill-llm").title = L("Sprachmodell wechseln", "Switch language model");
+    $("pill-llm").querySelector("use").setAttribute("href", "#i-chip");
+    loadStatus();  // Pille oben zeigt wieder das Sprachmodell
   }
   function setImageBusy(busy) {
     IV.busy = busy;
@@ -5139,6 +5541,285 @@
     setImageBusy(false);
     toast(L("Bild: ", "Image: ") + (ev.text || L("fehlgeschlagen", "failed")));
   }
+  // ---- Bildmodelle: Auswahl oben am Modell-Menü (#pill-llm), Verwaltung auf der Modell-Seite (Bild-Variante)
+  const IM = { data: null, progress: {} };
+  async function loadImageModels() {
+    try { IM.data = await getJSON("/api/image/models"); } catch { IM.data = null; }
+    renderImagePill();
+    if (openSheetName === "models" && IV.open) renderImageModels();
+  }
+  // Im Bild-Modus zeigt die Modell-Pille oben das aktive Bildmodell (statt des Sprachmodells)
+  function renderImagePill() {
+    if (!IV.open) return;
+    const active = IM.data && IM.data.models.find((m) => m.active);
+    setPill("pill-llm", active ? "ok" : "off", active ? active.label : L("kein Bildmodell", "no image model"));
+    $("pill-llm").title = L("Bildmodell wechseln", "Switch image model");
+    $("pill-llm").querySelector("use").setAttribute("href", "#i-image");
+  }
+  // Bildmodell-Seite: Suche über alle Text-zu-Bild-Modelle auf Hugging Face, darunter installiert / empfohlen / beliebt
+  const IMS = { q: "", sort: "downloads", timer: 0, seq: 0, repo: "" };
+  function renderImageModels() {
+    const d = IM.data;
+    const panel = $("mp-image");
+    if (!d) { panel.innerHTML = `<div class="mm-hint">${L("Bildmodelle nicht ladbar.", "Could not load image models.")}</div>`; return; }
+    if (!panel.querySelector(".ivm-search")) {  // Gerüst einmal – Eingaben bleiben beim Neuzeichnen stehen
+      panel.innerHTML = `<form class="mp-search ivm-search" autocomplete="off"><svg class="i"><use href="#i-search"/></svg>
+          <input type="search" spellcheck="false"><button type="submit" class="btn primary small"></button></form>
+        <div class="hf-tools"><select class="hf-sort"></select></div>
+        <p class="set-hint ivm-intro"></p><div class="ivm-runtime"></div><div class="ivm-installing hidden"></div><div class="ivm-body"></div>`;
+      const form = panel.querySelector("form"), q = form.querySelector("input"), sort = panel.querySelector(".hf-sort");
+      q.placeholder = L("Alle Text-zu-Bild-Modelle auf Hugging Face durchsuchen (z. B. flux, juggernaut xl, dreamshaper)",
+                        "Search all text-to-image models on Hugging Face (e.g. flux, juggernaut xl, dreamshaper)");
+      form.querySelector("button").textContent = L("Suchen", "Search");
+      for (const [v, de, en] of [["downloads", "Meiste Downloads", "Most downloads"], ["trending", "Gerade beliebt", "Trending"],
+                                 ["likes", "Meiste Likes", "Most likes"], ["updated", "Zuletzt aktualisiert", "Recently updated"]])
+        sort.add(new Option(L(de, en), v));
+      q.value = IMS.q; sort.value = IMS.sort;
+      const run = (now) => {
+        clearTimeout(IMS.timer);
+        IMS.q = q.value.trim(); IMS.repo = "";
+        IMS.timer = setTimeout(renderImageBody, now ? 0 : 400);
+      };
+      form.onsubmit = (e) => { e.preventDefault(); run(true); };
+      q.addEventListener("input", () => run(false));
+      sort.onchange = () => { IMS.sort = sort.value; run(true); };
+    }
+    const installed = d.models.filter((m) => m.installed);
+    panel.querySelector(".ivm-intro").textContent = (d.vram_gb ? L(`Grafikkarte: ${d.vram_gb} GB · `, `GPU: ${d.vram_gb} GB · `) : "")
+      + L("Immer nur ein Modell ist geladen; wechseln geht auch oben am Modell-Menü. ", "Only one model is loaded at a time; you can also switch at the model menu at the top. ")
+      + L(`Dateien in ${d.dir}.`, `Files in ${d.dir}.`) + (installed.length ? "" : " " + L("Noch kein Bildmodell installiert.", "No image model installed yet."));
+    renderRuntime();
+    renderInstalling();
+    renderImageBody();
+  }
+  // sd-server (rechnet die eigenen Bildmodelle): Version und Aktualisieren – neuere Modelle brauchen oft einen neueren
+  function renderRuntime() {
+    const box = $("mp-image").querySelector(".ivm-runtime");
+    const rt = (IM.data && IM.data.runtime) || {};
+    if (!box || !rt.installed) { if (box) box.innerHTML = ""; return; }
+    box.innerHTML = `<span></span><button type="button" class="btn small"></button>`;
+    box.querySelector("span").textContent = "sd-server " + (rt.version || L("(Version unbekannt)", "(version unknown)"));
+    const b = box.querySelector("button");
+    b.textContent = rt.updating ? L("aktualisiert …", "updating …") : L("Aktualisieren", "Update");
+    b.disabled = !!rt.updating;
+    b.title = L("Neuesten Build von stable-diffusion.cpp laden – neuere Bildmodelle (z. B. FLUX.2 klein) brauchen ihn oft",
+                "Download the newest stable-diffusion.cpp build – newer image models (e.g. FLUX.2 klein) often need it");
+    b.onclick = async () => {
+      b.disabled = true; b.textContent = L("aktualisiert …", "updating …");
+      try { const r = await api("POST", "/api/image/runtime/update"); toast(r.text || L("sd-server aktualisiert.", "sd-server updated.")); }
+      catch { /* Meldung kommt von api() */ }
+      loadImageModels();
+    };
+  }
+  function renderInstalling() {
+    const box = $("mp-image").querySelector(".ivm-installing");
+    if (!box || !IM.data) return;
+    const id = IM.data.installing;
+    box.classList.toggle("hidden", !id);
+    if (!id) { box.innerHTML = ""; return; }
+    const p = IM.progress[id] || { text: IM.data.text, pct: IM.data.pct };
+    if (!box.querySelector(".ivm-progress")) {
+      box.innerHTML = `<b></b><div class="ivm-progress"><div class="iv-bar"><i></i></div><span></span>
+        <button type="button" class="btn small"></button></div>`;
+      box.querySelector("button").textContent = L("Abbrechen", "Cancel");
+      box.querySelector("button").onclick = () => api("DELETE", "/api/image/models/install").catch(() => {});
+    }
+    const known = IM.data.models.find((m) => m.id === id);
+    box.querySelector("b").textContent = L("Lädt: ", "Downloading: ") + (known ? known.label : (IM.label || id));
+    box.querySelector("i").style.width = (p.pct || 0) + "%";
+    box.querySelector("span").textContent = p.text || L("startet …", "starting …");
+  }
+  async function renderImageBody() {
+    const panel = $("mp-image");
+    const body = panel.querySelector(".ivm-body");
+    if (!body || !IM.data) return;
+    const seq = ++IMS.seq;
+    if (IMS.repo) return imageRepoFiles(IMS.repo, body, seq);
+    if (IMS.q.length >= 2) {  // Suche über alle Text-zu-Bild-Modelle
+      body.innerHTML = `<div class="mm-hint">${L("Suche auf Hugging Face …", "Searching Hugging Face …")}</div>`;
+      let data;
+      try { data = await getJSON(`/api/image/hf/search?q=${encodeURIComponent(IMS.q)}&sort=${IMS.sort}`); }
+      catch { if (seq === IMS.seq) body.innerHTML = `<div class="mm-hint">${L("Hugging Face nicht erreichbar.", "Hugging Face not reachable.")}</div>`; return; }
+      if (seq !== IMS.seq) return;
+      body.innerHTML = "";
+      section(body, L(`Ergebnisse für „${IMS.q}“`, `Results for “${IMS.q}”`));
+      if (!data.results.length) body.insertAdjacentHTML("beforeend", `<div class="mm-hint">${L("Nichts gefunden – kürzeren Begriff versuchen.", "Nothing found – try a shorter term.")}</div>`);
+      for (const r of data.results) body.appendChild(imageHfItem(r));
+      return;
+    }
+    body.innerHTML = "";
+    const d = IM.data;
+    const installed = d.models.filter((m) => m.installed), offered = d.models.filter((m) => !m.installed);
+    if (installed.length) { section(body, L("Installiert", "Installed")); for (const m of installed) body.appendChild(imageModelCard(m, d)); }
+    section(body, L("Empfohlen", "Recommended"));
+    for (const m of offered) body.appendChild(imageModelCard(m, d));
+    body.appendChild(backendForm(true));
+    section(body, L("Gerade beliebt auf Hugging Face", "Trending on Hugging Face"));
+    const list = document.createElement("div");
+    list.className = "mm-hf";
+    list.innerHTML = `<div class="mm-hint">${L("Lade …", "Loading …")}</div>`;
+    body.appendChild(list);
+    let data;
+    try { data = await getJSON("/api/image/hf/search"); }
+    catch { if (seq === IMS.seq) list.innerHTML = `<div class="mm-hint">${L("Hugging Face nicht erreichbar.", "Hugging Face not reachable.")}</div>`; return; }
+    if (seq !== IMS.seq) return;
+    list.innerHTML = "";
+    for (const r of data.results) list.appendChild(imageHfItem(r));
+    if (!data.results.length) list.innerHTML = `<div class="mm-hint">${L("Gerade nichts Passendes.", "Nothing suitable right now.")}</div>`;
+  }
+  function section(box, title) {
+    const h = document.createElement("div");
+    h.className = "mp-hf-title ivm-section";
+    h.textContent = title;
+    box.appendChild(h);
+    return h;
+  }
+  function imageHfItem(r) {
+    const [owner, name] = r.repo.split("/");
+    const stats = [r.downloads ? L(`${r.downloads.toLocaleString(LOCALE)} Downloads`, `${r.downloads.toLocaleString(LOCALE)} downloads`) : "",
+                   r.likes ? `♥ ${r.likes.toLocaleString(LOCALE)}` : "", r.updated ? L(`aktualisiert ${r.updated}`, `updated ${r.updated}`) : ""]
+      .filter(Boolean).join(" · ");
+    const b = hfItem([document.createTextNode(name || r.repo)], r.supported ? r.family_label : L("nicht unterstützt", "not supported"),
+                     `${owner}${stats ? " · " + stats : ""}`, r.supported ? "" : r.reason);
+    const badges = document.createElement("div");
+    badges.className = "hf-badges";
+    const add = (text, cls) => { const t = document.createElement("span"); t.className = "hf-badge" + (cls ? " " + cls : ""); t.textContent = text; badges.appendChild(t); };
+    if (r.gguf) add("GGUF");
+    if (r.license) add(r.license, "muted");
+    if (r.gated) add(L("🔒 Zugang nötig", "🔒 Gated"), "warn");
+    if (badges.childElementCount) b.appendChild(badges);
+    b.classList.toggle("unsupported", !r.supported);
+    b.onclick = () => { if (!r.supported) { toast(r.reason); return; } IMS.repo = r.repo; renderImageBody(); };
+    return b;
+  }
+  async function imageRepoFiles(repo, body, seq) {
+    body.innerHTML = `<div class="mm-hint">${L("Lade Dateiliste …", "Loading file list …")}</div>`;
+    let data;
+    try { data = await api("GET", "/api/image/hf/files?repo=" + encodeURIComponent(repo)); }
+    catch { if (seq === IMS.seq) { IMS.repo = ""; renderImageBody(); } return; }
+    if (seq !== IMS.seq) return;
+    body.innerHTML = "";
+    const head = document.createElement("div");
+    head.className = "hf-detail";
+    head.innerHTML = `<div class="hf-detail-top"><button type="button" class="btn-link hf-back"></button>
+      <a class="hf-link" target="_blank" rel="noopener"></a></div><div class="mp-hf-title"></div><div class="hf-warn"></div>`;
+    head.querySelector(".hf-back").textContent = "← " + L("zurück", "back");
+    head.querySelector(".hf-back").onclick = () => { IMS.repo = ""; renderImageBody(); };
+    head.querySelector(".hf-link").href = `https://huggingface.co/${repo}`;
+    head.querySelector(".hf-link").textContent = L("Auf Hugging Face ansehen ↗", "View on Hugging Face ↗");
+    head.querySelector(".mp-hf-title").textContent = repo;
+    const notes = [];
+    if (data.family) notes.push(L(`Läuft als ${data.family_label}-Modell: Text-Encoder und VAE lädt Orbwise passend dazu (falls noch nicht da), ${data.steps} Schritte.`,
+                                  `Runs as a ${data.family_label} model: Orbwise adds the matching text encoder and VAE (if not there yet), ${data.steps} steps.`));
+    else notes.push(data.reason);
+    if (data.gated) notes.push(L("Zugangsbeschränkt: Lizenz auf der Modellseite akzeptieren und unter Einstellungen → Allgemein → Hugging Face ein Token eintragen.",
+                                 "Gated: accept the license on the model page and enter a token under Settings → General → Hugging Face."));
+    const warn = head.querySelector(".hf-warn");
+    warn.textContent = notes.join(" ");
+    warn.classList.toggle("info", !!data.family && !data.gated);
+    body.appendChild(head);
+    if (!data.variants.length) {
+      body.insertAdjacentHTML("beforeend", `<div class="mm-hint">${data.family
+        ? L("Keine ladbare Datei – sd.cpp braucht eine ganze Modelldatei (GGUF oder .safetensors), keine Diffusers-Aufteilung.",
+            "No loadable file – sd.cpp needs a whole model file (GGUF or .safetensors), not a diffusers split.") : ""}</div>`);
+      return;
+    }
+    const vram = IM.data && IM.data.vram_gb;
+    for (const v of data.variants) {
+      const mark = document.createElement("span");
+      mark.className = "fit-" + v.fit;
+      mark.textContent = FIT_MARKS[v.fit] + " ";
+      const busy = IM.data && IM.data.installing;
+      const b = hfItem([mark, document.createTextNode(v.quant || v.name)],
+                       busy === v.id ? L("Lädt …", "Loading …") : v.installed ? L("Installiert", "Installed") : v.recommended ? L("Empfohlen", "Recommended") : "",
+                       `${v.name} · ~${v.size_gb} GB · ${L("braucht", "needs")} ~${v.need_gb} GB VRAM` + (vram ? ` (${L("du hast", "you have")} ${vram} GB)` : ""));
+      b.disabled = !!busy || v.installed;
+      b.onclick = async () => {
+        if (v.fit === "big" && !await ask(L(`${v.name} ist für deine Grafikkarte zu groß und wird sehr langsam. Trotzdem laden?`,
+                                            `${v.name} is too big for your GPU and will be very slow. Download anyway?`))) return;
+        try {
+          const r = await api("POST", "/api/image/hf/install", { repo, file: v.file });
+          IM.data.installing = r.model; IM.label = `${repo.split("/")[1]} ${v.quant}`.trim(); IM.progress[r.model] = {};
+          renderInstalling(); b.disabled = true;
+          toast(L("Lädt – Fortschritt oben.", "Downloading – progress at the top."));
+        } catch {}
+      };
+      body.appendChild(b);
+    }
+  }
+  function imageModelCard(m, d) {
+    const card = document.createElement("div");
+    card.className = "ivm-card" + (m.active ? " active" : "");
+    card.innerHTML = `<div class="ivm-name"></div><div class="ivm-note"></div><div class="ivm-meta"></div><div class="ivm-btns"></div>`;
+    const name = card.querySelector(".ivm-name");
+    name.textContent = m.label;
+    const tag = (text, on) => { const t = document.createElement("span"); t.className = "ivm-tag" + (on ? " on" : ""); t.textContent = text; name.appendChild(t); };
+    if (m.active) tag(L("aktiv", "active"), true);
+    else if (m.installed) tag(L("installiert", "installed"));
+    if (m.edit) tag(L("kann bearbeiten", "can edit"));
+    if (m.new) tag(L("neu", "new"));
+    card.querySelector(".ivm-note").textContent = m.note;
+    if (m.misfiled) {  // früher falsch eingeordnet (z. B. klein als FLUX.1) – startet mit falschen Bauteilen
+      const w = document.createElement("div");
+      w.className = "hf-warn";
+      w.textContent = m.misfiled + " " + L("Bitte löschen.", "Please delete it.");
+      card.appendChild(w);
+    }
+    const meta = card.querySelector(".ivm-meta");
+    const fit = document.createElement("span");
+    fit.className = "fit-" + m.fit;
+    fit.textContent = FIT_MARKS[m.fit] + " ";
+    meta.append(fit, document.createTextNode([
+      m.installed ? L(`${m.disk_gb} GB auf der Platte`, `${m.disk_gb} GB on disk`) : L(`~${m.size_gb} GB Download`, `~${m.size_gb} GB download`),
+      m.min_vram_gb ? L(`ab ${m.min_vram_gb} GB VRAM`, `from ${m.min_vram_gb} GB VRAM`) : "", L(`${m.steps} Schritte`, `${m.steps} steps`), m.license].filter(Boolean).join(" · ")));
+    const btns = card.querySelector(".ivm-btns");
+    const btn = (label, cls, fn) => { const b = document.createElement("button"); b.type = "button"; b.className = "btn small " + cls; b.textContent = label; b.onclick = fn; btns.appendChild(b); return b; };
+    const busy = d.installing;
+    if (busy === m.id) {
+      btn(L("Lädt …", "Loading …"), "", () => {}).disabled = true;
+    } else if (!m.installed) {
+      const b = btn(L("Laden", "Download"), "primary", async () => {
+        if (m.fit === "big" && !await ask(L(`${m.label} ist für deine Grafikkarte zu groß und wird sehr langsam. Trotzdem laden?`,
+                                            `${m.label} is too big for your GPU and will be very slow. Download anyway?`))) return;
+        try { await api("POST", `/api/image/models/${m.id}/install`); IM.data.installing = m.id; IM.progress[m.id] = {}; renderImageModels(); } catch {}
+      });
+      b.disabled = !!busy;
+    } else {
+      if (!m.active) btn(L("Aktivieren", "Activate"), "", () => activateImageModel(m.id));
+      btn(L("Löschen", "Delete"), "danger", async () => {
+        if (!await ask(L(`${m.label} löschen? ${m.disk_gb} GB werden frei (Dateien, die ein anderes Bildmodell nutzt, bleiben).`,
+                         `Delete ${m.label}? Frees ${m.disk_gb} GB (files another image model uses stay).`), { danger: true })) return;
+        try {
+          const r = await api("DELETE", `/api/image/models/${m.id}`);
+          toast(L(`${m.label} gelöscht – ${r.freed_gb} GB frei.`, `${m.label} deleted – ${r.freed_gb} GB freed.`));
+          if (IV.open) openImageView(); else loadImageModels();
+        } catch {}
+      });
+    }
+    return card;
+  }
+  async function activateImageModel(id) {
+    if (IV.busy) { toast(L("Erst das laufende Bild abwarten.", "Wait for the running image first.")); return; }
+    try { IV.status = await api("POST", `/api/image/models/${id}/activate`); } catch { return; }
+    toast(L(`Bildmodell: ${IV.status.model_label}`, `Image model: ${IV.status.model_label}`));
+    if (IV.open) openImageView(); else loadImageModels();
+  }
+  function imageInstallEvent(ev) {
+    if (!ev.done) {
+      IM.progress[ev.model] = { text: ev.text, pct: ev.pct };
+      if (IM.data) IM.data.installing = ev.model;
+      if (openSheetName === "models" && IV.open) renderInstalling();  // nur der Fortschrittsblock, nicht die Liste
+      return;
+    }
+    if (IM.data) IM.data.installing = "";
+    delete IM.progress[ev.model];
+    const label = ((IM.data && IM.data.models.find((m) => m.id === ev.model)) || {}).label || IM.label || ev.model;
+    if (ev.ok) toast(L(`${label} ist geladen und aktiv.`, `${label} is downloaded and active.`));
+    else if (ev.cancelled) toast(L(`Laden von ${label} abgebrochen – erneut laden macht weiter.`, `Download of ${label} cancelled – downloading again resumes.`));
+    else toast(L(`${label}: `, `${label}: `) + (ev.text || L("fehlgeschlagen", "failed")));
+    if (IV.open) openImageView(); else loadImageModels();
+  }
+
   async function loadGallery(fresh = []) {
     let data;
     try { data = await getJSON("/api/image/list"); } catch { return; }
@@ -5159,7 +5840,7 @@
     card.querySelector("img").alt = img.prompt || "";
     card.querySelector("img").onclick = () => window.open(url, "_blank");
     card.querySelector(".iv-cap").textContent = (img.edit ? (img.refs > 1 ? `✎×${img.refs} ` : "✎ ") : "") + (img.prompt || "");
-    card.querySelector(".iv-meta").textContent = `${img.width}×${img.height} · ${img.steps} ${L("Schritte", "steps")} · Seed ${img.seed}`
+    card.querySelector(".iv-meta").textContent = (img.model ? img.model + " · " : "") + `${img.width}×${img.height} · ${img.steps} ${L("Schritte", "steps")} · Seed ${img.seed}`
       + (img.seconds ? ` · ${secs(img.seconds)}` : "");
     const actions = card.querySelector(".iv-actions");
     const add = (label, title, fn) => {
@@ -5252,7 +5933,7 @@
     if (size === "ref" && !IV.refs.length) size = "1:1";
     store.set("iv.size", $("iv-size").value);
     store.set("iv.mp", Number($("iv-res").value) || 1);
-    store.set("iv.steps", Number($("iv-steps").value) || 20);
+    store.set("iv.steps." + ((IV.status && IV.status.model) || ""), Number($("iv-steps").value) || 20);
     if (size === "custom") {
       const w = r32(Number($("iv-w").value) || 1024), h = r32(Number($("iv-h").value) || 1024);
       store.set("iv.custom", [w, h]);
@@ -5271,6 +5952,76 @@
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); generateImage(); }
   });
   $("iv-cancel").onclick = () => api("POST", "/api/image/cancel").catch(() => {});
+
+  // ---------------------------------------------------------------- Version und Update (unten in der Seitenleiste)
+  const UPD = { info: null, running: false, restarting: false, line: "" };
+  async function loadVersion(check, force) {
+    try { UPD.info = await getJSON(`/api/update${check ? "?check=1" : ""}${force ? "&force=1" : ""}`); }
+    catch { return; }
+    UPD.running = !!UPD.info.running;
+    renderVersion();
+  }
+  function versionLabel(i) {
+    if (!i) return "Orbwise";
+    const date = i.date ? new Date(i.date + "T12:00:00").toLocaleDateString(LOCALE, { day: "2-digit", month: "2-digit", year: "numeric" }) : "";
+    return ["Orbwise" + (i.version ? " " + i.version : ""), date, i.commit].filter(Boolean).join(" · ");
+  }
+  function renderVersion() {
+    const btn = $("side-version");
+    const i = UPD.info;
+    const available = !!(i && i.behind);
+    const text = btn.querySelector(".sv-text");
+    btn.classList.toggle("has-update", available && !UPD.running);
+    btn.querySelector(".sv-dot").classList.toggle("hidden", !(available || UPD.running));
+    if (UPD.restarting) text.textContent = L("Orbwise startet neu …", "Orbwise is restarting …");
+    else if (UPD.running) text.textContent = L("Aktualisiere … ", "Updating … ") + (UPD.line || "").replace(/^[✔•\s]+/, "").slice(0, 60);
+    else if (available) text.textContent = L(`Update verfügbar (${i.behind}) · `, `Update available (${i.behind}) · `) + versionLabel(i).replace(/^Orbwise ?/, "");
+    else text.textContent = versionLabel(i);
+    btn.title = i ? `${versionLabel(i)}${i.subject ? "\n" + i.subject : ""}${i.branch ? "\nBranch " + i.branch : ""}` : "";
+    $("btn-menu").classList.toggle("has-update", available);  // Handy: Punkt am Menü-Knopf
+  }
+  $("side-version").onclick = async () => {
+    if (UPD.running || UPD.restarting) { toast(L("Das Update läuft gerade …", "The update is running …")); return; }
+    await loadVersion(true);
+    const i = UPD.info;
+    if (!i) { toast(L("Version nicht abrufbar.", "Could not read the version.")); return; }
+    const head = versionLabel(i) + (i.subject ? `\n${i.subject}` : "");
+    if (i.behind && i.can_update) {
+      const list = i.changes.slice(0, 15).map((c) => "• " + c).join("\n") + (i.changes.length > 15 ? "\n…" : "");
+      if (!await ask(L(`Update verfügbar – ${i.behind} ${i.behind === 1 ? "Änderung" : "Änderungen"}:\n\n${list}\n\nOrbwise lädt das Update, aktualisiert die Abhängigkeiten und startet neu (meist unter einer Minute). Chats, Gedächtnis und Einstellungen bleiben.`,
+                       `Update available – ${i.behind} ${i.behind === 1 ? "change" : "changes"}:\n\n${list}\n\nOrbwise downloads the update, refreshes the dependencies and restarts (usually under a minute). Chats, memory and settings stay.`),
+                     { ok: L("Jetzt aktualisieren", "Update now") })) return;
+      try { await api("POST", "/api/update"); } catch { return; }
+      UPD.running = true; UPD.line = ""; renderVersion();
+      return;
+    }
+    if (i.behind) {
+      await ask(L(`Update verfügbar (${i.behind}), aber nicht automatisch möglich: ${i.reason}.\n\nIm Terminal: orbwise update`,
+                  `Update available (${i.behind}), but not possible automatically: ${i.reason}.\n\nIn a terminal: orbwise update`), { ok: "OK" });
+      return;
+    }
+    const state = i.error ? L(`Prüfen fehlgeschlagen: ${i.error}`, `Check failed: ${i.error}`)
+      : i.git ? L("Orbwise ist auf dem neuesten Stand.", "Orbwise is up to date.") : i.reason;
+    if (await ask(`${head}\n\n${state}`, { ok: L("Erneut prüfen", "Check again") })) {
+      await loadVersion(true, true);
+      const n = UPD.info;
+      toast(n && n.behind ? L(`Update verfügbar (${n.behind}) – unten auf die Version klicken.`, `Update available (${n.behind}) – click the version at the bottom.`)
+        : n && n.error ? L(`Prüfen fehlgeschlagen: ${n.error}`, `Check failed: ${n.error}`) : L("Kein Update – alles aktuell.", "No update – all current."));
+    }
+  };
+  function updateDone(ev) {
+    UPD.running = false;
+    if (!ev.ok) {
+      renderVersion();
+      ask(L("Update fehlgeschlagen:\n\n", "Update failed:\n\n") + (ev.text || ""), { ok: "OK" });
+      loadVersion(true, true);
+      return;
+    }
+    if (ev.restart) { UPD.restarting = true; renderVersion(); toast(L("Update geladen – Orbwise startet neu …", "Update installed – Orbwise is restarting …")); return; }
+    toast(L("Orbwise ist auf dem neuesten Stand.", "Orbwise is up to date."));
+    loadVersion(true, true);
+  }
+  setInterval(() => { if (S.connected && !UPD.running) loadVersion(true); }, 3 * 3600 * 1000);
 
   // ---------------------------------------------------------------- Modi: Tools (Assistent) / Coding
   // Getrennte Chat-Verläufe; Coding lädt nur Dateien, Shell, Web und Gedächtnis und hat keine Sprache.
@@ -5322,6 +6073,10 @@
   }
   document.querySelectorAll(".mode-switch [data-mode]").forEach((b) => {
     b.onclick = async () => {
+      if (app.classList.contains("side-open")) {  // Handy: Seitenleiste nach der Wahl schließen, sonst verdeckt sie den Modus
+        app.classList.remove("side-open");
+        if (!openSheetName) $("scrim").classList.add("hidden");
+      }
       if (b.dataset.mode === "image") { openImageView(); return; }
       if (IV.open) closeImageView();
       if (b.dataset.mode === S.mode || !await confirmLeaveSandbox()) return;
@@ -5808,13 +6563,30 @@
           + L(" – getrennt von den normalen Chats.", " – separate from the regular chats.")
         : L("Gedächtnis der normalen Chats – Coding-Projekte haben je ein eigenes.",
           "Memory of the regular chats – coding projects each have their own.");
+      const del = (title) => `<button type="button" class="mem-del" title="${title}" aria-label="${title}">${ico("trash")}</button>`;
       $("facts").innerHTML = facts.length
-        ? facts.map((f) => `<li>${escapeHtml(f.fact)}<small>${f.day}</small></li>`).join("")
+        ? facts.map((f, i) => `<li data-i="${i}"><span class="mem-text">${escapeHtml(f.fact)}<small>${f.day}</small></span>${del(L("Fakt löschen", "Delete fact"))}</li>`).join("")
         : `<li class="empty">${L("Noch keine Fakten gespeichert.", "No facts stored yet.")}</li>`;
+      $("facts").querySelectorAll("li[data-i] .mem-del").forEach((b) => {
+        const f = facts[Number(b.closest("li").dataset.i)];
+        b.onclick = async () => {
+          if (!await ask(L(`Diesen Fakt vergessen?\n\n„${f.fact}“`, `Forget this fact?\n\n“${f.fact}”`), { ok: L("Löschen", "Delete"), danger: true })) return;
+          try { await api("POST", "/api/memory/facts/delete", { fact: f.fact }); toast(L("Fakt gelöscht.", "Fact deleted.")); loadMemory(); } catch {}
+        };
+      });
       $("days").innerHTML = days.length
-        ? days.map((d) => `<li><button data-day="${d.day}">${formatDay(d.day)}<span>${d.summary ? L("Zusammenfassung", "Summary") : L("Protokoll", "Log")}</span></button></li>`).join("")
+        ? days.map((d) => `<li><button class="mem-day" data-day="${d.day}">${formatDay(d.day)}<span>${d.summary ? L("Zusammenfassung", "Summary") : L("Protokoll", "Log")}</span></button>${del(L("Tag löschen", "Delete day"))}</li>`).join("")
         : `<li class="empty">${L("Noch keine Einträge.", "No entries yet.")}</li>`;
-      $("days").querySelectorAll("button").forEach((b) => (b.onclick = () => openDay(b.dataset.day)));
+      $("days").querySelectorAll(".mem-day").forEach((b) => (b.onclick = () => openDay(b.dataset.day)));
+      $("days").querySelectorAll(".mem-del").forEach((b) => {
+        const day = b.closest("li").querySelector(".mem-day").dataset.day;
+        b.onclick = async () => {
+          if (!await ask(L(`Tagebuch vom ${formatDay(day)} löschen?\n\nProtokoll und Zusammenfassung dieses Tages werden vergessen. Gelernte Fakten und die Chats in der Seitenleiste bleiben.`,
+                           `Delete the journal of ${formatDay(day)}?\n\nThat day's log and summary are forgotten. Learned facts and the chats in the sidebar stay.`),
+                         { ok: L("Löschen", "Delete"), danger: true })) return;
+          try { await api("DELETE", "/api/memory/day/" + day); toast(L("Tag gelöscht.", "Day deleted.")); loadMemory(); } catch {}
+        };
+      });
     } catch (err) {
       toast(L("Gedächtnis nicht ladbar: ", "Could not load memory: ") + err.message);
     }

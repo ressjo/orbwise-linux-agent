@@ -153,3 +153,110 @@ def test_only_real_servers_count(tmp_path, monkeypatch):
         assert not upd._is_server(proc.pid)
     finally:
         proc.kill()
+
+
+def test_check_reports_new_commits(repos):
+    origin, clone = repos
+    (clone / "pyproject.toml").write_text('[project]\nname = "orbwise"\nversion = "1.2.3"\n')
+    info = upd.check(clone)
+    assert info["git"] and info["version"] == "1.2.3" and info["behind"] == 0 and not info["can_update"]
+    assert info["subject"] == "Erster Stand" and info["branch"] == "main" and len(info["date"]) == 10
+    for text in ("2", "3"):
+        (origin / "a.txt").write_text(text)
+        git(origin, "commit", "-qam", f"Neu {text}")
+    info = upd.check(clone)
+    assert info["behind"] == 2 and info["changes"] == ["Neu 3", "Neu 2"] and info["can_update"] and not info["error"]
+    (clone / "a.txt").write_text("lokal")
+    blocked = upd.check(clone, fetch=False)
+    assert blocked["behind"] == 2 and not blocked["can_update"] and "stash" in blocked["reason"]
+
+
+def test_check_without_git_or_remote(repos, tmp_path):
+    assert upd.check(tmp_path / "nix")["reason"].startswith("kein Git")
+    origin, clone = repos
+    git(clone, "remote", "set-url", "origin", str(tmp_path / "weg"))
+    assert upd.check(clone)["error"]
+
+
+def test_systemd_unit_from_cgroup(monkeypatch, tmp_path):
+    monkeypatch.delenv("INVOCATION_ID", raising=False)
+    assert upd.systemd_unit() is None
+    monkeypatch.setenv("INVOCATION_ID", "x")
+    cg = tmp_path / "cgroup"
+    cg.write_text("0::/user.slice/user-1000.slice/user@1000.service/app.slice/orbwise.service\n")
+    monkeypatch.setattr(upd, "Path", lambda p: cg if p == "/proc/self/cgroup" else Path(p))
+    assert upd.systemd_unit() == "orbwise.service"
+
+
+def test_update_from_the_web_ui(cfg, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from orbwise.server import create_app
+    monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    checks, restarts = [], []
+    monkeypatch.setattr(upd, "check", lambda *a, **k: checks.append(1) or {
+        "version": "0.1.0", "git": True, "commit": "abc1234", "date": "2026-10-31", "subject": "x", "branch": "main",
+        "behind": 1, "changes": ["Neu"], "can_update": True, "reason": "", "error": ""})
+
+    def fake_update(root, port, runner, restart, out):
+        out("Hole Updates …")
+        restart(port, Path("/x"))
+        return 0
+    monkeypatch.setattr(upd, "update", fake_update)
+    monkeypatch.setattr(upd, "restart_self", lambda port, root: restarts.append((port, root)))
+    with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
+        assert client.get("/api/update").json()["version"]  # ohne Prüfen: nur der installierte Stand
+        assert client.get("/api/update", params={"check": 1}).json()["behind"] == 1
+        client.get("/api/update", params={"check": 1})
+        assert len(checks) == 1  # höchstens alle 3 Stunden
+        client.get("/api/update", params={"check": 1, "force": 1})
+        assert len(checks) == 2
+        with client.websocket_connect("ws://localhost:8765/ws", headers={"Origin": "http://localhost:8765"}) as ws:
+            assert client.post("/api/update").json() == {"started": True}
+            events = []
+            while not any(e.get("type") == "update_done" for e in events):
+                events.append(ws.receive_json())
+        progress = [e["text"] for e in events if e.get("type") == "update_progress"]
+        done = next(e for e in events if e.get("type") == "update_done")
+        assert progress == ["Hole Updates …"] and done["ok"] and done["restart"]
+        for _ in range(50):
+            if restarts:
+                break
+            import time
+            time.sleep(0.05)
+        assert restarts == [(8765, Path("/x"))]
+
+
+def test_restart_self_starts_again_once_the_port_is_free(tmp_path, monkeypatch):
+    import socket
+    import sys
+    import time
+    monkeypatch.delenv("INVOCATION_ID", raising=False)
+    home = tmp_path / "home"
+    (home / ".local/bin").mkdir(parents=True)
+    marker = tmp_path / "gestartet"
+    launcher = home / ".local/bin/orbwise"
+    launcher.write_text(f'#!/bin/sh\necho "$@" > "{marker}"\n')
+    launcher.chmod(0o755)
+    monkeypatch.setattr(upd.Path, "home", lambda: home)
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    started, killed = [], []
+    real_popen = subprocess.Popen
+    monkeypatch.setattr(upd.subprocess, "Popen", lambda args, **kw: started.append(args))
+    monkeypatch.setattr(upd.os, "kill", lambda pid, sig: killed.append(pid))
+    with socket.socket() as s:  # Port, auf dem „der alte Server“ noch lauscht
+        s.bind(("127.0.0.1", 0))
+        s.listen()
+        port = s.getsockname()[1]
+        upd.restart_self(port, tmp_path)
+        assert killed == [os.getpid()] and started[0][0] == sys.executable
+        helper = real_popen(started[0])  # der echte Helfer wartet, bis der Port frei ist
+        time.sleep(0.6)
+        assert helper.poll() is None and not marker.exists()
+    helper.wait(timeout=10)
+    for _ in range(50):
+        if marker.exists():
+            break
+        time.sleep(0.1)
+    assert marker.read_text().strip() == "serve"

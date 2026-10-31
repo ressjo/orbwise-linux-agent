@@ -83,8 +83,11 @@ class CodingMixin:
                 log.info("GitHub-Konto nicht abrufbar: %s", e)
         if progress:
             await progress("Lege die Arbeitskopie an …")
-        state = await asyncio.to_thread(workspace.create, conv.chat_id, project, conv.meta.get("title", ""), identity)
         old = conv.meta.get("sandbox") or {}
+        state = await asyncio.to_thread(workspace.create, conv.chat_id, project, conv.meta.get("title", ""), identity,
+                                        str(conv.meta.get("sandbox_branch") or ""))
+        if state.get("branch"):
+            conv.meta["sandbox_branch"] = state["branch"]  # bleibt nach „Sandbox beenden“ – ein Branch je Chat
         sb = {**state, "enabled": True, "network": old.get("network", self.cfg.sandbox.network),
               "name": sbx.container_name(conv.chat_id), "image": sbx.image(self.cfg),
               "engine": os.path.basename(binary)}

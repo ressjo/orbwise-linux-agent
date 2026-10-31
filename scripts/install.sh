@@ -197,9 +197,9 @@ rm -f "$CHOICE_FILE"
 ollama pull bge-m3   # Embeddings fürs Gedächtnis
 
 # ---------------------------------------------------------------- Voice
-say "$(t "Installiere die Sprachausgabe Pocket TTS" "Installing the Pocket TTS speech output")"
-uv run orbwise voice install || echo "$(t "⚠ Pocket TTS nicht eingerichtet – später: orbwise voice install (bis dahin spricht der Browser)" \
-  "⚠ Pocket TTS not set up – later: orbwise voice install (until then the browser speaks)")"
+say "$(t "Installiere die Sprachausgabe Piper (CPU)" "Installing the Piper speech output (CPU)")"
+uv run orbwise voice install || echo "$(t "⚠ Piper nicht eingerichtet – später: orbwise voice install (bis dahin spricht der Browser)" \
+  "⚠ Piper not set up – later: orbwise voice install (until then the browser speaks)")"
 
 say "Downloading the wake word model and Whisper"
 uv run python -c "import openwakeword.utils as u; u.download_models(['hey_jarvis'])"
@@ -260,7 +260,7 @@ Start:    orbwise serve --open      (or "Orbwise" in the application menu)
 Check:    orbwise doctor
 Update:   orbwise update
 (Open a new terminal or run "source ~/.bashrc" if "orbwise" is not found yet.)
-Web UI:   http://localhost:8765
+Web UI:   orbwise open             (http://localhost:8765 – signs the browser in once)
 Models:   orbwise model add        (download and switch to another model – also in the web UI: LLM menu)
 EOF
 echo "Skills:   orbwise skills        (Mail, Paperless, Portainer … – also under Settings → Skills)"

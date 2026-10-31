@@ -1,4 +1,5 @@
-"""Bilder erzeugen und bearbeiten mit Qwen-Image-2.1 über stable-diffusion.cpp (sd-server, eigene Prozessgruppe).
+"""Bilder erzeugen und bearbeiten über stable-diffusion.cpp (sd-server, eigene Prozessgruppe) – mit dem aktiven
+Bildmodell (Qwen-Image 2.1, Z-Image Turbo, FLUX.1 schnell, SDXL; siehe imagegen_setup.CATALOG).
 
 - Der Server wird erst beim ersten Bild gestartet und bleibt geladen, solange Bilder kommen (image.idle_minutes).
 - Grafikspeicher: Auf kleinen Karten passen Sprachmodell und Bildmodell nicht gleichzeitig. Dann wird der
@@ -25,8 +26,9 @@ from typing import Any
 
 import httpx
 
+from . import imagegen_setup as setup
 from .config import ServerConfig
-from .imagegen_setup import image_dir, is_set_up, manifest, model_paths, server_binary
+from .imagegen_setup import image_dir, is_set_up, model_entry, model_paths, server_binary
 from .lang import T
 
 log = logging.getLogger(__name__)
@@ -140,6 +142,7 @@ class ImageEngine:
         self.stopped_llm = False  # haben wir das Sprachmodell für den Bildserver beendet?
         self.job: str | None = None
         self._idle: asyncio.TimerHandle | None = None
+        self.view_open = False  # Bild-Ansicht offen: das Sprachmodell bleibt draußen, bis man sie verlässt
 
     # ---------- Zustand ----------
     @property
@@ -153,33 +156,141 @@ class ImageEngine:
     def available(self) -> bool:
         return is_set_up(self.directory)
 
+    def model(self) -> setup.ImageModel | None:
+        """Das aktive Bildmodell (Katalogeintrag)."""
+        return setup.spec_of(self.directory, setup.active_id(self.directory))
+
     def can_edit(self) -> bool:
-        vision = model_paths(self.directory).get("vision")
+        api = self.api()
+        if api is not None:  # eigenes Backend: nur ein externer sd-server nimmt Vorlagen an
+            return api["backend"] == "sdcpp"
+        spec = self.model()
+        if not spec or not spec.edit:
+            return False
+        if "vision" not in spec.flags:  # FLUX.2/3 klein: Vorlagen gehen direkt an das Modell
+            return True
+        vision = model_paths(self.directory).get("vision")  # Qwen-Image: braucht die Bild-Erkennung (mmproj)
         return bool(vision and vision.exists())
 
+    def defaults(self) -> tuple[int, float, str]:
+        """Schritte, CFG und Sampler: die des Modells – eine eigene Angabe in config.yaml (image.steps/cfg_scale,
+        abweichend vom Standard) gilt für alle."""
+        spec = self.model()
+        steps = spec.steps if spec else 20
+        cfg_scale = spec.cfg_scale if spec else 6.0
+        if self.cfg.image.steps != 20:
+            steps = self.cfg.image.steps
+        if self.cfg.image.cfg_scale != 6.0:
+            cfg_scale = self.cfg.image.cfg_scale
+        return steps, cfg_scale, spec.sampler if spec else "euler"
+
+    async def select(self, model_id: str) -> None:
+        """Anderes installiertes Bildmodell aktiv machen – ein geladener Bildserver wird beendet (startet beim nächsten
+        Bild mit dem neuen Modell)."""
+        async with self.lock:
+            setup.set_active(self.directory, model_id)
+            await self.drop_server()
+
+    async def drop_server(self) -> None:
+        if self.server is not None:
+            await self.server.stop()
+        self.server = None  # neuer Startbefehl beim nächsten Bild
+
     def vram_gb(self) -> float:
+        """Grafikspeicher der größten Karte – sd-server rechnet auf einer Karte. Bei mehreren Karten meldet die
+        Telemetrie die Summe (metrics.combine); die zählt hier nicht, sonst bliebe das Sprachmodell geladen und dem
+        Bildmodell fehlte der Platz."""
         gpu = self.gpu_info() or {}
-        if gpu.get("vram_total"):
-            return gpu["vram_total"] / 1024 ** 3
-        return float(manifest(self.directory).get("vram_gb") or 0)
+        cards = gpu.get("gpus") or [gpu]
+        biggest = max((c.get("vram_total") or 0 for c in cards), default=0)
+        if biggest:
+            return biggest / 1024 ** 3
+        return float(model_entry(self.directory).get("vram_gb") or 0)
 
     def loaded(self) -> bool:
         return bool(self.server and self.server.running())
 
+    # ---------- Eigenes Backend (Experten): Server, den Orbwise nicht startet ----------
+    def api(self) -> dict | None:
+        """Eintrag des aktiven Bildmodells, wenn es ein eigenes Backend ist (openai / a1111 / sdcpp), sonst None."""
+        entry = model_entry(self.directory)
+        return entry if setup.is_api(entry) else None
+
+    def _api_headers(self) -> dict:
+        from . import keystore
+        try:
+            key = keystore.get("image_api_key:" + setup.active_id(self.directory))
+        except Exception:  # noqa: BLE001 – ohne Schlüssel
+            key = ""
+        return {"Authorization": f"Bearer {key}"} if key else {}
+
+    async def _generate_api(self, api: dict, prompt: str, negative: str, width: int, height: int, steps: int,
+                            cfg_scale: float, seed: int, count: int, ref_images: list[bytes] | None,
+                            sampler: str, progress: Progress | None) -> dict:
+        """Ein Bild über das eigene Backend → {"images": [{"b64_json": …}]} wie bei sd-server."""
+        kind, base = api["backend"], api["base_url"].rstrip("/")
+        if progress:
+            await progress({"phase": "generating"})
+        async with httpx.AsyncClient(timeout=httpx.Timeout(900, connect=15), transport=self.transport,
+                                     headers=self._api_headers()) as c:
+            try:
+                if kind == "sdcpp":  # externer sd-server: dieselbe Schnittstelle wie der eigene
+                    body = {"prompt": prompt, "negative_prompt": negative or "", "width": width, "height": height,
+                            "seed": seed, "batch_count": count, "output_format": "png",
+                            "ref_images": [base64.b64encode(b).decode() for b in ref_images or []],
+                            "sample_params": {"sample_method": sampler, "sample_steps": steps,
+                                              **({"guidance": {"txt_cfg": cfg_scale}} if cfg_scale else {})}}
+                    r = await c.post(f"{base}/sdcpp/v1/img_gen", json=body)
+                    self._api_check(r)
+                    self.job = r.json()["id"]
+                    c.base_url = base
+                    return await self._wait(c, self.job, progress)
+                if kind == "a1111":
+                    body = {"prompt": prompt, "negative_prompt": negative or "", "width": width, "height": height,
+                            "steps": steps, "seed": seed, "batch_size": count,
+                            **({"cfg_scale": cfg_scale} if cfg_scale else {}),
+                            **({"override_settings": {"sd_model_checkpoint": api["model"]}} if api.get("model") else {})}
+                    r = await c.post(f"{base}/sdapi/v1/txt2img", json=body)
+                    self._api_check(r)
+                    return {"images": [{"b64_json": img} for img in r.json().get("images") or []]}
+                body = {"prompt": prompt, "n": count, "size": f"{width}x{height}", "response_format": "b64_json",
+                        **({"model": api["model"]} if api.get("model") else {}),
+                        **({"negative_prompt": negative} if negative else {}),
+                        **({"seed": seed} if seed >= 0 else {}), **({"steps": steps} if steps else {})}
+                r = await c.post(f"{base}/images/generations", json=body)
+                self._api_check(r)
+                return {"images": [{"b64_json": d.get("b64_json") or ""} for d in r.json().get("data") or []]}
+            except httpx.HTTPError as e:
+                raise ImageError(T(f"Eigenes Bild-Backend nicht erreichbar ({base}): {e}",
+                                   f"Own image backend not reachable ({base}): {e}")) from e
+            finally:
+                self.job = None
+
+    @staticmethod
+    def _api_check(r: httpx.Response) -> None:
+        if r.status_code >= 400:
+            raise ImageError(T(f"Eigenes Bild-Backend lehnt ab ({r.status_code}): ",
+                               f"Own image backend refused ({r.status_code}): ") + r.text[:300])
+
     def status(self) -> dict:
+        spec = self.model()
+        steps, cfg_scale, _ = self.defaults()
         return {"available": self.available(), "loaded": self.loaded(), "busy": self.lock.locked(),
                 "can_edit": self.can_edit(), "sizes": list(RATIOS), "size": self.cfg.image.size,
                 "resolutions": list(RESOLUTIONS), "megapixels": self.cfg.image.megapixels, "max_refs": MAX_REFS,
-                "steps": self.cfg.image.steps, "cfg_scale": self.cfg.image.cfg_scale,
+                "steps": steps, "cfg_scale": cfg_scale,
+                "model": spec.id if spec else "", "model_label": spec.label if spec else "",
+                "external": (self.api() or {}).get("backend", ""),
                 "llm_unloaded": self.stopped_llm, "dir": str(self.directory)}
 
     # ---------- Server ----------
     def command(self) -> str:
         paths = model_paths(self.directory)
-        parts = [str(server_binary(self.directory)), "--diffusion-model", str(paths["diffusion"]),
-                 "--vae", str(paths["vae"]), "--llm", str(paths["llm"])]
-        if paths.get("vision") and paths["vision"].exists():
-            parts += ["--llm_vision", str(paths["vision"])]
+        spec = self.model() or setup.BY_ID["qwen-image"]
+        parts = [str(server_binary(self.directory))]
+        for role, flag in spec.flags.items():  # Reihenfolge laut Katalog; optionale Teile nur, wenn vorhanden
+            if paths.get(role) and (role in spec.required or paths[role].exists()):
+                parts += [flag, str(paths[role])]
         parts += ["--listen-ip", "127.0.0.1", "--listen-port", str(self.cfg.image.port), "--fa"]
         if self.cfg.image.extra_args.strip():
             parts += self.cfg.image.extra_args.split()
@@ -218,8 +329,8 @@ class ImageEngine:
 
     async def ensure(self, progress: Progress | None = None) -> None:
         if not self.available():
-            raise ImageError(T("Der Bild-Modus ist noch nicht eingerichtet: orbwise model add qwen-image",
-                               "Image mode is not set up yet: orbwise model add qwen-image"))
+            raise ImageError(T("Noch kein Bildmodell installiert – im Bild-Modus unter „Bildmodelle“ eins laden.",
+                               "No image model installed yet – download one under “Image models” in image mode."))
         from .llm_router import ManagedServer
         if self.server is None:
             bin_dir = str(server_binary(self.directory).parent)
@@ -241,7 +352,37 @@ class ImageEngine:
             await self.server.ensure_running(say)
         except Exception as e:  # noqa: BLE001 – Sprachmodell zurückholen, Fehler weitergeben
             await self._release_now()
+            text = str(e)
+            if re.search(r"get sd version from file failed|new_sd_ctx_t failed|unknown (model|architecture)", text):
+                hint = T("sd-server erkennt diese Modelldatei nicht – entweder kennt dein sd-server die "
+                         "Modellgeneration noch nicht (Bildmodelle → sd-server aktualisieren) oder das Modell wurde "
+                         "mit falschen Bauteilen geladen (Bildmodelle → löschen und neu laden). ",
+                         "sd-server does not recognise this model file – either your sd-server does not know this "
+                         "model generation yet (Image models → update sd-server) or the model was set up with the wrong "
+                         "parts (Image models → delete and download again). ")
+                raise ImageError(hint + T("Details: ", "Details: ") + text[-600:]) from e
             raise ImageError(T(f"Bildserver startet nicht: {e}", f"Image server does not start: {e}")) from e
+
+    async def enter(self) -> bool:
+        """Bild-Ansicht geöffnet: das Sprachmodell gleich aus dem Grafikspeicher nehmen (nicht erst beim ersten Bild) –
+        das Bildmodell lädt dann beim Erzeugen. Bei einem eigenen Bild-Backend bleibt es (rechnet woanders).
+        → True, wenn das Sprachmodell jetzt entladen ist."""
+        self.view_open = True
+        if self.api() is not None or not self.available():
+            return False
+        router = self.llm
+        for _ in range(240):  # lädt das Sprachmodell gerade (Start, Wechsel)? Erst fertig werden lassen
+            if not getattr(router, "switching", None):
+                break
+            await asyncio.sleep(0.5)
+        async with self.lock:
+            await self._borrow_gpu(None)
+        return self.stopped_llm
+
+    async def leave(self) -> None:
+        """Bild-Ansicht verlassen: Bildserver beenden, Sprachmodell zurück (läuft ein Bild, erst nach diesem)."""
+        self.view_open = False
+        await self.release()
 
     async def release(self, restart: bool = True) -> None:
         """Bildserver beenden und – falls wir es beendet hatten – das Sprachmodell wieder starten. Läuft gerade ein
@@ -272,9 +413,15 @@ class ImageEngine:
         self._idle = loop.call_later(minutes * 60, lambda: loop.create_task(self._idle_release()))
 
     async def _idle_release(self) -> None:
-        if not self.lock.locked():
-            log.info("Bild-Modus ungenutzt – Bildmodell entladen")
-            await self.release()
+        if self.lock.locked():
+            return
+        if self.view_open:  # Bild-Ansicht noch offen: nur den Bildserver freigeben, das Sprachmodell bleibt draußen
+            log.info("Bild-Modus ungenutzt – Bildmodell entladen (Sprachmodell bleibt aus, solange die Ansicht offen ist)")
+            async with self.lock:
+                await self.drop_server()
+            return
+        log.info("Bild-Modus ungenutzt – Bildmodell entladen")
+        await self.release()
 
     # ---------- Erzeugen ----------
     async def generate(self, prompt: str, negative: str = "", size: str = "", steps: int = 0, cfg_scale: float = 0,
@@ -286,31 +433,46 @@ class ImageEngine:
         if not prompt:
             raise ImageError(T("Bitte beschreiben, was auf das Bild soll.", "Please describe the image."))
         if ref_images and not self.can_edit():
-            raise ImageError(T("Zum Bearbeiten fehlt die Bild-Erkennung des Text-Encoders (mmproj) – "
-                               "orbwise model add qwen-image erneut ausführen.",
-                               "Editing needs the text encoder's vision part (mmproj) – run orbwise model add "
-                               "qwen-image again."))
+            spec = self.model()
+            if spec and spec.edit:  # Qwen-Image, aber ohne Bild-Erkennung des Text-Encoders
+                raise ImageError(T("Zum Bearbeiten fehlt die Bild-Erkennung des Text-Encoders (mmproj) – das Modell "
+                                   "unter „Bildmodelle“ löschen und neu laden.",
+                                   "Editing needs the text encoder's vision part (mmproj) – delete the model under "
+                                   "“Image models” and download it again."))
+            raise ImageError(T("Dieses Bildmodell kann keine Vorlagen bearbeiten – dafür Qwen-Image 2.1 wählen.",
+                               "This image model cannot edit references – choose Qwen-Image 2.1 for that."))
         if ref_images and len(ref_images) > MAX_REFS:
             raise ImageError(T(f"Höchstens {MAX_REFS} Vorlagen auf einmal.", f"At most {MAX_REFS} reference images."))
         ref_size = image_size(ref_images[0]) if ref_images else None
         width, height = size_of(size or self.cfg.image.size, megapixels or self.cfg.image.megapixels, ref_size)
-        steps = max(1, min(80, steps or self.cfg.image.steps))
-        cfg_scale = cfg_scale or self.cfg.image.cfg_scale
+        default_steps, default_cfg, sampler = self.defaults()
+        steps = max(1, min(80, steps or default_steps))
+        cfg_scale = cfg_scale or default_cfg
         seed = seed if seed is not None and seed >= 0 else random.randint(0, 2 ** 31 - 1)
         count = max(1, min(4, count or 1))
         async with self.lock:
             if self._idle:
                 self._idle.cancel()
-            await self.ensure(progress)
             started = time.monotonic()
+            api = self.api()
+            if api is not None:  # eigenes Backend: nichts starten, nichts entladen – nur ansprechen
+                result = await self._generate_api(api, prompt, negative, width, height, steps, cfg_scale, seed, count,
+                                                  ref_images, sampler, progress)
+                spec = self.model()
+                return self._save(result, {"model": spec.label if spec else "", "prompt": prompt, "negative": negative,
+                                           "width": width, "height": height, "steps": steps, "cfg_scale": cfg_scale,
+                                           "seed": seed, "edit": bool(ref_images), "refs": len(ref_images or []),
+                                           "seconds": round(time.monotonic() - started, 1)})
+            await self.ensure(progress)
             body: dict[str, Any] = {
                 "prompt": prompt, "negative_prompt": negative or "", "width": width, "height": height,
                 "seed": seed, "batch_count": count, "embed_image_metadata": True, "output_format": "png",
                 "ref_images": [base64.b64encode(b).decode() for b in ref_images or []],
-                "sample_params": {"sample_method": "euler", "sample_steps": steps,
+                "sample_params": {"sample_method": sampler, "sample_steps": steps,
                                   "guidance": {"txt_cfg": cfg_scale}},
             }
-            if self.vram_gb() and self.vram_gb() < 10:
+            vram = self.vram_gb()  # fragt nvidia-smi – nur einmal
+            if vram and vram < 10:
                 body["vae_tiling_params"] = {"enabled": True}
             async with httpx.AsyncClient(base_url=self.base_url, timeout=60, transport=self.transport) as c:
                 r = await c.post("/sdcpp/v1/img_gen", json=body)
@@ -321,7 +483,9 @@ class ImageEngine:
                 result = await self._wait(c, job, progress)
             self.job = None
             seconds = round(time.monotonic() - started, 1)
-            saved = self._save(result, {"prompt": prompt, "negative": negative, "width": width, "height": height,
+            spec = self.model()
+            saved = self._save(result, {"model": spec.label if spec else "", "prompt": prompt, "negative": negative,
+                                        "width": width, "height": height,
                                         "steps": steps, "cfg_scale": cfg_scale, "seed": seed,
                                         "edit": bool(ref_images), "refs": len(ref_images or []),
                                         "seconds": seconds})
@@ -362,9 +526,20 @@ class ImageEngine:
                     await progress(state)
 
     async def cancel(self) -> bool:
+        api = self.api()
+        if api is not None and api["backend"] == "a1111" and self.lock.locked():
+            with contextlib.suppress(httpx.HTTPError):
+                async with httpx.AsyncClient(timeout=10, transport=self.transport, headers=self._api_headers()) as c:
+                    await c.post(api["base_url"].rstrip("/") + "/sdapi/v1/interrupt")
+            return True
         job = self.job
         if not job:
             return False
+        if api is not None and api["backend"] == "sdcpp":
+            with contextlib.suppress(httpx.HTTPError):
+                async with httpx.AsyncClient(timeout=10, transport=self.transport, headers=self._api_headers()) as c:
+                    await c.post(api["base_url"].rstrip("/") + f"/sdcpp/v1/jobs/{job}/cancel")
+            return True
         with contextlib.suppress(httpx.HTTPError):
             async with httpx.AsyncClient(base_url=self.base_url, timeout=10, transport=self.transport) as c:
                 await c.post(f"/sdcpp/v1/jobs/{job}/cancel")

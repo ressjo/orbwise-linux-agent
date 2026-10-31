@@ -10,15 +10,18 @@ import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import signal
+import subprocess
 import time
 import uuid
 from datetime import datetime
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import agent_safety, askpass, metrics, prompts, retire, usage
@@ -36,7 +39,7 @@ from .tools import briefing, proc
 from .tools.calendar_tools import calendar_status
 from .tools.registry import ToolContext, get_tool
 from .tools.trilium import trilium_status
-from .voice import pocket
+from .voice import piper, pocket
 from .voice.listen import AudioSession, WakeWordFactory, WhisperSTT
 from .voice.tts import TTS, Speaker
 from .web_i18n import translate_index
@@ -576,7 +579,7 @@ def create_app(cfg: Config) -> FastAPI:
     heal_failed_at = [-1e9]
 
     def heal_index_soon() -> None:
-        if (memory.index.needs_rebuild and not any(not t.done() for t in healing)
+        if (memory.index.needs_rebuild and not any(not t.done() for t in healing) and not llm_resting()
                 and time.monotonic() - heal_failed_at[0] > 600):  # nach einem Fehlschlag erst in 10 min wieder
             healing[:] = [asyncio.create_task(heal_index())]  # nicht an STOP gebunden
 
@@ -591,16 +594,54 @@ def create_app(cfg: Config) -> FastAPI:
         return T(f"{len(memory.journal.days())} Tage · {len(memory.facts.list())} Fakten",
                  f"{len(memory.journal.days())} days · {len(memory.facts.list())} facts")
 
+    piper_jobs: dict = {"voice": "", "stop": None}  # laufender Download einer Piper-Stimme
+
+    async def setup_piper(voice_id: str, progress=None) -> bool:
+        """Piper einrichten (eigene Umgebung) und die Stimme laden – beim Start, wenn Piper gewählt ist, oder aus der
+        Oberfläche. Fortschritt per WebSocket (piper_progress)."""
+        import threading
+        loop = asyncio.get_running_loop()
+
+        def out(line: str) -> None:
+            log.info("Piper: %s", line.strip())
+            m = re.search(r"\((\d+) %\)", line)
+            asyncio.run_coroutine_threadsafe(hub.broadcast({"type": "piper_progress", "voice": voice_id,
+                                                            "text": line.strip(), "pct": int(m.group(1)) if m else None}),
+                                             loop)
+            if progress:
+                asyncio.run_coroutine_threadsafe(progress(line.strip()), loop)
+        if not tts.piper.installed() and not await asyncio.to_thread(piper.install, tts.piper.data_dir, out):
+            return False
+        if piper.has_voice(tts.piper.data_dir, voice_id):
+            return True
+        stop = threading.Event()
+        piper_jobs.update(voice=voice_id, stop=stop)
+        try:
+            return await asyncio.to_thread(piper.download_voice, tts.piper.data_dir, voice_id, out, None, stop)
+        except Exception as e:  # noqa: BLE001 – abgebrochen oder Netz
+            out(f"✘ {e}" if str(e) else "✘ abgebrochen")
+            return False
+        finally:
+            piper_jobs.update(voice="", stop=None)
+
     async def warm_tts() -> None:
-        if tts is None or not await asyncio.to_thread(tts.available):
-            await startup.set("tts", "warn", T("Browser-Stimme", "browser voice") + (f" – {tts.error}" if tts and tts.error else ""))
+        if tts is None:
+            await startup.set("tts", "warn", T("Browser-Stimme", "browser voice"))
             return
-        label = pocket.BY_NAME[tts.voice].label
+        if tts.is_piper(tts.voice) and not await asyncio.to_thread(tts.available):  # Piper gewählt, fehlt noch
+            async def say(text: str) -> None:
+                await startup.set("tts", "running", T("richte Piper ein: ", "setting up Piper: ") + text)
+            await startup.set("tts", "running", T("richte Piper ein …", "setting up Piper …"))
+            await setup_piper(tts.piper_id(tts.voice), say)
+        if not await asyncio.to_thread(tts.available):
+            await startup.set("tts", "warn", T("Browser-Stimme", "browser voice") + (f" – {tts.error}" if tts.error else ""))
+            return
+        label = tts.label_of(tts.voice)
         await startup.set("tts", "running", T("lade Stimme ", "loading voice ") + label + " …")
         try:
             await asyncio.to_thread(tts.warmup)
             speaks = pocket.language_name(tts.reply_language, cfg.language == "en")
-            await startup.set("tts", "ok", f"Pocket TTS · {label} · {speaks}")
+            await startup.set("tts", "ok", f"{label} · {speaks}")
         except Exception as e:  # noqa: BLE001
             await startup.set("tts", "warn", T("Browser-Stimme – ", "browser voice – ") + str(e))
 
@@ -648,19 +689,11 @@ def create_app(cfg: Config) -> FastAPI:
         await startup.set("telegram", "warn", T("noch keine Verbindung", "not connected yet"))
 
     async def remove_piper_voices() -> None:
-        """Piper ist aus Orbwise entfernt: die heruntergeladenen Piper-Stimmen löschen (einmalig) und – wer bisher Piper
-        hörte – gleich Pocket TTS einrichten, damit nicht plötzlich der Browser spricht."""
+        """Stimmen der früheren Piper-Einbindung (<data>/voices) löschen (einmalig) – Piper liegt jetzt in
+        <data>/piper und richtet sich beim Start selbst ein."""
         freed = await asyncio.to_thread(retire.remove_piper_voices, cfg.memory.dir.parent / "voices")
-        if not freed:
-            return
-        log.info("Piper-Stimmen entfernt (%.0f MB frei)", freed / 1e6)
-        if tts and not tts.pocket.installed() and pocket.cpu_supported():
-            await startup.set("tts", "running", T("richte Pocket TTS ein …", "setting up Pocket TTS …"))
-            if await asyncio.to_thread(pocket.install, tts.pocket.data_dir, log.info):
-                await warm_tts()
-            else:
-                await startup.set("tts", "warn", T("Browser-Stimme – Pocket TTS unter Einstellungen → Stimme",
-                                                   "browser voice – Pocket TTS under Settings → Voice"))
+        if freed:
+            log.info("Alte Piper-Stimmen entfernt (%.0f MB frei)", freed / 1e6)
 
     async def remove_retired(found: dict) -> None:
         """Strata ist aus Orbwise entfernt: laufenden Server stoppen, Modell und Engine löschen (einmalig)."""
@@ -698,12 +731,12 @@ def create_app(cfg: Config) -> FastAPI:
             await asyncio.to_thread(sbx.stop, cfg, name)
         bg_jobs.set_broadcast(None)
         from .tools.ssh import close_all as close_ssh
-        await close_ssh()
+        await close_ssh()  # offene SSH-Verbindungen schließen (sonst bleiben sie bis zum Zeitlimit angemeldet)
         if images.server is not None:
-            await images.server.stop()  # Bildserver nicht verwaist laufen lassen  # offene SSH-Verbindungen schließen (sonst bleiben sie bis zum Zeitlimit angemeldet)
+            await images.server.stop()  # Bildserver nicht verwaist laufen lassen
         await hub.speaker.close()
         if tts:
-            await asyncio.to_thread(tts.pocket.stop)
+            await asyncio.to_thread(tts.stop)
         await llm.close()
         memory.close()
 
@@ -927,10 +960,36 @@ def create_app(cfg: Config) -> FastAPI:
                     log.debug("Telemetrie fehlgeschlagen: %s", e)
             await asyncio.sleep(2)
 
+    def llm_resting() -> bool:
+        """Soll das Sprachmodell gerade aus bleiben? (Bild-Modus hat den Grafikspeicher bzw. von Hand entladen) – dann
+        keine Wartung, die es laden würde (Tageszusammenfassungen, Suchindex mit Embeddings)."""
+        return bool(getattr(llm, "gpu_borrowed", None) or getattr(llm, "unloaded", False) or images.view_open)
+
+    app_state_resting = llm_resting  # für Tests: app.state.llm_resting
+
+    waking: list[asyncio.Task] = []
+
+    def model_resting() -> bool:
+        """Sprachmodell entladen (von Hand oder für Bilder), aber die Bild-Ansicht ist zu – dann soll Tippen es laden."""
+        return isinstance(llm, LLMRouter) and not images.view_open and bool(llm.gpu_borrowed or llm.unloaded)
+
+    async def wake_model() -> None:
+        """Beim Tippen in Tools/Coding: Sprachmodell im Hintergrund laden (Bildserver geht vorher aus), danach den
+        Chat schon einlesen – die Frage muss dann nicht auf das Laden warten."""
+        try:
+            if llm.gpu_borrowed:
+                await llm.gpu_borrowed()  # Bildmodell raus, Sprachmodell rein (ein laufendes Bild wird erst fertig)
+            if llm.unloaded:
+                await llm.ensure_loaded()  # zeigt „lädt …“ wie beim Absenden
+        except Exception as e:  # noqa: BLE001 – dann lädt es eben beim Absenden (mit Fehlermeldung dort)
+            log.info("Sprachmodell beim Tippen nicht geladen: %s", e)
+            return
+        hub.prewarm_soon()
+
     async def summary_loop() -> None:
         await asyncio.sleep(30)
         while True:
-            if not agent.lock.locked():
+            if not agent.lock.locked() and not llm_resting():
                 try:
                     done = await memory.summarize_pending()
                     if done:
@@ -945,9 +1004,14 @@ def create_app(cfg: Config) -> FastAPI:
             await asyncio.sleep(300)
 
     app = FastAPI(title="Orbwise", lifespan=lifespan)
+    from . import web_auth
+    web_token = web_auth.load_or_create()
+    app.state.web_token = web_token
     app.state.hub = hub
     app.state.telegram = telegram_bot
     app.state.memory = memory
+    app.state.llm_resting = app_state_resting
+    app.state.images = images
 
     def from_jail(conn) -> bool:
         """Kommt die Verbindung aus dem Käfig des Auto-Modus? Dann darf sie Orbwise nicht bedienen (z. B. sich eine
@@ -969,12 +1033,124 @@ def create_app(cfg: Config) -> FastAPI:
         if request.method not in ("GET", "HEAD") and origin and \
                 not check_host(re.sub(r"^https?://", "", origin), cfg.port):
             return JSONResponse({"error": "forbidden origin"}, status_code=403)
+        # Zugangs-Token (web_auth.py): sonst könnte jedes Programm auf dem Rechner Orbwise bedienen
+        path = request.url.path
+        if not web_auth.is_public(path) and path != "/" \
+                and not web_auth.valid(web_auth.given(request.headers, request.cookies), web_token):
+            return JSONResponse({"error": "unauthorized", "detail": T(
+                "Nicht angemeldet – Orbwise über das Startmenü oder mit „orbwise open“ öffnen.",
+                "Not signed in – open Orbwise from the app menu or with “orbwise open”.")}, status_code=401)
         return await call_next(request)
 
+    def signed_in(response, token: str):
+        response.set_cookie(web_auth.COOKIE, token, max_age=web_auth.MAX_AGE, httponly=True, samesite="strict",
+                            path="/")
+        return response
+
+    open_codes: dict[str, float] = {}  # Einmal-Codes für den Starter: Code → gültig bis
+
+    def new_open_url(seconds: float = 60) -> str:
+        now = time.monotonic()
+        for c, until in list(open_codes.items()):
+            if until < now:
+                open_codes.pop(c, None)
+        code = secrets.token_urlsafe(18)
+        open_codes[code] = now + seconds
+        return f"http://localhost:{cfg.port}/?code={code}"
+    app.state.open_url = new_open_url  # orbwise serve --open
+
+    @app.post("/api/open-code")
+    async def open_code():
+        """Für den Starter / „orbwise open“ (mit Token-Header): ein Einmal-Code für die Adresszeile – so landet das
+        Token selbst nie im Browser-Verlauf."""
+        return {"url": new_open_url()}
+
     @app.get("/")
-    async def index():
+    async def index(request: Request, code: str = ""):
+        if code:  # Link aus dem Starter: Code einlösen (nur einmal), Cookie setzen, Code aus der Adresszeile nehmen
+            until = open_codes.pop(code, 0)
+            if until < time.monotonic():
+                return HTMLResponse(web_auth.login_page(cfg.language, expired=True), status_code=401,
+                                    headers={"Cache-Control": "no-store"})
+            return signed_in(RedirectResponse("/", status_code=303), web_token)
+        if not web_auth.valid(web_auth.given(request.headers, request.cookies), web_token):
+            return HTMLResponse(web_auth.login_page(cfg.language), status_code=401, headers={"Cache-Control": "no-store"})
         html = translate_index((WEB_DIR / "index.html").read_text(encoding="utf-8"), cfg.language)
         return HTMLResponse(versioned_assets(html), headers={"Cache-Control": "no-cache"})
+
+    @app.post("/api/login")
+    async def login(request: Request):
+        """Anmeldeseite: Token einfügen (Formular oder JSON) → Cookie."""
+        raw = (await request.body())[:2000].decode(errors="replace")
+        if "json" in request.headers.get("content-type", ""):
+            try:
+                given = str(json.loads(raw).get("token") or "")
+            except (ValueError, AttributeError):
+                given = ""
+        else:
+            from urllib.parse import parse_qs
+            given = (parse_qs(raw).get("token") or [""])[0]
+        if not web_auth.valid(given.strip(), web_token):
+            await asyncio.sleep(1)  # Raten bremsen
+            return HTMLResponse(web_auth.login_page(cfg.language, wrong=True), status_code=401,
+                                headers={"Cache-Control": "no-store"})
+        return signed_in(RedirectResponse("/", status_code=303), web_token)
+
+    @app.get("/api/alive")
+    async def alive():
+        """Lebenszeichen ohne Token – für den Starter (orbwise-open), bevor er die Oberfläche öffnet."""
+        return {"ok": True}
+
+    # ---------- Version und Update aus der Oberfläche ----------
+    update_state: dict = {"checked": 0.0, "info": None, "running": False}
+
+    @app.get("/api/update")
+    async def update_info(check: bool = False, force: bool = False):
+        """Installierter Stand; mit check=1 auch, ob es einen neueren gibt (git fetch höchstens alle 3 Stunden)."""
+        from . import update as upd
+        if not check:
+            return {**await asyncio.to_thread(upd.details), "running": update_state["running"]}
+        fresh = time.monotonic() - update_state["checked"] < 3 * 3600
+        if force or not fresh or update_state["info"] is None:
+            update_state["info"] = await asyncio.to_thread(upd.check)
+            update_state["checked"] = time.monotonic()
+        return {**update_state["info"], "running": update_state["running"]}
+
+    @app.post("/api/update")
+    async def update_start():
+        """Update laden (git pull, Abhängigkeiten) und Orbwise neu starten – Fortschritt per WebSocket
+        (update_progress, update_done). Nicht, während Orbwise antwortet oder ein Bild rechnet."""
+        from . import update as upd
+        if update_state["running"]:
+            raise HTTPException(409, T("Das Update läuft schon.", "The update is already running."))
+        if agent.busy() or images.lock.locked():
+            raise HTTPException(409, T("Orbwise arbeitet gerade – erst abwarten, dann aktualisieren.",
+                                       "Orbwise is busy – wait, then update."))
+        update_state["running"] = True
+        loop = asyncio.get_running_loop()
+        lines: list[str] = []
+
+        def out(line: str) -> None:
+            lines.append(line)
+            asyncio.run_coroutine_threadsafe(hub.broadcast({"type": "update_progress", "text": line}), loop)
+
+        async def run() -> None:
+            restart: list[Path] = []
+            try:
+                code = await asyncio.to_thread(upd.update, None, cfg.port, subprocess.run,
+                                               lambda port, root: restart.append(root), out)
+            except Exception as e:  # noqa: BLE001 – melden statt hängen lassen
+                log.exception("Update fehlgeschlagen")
+                code, lines[:] = 1, [*lines, str(e)]
+            update_state["running"] = False
+            update_state["info"] = None  # beim nächsten Blick neu prüfen
+            await hub.broadcast({"type": "update_done", "ok": code == 0, "restart": bool(restart),
+                                 "text": "\n".join(lines[-12:])})
+            if restart:
+                await asyncio.sleep(1)  # Meldung noch zustellen
+                await asyncio.to_thread(upd.restart_self, cfg.port, restart[0])
+        background.append(asyncio.create_task(run()))
+        return {"started": True}
 
     @app.get("/api/startup")
     async def startup_state():
@@ -1117,7 +1293,7 @@ def create_app(cfg: Config) -> FastAPI:
                 saved = await images.generate(
                     str(data.get("prompt") or ""), negative=str(data.get("negative") or ""),
                     size=str(data.get("size") or ""), steps=int(data.get("steps") or 0),
-                    cfg_scale=float(data.get("cfg_scale") or 0), seed=int(data.get("seed", -1) or -1),
+                    cfg_scale=float(data.get("cfg_scale") or 0), seed=int(-1 if data.get("seed") in (None, "") else data["seed"]),
                     count=int(data.get("count") or 1), ref_images=refs, progress=progress,
                     megapixels=float(data.get("megapixels") or 0))
                 await hub.broadcast({"type": "image_done", "images": saved})
@@ -1129,15 +1305,248 @@ def create_app(cfg: Config) -> FastAPI:
         image_task[:] = [asyncio.create_task(run())]
         return JSONResponse({"started": True}, status_code=202)
 
+    # ---------- Bildmodelle: auswählen, laden, löschen (Katalog: imagegen_setup.CATALOG) ----------
+    image_install: dict = {"model": "", "stop": None, "text": "", "pct": None}
+
+    runtime_update = [False]
+
+    @app.post("/api/image/runtime/update")
+    async def image_runtime_update():
+        """sd-server auf den neuesten Build bringen (neuere Bildmodelle) – ein laufendes Bild wird erst fertig."""
+        from . import imagegen_setup
+        if runtime_update[0]:
+            raise HTTPException(409, T("Wird schon aktualisiert.", "Already updating."))
+        runtime_update[0] = True
+        lines: list[str] = []
+        try:
+            async with images.lock:
+                await images.drop_server()
+                directory = images.directory
+
+                def run() -> bool:
+                    with imagegen_setup._client() as client:
+                        return imagegen_setup.install_binary(directory, client, lines.append, update=True)
+                ok = await asyncio.to_thread(run)
+        except httpx.HTTPError as e:
+            ok, lines = False, [*lines, T(f"✘ GitHub nicht erreichbar: {e}", f"✘ GitHub not reachable: {e}")]
+        finally:
+            runtime_update[0] = False
+        if not ok:
+            raise HTTPException(502, (lines[-1] if lines else T("Aktualisieren fehlgeschlagen", "Update failed")).lstrip("✘ "))
+        return {"ok": True, "version": imagegen_setup.runtime_version(images.directory), "text": lines[-1] if lines else ""}
+
+    @app.get("/api/image/models")
+    async def image_models():
+        from . import imagegen_setup
+        vram = await asyncio.to_thread(images.vram_gb)
+        items = await asyncio.to_thread(imagegen_setup.catalog, cfg, vram)
+        home = str(Path.home())
+        folder = str(images.directory)
+        return {"models": items, "vram_gb": round(vram, 1),
+                "runtime": {"installed": imagegen_setup.server_binary(images.directory).exists(),
+                            "version": imagegen_setup.runtime_version(images.directory), "updating": runtime_update[0]},
+                "dir": "~" + folder[len(home):] if folder.startswith(home + "/") else folder,
+                "installing": image_install["model"], "text": image_install["text"], "pct": image_install["pct"]}
+
+    def start_image_install(model_id: str, source: dict | None = None) -> dict:
+        """Bildmodell im Hintergrund laden (Fortschritt per WebSocket: image_install) – danach ist es aktiv."""
+        import threading
+
+        from . import imagegen_setup
+        from . import models as mdl
+        if image_install["model"]:
+            raise HTTPException(409, T("Es wird schon ein Bildmodell geladen.", "An image model is already downloading."))
+        stop = threading.Event()
+        image_install.update(model=model_id, stop=stop, text="", pct=None)
+        loop = asyncio.get_running_loop()
+
+        def out(line: str) -> None:
+            m = re.search(r"\((\d+) %\)", line)
+            image_install["text"], image_install["pct"] = line.strip(), int(m.group(1)) if m else None
+            asyncio.run_coroutine_threadsafe(hub.broadcast({"type": "image_install", "model": model_id,
+                                                            "text": line.strip(), "pct": image_install["pct"]}), loop)
+
+        async def run() -> None:
+            ok, cancelled = False, False
+            try:
+                gpu = await asyncio.to_thread(mdl.detect_gpu)
+                gpu = {**gpu, "vram_gb": images.vram_gb() or gpu.get("vram_gb", 0)}  # eine Karte rechnet
+                ok = await asyncio.to_thread(imagegen_setup.install, gpu, cfg, out, None, model_id, stop, source)
+            except imagegen_setup.InstallCancelled:
+                cancelled = True
+            except Exception as e:  # noqa: BLE001 – melden statt hängen lassen
+                log.exception("Bildmodell %s nicht geladen", model_id)
+                out(f"✘ {e}")
+            finally:
+                last = image_install["text"]
+                image_install.update(model="", stop=None, text="", pct=None)
+            if ok:
+                await images.select(model_id)  # neuer Startbefehl beim nächsten Bild
+            await hub.broadcast({"type": "image_install", "model": model_id, "done": True, "ok": ok,
+                                 "cancelled": cancelled, "text": last})
+        background.append(asyncio.create_task(run()))
+        return {"started": True, "model": model_id}
+
+    @app.post("/api/image/models/{model_id}/install")
+    async def image_model_install(model_id: str):
+        from . import imagegen_setup
+        if model_id not in imagegen_setup.BY_ID:
+            raise HTTPException(404, T("Unbekanntes Bildmodell", "Unknown image model"))
+        return start_image_install(model_id)
+
+    # ---------- Alle Text-zu-Bild-Modelle auf Hugging Face: suchen, Datei wählen, laden ----------
+    @app.get("/api/image/hf/search")
+    async def image_hf_search(q: str = "", sort: str = "downloads"):
+        from . import imagegen_setup
+        try:
+            return {"results": await asyncio.to_thread(imagegen_setup.hf_image_search, q, sort)}
+        except (httpx.HTTPError, ValueError) as e:
+            raise HTTPException(502, T(f"Hugging Face nicht erreichbar: {e}", f"Hugging Face not reachable: {e}")) from e
+
+    @app.get("/api/image/hf/files")
+    async def image_hf_files(repo: str):
+        from . import imagegen_setup
+        try:
+            return await asyncio.to_thread(imagegen_setup.hf_image_files, repo, images.vram_gb(), images.directory)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (401, 403):
+                raise HTTPException(403, T(
+                    "Zugangsbeschränktes Modell – Lizenz auf Hugging Face akzeptieren und unter Einstellungen → "
+                    "Allgemein → Hugging Face ein Token eintragen.",
+                    "Gated model – accept the license on Hugging Face and enter a token under Settings → General → "
+                    "Hugging Face.")) from e
+            raise HTTPException(404 if e.response.status_code == 404 else 502,
+                                T("Repo nicht gefunden", "Repo not found")) from e
+        except httpx.HTTPError as e:
+            raise HTTPException(502, T(f"Hugging Face nicht erreichbar: {e}", f"Hugging Face not reachable: {e}")) from e
+
+    @app.post("/api/image/hf/install")
+    async def image_hf_install(request: Request):
+        """{repo, file}: diese Datei als Bildmodell laden – Familie wird erkannt, Text-Encoder/VAE kommen dazu."""
+        from . import imagegen_setup
+        data = await request.json()
+        repo, file = str(data.get("repo") or ""), str(data.get("file") or "")
+        try:
+            listing = await asyncio.to_thread(imagegen_setup.hf_image_files, repo, images.vram_gb())
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        except httpx.HTTPError as e:
+            raise HTTPException(502, T(f"Hugging Face nicht erreichbar: {e}", f"Hugging Face not reachable: {e}")) from e
+        if not listing["family"]:
+            raise HTTPException(400, listing["reason"] or T("nicht unterstützt", "not supported"))
+        variant = next((v for v in listing["variants"] if v["file"] == file), None)
+        if variant is None:  # nur Dateien aus der eigenen Liste – kein beliebiger Pfad
+            raise HTTPException(400, T("Diese Datei gibt es in dem Repo nicht.", "That file is not in the repo."))
+        label = repo.split("/")[-1] + (f" {variant['quant']}" if variant["quant"] else "")
+        return start_image_install(variant["id"], {"repo": repo, "file": file,
+                                                   "family": variant.get("family") or listing["family"],
+                                                   "label": label})
+
+    # ---------- Eigenes Bild-Backend (Experten): OpenAI Images API, Automatic1111/Forge, externer sd-server ----------
+    async def probe_image_backend(kind: str, base: str, key: str) -> dict:
+        """Verbindung prüfen → {"ok", "models", "error"} (Modelle, soweit die Schnittstelle sie nennt)."""
+        base = base.strip().rstrip("/")
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+        path = {"openai": "/models", "a1111": "/sdapi/v1/sd-models", "sdcpp": "/sdcpp/v1/capabilities"}.get(kind)
+        if not path or not re.match(r"^https?://[^\s/]+", base):
+            return {"ok": False, "models": [], "error": T("Adresse bitte mit http:// oder https://",
+                                                          "Address please with http:// or https://")}
+        try:
+            async with httpx.AsyncClient(timeout=10) as c:
+                r = await c.get(base + path, headers=headers)
+        except httpx.HTTPError as e:
+            return {"ok": False, "models": [], "error": T(f"nicht erreichbar: {e}", f"not reachable: {e}")}
+        if r.status_code == 401:
+            return {"ok": False, "models": [], "error": T("API-Schlüssel falsch oder fehlt", "API key wrong or missing")}
+        if r.status_code >= 400:
+            return {"ok": False, "models": [], "error": f"HTTP {r.status_code}: {r.text[:200]}"}
+        try:
+            data = r.json()
+        except ValueError:
+            data = {}
+        models = [m.get("id", "") for m in data.get("data") or []] if kind == "openai" and isinstance(data, dict) else \
+            [m.get("title") or m.get("model_name", "") for m in data] if kind == "a1111" and isinstance(data, list) else []
+        return {"ok": True, "models": [m for m in models if m][:200], "error": ""}
+
+    @app.post("/api/image/backend/probe")
+    async def image_backend_probe(request: Request):
+        data = await request.json()
+        return await probe_image_backend(str(data.get("kind") or ""), str(data.get("base_url") or ""),
+                                         str(data.get("api_key") or ""))
+
+    @app.post("/api/image/backend")
+    async def image_backend_add(request: Request):
+        """Eigenes Bild-Backend eintragen und aktiv machen – Orbwise startet dort nichts (der Server läuft selbst)."""
+        from . import imagegen_setup, keystore
+        data = await request.json()
+        kind, base = str(data.get("kind") or ""), str(data.get("base_url") or "")
+        label = str(data.get("label") or "").strip() or imagegen_setup.API_KINDS.get(kind, "Server")
+        try:
+            async with images.lock:  # ein laufendes Bild rechnet erst fertig
+                await images.drop_server()  # immer nur ein Modell: der eigene Bildserver geht aus
+                model_id = await asyncio.to_thread(imagegen_setup.add_api_model, cfg, label, kind, base,
+                                                   str(data.get("model") or ""))
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        key = str(data.get("api_key") or "").strip()
+        await asyncio.to_thread(lambda: keystore.set("image_api_key:" + model_id, key) if key
+                                else keystore.delete("image_api_key:" + model_id))
+        return {"id": model_id, **images.status()}
+
+    @app.delete("/api/image/models/install")
+    async def image_model_install_cancel():
+        stop = image_install.get("stop")
+        if stop is not None:
+            stop.set()  # die .part-Datei bleibt – erneut laden macht dort weiter
+        return {"ok": stop is not None}
+
+    @app.post("/api/image/models/{model_id}/activate")
+    async def image_model_activate(model_id: str):
+        from . import imagegen_setup
+        if not imagegen_setup.model_installed(images.directory, model_id):
+            raise HTTPException(404, T("Dieses Bildmodell ist nicht installiert.", "This image model is not installed."))
+        await images.select(model_id)
+        return images.status()
+
+    @app.delete("/api/image/models/{model_id}")
+    async def image_model_delete(model_id: str):
+        """Bildmodell löschen (gemeinsam genutzte Dateien bleiben). Läuft gerade ein Bild, wird es erst fertig."""
+        from . import imagegen_setup
+        if model_id == image_install["model"]:
+            raise HTTPException(409, T("Wird gerade geladen – erst abbrechen.", "Downloading right now – cancel first."))
+        async with images.lock:
+            if model_id == imagegen_setup.active_id(images.directory):
+                await images.drop_server()
+            freed = await asyncio.to_thread(imagegen_setup.remove_model, cfg, model_id)
+        if model_id.startswith("api-"):  # Schlüssel eines eigenen Backends mit entfernen
+            from . import keystore
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(keystore.delete, "image_api_key:" + model_id)
+        return {"freed_gb": round(freed / 1e9, 1), **images.status()}
+
     @app.post("/api/image/cancel")
     async def image_cancel():
         return {"ok": await images.cancel()}
 
+    @app.post("/api/image/enter")
+    async def image_enter():
+        """Bild-Ansicht geöffnet: Sprachmodell jetzt entladen (im Hintergrund – eine laufende Antwort endet erst).
+        Das passende Bildmodell lädt beim ersten Bild."""
+        async def run() -> None:
+            async with agent.lock:  # nie mitten in einer Antwort entladen
+                unloaded = await images.enter()
+            if unloaded:
+                await hub.broadcast({"type": "image_llm_unloaded"})
+        background.append(asyncio.create_task(run()))
+        return {"ok": True}
+
     @app.post("/api/image/release")
     async def image_release():
-        """Bild-Modus verlassen: Bildmodell entladen, Sprachmodell zurück (im Hintergrund)."""
-        if images.loaded() and not images.lock.locked():
-            background.append(asyncio.create_task(images.release()))
+        """Bild-Modus verlassen: Bildmodell entladen, Sprachmodell zurück (im Hintergrund; ein laufendes Bild wird
+        erst fertig)."""
+        background.append(asyncio.create_task(images.leave()))
         return {"ok": True}
 
     @app.post("/api/image/telegram/{name}")
@@ -1191,6 +1600,24 @@ def create_app(cfg: Config) -> FastAPI:
     @app.get("/api/memory/facts")
     async def memory_facts():
         return [{"fact": f, "day": d} for f, d in memory.scoped_facts(memory.active).list()]
+
+    @app.post("/api/memory/facts/delete")
+    async def memory_fact_delete(request: Request):
+        """Einen Fakt aus dem Gedächtnis des offenen Chats löschen (genau diesen, nicht per Suchtext)."""
+        fact = str((await request.json()).get("fact") or "")
+        if not await memory.forget_fact(fact, memory.active):
+            raise HTTPException(404, T("Diesen Fakt gibt es nicht (mehr).", "This fact does not exist (anymore)."))
+        agent._cache_owner = None  # Systemprompt enthält die Fakten – beim nächsten Mal neu einlesen
+        return {"ok": True}
+
+    @app.delete("/api/memory/day/{day}")
+    async def memory_day_delete(day: str):
+        """Tagebuch eines Tages vergessen (Protokoll, Zusammenfassung, Suchindex) – Fakten und Chats bleiben."""
+        if not valid_day(day):
+            raise HTTPException(400, "ungültiges Datum")
+        if not await asyncio.to_thread(memory.forget_day, day, memory.active):
+            raise HTTPException(404, T("Für diesen Tag gibt es keine Einträge.", "There are no entries for this day."))
+        return {"ok": True}
 
     @app.get("/api/history")
     async def history():
@@ -1455,11 +1882,14 @@ def create_app(cfg: Config) -> FastAPI:
         if not path:
             raise HTTPException(409, T("Kein Projektordner gewählt.", "No project folder chosen."))
         sb = agent.sandbox_state()
+        from . import sandbox as sbx
         try:
-            if sb:
-                return await asyncio.to_thread(github.push_from_copy, cfg, sb["path"], github.sandbox_origin(sb))
+            if sb:  # offene Änderungen der Arbeitskopie zuerst committen – sonst käme nur ein leerer Branch an
+                await sbx.commit_all(cfg, sb, str(memory.active.meta.get("title") or ""))
+                return await asyncio.to_thread(github.push_from_copy, cfg, sb["path"], github.sandbox_origin(sb), "",
+                                               sb.get("project") or "")
             return await asyncio.to_thread(github.push, cfg, path)
-        except (github.GitHubError, OSError) as e:
+        except (github.GitHubError, sbx.SandboxError, OSError) as e:
             raise HTTPException(400, str(e)) from e
 
     @app.post("/api/github/connect")
@@ -1479,10 +1909,14 @@ def create_app(cfg: Config) -> FastAPI:
             identity = await github.user(cfg)
         except Exception as e:  # noqa: BLE001 – dann die git-Identität des Rechners
             log.info("GitHub-Konto nicht abrufbar: %s", e)
+        from . import sandbox as sbx
         try:
+            from . import workspace
+            if sb and workspace._git_dir(sb["path"]) is not None:
+                await sbx.commit_all(cfg, sb, str(memory.active.meta.get("title") or data.get("message") or ""))
             out = await asyncio.to_thread(github.connect_and_push, cfg, project, str(data.get("repo", "")), sb,
                                           str(data.get("message") or ""), identity)
-        except (github.GitHubError, OSError) as e:
+        except (github.GitHubError, sbx.SandboxError, OSError) as e:
             raise HTTPException(400, str(e)) from e
         finally:
             if sb:
@@ -1909,9 +2343,64 @@ def create_app(cfg: Config) -> FastAPI:
     async def voices():
         if not tts:
             return {"available": False, "voices": [], "languages": []}
-        return {"available": True, "current": tts.voice, "language": tts.reply_language,
+        return {"available": True, "current": tts.voice, "language": tts.reply_language, "engine": tts.engine(),
                 "voices": pocket.voice_list(cfg.language, tts.voice, tts.languages),
-                "languages": pocket.language_list(cfg.language == "en"), "pocket": tts.pocket.describe()}
+                "languages": pocket.language_list(cfg.language == "en"), "pocket": tts.pocket.describe(),
+                "piper": {**tts.piper.describe(), "downloading": piper_jobs["voice"],
+                          "voices": piper.voice_list(cfg.language, tts.voice, tts.piper.data_dir)}}
+
+    @app.post("/api/piper/voices/{voice_id}")
+    async def piper_voice_download(voice_id: str):
+        """Piper (falls nötig) einrichten und eine Stimme laden – im Hintergrund; danach ist sie gewählt."""
+        if not tts:
+            raise HTTPException(400, "Sprachausgabe ist deaktiviert")
+        if voice_id not in piper.BY_ID:
+            raise HTTPException(404, T("Unbekannte Piper-Stimme", "Unknown Piper voice"))
+        if piper_jobs["voice"]:
+            raise HTTPException(409, T("Es wird schon eine Stimme geladen.", "A voice is already downloading."))
+        piper_jobs["voice"] = voice_id
+
+        async def run() -> None:
+            try:
+                ok = await setup_piper(voice_id)
+            finally:
+                piper_jobs.update(voice="", stop=None)
+            if ok and await asyncio.to_thread(tts.select, "piper:" + voice_id):
+                apply_reply_language()
+                await hub.broadcast({"type": "voice_changed", "voice": tts.voice, "language": tts.reply_language})
+                await startup.set("tts", "ok", f"{tts.label_of(tts.voice)} · "
+                                  f"{pocket.language_name(tts.reply_language, cfg.language == 'en')}")
+            await hub.broadcast({"type": "piper_progress", "voice": voice_id, "done": True, "ok": ok})
+        background.append(asyncio.create_task(run()))
+        return {"started": True}
+
+    @app.delete("/api/piper/download")
+    async def piper_download_cancel():
+        stop = piper_jobs.get("stop")
+        if stop is not None:
+            stop.set()
+        return {"ok": stop is not None}
+
+    @app.delete("/api/piper")
+    async def piper_remove():
+        if not tts:
+            raise HTTPException(400, "Sprachausgabe ist deaktiviert")
+        if tts.is_piper(tts.voice):
+            raise HTTPException(409, T("Piper ist gerade aktiv – erst eine Pocket-Stimme wählen.",
+                                       "Piper is active – choose a Pocket voice first."))
+        await asyncio.to_thread(tts.piper.stop)
+        freed = await asyncio.to_thread(piper.remove, tts.piper.data_dir)
+        return {"ok": True, "freed_mb": round(freed / 1e6)}
+
+    @app.delete("/api/piper/voices/{voice_id}")
+    async def piper_voice_delete(voice_id: str):
+        if not tts or voice_id not in piper.BY_ID:
+            raise HTTPException(404, T("Unbekannte Piper-Stimme", "Unknown Piper voice"))
+        if tts.voice == "piper:" + voice_id:
+            raise HTTPException(409, T("Diese Stimme ist gerade aktiv – erst eine andere wählen.",
+                                       "This voice is active – choose another one first."))
+        freed = await asyncio.to_thread(piper.remove_voice, tts.piper.data_dir, voice_id)
+        return {"ok": True, "freed_mb": round(freed / 1e6)}
 
     @app.post("/api/pocket/install")
     async def install_pocket():
@@ -1922,8 +2411,9 @@ def create_app(cfg: Config) -> FastAPI:
         lines: list[str] = []
         if not await asyncio.to_thread(pocket.install, tts.pocket.data_dir, lines.append):
             raise HTTPException(502, (lines[-1] if lines else "Installation fehlgeschlagen").lstrip("✘ "))
-        tts.pocket.warm(tts.voice)
-        await startup.set("tts", "ok", f"Pocket TTS · {pocket.BY_NAME[tts.voice].label}")
+        if not tts.is_piper(tts.voice):
+            tts.pocket.warm(tts.voice)
+            await startup.set("tts", "ok", tts.label_of(tts.voice))
         return {"ok": True, "pocket": tts.pocket.describe()}
 
     @app.delete("/api/pocket")
@@ -1950,16 +2440,19 @@ def create_app(cfg: Config) -> FastAPI:
 
     @app.get("/api/voices/{name}/preview")
     async def preview_voice(name: str, text: str = ""):
-        if not tts or name not in pocket.BY_NAME or not tts.available():
+        if not tts or not tts.known(name):
             raise HTTPException(404, "Stimme nicht verfügbar")
         lang = tts.language_of(name)
-        if lang != tts.reply_language:  # der Server hat nur das Modell einer Sprache geladen
+        if tts.is_piper(name):  # Piper: jede geladene Stimme lässt sich anhören
+            if not tts.piper.installed() or not piper.has_voice(tts.piper.data_dir, tts.piper_id(name)):
+                raise HTTPException(404, T("Diese Stimme ist noch nicht geladen.", "This voice is not downloaded yet."))
+        elif not tts.pocket.installed() or not pocket.cpu_supported():
+            raise HTTPException(404, "Stimme nicht verfügbar")
+        elif lang != tts.pocket.language:  # Pocket hat nur das Modell einer Sprache geladen
             en = cfg.language == "en"
             raise HTTPException(409, T(
-                f"{pocket.BY_NAME[name].label} spricht {pocket.language_name(lang, en)}, geladen ist gerade "
-                f"{pocket.language_name(tts.reply_language, en)} – zum Anhören die Stimme wählen.",
-                f"{pocket.BY_NAME[name].label} speaks {pocket.language_name(lang, en)}, but "
-                f"{pocket.language_name(tts.reply_language, en)} is loaded – select the voice to hear it."))
+                f"{tts.label_of(name)} spricht {pocket.language_name(lang, en)} – zum Anhören die Stimme wählen.",
+                f"{tts.label_of(name)} speaks {pocket.language_name(lang, en)} – select the voice to hear it."))
         sample = text.strip()[:200] or pocket.SAMPLES.get(lang, pocket.SAMPLES["en"])
         try:
             wav = await asyncio.to_thread(tts.synth, sample, name)
@@ -1975,6 +2468,9 @@ def create_app(cfg: Config) -> FastAPI:
         if not check_host(host, cfg.port) or not check_host(ws.headers.get("host"), cfg.port) \
                 or await asyncio.to_thread(from_jail, ws):  # kostet nur, solange ein Käfig-Prozess lebt
             await ws.close(code=4403)
+            return
+        if not web_auth.valid(web_auth.given(ws.headers, ws.cookies), web_token):
+            await ws.close(code=4401)  # Oberfläche lädt neu und zeigt die Anmeldung
             return
         await ws.accept()
         client = Client(ws)
@@ -2045,7 +2541,10 @@ def create_app(cfg: Config) -> FastAPI:
                         hub.prewarm_soon()
                     await hub.broadcast({"type": "settings_sync", **settings_info()})
                 elif t == "prewarm":  # die Oberfläche merkt: gleich kommt eine Frage (Tippen, Sprechen)
-                    hub.prewarm_soon()
+                    if model_resting() and not any(not w.done() for w in waking):
+                        waking[:] = [asyncio.create_task(wake_model())]  # entladen → schon beim Tippen laden
+                    else:
+                        hub.prewarm_soon()
                 elif t == "compact":  # Knopf an der Kontext-Kachel
                     task = asyncio.create_task(hub.compact(str(data.get("focus", ""))[:500]))
                     hub.tasks.add(task)

@@ -140,3 +140,18 @@ def test_auto_mode_survives_restart(cfg, monkeypatch):
                 time.sleep(0.05)
     app = create_app(cfg)  # Neustart: ohne Dashboard gilt die letzte Wahl
     assert app.state.hub.agent.auto_mode == "auto"
+
+
+@pytest.mark.parametrize("cmd,kind", [
+    ("/usr/bin/sudo id", "root"), ("/bin/su -c id", "root"), ('s""udo id', "root"), ("s\\udo id", "root"),
+    ("./sudo id", "root"), ("/usr/bin/git push", "push"), ("~/bin/git push origin main", "push"),
+    ("ls /usr/share/doc", "ok"), ("cat /etc/sudoers.d/x", "ok"), ('echo "use sudo later"', "ok"),
+])
+def test_auto_sees_root_and_push_behind_paths_and_quotes(cmd, kind):
+    from orbwise.tools.safety import auto_full_check
+    assert auto_full_check(cmd)[0] == kind, cmd
+
+
+def test_sudo_with_a_path_still_gets_the_password_dialog():
+    from orbwise.tools.safety import apply_privilege
+    assert apply_privilege("ls; /usr/bin/sudo -u x id", "dashboard") == "ls; sudo -A -u x id"

@@ -219,6 +219,15 @@ class Facts:
         self._write(keep + [(new, day_str())])
         return True
 
+    def remove_exact(self, fact: str) -> bool:
+        """Genau diesen Fakt löschen (aus der Oberfläche – nicht alle, die einen Suchtext enthalten)."""
+        facts = self.list()
+        keep = [(f, d) for f, d in facts if f != fact]
+        if len(keep) == len(facts):
+            return False
+        self._write(keep)
+        return True
+
     def remove(self, query: str) -> list[str]:
         q = query.lower().strip()
         if not q:

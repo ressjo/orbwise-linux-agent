@@ -138,3 +138,15 @@ def test_coding_has_its_own_higher_step_limit(cfg, llm, memory, tmp_path, monkey
 
     _tools(memory)
     assert Agent(cfg, llm, memory).max_steps() == 3
+
+
+def test_deleting_in_a_project_leaves_the_tools_memory_alone(memory, tmp_path):
+    a = tmp_path / "alpha"
+    a.mkdir()
+    _tools(memory)
+    run(memory.remember("Gleicher Satz."))
+    conv = _coding(memory, a)
+    run(memory.remember("Gleicher Satz."))
+    assert run(memory.forget_fact("Gleicher Satz.", conv))
+    assert memory.scoped_facts(conv).list() == []
+    assert [f for f, _ in memory.facts.list()] == ["Gleicher Satz."]  # Tools-Gedächtnis unberührt

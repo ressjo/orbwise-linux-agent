@@ -1,4 +1,4 @@
-"""Sprachausgabe mit Pocket TTS (lokal) + satzweises Streaming."""
+"""Sprachausgabe mit Piper oder Pocket TTS (lokal, CPU) + satzweises Streaming."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .. import state
 from ..config import DATA_DIR, VoiceConfig
-from . import pocket
+from . import piper, pocket
 
 log = logging.getLogger(__name__)
 
@@ -88,9 +88,10 @@ class SentenceSplitter:
 
 
 class TTS:
-    """Sprachausgabe mit Pocket TTS. Gewählte Stimme und die Sprache je Stimme stehen in state.json („tts“); die
-    Sprache der aktiven Stimme ist auch die Sprache der Antworten (siehe reply_language). Ohne Pocket TTS spricht der
-    Browser (Web Speech API)."""
+    """Sprachausgabe mit Piper (Standard: schnell auf der CPU, liest Zahlen richtig) oder Pocket TTS. Stimmen von Piper
+    heißen „piper:<id>“ (z. B. piper:de_DE-thorsten-high), die von Pocket wie in dessen Katalog. Gewählte Stimme und die
+    Sprache je Pocket-Stimme stehen in state.json („tts“); die Sprache der aktiven Stimme ist auch die Sprache der
+    Antworten (siehe reply_language). Ohne Sprachausgabe spricht der Browser (Web Speech API)."""
 
     def __init__(self, cfg: VoiceConfig, data_dir: Path = DATA_DIR, state_path: Path | None = None):
         self.cfg = cfg
@@ -98,17 +99,53 @@ class TTS:
         self.state_path = state_path or data_dir / "state.json"
         saved = state.load(self.state_path).get("tts") or {}
         voice = saved.get("voice")
-        self.voice = voice if voice in pocket.BY_NAME else pocket.NATIVE.get(self.base_language, "alba")
+        if not saved.get("piper_default"):  # einmalig: Piper wird Standard (liest Zahlen richtig, schnell)
+            voice = None
+        self.voice = voice if self.known(voice) else self.default_voice()
         self.languages: dict[str, str] = {k: v for k, v in (saved.get("languages") or {}).items()
                                           if k in pocket.BY_NAME and v in pocket.LANGUAGES}
-        self.pocket = pocket.PocketTTS(data_dir, self.language_of(self.voice))
+        self.pocket = pocket.PocketTTS(data_dir, self.language_of(self.voice) if not self.is_piper(self.voice)
+                                       else self.base_language)
+        self.piper = piper.PiperTTS(data_dir)
         self._error: str | None = None
+        if not saved.get("piper_default"):
+            self._save()
+
+    # ---------- Stimmen ----------
+    @staticmethod
+    def is_piper(voice: str | None) -> bool:
+        return bool(voice) and voice.startswith("piper:")
+
+    @staticmethod
+    def piper_id(voice: str) -> str:
+        return voice.split(":", 1)[1]
+
+    def known(self, voice: str | None) -> bool:
+        if not voice:
+            return False
+        return self.piper_id(voice) in piper.BY_ID if self.is_piper(voice) else voice in pocket.BY_NAME
+
+    def default_voice(self) -> str:
+        return "piper:" + piper.NATIVE.get(self.base_language, piper.NATIVE["en"])
+
+    def label_of(self, voice: str) -> str:
+        if self.is_piper(voice):
+            v = piper.BY_ID.get(self.piper_id(voice))
+            return f"{v.label} (Piper)" if v else voice
+        v = pocket.BY_NAME.get(voice)
+        return f"{v.label} (Pocket)" if v else voice
+
+    def engine(self, voice: str | None = None) -> str:
+        return "piper" if self.is_piper(voice or self.voice) else "pocket"
 
     @property
     def current(self) -> str:
         return self.voice
 
     def language_of(self, voice: str) -> str:
+        if self.is_piper(voice):  # eine Piper-Stimme spricht genau ihre Sprache
+            v = piper.BY_ID.get(self.piper_id(voice))
+            return v.language if v else self.base_language
         return self.languages.get(voice) or self.base_language
 
     @property
@@ -116,9 +153,25 @@ class TTS:
         """Sprache, in der Orbwise antwortet und vorliest – die der aktiven Stimme."""
         return self.language_of(self.voice)
 
+    def _save(self) -> None:
+        state.update(self.state_path, lambda data: data.__setitem__(
+            "tts", {"voice": self.voice, "languages": dict(self.languages), "piper_default": True}))
+
     def select(self, voice: str, language: str | None = None) -> bool:
-        """Stimme (und ihre Sprache) wählen, merken und den Server schon starten – der erste Satz soll nicht warten."""
-        if voice not in pocket.BY_NAME or (language and language not in pocket.LANGUAGES):
+        """Stimme (bei Pocket auch ihre Sprache) wählen, merken und den Server schon starten – der erste Satz soll
+        nicht warten. Eine Piper-Stimme muss vorher geladen sein."""
+        if not self.known(voice):
+            return False
+        if self.is_piper(voice):
+            if not piper.has_voice(self.piper.data_dir, self.piper_id(voice)):
+                return False
+            self.voice = voice
+            self._save()
+            self.pocket.stop()  # immer nur eine Sprachausgabe im Speicher
+            if self.piper.installed():
+                self.piper.warm(self.piper_id(voice))
+            return True
+        if language and language not in pocket.LANGUAGES:
             return False
         self.voice = voice
         if language:
@@ -126,14 +179,23 @@ class TTS:
                 self.languages.pop(voice, None)
             else:
                 self.languages[voice] = language
-        state.update(self.state_path, lambda data: data.__setitem__(
-            "tts", {"voice": self.voice, "languages": dict(self.languages)}))
+        self._save()
+        self.piper.stop()
         self.pocket.set_language(self.reply_language)
         if self.pocket.installed():
             self.pocket.warm(voice)
         return True
 
     def available(self) -> bool:
+        if self.is_piper(self.voice):
+            if not self.piper.installed():
+                self._error = "Piper ist nicht installiert"
+                return False
+            if not piper.has_voice(self.piper.data_dir, self.piper_id(self.voice)):
+                self._error = "Piper-Stimme ist nicht geladen"
+                return False
+            self._error = None
+            return True
         if not self.pocket.installed():
             self._error = "Pocket TTS ist nicht installiert"
             return False
@@ -148,10 +210,20 @@ class TTS:
         return self._error
 
     def warmup(self) -> None:
-        self.pocket.ensure_running(self.voice)
+        if self.is_piper(self.voice):
+            self.piper.ensure_running(self.piper_id(self.voice))
+        else:
+            self.pocket.ensure_running(self.voice)
 
     def synth(self, text: str, voice: str | None = None) -> bytes:
-        return self.pocket.synth(text, voice or self.voice)
+        voice = voice or self.voice
+        if self.is_piper(voice):
+            return self.piper.synth(text, self.piper_id(voice))
+        return self.pocket.synth(text, voice)
+
+    def stop(self) -> None:
+        self.piper.stop()
+        self.pocket.stop()
 
 
 class Speaker:

@@ -10,6 +10,48 @@ All notable changes to this project are documented here. The format follows
   containers, background jobs) – also after `orbwise update`, which restarts the server in the background where Ctrl+C
   no longer reaches it. Stopping/restarting now only hits real `orbwise serve` processes, not shells or editors whose
   command line merely contains the text.
+- **FLUX.3 Image Klein** (also with AtomicChat's text encoder without refusals, and Klein Base): set up as
+  stable-diffusion.cpp documents it – FLUX.3 GGUF, Qwen3-VL 4B, FLUX.2 VAE, 16 steps at CFG 1.0 – with editing from
+  reference images; found by the Hugging Face search too. Downloading FLUX.2/FLUX.3 klein updates the sd-server first
+  (support arrived in October 2026). FLUX.2 klein now also edits with references and takes the GGUF repos named in
+  the sd.cpp docs first; the FLUX.2 VAE no longer collides with FLUX.1's `ae.safetensors`.
+- **Delete memory entries:** in *Memory*, every fact and every journal day has a delete button. A fact is removed
+  exactly (not every fact containing the words); a day forgets its log, summary and search entries – learned facts and
+  the chats in the sidebar stay. Works for the regular memory and each coding project's own.
+- **Own backend (experts):** use a server Orbwise does not run – for language models any OpenAI-compatible server
+  (Strata, vLLM, LM Studio, llama-server elsewhere; *Test connection* lists its models), for images the OpenAI Images
+  API, Automatic1111/Forge or an external sd-server. Orbwise only talks to it (no context window or KV cache to set);
+  API keys live in the keyring. An own backend named Strata is not touched by the old Strata cleanup.
+- **All text-to-image models from Hugging Face in the image view:** search and sort like for language models; the
+  model family is recognised (FLUX.1, FLUX.2 klein, Qwen-Image, Z-Image, SDXL incl. Pony/Illustrious, SD 1.5), the
+  loadable files are listed with size and fit, and the family's text encoder and VAE are added on download.
+  Unsupported repos (LoRA, ControlNet, video, unknown) say why.
+- **Only one model in memory:** `image.unload_llm` now defaults to `always` – the language model leaves the video
+  memory before the first image on every card (`auto` keeps the old behaviour).
+- **Image models:** besides Qwen-Image 2.1 now **Z-Image Turbo**, **FLUX.1 schnell**, **FLUX.1 dev**, the new
+  **FLUX.2 klein 4B/9B** and **Stable Diffusion XL** – up to ~20 GB VRAM (Q8 from 20 GB). In image mode the model menu
+  at the top lists only the image models and *Models* in the sidebar opens their management: download (progress,
+  cancel, resume), activate, delete – no terminal needed. Steps and sampler follow the model, editing only where the
+  model can. Shared files (FLUX's VAE) are stored once and kept while another model uses them. Older setups are taken
+  over as Qwen-Image. CLI: `orbwise model add|remove <image model>`.
+- **Version and update in the web UI:** the bottom of the sidebar shows the installed version (version · date ·
+  commit). Orbwise checks for updates at most every 3 hours; *Update available (n)* lists what changed and updates
+  with one click – git pull, dependencies, restart (also as a systemd user service), then the page reloads itself.
+- **Adding models, LM-Studio-style:** the *Add* tab opens with trending GGUF models from Hugging Face that fit your
+  video memory (deduplicated across uploaders) instead of only a fixed list; search runs while you type, sorted by
+  downloads, trend, likes or last update, with a *fits my memory* filter. Every model shows parameters, architecture,
+  maximum context, license, vision, tool calls and whether it is gated; every quantization a video-memory bar, the
+  context that roughly fits next to it and a short quality note. A warning appears before the download when the
+  installed llama.cpp does not know the model's architecture yet.
+- **Hugging Face token in the settings** (*General → Hugging Face*, checked with Hugging Face, kept in the keyring) for
+  gated models, with a clear "accept the license" message and link instead of a bare 401. `HF_ENDPOINT` selects a
+  mirror.
+- **Access token for the UI and API:** before, any program on the machine – also one of another user – could drive
+  Orbwise over localhost and, in Auto mode, run commands in your name. Now everything needs a secret token from
+  `~/.config/orbwise/web-token` (readable only by you, created on first start). The app menu entry, `orbwise serve
+  --open` and the new `orbwise open` sign the browser in through a one-time link (HttpOnly cookie, about a year – the
+  token never lands in the browser history); without it a sign-in page asks for the token. The `orbwise` CLI sends it
+  along; `/v1` keeps its own API key.
 - **Code check:** the chat shows the current step ("Code check: Security") instead of "waiting for the model", and
   every running step has a **Stop** button in the activity panel – it ends the check with a report of the state so far
   (findings marked as not verified) and fixes nothing automatically.
@@ -23,6 +65,14 @@ All notable changes to this project are documented here. The format follows
   chat and fixes confirmed findings and failing checks automatically (re-checking, up to two rounds).
 
 ### Changed
+- **Typing loads the language model:** after *Unload model* (or when the image model still holds the video memory
+  and the image view is closed), typing or speaking in Tools/Coding now loads the language model in the background –
+  the question no longer waits for the whole load after sending. In the image view nothing is loaded.
+- **Piper is the speech output again (default), Pocket TTS stays selectable:** Piper reads numbers, dates and times
+  itself (espeak-ng) and is fast on the CPU – no video memory. It runs in its own Python environment as a local
+  server (GPL-3.0, never inside Orbwise), sets itself up on first start with the voice of your language (German:
+  Thorsten), and *Settings → Voice* downloads, selects, previews and deletes voices; Pocket TTS is in the same menu.
+  Users who had a Pocket voice are moved to Piper once; choosing Pocket again sticks.
 - **Token line:** shows llama-server's **prompt cache in RAM** (`--cache-ram`: how many already read chats it keeps,
   GB used of the limit – read from the server log); the KV cache only appears when part of it spills into RAM.
 - **Activity panel:** the newest step is at the top of its group; the "context in memory" tile with the green bar is
@@ -45,6 +95,40 @@ All notable changes to this project are documented here. The format follows
   `~/.local/share/orbwise/chromium` (no root; asks first outside Auto, a "no" is remembered).
 
 ### Fixed
+- **Text encoders and FLUX 3 Image Klein were set up as image models:** repos like
+  `FLUX-3-Image-Klein-TE-Uncensored-GGUF` hold only a text encoder (or a prompt upsampler, "pup") and are now shown as
+  "belongs next to an image model"; FLUX 3 Image Klein (text encoder Qwen3-VL-4B) is its own generation and marked as
+  not supported yet instead of being set up as FLUX.2 klein. Models already set up like this are flagged with the reason.
+- **FLUX.2 klein models were set up as FLUX.1** (e.g. `flux3-image-klein`): any repo with "flux" in its name got
+  FLUX.1's text encoders and VAE, and sd-server stopped with "get sd version from file failed". Now *klein* is
+  recognised (4B or 9B from the name, else from file size and quantization), newer FLUX generations are marked as not
+  supported, and plain "flux" only counts as FLUX.1 with a matching `base_model` tag. Models set up wrongly before are
+  flagged on the image model page; an unrecognised model file gets a clear message, and the page shows the sd-server
+  version with an **Update** button.
+- **Image mode loaded the language model again in the background:** the daily summaries (every 5 minutes) asked the
+  language model, which took the video memory back from the image model – also right after unloading it by hand.
+  Now clicking *Image* unloads the language model at once; the active image model loads with the first picture; while
+  the image view is open no summaries or index rebuilds run, memory embeddings go to the CPU, and after 10 idle
+  minutes only the image server stops. The language model returns when you leave the image view or ask something.
+- **Image mode:** the sidebar navigation (Models, Planner, Memory, Settings) sat right under the mode switch; it is at
+  the bottom again like in the other modes.
+- **`orbwise update` did not restart a running server** since the access token: it asked `/api/status`, which now
+  needs the token, and took the server for stopped. It now asks the token-free `/api/alive`.
+- **Image mode with several GPUs:** since the multi-GPU change the image engine took the *sum* of all cards' VRAM, so
+  on e.g. 2×12 GB it kept the language model loaded and skipped `--offload-to-cpu` – the image model then had no room
+  on the one card sd-server runs on. It now goes by the biggest single card. A seed of 0 is no longer turned into a
+  random seed.
+- **Auto mode saw `sudo` only by name:** `/usr/bin/sudo`, `/bin/su`, `s""udo` or `/usr/bin/git push` ran without the
+  password dialog or the push question. Root and push are now also recognised behind paths and quotes, and
+  `/usr/bin/sudo` gets the password dialog like `sudo`.
+- **Toasts blocked the buttons under them** (activity, model, voice in the header; the mode tabs on the phone) for as
+  long as they were shown. They now sit below the header and let clicks through (links in them stay clickable).
+- **Phone:** choosing a mode closes the sidebar; Esc closes the activity panel when it covers the chat.
+- **Push to GitHub from the sandbox** landed only an empty branch: the push took the branch of the working copy as
+  committed, while the agent's changes were still uncommitted. Open changes are now committed first (in the
+  container); without new commits nothing is pushed instead of creating an empty branch.
+- **One branch per chat:** a sandbox switched on again (or started by the code check) reuses the chat's earlier
+  `orbwise/…` branch instead of creating a second one named after the changed chat title.
 - **sudo failed silently in the cage** (e.g. installing a package via `yay`): the cage forbids it; Auto no longer
   cages, yay/paru get the password dialog, and a package manager without `sudo` gets a hint.
 - **`curl -A "$UA" …` was flagged as "reads credentials"** – curl options are no longer taken for file names.

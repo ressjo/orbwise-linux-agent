@@ -67,7 +67,7 @@ What Orbwise can do for you – each line links to the details.
 | **Mail** | Proton Mail Bridge or any IMAP mailbox: read, sort, file attachments, optionally reply → [E-mail](#e-mail-proton-mail-bridge-or-any-imap-mailbox) |
 | **Notes & calendar** | Obsidian, Trilium, iCloud/CalDAV calendars, reminders → [Obsidian](#obsidian-notes) · [Calendar](#calendar-icloud--caldav) |
 | **Routines** | Tasks at set times ("every weekday at 8, search Linux news") and a morning briefing → [Routines](#routines) |
-| **Images** | Generate and edit images locally with Qwen-Image; explain screenshots and photos with the loaded model (if it can see images) → [Image mode](#image-mode-qwen-image-21) · [Screen](#screen--images) |
+| **Images** | Generate and edit images locally with Qwen-Image, Z-Image, FLUX or SDXL (choose, download and delete in the image view); explain screenshots and photos with the loaded model (if it can see images) → [Image mode](#image-mode-qwen-image-z-image-flux-sdxl) · [Screen](#screen--images) |
 | **Phone** | Telegram bot: text and voice messages, confirmations, files in both directions → [Telegram](#telegram-phone) |
 | **Planning** | Plan mode: looks things up read-only and presents a plan to run, change or discard → [Plan mode](#plan-mode) |
 
@@ -110,7 +110,7 @@ The installer
 1. installs the system packages (Ollama with the right GPU backend, `uv`, `fd`, `ripgrep`, `plocate`, `xdg-utils`, …),
 2. sets up the Python environment (`uv sync --extra voice`),
 3. pulls the chosen model (recommendation: ≥ 22 GB → `qwen3:30b`, ≥ 12 GB → `qwen3:14b`, ≥ 6 GB → `qwen3:8b`, otherwise `qwen3:4b`) together with `bge-m3` (embeddings) – if a download fails you can pick another model,
-4. installs the speech output Pocket TTS with its model and voice (`orbwise voice install`), the wake word model and Whisper,
+4. installs the speech output Piper with the voice of your language (`orbwise voice install`), the wake word model and Whisper,
 5. creates `~/.config/orbwise/config.yaml`, an **Orbwise** entry in the application menu and an autostart entry.
 
 Then:
@@ -122,7 +122,35 @@ orbwise serve --open  # starts the server and opens http://localhost:8765
 
 Or click **Orbwise** in the application menu – it opens the UI in its own app window.
 
+**Access token:** the UI and API only answer with a secret token from `~/.config/orbwise/web-token` (readable only by
+you), so other programs or users on the machine cannot drive Orbwise. The app menu entry, `orbwise serve --open` and
+`orbwise open` sign the browser in through a one-time link (a cookie, kept for about a year – bookmarks keep working).
+Opening `http://localhost:8765` without it shows a sign-in page where you can paste the token. Scripts send it as
+header `X-Orbwise-Token`. The OpenAI-compatible API (`/v1`) keeps its own key.
+
+### Own backend (experts) – e.g. Strata, vLLM, LM Studio, Forge
+
+Orbwise does not have to run the models itself. **Models → Add → Own backend (experts)** takes any
+**OpenAI-compatible server** – Strata, vLLM, LM Studio, TabbyAPI, a llama-server on another machine: name, address
+(`http://host:port/v1`; *Test connection* adds `/v1` if needed and lists the server's models), optional API key and
+optional context window. Orbwise then only talks to it: it starts and stops nothing there, so context window, KV
+cache, GPUs and sampling defaults are up to the server – the context window you enter only tells Orbwise how much
+fits. Switching to such a backend still stops Orbwise's own llama-server (only one model in memory).
+
+The same for images, on the image model page (image mode → *Models*): **OpenAI Images API**
+(`/v1/images/generations`), **Automatic1111 / Forge** (`/sdapi/v1/txt2img`, the model goes in as
+`sd_model_checkpoint`) or an external **stable-diffusion.cpp sd-server** (editing with references works there).
+Prompt, negative prompt, size, steps, seed and count are sent as far as the interface knows them. API keys are kept in
+the keyring, never in `state.json` or `manifest.json`.
+
 ### Updating
+
+The version is shown at the bottom of the sidebar (version · date · commit). Orbwise checks for a newer version at
+most every 3 hours (`git fetch`, no password prompts); when there is one, the line turns into **Update available (n)**
+– on the phone a dot appears on the menu button. Click it to see what changed and **Update now**: Orbwise pulls the
+update, refreshes the dependencies, restarts itself (as a systemd user service via `systemctl --user restart`) and the
+page reloads with the new version. It refuses while Orbwise is answering or drawing an image, and when the project
+folder has local changes. In a terminal the same is:
 
 ```bash
 orbwise update
@@ -309,10 +337,15 @@ API server) loads it again, warming the prompt cache does not. Handy before a ga
 deleting. It also survives a restart: Orbwise then starts without loading the model. Deleting the selected model
 unloads it first and selects another one (loaded with the next question).
 
-**Any model from Hugging Face – no config needed:** in **Add model** (tab **Add**) type a search term (`qwen3.6 27b`) or paste
-a Hugging Face link into the search field. Pick a repository, then a quantization: each shows its download size, the
-estimated video memory (weights + vision module + ~1.5 GB for context) and whether it fits; the largest one that fits
-completely is marked **Recommended**. Orbwise then
+**Any model from Hugging Face – no config needed:** the tab **Add** opens with **trending GGUF models that fit your
+video memory** (one entry per model, even if several people uploaded it; refreshed hourly). Results appear while you
+type a search term (`qwen3.6 27b`) or paste a Hugging Face link; sort them by downloads, trend, likes or last update
+and tick *only what fits my memory*. Each model shows its size, parameters, architecture, maximum context, license and
+whether it understands images, supports tool calls or is gated. Pick one, then a quantization: each shows its
+download size, the video memory it needs (weights + vision module + ~1.5 GB for context) as a bar, roughly how much
+context fits next to it and a short quality note (*Q4_K_M – usually the best pick*, *Q8_0 – nearly lossless* …); the
+largest one that fits completely is marked **Recommended**. If your llama.cpp does not know the model's architecture
+yet, Orbwise says so before the download (update llama.cpp at the top of the page). Orbwise then
 
 - downloads the GGUF file – split files (`-00001-of-00003`) and the vision module (`mmproj`, for pictures in the chat)
   included, resumable – to `~/models/<user>_<repo>/` (`llm.models_dir`),
@@ -334,7 +367,9 @@ the same version – downloaded first if it is not there yet – and restarts a 
 updated by Orbwise – it is a system package with kernel drivers that needs a reboot, and a broken update leaves the
 GPU unusable. Update it yourself following the guide, then press **Update** on the llama.cpp line so the build
 matches; `orbwise doctor` warns when the build was made for a different ROCm major version. Deleting a model (**⋯ → Delete**) removes files Orbwise downloaded; files you put into `~/models` yourself stay.
-Gated repositories need a Hugging Face token in `HF_TOKEN`. Ollama is still used for the memory embeddings and the
+Gated repositories (e.g. Llama, Gemma) need a Hugging Face token: accept the license on the model page and enter a
+read token under **Settings → General → Hugging Face** (kept in the keyring; `HF_TOKEN` in the environment works too).
+`HF_ENDPOINT` points Orbwise at a mirror instead of huggingface.co. Ollama is still used for the memory embeddings and the
 Ollama presets above.
 
 **Context window, KV cache and sampling per model** (Models page, for any model – changes to a model that is not
@@ -540,9 +575,18 @@ continues without further thinking, with the thoughts so far (the activity shows
 
 ## Voice & voice effect
 
-Orbwise speaks with [Kyutai's Pocket TTS](https://github.com/kyutai-labs/pocket-tts) – natural-sounding, on the CPU.
-The installer sets it up (`orbwise voice install`); otherwise **Settings → Voice → Install Pocket TTS** does. It is a
-ready-made program (a few MB, no Python or PyTorch; checksum verified) in `~/.local/share/orbwise/pocket-tts/`; on
+Orbwise speaks with **[Piper](https://github.com/OHF-Voice/piper1-gpl)** by default – fast on the CPU (no video
+memory), and it reads numbers, dates and times itself through espeak-ng. The installer sets it up (`orbwise voice
+install`), otherwise Orbwise does on its first start. Piper is GPL-3.0, so it never runs inside Orbwise: it gets its
+own Python environment (`~/.local/share/orbwise/piper/venv`, `piper-tts` from PyPI) and runs as a local server on the
+CPU that Orbwise talks to. Voices come from [rhasspy/piper-voices](https://huggingface.co/rhasspy/piper-voices)
+(20–110 MB each) – German: *Thorsten* (recommended), *Thorsten (lively)*, *Kerstin*, *Ramona*, *Eva* …; English:
+*Lessac*, *Ryan*, *Amy*, *Alba*; and French, Spanish, Italian, Portuguese, Dutch. **Settings → Voice** downloads,
+selects, previews and deletes them; a Piper voice speaks exactly its language, which is then the answer language.
+[Listen to samples](https://rhasspy.github.io/piper-samples/).
+
+**Pocket TTS** ([Kyutai](https://github.com/kyutai-labs/pocket-tts)) remains as an alternative in the same menu – more
+natural sound, but weaker with numbers (`orbwise voice install pocket`). It is a ready-made program (a few MB, no Python or PyTorch; checksum verified) in `~/.local/share/orbwise/pocket-tts/`; on
 its first start it fetches the model for the language (~100M parameters) and the voice from Hugging Face – a few
 hundred MB, cached in `~/.cache/huggingface`. It runs as a small local server (int8, 4 CPU threads, faster than real
 time on a desktop CPU). Until it is installed, or if it fails, the browser speaks.
@@ -631,13 +675,50 @@ Tools: `ha_find` (by name, room or type, with state), `ha_state`, `ha_control` (
 colour, temperature, open/close/position for covers, scenes/scripts/buttons, lock/unlock, set values).
 Locks, alarm panels and garage doors/gates always require confirmation.
 
-### Image mode (Qwen-Image-2.1)
+### Image mode (Qwen-Image, Z-Image, FLUX, SDXL)
 
-```bash
-orbwise model add qwen-image     # stable-diffusion.cpp (Vulkan build) + model files, ~10–15 GB depending on the GPU
-```
+Pick **Image** in the mode switch at the top of the sidebar. In image mode the **model menu at the top** lists only
+the installed image models (switch with one click) and **Models** in the sidebar opens the image model management;
+back in a chat, both show the language models again. Without an image model the view offers a button to choose one.
+Each model shows what it is good at, the download size, the video memory it needs and its license – **Download**
+(with progress, cancellable; downloading again resumes), **Activate** or **Delete**. Steps and sampler follow the
+model; a loaded image server restarts with the new model on the next image. The quantization follows the video
+memory (Q8 with 20 GB and more).
 
-Then pick **Image** in the mode switch at the top of the sidebar. Describe the image (English usually works best), choose format,
+| Model | Good at | Download | VRAM | Steps |
+|---|---|---|---|---|
+| **Qwen-Image 2.1** | very good images and text in images; **editing** with up to 3 references | ~15 GB | from 8 GB | 20 |
+| **Z-Image Turbo** | very fast, photorealistic, small | ~6.5 GB | from 6 GB | 8 |
+| **FLUX.1 schnell** | versatile, good detail, Apache 2.0 | ~12 GB | from 8 GB | 4 |
+| **FLUX.3 Image Klein** *(new)* | newest FLUX generation, very good images; **editing** with references | ~8 GB | from 8 GB | 16 |
+| **FLUX.3 Image Klein** (text encoder without refusals) | the same with AtomicChat's uncensored Qwen3-VL encoder | ~8 GB | from 8 GB | 16 |
+| **FLUX.3 Image Klein Base** | non-distilled base, slower and more varied | ~8 GB | from 8 GB | 20 |
+| **FLUX.2 klein 4B** | small and fast, Apache 2.0; editing with references | ~7 GB | from 8 GB | 4 |
+| **FLUX.2 klein 9B** | more detail; non-commercial; editing with references | ~12 GB | 12–20 GB | 4 |
+| **FLUX.1 dev** | the large FLUX.1, very detailed; non-commercial | ~12–18 GB | 12–20 GB | 20 |
+| **Stable Diffusion XL 1.0** | the classic, runs on weaker cards | ~7 GB | from 6 GB | 25 |
+
+**Any text-to-image model from Hugging Face:** the image model page has a search over all text-to-image models (sorted
+by downloads, trend, likes or last update; without a term it shows trending ones that run here). Orbwise recognises
+the model family from the name and Hugging Face's `base_model` tags – FLUX.1 dev/schnell, FLUX.2 klein, Qwen-Image,
+Z-Image, SDXL (also Pony, Illustrious …) and SD 1.5 – and lists the loadable files (GGUF quantizations or whole
+`.safetensors` checkpoints) with size and whether they fit. On download it adds the family's text encoder and VAE
+if they are not there yet and starts the model with the family's options and steps. LoRAs, ControlNets, editing and
+video models and unknown families are shown as *not supported*, with the reason.
+
+FLUX.3 Image Klein follows stable-diffusion.cpp's `docs/flux3.md`: the GGUF from `leejet/flux-3-image-klein-GGUF`,
+Qwen3-VL 4B as text encoder (`--llm`) and the FLUX.2 VAE; FLUX.2 klein likewise takes `leejet/FLUX.2-klein-*-GGUF`
+first. Both need a recent `sd-server` – downloading them updates it automatically; the image model page also shows
+its version with an **Update** button. Text-encoder or prompt-upsampler repos ("TE", "pup") are not image models on
+their own; the uncensored FLUX.3 encoder is offered as its own catalog entry instead. If a model file is not recognised when the image server starts, Orbwise says
+whether the sd-server is too old or the model was set up with the wrong parts.
+
+Files another model also uses (FLUX's VAE is shared with Z-Image) are stored once and stay when one of them is
+deleted. In a terminal: `orbwise model add qwen-image` (or `z-image-turbo`, `flux-schnell`, `flux2-klein-4b`,
+`flux2-klein-9b`, `flux-dev`, `sdxl`) and
+`orbwise model remove <name>`.
+
+Describe the image (English usually works best), choose format,
 resolution (0.5 / 1 / 1.5 / 2 megapixels, a custom width × height, or "like reference"), steps, count and seed – or
 **edit**: add up to **3 references** (upload them or press *Use as reference* in the gallery). They are numbered
 image 1–3, so the prompt can combine them – e.g. "the woman from image 1 and the man from image 2 together on a park
@@ -645,19 +726,23 @@ bench, evening light". More megapixels mean finer detail but more time and VRAM.
 land in `~/Bilder/Orbwise` (or `~/Pictures/Orbwise`); prompt and settings are stored in the PNG.
 
 - **Runtime:** stable-diffusion.cpp's prebuilt Linux **Vulkan** build (AMD and NVIDIA, no ROCm/CUDA build needed),
-  `sd-server` stays loaded while you keep painting. Model: Qwen-Image-2.1 GGUF (quantisation by VRAM: Q4 on 8 GB,
-  Q6 on 12 GB, Q8 from 20 GB), text encoder Qwen3-VL-8B (GGUF + mmproj for editing) and its VAE. The exact files are
-  read from Hugging Face during setup and recorded in `~/orbwise-image/manifest.json`; your own build can replace
-  `~/orbwise-image/bin/sd-server`.
-- **Graphics memory:** below 16 GB the language model (its llama-server) is stopped before the first image –
-  both don't fit. As soon as Orbwise needs the language model again (a chat question, a model switch), when you
-  leave the image view or after `image.idle_minutes` (10) without a new image, the image model is unloaded and the
-  language model starts again (`image.unload_llm: auto | always | never`). On 8 GB the text encoder runs on the CPU
-  and the VAE in tiles; expect roughly 1–3 minutes per 1024² image there.
+  `sd-server` stays loaded while you keep painting. Quantisation follows the VRAM (e.g. Qwen-Image: Q4 on 8 GB, Q6 on
+  12 GB, Q8 from 20 GB); Qwen-Image uses the text encoder Qwen3-VL-8B (GGUF + mmproj for editing), Z-Image Qwen3-4B,
+  FLUX CLIP-L + T5-XXL (fp8 below 20 GB). The exact files are read from Hugging Face during setup and recorded in
+  `~/orbwise-image/manifest.json`; your own build can replace `~/orbwise-image/bin/sd-server`.
+- **Graphics memory:** only one model is in memory at a time – clicking **Image** stops the language model (its
+  llama-server, Ollama models too) right away, the active image model loads with the first picture, and switching
+  image models stops the previous image server. While the image view is open, no background work loads the language
+  model (daily summaries and index rebuilds wait, memory embeddings run on the CPU); after `image.idle_minutes` only
+  the image server stops. Routines and Telegram messages are your own requests – they do bring the language model
+  back. As soon as
+  Orbwise needs the language model again (a chat question, a model switch), when you leave the image view or after
+  `image.idle_minutes` (10) without a new image, the image model is unloaded and the language model starts again
+  (`image.unload_llm: always`; `auto` keeps both on cards with 16 GB and more, `never` always keeps both). On 8 GB
+  the text encoder runs on the CPU and the VAE in tiles; expect roughly 1–3 minutes per 1024² image there.
 - **Elsewhere:** `generate_image` in the tools mode ("draw me a lighthouse at dusk", with confirmation) and
   `/bild <description>` via Telegram.
-- `orbwise doctor` checks program, Vulkan libraries and model files; `orbwise model remove qwen-image` deletes the
-  model files.
+- `orbwise doctor` checks program, Vulkan libraries and the files of every installed image model.
 
 ### Docker via Portainer
 
@@ -1235,10 +1320,10 @@ orbwise model [name]           # list or switch model profiles
 orbwise model add [ollama-tag] # download another model (interactive presets without a tag; also HF links)
 orbwise model search <term>    # search GGUF models on Hugging Face (or <user/repo> for its quantizations)
 orbwise model llamacpp --update # newest llama.cpp build for models from Hugging Face / ~/models
-orbwise model add qwen-image   # set up the image mode (Qwen-Image-2.1)
+orbwise model add qwen-image   # image model (also z-image-turbo, flux-schnell, sdxl) – or in the image view
 orbwise model remove <name>    # remove a downloaded model from the list
 orbwise context-test [--quick] # check the context window with the active model (Orbwise must be running)
-orbwise voice install          # install the speech output Pocket TTS and fetch its model (remove: orbwise voice remove)
+orbwise voice install          # install the speech output Piper with your language's voice (pocket: Pocket TTS; remove: orbwise voice remove)
 orbwise update                 # update (git pull, dependencies, restart)
 orbwise version                # show the installed version
 orbwise reindex                # rebuild the search index from the Markdown files
@@ -1254,7 +1339,7 @@ orbwise init-config            # create the example configuration
 | The orb stays "OFFLINE" | Is `orbwise serve` running? Log: `~/.local/state/orbwise.log` |
 | "Ollama not reachable" | `sudo systemctl enable --now ollama` |
 | Context: "shortened", slow answers, the window seems smaller | `orbwise context-test` (or Models → model → *Diagnostics* → *Test context*): checks whether the server really runs with the configured window, KV cache in VRAM, token estimate, prompt cache (same prompt and follow-up), a prompt up to the compaction point (the model must still repeat a code word from its start) and overflow detection. `--quick` skips the two slow fill checks |
-| No natural voice (the browser speaks) | `orbwise doctor` → Pocket TTS missing? `orbwise voice install`; its log: `~/.local/share/orbwise/pocket-tts/server.log` |
+| No natural voice (the browser speaks) | `orbwise doctor` → Piper missing? `orbwise voice install`; its log: `~/.local/share/orbwise/piper/server.log` (Pocket TTS: `…/pocket-tts/server.log`) |
 | Microphone doesn't work | Open `http://localhost:8765` (not the IP), check the browser's microphone permission |
 | Wake word triggers too often/rarely | Adjust `voice.wakeword_threshold` (0.3–0.7) |
 | No password field appears | The dashboard must be open; `orbwise doctor` checks the askpass helper |

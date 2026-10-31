@@ -616,12 +616,30 @@ _SELF_ROOT = re.compile(r"(?<![\w./-])(yay|paru|pikaur|trizen|aura)(?![\w.-])|(?
 _GIT_PUSH = re.compile(r"(?<![\w./-])git\b[^;&|\n]*?\spush\b")
 
 
+# Verdeckte Schreibweisen für die Schlüsselwort-Suche auflösen: /usr/bin/sudo, ./su, ~/bin/git → sudo, su, git;
+# s""udo, s\udo → sudo (die Shell macht daraus dasselbe Programm)
+_PATH_PREFIX = re.compile(r"(?<![\w.-])(?:~|\.{1,2})?/(?:[\w.+-]+/)*(?=[\w.+-])")
+_EMPTY_QUOTES = re.compile(r"""(?<=\w)(?:''|"")|(?:''|"")(?=\w)""")
+_WORD_ESCAPE = re.compile(r"\\(?=\w)")
+
+
+def _plain_words(text: str) -> str:
+    return _PATH_PREFIX.sub("", _WORD_ESCAPE.sub("", _EMPTY_QUOTES.sub("", text)))
+
+
 def auto_full_check(command: str) -> tuple[str, str]:
     """Auto-Modus „Auto“: nur Root und Pushen fragen. → ("ok" | "root" | "push", Grund)."""
+    root = "root", T("braucht Root-Rechte", "needs root privileges")
     scan = _scan_text(command.strip())
-    if _ROOT_WORD.search(scan) or _SELF_ROOT.search(scan):
-        return "root", T("braucht Root-Rechte", "needs root privileges")
-    if _GIT_PUSH.search(scan):
+    plain = _plain_words(scan)
+    if _ROOT_WORD.search(plain) or _SELF_ROOT.search(plain):
+        return root
+    try:  # auch über die Wörter, wie die Shell sie sieht (Anführungszeichen, Pfade)
+        if any(_strip_wrappers(seg)[1] for seg in _segments(_tokens(command))):
+            return root
+    except ValueError:
+        pass
+    if _GIT_PUSH.search(plain):
         return "push", T("schickt Commits ins Internet (git push)", "pushes commits to the internet (git push)")
     return "ok", ""
 
@@ -831,7 +849,7 @@ def auto_shell_ok(command: str, cwd: str | None = None, _depth: int = 0) -> tupl
     return True, ""
 
 
-_SUDO_RE = re.compile(r"(^|[;&|(]\s*|\s)sudo((?:\s+(?:-[ugpCrtUDRTh]\s+[^\s-]\S*|-[A-Za-z]+))*)\s+")
+_SUDO_RE = re.compile(r"(^|[;&|(]\s*|\s)(?:(?:/[\w.+-]+)*/)?sudo((?:\s+(?:-[ugpCrtUDRTh]\s+[^\s-]\S*|-[A-Za-z]+))*)\s+")
 # Optionen mit Wert (z. B. -u root) bleiben erhalten; -n/-S/-A werden durch den gewählten Modus ersetzt
 _SUDO_OWN_FLAGS = re.compile(r"\s+-[nSA]+\b")
 
