@@ -91,7 +91,7 @@
       <div class="mode-switch" role="tablist" aria-label="Modus">
         <button type="button" role="tab" data-mode="tools" class="on" title="Tools: Fragen, Websuche, Paperless, Mail, System bedienen – mit Sprache"><svg class="i"><use href="#i-chat"/></svg><span>Tools</span></button>
         <button type="button" role="tab" data-mode="coding" title="Coding: nur Dateien, Shell, Web und Gedächtnis – mehr Kontext für Code, ohne Sprache"><svg class="i"><use href="#i-code"/></svg><span>Coding</span></button>
-        <button type="button" role="tab" data-mode="image" title="Bild: Bilder erzeugen und bearbeiten mit Qwen-Image-2.1 – lokal"><svg class="i"><use href="#i-image"/></svg><span>Bild</span></button>
+        <button type="button" role="tab" data-mode="image" title="Bild: Bilder erzeugen und bearbeiten – lokal (Qwen-Image, Z-Image, FLUX, SDXL)"><svg class="i"><use href="#i-image"/></svg><span>Bild</span></button>
       </div>
       <button class="new-chat" id="chat-new" title="Neuen Chat beginnen (Gedächtnis bleibt erhalten)"><svg class="i"><use href="#i-plus"/></svg><span>Neuer Chat</span></button>
       <div class="side-search">
@@ -388,7 +388,7 @@
   </section>
 
   <section class="sheet sheet-xl hidden" id="sheet-models" aria-label="Modelle">
-    <div class="sheet-head"><h2>Modelle</h2>
+    <div class="sheet-head"><h2 id="mp-title">Modelle</h2>
       <div class="mp-headinfo"><div class="mp-gpu" id="mp-gpu"></div><div class="mp-runtime" id="mp-runtime"></div></div>
       <button class="icon-btn" data-close-sheet title="Schließen" aria-label="Schließen"><svg class="i"><use href="#i-x"/></svg></button></div>
     <div class="mp-bar-row"><div class="seg mp-tabs" id="mp-tabs" role="tablist"><button type="button" data-mtab="mine" class="on">Meine Modelle</button><button type="button" data-mtab="add">Hinzufügen</button><button type="button" data-mtab="api">API-Server</button></div></div>
@@ -399,6 +399,7 @@
     </div>
     <div class="mp-addtab hidden" id="mp-add"></div>
     <div class="mp-addtab hidden" id="mp-api"></div>
+    <div class="mp-addtab hidden" id="mp-image"></div>
   </section>
 
   <section class="sheet sheet-wide hidden" id="sheet-settings" aria-label="Einstellungen">

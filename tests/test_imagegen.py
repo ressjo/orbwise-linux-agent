@@ -196,7 +196,7 @@ def test_cancel(engine):
 def test_not_set_up(tmp_path):
     eng = ImageEngine(Config.model_validate({"image": {"dir": str(tmp_path / "nix")}}))
     assert not eng.available() and eng.status()["available"] is False
-    with pytest.raises(ImageError, match="qwen-image"):
+    with pytest.raises(ImageError, match="Bildmodelle"):
         run(eng.generate("x"))
 
 
@@ -269,7 +269,8 @@ def test_install_downloads_and_writes_manifest(tmp_path):
     d = tmp_path / "img"
     assert (d / "bin" / "sd-server").stat().st_mode & 0o100
     assert "https://x/cpu.zip" not in requests  # der Vulkan-Build, nicht der CPU-Build
-    assert setup.is_set_up(d) and set(setup.manifest(d)["files"]) == {"diffusion", "llm", "vae", "vision"}
+    assert setup.is_set_up(d) and set(setup.model_entry(d)["files"]) == {"diffusion", "llm", "vae", "vision"}
+    assert setup.active_id(d) == "qwen-image"
     assert setup.remove(cfg) > 0 and not setup.is_set_up(d)
 
 
@@ -348,3 +349,190 @@ def test_several_references_in_order(engine):
 def base64_of(data: bytes) -> str:
     import base64
     return base64.b64encode(data).decode()
+
+
+# ---------------------------------------------------------------- Mehrere Bildmodelle
+CATALOG_TREES = {
+    **TREES,
+    setup.ZIMAGE_REPO: ["z_image_turbo-Q4_K.gguf", "z_image_turbo-Q8_0.gguf"],
+    setup.ZIMAGE_TEXT_REPO: ["Qwen3-4B-Instruct-2507-Q4_K_M.gguf", "Qwen3-4B-Instruct-2507-Q8_0.gguf"],
+    setup.FLUX_REPO: ["ae.safetensors", "flux1-schnell.safetensors"],
+    setup.FLUX_GGUF_REPO: ["flux1-schnell-Q4_K_S.gguf", "flux1-schnell-Q8_0.gguf"],
+    setup.FLUX_TEXT_REPO: ["clip_l.safetensors", "t5xxl_fp16.safetensors", "t5xxl_fp8_e4m3fn.safetensors"],
+    setup.SDXL_REPO: ["sd_xl_base_1.0.safetensors", "sd_xl_base_1.0_0.9vae.safetensors"],
+    setup.SDXL_VAE_REPO: ["sdxl_vae.safetensors"],
+    setup.FLUX_DEV_GGUF_REPO: ["flux1-dev-Q4_K_S.gguf", "flux1-dev-Q8_0.gguf"],
+    "unsloth/Qwen3-4B-GGUF": ["Qwen3-4B-Q4_K_M.gguf", "Qwen3-4B-Q8_0.gguf"],
+    "unsloth/Qwen3-8B-GGUF": ["Qwen3-8B-Q4_K_M.gguf", "Qwen3-8B-Q8_0.gguf"],
+    "Comfy-Org/flux2-dev": ["split_files/vae/flux2-vae.safetensors", "split_files/diffusion_models/flux2_dev_fp8.safetensors"],
+    "someone/FLUX.2-klein-4B-GGUF": ["flux-2-klein-4b-Q4_K_M.gguf", "flux-2-klein-4b-Q8_0.gguf"],
+    "someone/FLUX.2-klein-9B-GGUF": ["flux-2-klein-9b-Q4_K_M.gguf", "flux-2-klein-9b-Q8_0.gguf"],
+}
+SEARCH = {"FLUX.2-klein-4B": ["someone/FLUX.2-klein-4B-GGUF"], "FLUX.2-klein-9B": ["someone/FLUX.2-klein-9B-GGUF"]}
+
+
+def catalog_client(requests=None):
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as z:
+        z.writestr("sd-server", "#!/bin/sh\n")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if requests is not None:
+            requests.append(url)
+        if "api.github.com" in url:
+            return httpx.Response(200, json={"assets": [{"name": "sd-bin-Linux-x86_64-vulkan.zip",
+                                                         "browser_download_url": "https://x/vulkan.zip"}]})
+        if url == "https://x/vulkan.zip":
+            return httpx.Response(200, content=archive.getvalue())
+        if "/api/models?" in url:  # Suche (neue Modelle)
+            return httpx.Response(200, json=[{"id": r} for r in SEARCH.get(request.url.params.get("search"), [])])
+        if "/api/models/" in url:
+            repo = url.split("/api/models/")[1].split("/tree")[0]
+            if repo not in CATALOG_TREES:
+                return httpx.Response(404, json={"error": "Repository not found"})
+            return httpx.Response(200, json=[{"type": "file", "path": p} for p in CATALOG_TREES[repo]])
+        if "/resolve/main/" in url:
+            return httpx.Response(200, content=b"weights:" + url.encode())
+        return httpx.Response(404)
+    return httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=True)
+
+
+def test_each_catalog_model_finds_its_files():
+    for spec in setup.CATALOG:
+        trees = {**CATALOG_TREES, "__search__": [r for q in spec.search for r in SEARCH.get(q, [])]}
+        small = spec.choose(trees, 8)
+        assert set(spec.required) <= set(small), spec.id
+    klein = setup.BY_ID["flux2-klein-9b"].choose({**CATALOG_TREES, "__search__": SEARCH["FLUX.2-klein-9B"]}, 20)
+    assert klein["diffusion"] == ("someone/FLUX.2-klein-9B-GGUF", "flux-2-klein-9b-Q8_0.gguf")  # 20 GB → Q8
+    assert klein["llm"][1] == "Qwen3-8B-Q8_0.gguf" and klein["vae"][1].endswith("flux2-vae.safetensors")
+    dev = setup.BY_ID["flux-dev"].choose(CATALOG_TREES, 20)
+    assert dev["diffusion"] == (setup.FLUX_DEV_GGUF_REPO, "flux1-dev-Q8_0.gguf") and dev["vae"][1] == "ae.safetensors"
+    flux = setup.BY_ID["flux-schnell"]
+    assert flux.choose(CATALOG_TREES, 8)["t5xxl"][1] == "t5xxl_fp8_e4m3fn.safetensors"
+    assert flux.choose(CATALOG_TREES, 24)["t5xxl"][1] == "t5xxl_fp16.safetensors"
+    assert flux.choose(CATALOG_TREES, 24)["diffusion"][1] == "flux1-schnell-Q8_0.gguf"
+    sdxl = setup.BY_ID["sdxl"].choose(CATALOG_TREES, 8)
+    assert sdxl["diffusion"][1] == "sd_xl_base_1.0.safetensors" and sdxl["vae"] == (setup.SDXL_VAE_REPO, "sdxl_vae.safetensors")
+
+
+def test_several_models_share_files_and_delete_cleanly(tmp_path):
+    cfg = Config.model_validate({"image": {"dir": str(tmp_path / "img")}})
+    d = tmp_path / "img"
+    client = catalog_client()
+    for model_id in ("z-image-turbo", "flux-schnell"):
+        assert setup.install({"vram_gb": 8}, cfg, out=lambda s: None, client=client, model_id=model_id)
+    assert setup.active_id(d) == "flux-schnell" and setup.is_set_up(d)
+    assert setup.model_paths(d, "z-image-turbo")["vae"] == setup.model_paths(d, "flux-schnell")["vae"]  # nur einmal
+    items = {m["id"]: m for m in setup.catalog(cfg, 8)}
+    assert items["flux-schnell"]["active"] and items["z-image-turbo"]["installed"] and not items["sdxl"]["installed"]
+    assert items["flux-schnell"]["fit"] == "tight" and items["z-image-turbo"]["fit"] == "ok" and items["sdxl"]["fit"] == "ok"
+    setup.set_active(d, "z-image-turbo")
+    assert setup.active_id(d) == "z-image-turbo"
+    with pytest.raises(ValueError):
+        setup.set_active(d, "sdxl")
+    freed = setup.remove_model(cfg, "z-image-turbo")  # aktives gelöscht → das andere wird aktiv
+    assert freed > 0 and setup.active_id(d) == "flux-schnell" and setup.is_set_up(d)
+    assert setup.model_paths(d)["vae"].exists()  # das gemeinsame VAE bleibt
+    assert not (d / "models" / "z_image_turbo-Q4_K.gguf").exists()
+    setup.remove_model(cfg, "flux-schnell")
+    assert not setup.is_set_up(d) and not any((d / "models").iterdir())
+    assert setup.remove_model(cfg, "flux-schnell") == 0
+
+
+def test_cancel_keeps_the_part_file(tmp_path):
+    import threading
+    cfg = Config.model_validate({"image": {"dir": str(tmp_path / "img")}})
+    stop = threading.Event()
+    stop.set()
+    with pytest.raises(setup.InstallCancelled):
+        setup.install({"vram_gb": 8}, cfg, out=lambda s: None, client=catalog_client(), model_id="sdxl", stop=stop)
+    assert not setup.model_installed(tmp_path / "img", "sdxl")
+    assert not setup.install({"vram_gb": 8}, cfg, out=lambda s: None, client=catalog_client(), model_id="gibtsnicht")
+
+
+def test_old_setup_is_read_as_qwen_image(tmp_path):
+    d = make_install(tmp_path)  # altes manifest.json: {"files": …, "vram_gb": 8}
+    assert setup.active_id(d) == "qwen-image" and setup.is_set_up(d)
+    assert set(setup.model_paths(d)) == {"diffusion", "llm", "vae", "vision"}
+
+
+def test_command_steps_and_sampler_follow_the_active_model(engine, tmp_path):
+    d = engine.directory
+    client = catalog_client()
+    assert setup.install({"vram_gb": 24}, engine.cfg, out=lambda s: None, client=client, model_id="sdxl")
+    run(engine.select("sdxl"))
+    cmd = engine.command()
+    assert "--model" in cmd and "sd_xl_base_1.0.safetensors" in cmd and "--llm" not in cmd and "--diffusion-model" not in cmd
+    engine.cfg.image.steps, engine.cfg.image.cfg_scale = 20, 6.0  # Standardwerte → die des Modells
+    assert engine.defaults() == (25, 7.0, "euler_a") and not engine.can_edit()
+    with pytest.raises(ImageError, match="Qwen-Image"):
+        run(engine.generate("x", ref_images=[b"x"]))
+    assert setup.install({"vram_gb": 24}, engine.cfg, out=lambda s: None, client=client, model_id="flux-schnell")
+    run(engine.select("flux-schnell"))
+    cmd = engine.command()
+    assert "--clip_l" in cmd and "--t5xxl" in cmd and engine.defaults()[:2] == (4, 1.0)
+    run(engine.select("qwen-image"))
+    assert "--llm_vision" in engine.command() and engine.can_edit() and engine.status()["model"] == "qwen-image"
+    assert d == engine.directory
+
+
+def test_image_model_api(cfg, monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+
+    from orbwise.server import create_app
+    monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    cfg.image.dir = str(tmp_path / "img")
+    cfg.image.output_dir = str(tmp_path / "out")
+    from orbwise import models as mdl
+    monkeypatch.setattr(mdl, "detect_gpu", lambda: {"vendor": "amd", "name": "x", "vram_gb": 16.0, "gpus": []})
+    real_install = setup.install
+    monkeypatch.setattr(setup, "install", lambda gpu, c, out, client, model_id, stop: real_install(
+        gpu, c, out, catalog_client(), model_id, stop))
+    with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
+        data = client.get("/api/image/models").json()
+        assert [m["id"] for m in data["models"]] == ["qwen-image", "z-image-turbo", "flux-schnell", "flux2-klein-4b",
+                                                      "flux2-klein-9b", "flux-dev", "sdxl"]
+        assert [m["id"] for m in data["models"] if m["new"]] == ["flux2-klein-4b", "flux2-klein-9b"]
+        assert not any(m["installed"] for m in data["models"]) and data["installing"] == ""
+        assert client.post("/api/image/models/gibtsnicht/install").status_code == 404
+        assert client.post("/api/image/models/sdxl/activate").status_code == 404
+        with client.websocket_connect("ws://localhost:8765/ws", headers={"Origin": "http://localhost:8765"}) as ws:
+            assert client.post("/api/image/models/z-image-turbo/install").json() == {"started": True}
+            events = []
+            while not any(e.get("type") == "image_install" and e.get("done") for e in events):
+                events.append(ws.receive_json())
+        done = next(e for e in events if e.get("done"))
+        assert done["ok"] and any(e.get("pct") == 100 for e in events if e.get("type") == "image_install")
+        st = client.get("/api/image/status").json()
+        assert st["available"] and st["model"] == "z-image-turbo" and st["steps"] == 8 and not st["can_edit"]
+        listed = {m["id"]: m for m in client.get("/api/image/models").json()["models"]}
+        assert listed["z-image-turbo"]["active"] and listed["z-image-turbo"]["disk_gb"] >= 0
+        gone = client.delete("/api/image/models/z-image-turbo").json()
+        assert gone["available"] is False
+        assert client.delete("/api/image/models/install").json() == {"ok": False}
+
+
+def test_new_models_find_their_repository_by_search(tmp_path):
+    cfg = Config.model_validate({"image": {"dir": str(tmp_path / "img")}})
+    requests = []
+    assert setup.install({"vram_gb": 12}, cfg, out=lambda s: None, client=catalog_client(requests),
+                         model_id="flux2-klein-4b")
+    d = tmp_path / "img"
+    assert setup.active_id(d) == "flux2-klein-4b" and setup.is_set_up(d)
+    assert setup.model_paths(d)["diffusion"].name == "flux-2-klein-4b-Q4_K_M.gguf"
+    assert any("search=FLUX.2-klein-4B" in u for u in requests)
+    # Ausweich-Repositories, die es nicht gibt (404), brechen nichts ab
+    assert any("Comfy-Org/flux2-klein/tree" in u for u in requests)
+    assert setup.install({"vram_gb": 12}, cfg, out=lambda s: None, client=catalog_client(), model_id="flux2-klein-9b")
+    assert setup.model_paths(d, "flux2-klein-9b")["vae"] == setup.model_paths(d, "flux2-klein-4b")["vae"]  # geteilt
+    # nichts gefunden → klare Meldung statt Absturz
+    SEARCH["FLUX.2-klein-4B"], saved = [], SEARCH["FLUX.2-klein-4B"]
+    try:
+        out = []
+        assert not setup.install({"vram_gb": 12}, Config.model_validate({"image": {"dir": str(tmp_path / "b")}}),
+                                 out=out.append, client=catalog_client(), model_id="flux2-klein-4b")
+        assert "nicht gefunden" in out[-1] and "diffusion" in out[-1]
+    finally:
+        SEARCH["FLUX.2-klein-4B"] = saved
