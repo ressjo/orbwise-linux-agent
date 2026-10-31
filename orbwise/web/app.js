@@ -5743,8 +5743,7 @@
     if (m.misfiled) {  // früher falsch eingeordnet (z. B. klein als FLUX.1) – startet mit falschen Bauteilen
       const w = document.createElement("div");
       w.className = "hf-warn";
-      w.textContent = L(`Falsch eingeordnet – das ist ein ${m.misfiled}-Modell und startet so nicht. Bitte löschen und über die Suche neu laden.`,
-                        `Misfiled – this is a ${m.misfiled} model and does not start like this. Please delete it and download it again via the search.`);
+      w.textContent = m.misfiled + " " + L("Bitte löschen.", "Please delete it.");
       card.appendChild(w);
     }
     const meta = card.querySelector(".ivm-meta");

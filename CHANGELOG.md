@@ -83,6 +83,10 @@ All notable changes to this project are documented here. The format follows
   `~/.local/share/orbwise/chromium` (no root; asks first outside Auto, a "no" is remembered).
 
 ### Fixed
+- **Text encoders and FLUX 3 Image Klein were set up as image models:** repos like
+  `FLUX-3-Image-Klein-TE-Uncensored-GGUF` hold only a text encoder (or a prompt upsampler, "pup") and are now shown as
+  "belongs next to an image model"; FLUX 3 Image Klein (text encoder Qwen3-VL-4B) is its own generation and marked as
+  not supported yet instead of being set up as FLUX.2 klein. Models already set up like this are flagged with the reason.
 - **FLUX.2 klein models were set up as FLUX.1** (e.g. `flux3-image-klein`): any repo with "flux" in its name got
   FLUX.1's text encoders and VAE, and sd-server stopped with "get sd version from file failed". Now *klein* is
   recognised (4B or 9B from the name, else from file size and quantization), newer FLUX generations are marked as not

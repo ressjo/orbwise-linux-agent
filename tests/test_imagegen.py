@@ -591,9 +591,14 @@ def test_families_are_detected_from_names_and_tags():
     assert d("city96/FLUX.1-dev-gguf")[0] == "flux-dev" and d("x/flux1-schnell-Q4")[0] == "flux-schnell"
     assert d("x/some-flux-finetune")[0] == "" and "unklar" in d("x/some-flux-finetune")[1]  # Version nicht erkennbar
     assert d("x/some-flux-finetune", ["base_model:black-forest-labs/FLUX.1-dev"])[0] == "flux-dev"
-    # der gemeldete Fall: „flux3-image-klein“ ist ein klein-Modell, kein FLUX.1 (sonst falsche Bauteile)
-    assert d("someone/flux3-image-klein-GGUF")[0] == "flux2-klein"
-    assert d("x/FLUX.3-dev")[0] == "" and "neuere" in d("x/FLUX.3-dev")[1]
+    # gemeldet: FLUX 3 Image Klein ist eine eigene Generation (Qwen3-VL-4B), das „TE“-Repo nur ihr Text-Encoder
+    assert d("AtomicChat/FLUX-3-Image-Klein-GGUF")[0] == "" and "FLUX 3" in d("AtomicChat/FLUX-3-Image-Klein-GGUF")[1]
+    te = d("AtomicChat/FLUX-3-Image-Klein-TE-Uncensored-GGUF")
+    assert te[0] == "" and "Text-Encoder" in te[1]
+    assert "Text-Encoder" in d("AtomicChat/FLUX-3-Image-Klein-pup-Uncensored-GGUF")[1]
+    assert d("someone/FLUX.2-klein-4B-GGUF")[0] == "flux2-klein-4b" and d("x/klein-model")[0] == "flux2-klein"
+    assert d("x/FLUX.3-dev")[0] == "" and "FLUX 3" in d("x/FLUX.3-dev")[1]
+    assert d("x/FLUX.2-dev")[0] == "" and "neuere" in d("x/FLUX.2-dev")[1]
     assert setup.klein_size("flux3-image-klein-Q8_0.gguf", int(4.4e9)) == "flux2-klein-4b"  # ~4 Mrd. Parameter
     assert setup.klein_size("flux3-image-klein-Q8_0.gguf", int(9.8e9)) == "flux2-klein-9b"
     assert setup.klein_size("klein-Q4_K_M.gguf", int(5.6e9)) == "flux2-klein-9b"  # 9B in Q4 ist ähnlich groß
@@ -756,17 +761,17 @@ def test_no_background_maintenance_in_image_mode(cfg, monkeypatch, tmp_path):
 
 # ---------------------------------------------------------------- Gemeldet: „flux3-image-klein“ als FLUX.1 gestartet
 def test_klein_model_gets_the_klein_parts_not_flux1(fake_hf, tmp_path):
-    HF_IMAGE_MODELS.append({"id": "someone/flux3-image-klein-GGUF", "downloads": 10, "tags": ["gguf"]})
+    HF_IMAGE_MODELS.append({"id": "someone/flux2-image-klein-GGUF", "downloads": 10, "tags": ["gguf"]})
     try:
         from orbwise import models as mdl
         real = mdl._hf_get
 
         def get(path, params=None, base=None):
-            if path == "/models/someone/flux3-image-klein-GGUF/tree/main":
-                return [{"type": "file", "path": "flux3-image-klein-Q8_0.gguf", "lfs": {"size": int(4.4e9)}}]
+            if path == "/models/someone/flux2-image-klein-GGUF/tree/main":
+                return [{"type": "file", "path": "flux2-image-klein-Q8_0.gguf", "lfs": {"size": int(4.4e9)}}]
             return real(path, params, base)
         mdl._hf_get = get
-        files = setup.hf_image_files("someone/flux3-image-klein-GGUF", 24)
+        files = setup.hf_image_files("someone/flux2-image-klein-GGUF", 24)
         assert files["family"] == "flux2-klein" and files["variants"][0]["family"] == "flux2-klein-4b"
     finally:
         HF_IMAGE_MODELS.pop()
@@ -783,9 +788,9 @@ def test_misfiled_model_is_flagged(tmp_path):
     (d / "manifest.json").write_text(json.dumps({"active": "hf-klein", "models": {"hf-klein": {
         "files": {"diffusion": "flux3-image-klein-Q8_0.gguf", "clip_l": "clip_l.safetensors",
                   "t5xxl": "t5xxl_fp8_e4m3fn.safetensors", "vae": "ae.safetensors"},
-        "family": "flux-dev", "repo": "someone/flux3-image-klein-GGUF", "label": "flux3-image-klein"}}}))
+        "family": "flux-dev", "repo": "AtomicChat/FLUX-3-Image-Klein-TE-Uncensored-GGUF", "label": "flux3-image-klein"}}}))
     item = next(m for m in setup.catalog(cfg, 24) if m["id"] == "hf-klein")
-    assert item["misfiled"] == "FLUX.2 klein 4B"
+    assert "Text-Encoder" in item["misfiled"]  # das gemeldete Repo: nur der Text-Encoder von FLUX 3 Klein
 
 
 def test_unrecognised_model_file_gets_a_helpful_message(tmp_path, monkeypatch):
