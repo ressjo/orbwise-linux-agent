@@ -153,6 +153,12 @@ def test_gpu_handoff_on_small_card(engine):
     assert not engine.loaded() and router.prepared == 1 and router.gpu_borrowed is None
 
 
+def test_several_cards_count_the_biggest_not_the_sum(engine):
+    gib = 1024 ** 3
+    engine.gpu_info = lambda: {"vram_total": 24 * gib, "gpus": [{"vram_total": 12 * gib}, {"vram_total": 12 * gib}]}
+    assert engine.vram_gb() == 12 and engine._should_unload() and "--offload-to-cpu" in engine.command()
+
+
 def test_big_card_keeps_llm(engine):
     engine._vram["gb"] = 24
     run(engine.generate("cat"))

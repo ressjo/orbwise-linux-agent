@@ -32,6 +32,33 @@ def _not_root(monkeypatch):
     monkeypatch.setattr(agent_safety, "running_as_root", lambda: False)
 
 
+@pytest.fixture(autouse=True)
+def _no_github_login(monkeypatch):
+    """Kein GitHub-Token vom Testrechner (GH_TOKEN, gh auth) – sonst sind die GitHub-Werkzeuge je nach Rechner an
+    oder aus. Tests, die ein Token brauchen, setzen cfg.github.token."""
+    from orbwise import github
+    for name in ("ORBWISE_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(github, "_gh_cache", (float("inf"), ""))  # „gh auth token“ gilt als schon gefragt: keins
+
+
+@pytest.fixture(autouse=True)
+def _web_token(tmp_path: Path, monkeypatch):
+    """Zugangs-Token im Test-Ordner; TestClient schickt es von selbst mit (die Server-Tests prüfen Funktionen, nicht
+    die Anmeldung – die prüft test_web_auth.py mit einem Client ohne Token)."""
+    from fastapi.testclient import TestClient
+
+    from orbwise import web_auth
+    monkeypatch.setenv("ORBWISE_WEB_TOKEN_FILE", str(tmp_path / "web-token"))
+    original = TestClient.__init__
+
+    def with_token(self, *args, **kwargs):
+        if kwargs.pop("anonymous", False) is False:
+            kwargs["headers"] = {"X-Orbwise-Token": web_auth.read_token(), **(kwargs.get("headers") or {})}
+        original(self, *args, **kwargs)
+    monkeypatch.setattr(TestClient, "__init__", with_token)
+
+
 @pytest.fixture
 def cfg(tmp_path: Path) -> Config:
     c = Config()

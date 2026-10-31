@@ -1,4 +1,4 @@
-"""Kommandozeile: orbwise [serve|doctor|model|context-test|update|version|reindex|summarize|init-config]"""
+"""Kommandozeile: orbwise [serve|open|doctor|model|context-test|update|version|reindex|summarize|init-config]"""
 
 from __future__ import annotations
 
@@ -11,10 +11,24 @@ import sys
 import webbrowser
 from pathlib import Path
 
+from . import web_auth
 from .config import config_path, env, load_config
 from .lang import T, set_lang
 
 EXAMPLE_CONFIG = Path(__file__).parent / "config.example.yaml"
+
+
+def cmd_open(args) -> None:
+    """Oberfläche im Browser öffnen – angemeldet über einen Einmal-Link (siehe web_auth.py)."""
+    cfg = load_config(skills=False)
+    url = web_auth.open_url(cfg.port)
+    if "code=" not in url:
+        print(T("Orbwise läuft nicht oder das Token fehlt – erst „orbwise serve“ starten.",
+                "Orbwise is not running or the token is missing – start “orbwise serve” first."), file=sys.stderr)
+    if args.print:
+        print(url)
+        return
+    webbrowser.open(url)
 
 
 def cmd_serve(args) -> None:
@@ -32,9 +46,12 @@ def cmd_serve(args) -> None:
         logging.getLogger("orbwise").warning("ACHTUNG: %s", warning)
     app = create_app(cfg)
     url = f"http://localhost:{cfg.port}"
-    print(T("Orbwise läuft auf ", "Orbwise is running at ") + url)
-    if args.open:
-        webbrowser.open(url)
+    print(T("Orbwise läuft auf ", "Orbwise is running at ") + url
+          + T(" – öffnen mit: orbwise open", " – open with: orbwise open"))
+    if args.open:  # Einmal-Link (meldet den Browser an), kurz nachdem der Server angenommen hat
+        import threading
+        link = app.state.open_url(120)
+        threading.Timer(1.5, webbrowser.open, args=(link,)).start()
     uvicorn.run(app, host=cfg.host, port=cfg.port, log_level="info" if args.verbose else "warning")
 
 
@@ -432,7 +449,7 @@ def cmd_model(args) -> None:
         return cmd_model_manage(args, cfg, state)
     router = LLMRouter(cfg.llm, state_path=state)
     base = f"http://127.0.0.1:{cfg.port}"
-    headers = {"Host": f"localhost:{cfg.port}"}
+    headers = web_auth.headers(cfg.port)
     if not args.name:
         for info in router.describe():
             star = "▶" if info["active"] else " "
@@ -512,7 +529,7 @@ def cmd_model_manage(args, cfg, state: Path) -> None:
     from . import models as mdl
 
     base = f"http://127.0.0.1:{cfg.port}"
-    headers = {"Host": f"localhost:{cfg.port}"}
+    headers = web_auth.headers(cfg.port)
     if args.name == "choose":
         vram = args.vram if args.vram is not None else mdl.detect_gpu()["vram_gb"]
         if not sys.stdin.isatty():
@@ -691,7 +708,7 @@ def cmd_context_test(args) -> None:
           if not args.quick else T("Kontext-Schnelltest läuft …", "Quick context test running …"), flush=True)
     try:
         r = httpx.post(f"http://127.0.0.1:{cfg.port}/api/context/test", params={"quick": args.quick},
-                       headers={"Host": f"localhost:{cfg.port}"}, timeout=3600)
+                       headers=web_auth.headers(cfg.port), timeout=3600)
     except httpx.ConnectError:
         sys.exit(T("Orbwise läuft nicht – erst starten (orbwise serve), dann den Test wiederholen.",
                    "Orbwise is not running – start it (orbwise serve), then run the test again."))
@@ -753,6 +770,8 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("serve", help=T("Server starten (Standard)", "start the server (default)"))
     p.add_argument("--open", action="store_true", help=T("Browser öffnen", "open the browser"))
     p.add_argument("-v", "--verbose", action="store_true")
+    p = sub.add_parser("open", help=T("Oberfläche im Browser öffnen (angemeldet)", "open the web UI (signed in)"))
+    p.add_argument("--print", action="store_true", help=T("nur den Einmal-Link ausgeben", "only print the one-time link"))
     sub.add_parser("doctor", help=T("Installation prüfen", "check the installation"))
     p = sub.add_parser("model", help=T("Modelle anzeigen, umschalten, laden (add) oder entfernen (remove)",
                                        "list, switch, download (add) or remove (remove) models"))
@@ -791,7 +810,7 @@ def main(argv: list[str] | None = None) -> None:
         logging.getLogger(noisy).setLevel(logging.WARNING)
     if args.cmd is None:
         args = parser.parse_args(["serve", *(argv or sys.argv[1:])])
-    {"serve": cmd_serve, "doctor": cmd_doctor, "update": cmd_update, "model": cmd_model, "version": cmd_version,
+    {"serve": cmd_serve, "open": cmd_open, "doctor": cmd_doctor, "update": cmd_update, "model": cmd_model, "version": cmd_version,
      "reindex": cmd_reindex, "summarize": cmd_summarize, "init-config": cmd_init_config,
      "context-test": cmd_context_test, "voice": cmd_voice, "skills": cmd_skills}[args.cmd](args)
 

@@ -119,6 +119,13 @@ def test_endpoint_connects_the_sandbox_copy(cfg, gh, plain, monkeypatch, tmp_pat
     async def user(cfg, transport=None):
         return IDENT
     monkeypatch.setattr(github, "user", user)
+    commits = []
+
+    async def commit_all(cfg, sb, message):
+        commits.append(sb["path"])
+        return False
+    from orbwise import sandbox
+    monkeypatch.setattr(sandbox, "commit_all", commit_all)
     monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
     monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
     with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
@@ -131,6 +138,7 @@ def test_endpoint_connects_the_sandbox_copy(cfg, gh, plain, monkeypatch, tmp_pat
         r = client.post("/api/github/connect", json={"repo": "jo/neu"})
         assert r.status_code == 200, r.text
         assert r.json()["branch"] == "orbwise/arbeit"
+        assert commits == [str(ws)]  # offene Änderungen der Kopie wurden vorher committet
         assert memory.conversation.meta["sandbox"]["origin"] == "https://github.com/jo/neu.git"
     assert sh(plain, "config", "remote.origin.url").strip() == "https://github.com/jo/neu.git"
     assert sh(gh, "log", "--format=%s", "orbwise/arbeit").splitlines()[0] == "aus der Sandbox"

@@ -106,6 +106,7 @@
         <button class="nav-item" data-sheet="planner" title="Planer"><svg class="i"><use href="#i-calendar"/></svg><span>Planer</span></button>
         <button class="nav-item" data-sheet="memory" title="Gedächtnis"><svg class="i"><use href="#i-brain"/></svg><span>Gedächtnis</span></button>
         <button class="nav-item" data-sheet="settings" title="Einstellungen"><svg class="i"><use href="#i-settings"/></svg><span>Einstellungen</span></button>
+        <button class="side-version" id="side-version" type="button"><span class="sv-dot hidden"></span><span class="sv-text"></span></button>
       </nav>
     </aside>
 
@@ -437,6 +438,7 @@
             <div class="seg" id="set-auto"><button type="button" data-auto="off">Aus</button><button type="button" data-auto="read">Nur lesen</button><button type="button" data-auto="files">+ Dateien</button><button type="button" data-auto="auto">Auto</button></div></div>
           <div class="set-row"><div><b>Denkmodus</b><small>Gründlicher, dafür langsamer.</small></div>
             <div class="seg" id="set-think"><button type="button" data-think="off">Aus</button><button type="button" data-think="on" class="hidden">An</button></div></div>
+          <div class="set-row" id="set-hf"></div>
           <p class="set-hint">Mail, Paperless, Telegram und andere Verbindungen richtest du unter <b>Skills</b> ein. Alles Weitere steht in <code>~/.config/orbwise/config.yaml</code> – <code>orbwise doctor</code> prüft es.</p>
         </div>
         <div class="set-section hidden" id="set-status">

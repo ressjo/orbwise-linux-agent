@@ -260,7 +260,7 @@ Start:    orbwise serve --open      (or "Orbwise" in the application menu)
 Check:    orbwise doctor
 Update:   orbwise update
 (Open a new terminal or run "source ~/.bashrc" if "orbwise" is not found yet.)
-Web UI:   http://localhost:8765
+Web UI:   orbwise open             (http://localhost:8765 – signs the browser in once)
 Models:   orbwise model add        (download and switch to another model – also in the web UI: LLM menu)
 EOF
 echo "Skills:   orbwise skills        (Mail, Paperless, Portainer … – also under Settings → Skills)"

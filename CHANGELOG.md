@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Version and update in the web UI:** the bottom of the sidebar shows the installed version (version · date ·
+  commit). Orbwise checks for updates at most every 3 hours; *Update available (n)* lists what changed and updates
+  with one click – git pull, dependencies, restart (also as a systemd user service), then the page reloads itself.
+- **Adding models, LM-Studio-style:** the *Add* tab opens with trending GGUF models from Hugging Face that fit your
+  video memory (deduplicated across uploaders) instead of only a fixed list; search runs while you type, sorted by
+  downloads, trend, likes or last update, with a *fits my memory* filter. Every model shows parameters, architecture,
+  maximum context, license, vision, tool calls and whether it is gated; every quantization a video-memory bar, the
+  context that roughly fits next to it and a short quality note. A warning appears before the download when the
+  installed llama.cpp does not know the model's architecture yet.
+- **Hugging Face token in the settings** (*General → Hugging Face*, checked with Hugging Face, kept in the keyring) for
+  gated models, with a clear "accept the license" message and link instead of a bare 401. `HF_ENDPOINT` selects a
+  mirror.
+- **Access token for the UI and API:** before, any program on the machine – also one of another user – could drive
+  Orbwise over localhost and, in Auto mode, run commands in your name. Now everything needs a secret token from
+  `~/.config/orbwise/web-token` (readable only by you, created on first start). The app menu entry, `orbwise serve
+  --open` and the new `orbwise open` sign the browser in through a one-time link (HttpOnly cookie, about a year – the
+  token never lands in the browser history); without it a sign-in page asks for the token. The `orbwise` CLI sends it
+  along; `/v1` keeps its own API key.
 - **Code check:** the chat shows the current step ("Code check: Security") instead of "waiting for the model", and
   every running step has a **Stop** button in the activity panel – it ends the check with a report of the state so far
   (findings marked as not verified) and fixes nothing automatically.
@@ -41,6 +59,23 @@ All notable changes to this project are documented here. The format follows
   `~/.local/share/orbwise/chromium` (no root; asks first outside Auto, a "no" is remembered).
 
 ### Fixed
+- **`orbwise update` did not restart a running server** since the access token: it asked `/api/status`, which now
+  needs the token, and took the server for stopped. It now asks the token-free `/api/alive`.
+- **Image mode with several GPUs:** since the multi-GPU change the image engine took the *sum* of all cards' VRAM, so
+  on e.g. 2×12 GB it kept the language model loaded and skipped `--offload-to-cpu` – the image model then had no room
+  on the one card sd-server runs on. It now goes by the biggest single card. A seed of 0 is no longer turned into a
+  random seed.
+- **Auto mode saw `sudo` only by name:** `/usr/bin/sudo`, `/bin/su`, `s""udo` or `/usr/bin/git push` ran without the
+  password dialog or the push question. Root and push are now also recognised behind paths and quotes, and
+  `/usr/bin/sudo` gets the password dialog like `sudo`.
+- **Toasts blocked the buttons under them** (activity, model, voice in the header; the mode tabs on the phone) for as
+  long as they were shown. They now sit below the header and let clicks through (links in them stay clickable).
+- **Phone:** choosing a mode closes the sidebar; Esc closes the activity panel when it covers the chat.
+- **Push to GitHub from the sandbox** landed only an empty branch: the push took the branch of the working copy as
+  committed, while the agent's changes were still uncommitted. Open changes are now committed first (in the
+  container); without new commits nothing is pushed instead of creating an empty branch.
+- **One branch per chat:** a sandbox switched on again (or started by the code check) reuses the chat's earlier
+  `orbwise/…` branch instead of creating a second one named after the changed chat title.
 - **sudo failed silently in the cage** (e.g. installing a package via `yay`): the cage forbids it; Auto no longer
   cages, yay/paru get the password dialog, and a package manager without `sudo` gets a hint.
 - **`curl -A "$UA" …` was flagged as "reads credentials"** – curl options are no longer taken for file names.

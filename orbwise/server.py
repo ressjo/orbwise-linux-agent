@@ -10,14 +10,16 @@ import json
 import logging
 import os
 import re
+import secrets
 import shutil
+import subprocess
 import time
 import uuid
 from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import agent_safety, askpass, metrics, prompts, retire, usage
@@ -697,9 +699,9 @@ def create_app(cfg: Config) -> FastAPI:
             await asyncio.to_thread(sbx.stop, cfg, name)
         bg_jobs.set_broadcast(None)
         from .tools.ssh import close_all as close_ssh
-        await close_ssh()
+        await close_ssh()  # offene SSH-Verbindungen schließen (sonst bleiben sie bis zum Zeitlimit angemeldet)
         if images.server is not None:
-            await images.server.stop()  # Bildserver nicht verwaist laufen lassen  # offene SSH-Verbindungen schließen (sonst bleiben sie bis zum Zeitlimit angemeldet)
+            await images.server.stop()  # Bildserver nicht verwaist laufen lassen
         await hub.speaker.close()
         if tts:
             await asyncio.to_thread(tts.pocket.stop)
@@ -944,6 +946,9 @@ def create_app(cfg: Config) -> FastAPI:
             await asyncio.sleep(300)
 
     app = FastAPI(title="Orbwise", lifespan=lifespan)
+    from . import web_auth
+    web_token = web_auth.load_or_create()
+    app.state.web_token = web_token
     app.state.hub = hub
     app.state.telegram = telegram_bot
     app.state.memory = memory
@@ -968,12 +973,124 @@ def create_app(cfg: Config) -> FastAPI:
         if request.method not in ("GET", "HEAD") and origin and \
                 not check_host(re.sub(r"^https?://", "", origin), cfg.port):
             return JSONResponse({"error": "forbidden origin"}, status_code=403)
+        # Zugangs-Token (web_auth.py): sonst könnte jedes Programm auf dem Rechner Orbwise bedienen
+        path = request.url.path
+        if not web_auth.is_public(path) and path != "/" \
+                and not web_auth.valid(web_auth.given(request.headers, request.cookies), web_token):
+            return JSONResponse({"error": "unauthorized", "detail": T(
+                "Nicht angemeldet – Orbwise über das Startmenü oder mit „orbwise open“ öffnen.",
+                "Not signed in – open Orbwise from the app menu or with “orbwise open”.")}, status_code=401)
         return await call_next(request)
 
+    def signed_in(response, token: str):
+        response.set_cookie(web_auth.COOKIE, token, max_age=web_auth.MAX_AGE, httponly=True, samesite="strict",
+                            path="/")
+        return response
+
+    open_codes: dict[str, float] = {}  # Einmal-Codes für den Starter: Code → gültig bis
+
+    def new_open_url(seconds: float = 60) -> str:
+        now = time.monotonic()
+        for c, until in list(open_codes.items()):
+            if until < now:
+                open_codes.pop(c, None)
+        code = secrets.token_urlsafe(18)
+        open_codes[code] = now + seconds
+        return f"http://localhost:{cfg.port}/?code={code}"
+    app.state.open_url = new_open_url  # orbwise serve --open
+
+    @app.post("/api/open-code")
+    async def open_code():
+        """Für den Starter / „orbwise open“ (mit Token-Header): ein Einmal-Code für die Adresszeile – so landet das
+        Token selbst nie im Browser-Verlauf."""
+        return {"url": new_open_url()}
+
     @app.get("/")
-    async def index():
+    async def index(request: Request, code: str = ""):
+        if code:  # Link aus dem Starter: Code einlösen (nur einmal), Cookie setzen, Code aus der Adresszeile nehmen
+            until = open_codes.pop(code, 0)
+            if until < time.monotonic():
+                return HTMLResponse(web_auth.login_page(cfg.language, expired=True), status_code=401,
+                                    headers={"Cache-Control": "no-store"})
+            return signed_in(RedirectResponse("/", status_code=303), web_token)
+        if not web_auth.valid(web_auth.given(request.headers, request.cookies), web_token):
+            return HTMLResponse(web_auth.login_page(cfg.language), status_code=401, headers={"Cache-Control": "no-store"})
         html = translate_index((WEB_DIR / "index.html").read_text(encoding="utf-8"), cfg.language)
         return HTMLResponse(versioned_assets(html), headers={"Cache-Control": "no-cache"})
+
+    @app.post("/api/login")
+    async def login(request: Request):
+        """Anmeldeseite: Token einfügen (Formular oder JSON) → Cookie."""
+        raw = (await request.body())[:2000].decode(errors="replace")
+        if "json" in request.headers.get("content-type", ""):
+            try:
+                given = str(json.loads(raw).get("token") or "")
+            except (ValueError, AttributeError):
+                given = ""
+        else:
+            from urllib.parse import parse_qs
+            given = (parse_qs(raw).get("token") or [""])[0]
+        if not web_auth.valid(given.strip(), web_token):
+            await asyncio.sleep(1)  # Raten bremsen
+            return HTMLResponse(web_auth.login_page(cfg.language, wrong=True), status_code=401,
+                                headers={"Cache-Control": "no-store"})
+        return signed_in(RedirectResponse("/", status_code=303), web_token)
+
+    @app.get("/api/alive")
+    async def alive():
+        """Lebenszeichen ohne Token – für den Starter (orbwise-open), bevor er die Oberfläche öffnet."""
+        return {"ok": True}
+
+    # ---------- Version und Update aus der Oberfläche ----------
+    update_state: dict = {"checked": 0.0, "info": None, "running": False}
+
+    @app.get("/api/update")
+    async def update_info(check: bool = False, force: bool = False):
+        """Installierter Stand; mit check=1 auch, ob es einen neueren gibt (git fetch höchstens alle 3 Stunden)."""
+        from . import update as upd
+        if not check:
+            return {**await asyncio.to_thread(upd.details), "running": update_state["running"]}
+        fresh = time.monotonic() - update_state["checked"] < 3 * 3600
+        if force or not fresh or update_state["info"] is None:
+            update_state["info"] = await asyncio.to_thread(upd.check)
+            update_state["checked"] = time.monotonic()
+        return {**update_state["info"], "running": update_state["running"]}
+
+    @app.post("/api/update")
+    async def update_start():
+        """Update laden (git pull, Abhängigkeiten) und Orbwise neu starten – Fortschritt per WebSocket
+        (update_progress, update_done). Nicht, während Orbwise antwortet oder ein Bild rechnet."""
+        from . import update as upd
+        if update_state["running"]:
+            raise HTTPException(409, T("Das Update läuft schon.", "The update is already running."))
+        if agent.busy() or images.lock.locked():
+            raise HTTPException(409, T("Orbwise arbeitet gerade – erst abwarten, dann aktualisieren.",
+                                       "Orbwise is busy – wait, then update."))
+        update_state["running"] = True
+        loop = asyncio.get_running_loop()
+        lines: list[str] = []
+
+        def out(line: str) -> None:
+            lines.append(line)
+            asyncio.run_coroutine_threadsafe(hub.broadcast({"type": "update_progress", "text": line}), loop)
+
+        async def run() -> None:
+            restart: list[Path] = []
+            try:
+                code = await asyncio.to_thread(upd.update, None, cfg.port, subprocess.run,
+                                               lambda port, root: restart.append(root), out)
+            except Exception as e:  # noqa: BLE001 – melden statt hängen lassen
+                log.exception("Update fehlgeschlagen")
+                code, lines[:] = 1, [*lines, str(e)]
+            update_state["running"] = False
+            update_state["info"] = None  # beim nächsten Blick neu prüfen
+            await hub.broadcast({"type": "update_done", "ok": code == 0, "restart": bool(restart),
+                                 "text": "\n".join(lines[-12:])})
+            if restart:
+                await asyncio.sleep(1)  # Meldung noch zustellen
+                await asyncio.to_thread(upd.restart_self, cfg.port, restart[0])
+        background.append(asyncio.create_task(run()))
+        return {"started": True}
 
     @app.get("/api/startup")
     async def startup_state():
@@ -1116,7 +1233,7 @@ def create_app(cfg: Config) -> FastAPI:
                 saved = await images.generate(
                     str(data.get("prompt") or ""), negative=str(data.get("negative") or ""),
                     size=str(data.get("size") or ""), steps=int(data.get("steps") or 0),
-                    cfg_scale=float(data.get("cfg_scale") or 0), seed=int(data.get("seed", -1) or -1),
+                    cfg_scale=float(data.get("cfg_scale") or 0), seed=int(-1 if data.get("seed") in (None, "") else data["seed"]),
                     count=int(data.get("count") or 1), ref_images=refs, progress=progress,
                     megapixels=float(data.get("megapixels") or 0))
                 await hub.broadcast({"type": "image_done", "images": saved})
@@ -1454,11 +1571,14 @@ def create_app(cfg: Config) -> FastAPI:
         if not path:
             raise HTTPException(409, T("Kein Projektordner gewählt.", "No project folder chosen."))
         sb = agent.sandbox_state()
+        from . import sandbox as sbx
         try:
-            if sb:
-                return await asyncio.to_thread(github.push_from_copy, cfg, sb["path"], github.sandbox_origin(sb))
+            if sb:  # offene Änderungen der Arbeitskopie zuerst committen – sonst käme nur ein leerer Branch an
+                await sbx.commit_all(cfg, sb, str(memory.active.meta.get("title") or ""))
+                return await asyncio.to_thread(github.push_from_copy, cfg, sb["path"], github.sandbox_origin(sb), "",
+                                               sb.get("project") or "")
             return await asyncio.to_thread(github.push, cfg, path)
-        except (github.GitHubError, OSError) as e:
+        except (github.GitHubError, sbx.SandboxError, OSError) as e:
             raise HTTPException(400, str(e)) from e
 
     @app.post("/api/github/connect")
@@ -1478,10 +1598,14 @@ def create_app(cfg: Config) -> FastAPI:
             identity = await github.user(cfg)
         except Exception as e:  # noqa: BLE001 – dann die git-Identität des Rechners
             log.info("GitHub-Konto nicht abrufbar: %s", e)
+        from . import sandbox as sbx
         try:
+            from . import workspace
+            if sb and workspace._git_dir(sb["path"]) is not None:
+                await sbx.commit_all(cfg, sb, str(memory.active.meta.get("title") or data.get("message") or ""))
             out = await asyncio.to_thread(github.connect_and_push, cfg, project, str(data.get("repo", "")), sb,
                                           str(data.get("message") or ""), identity)
-        except (github.GitHubError, OSError) as e:
+        except (github.GitHubError, sbx.SandboxError, OSError) as e:
             raise HTTPException(400, str(e)) from e
         finally:
             if sb:
@@ -1966,6 +2090,9 @@ def create_app(cfg: Config) -> FastAPI:
         if not check_host(host, cfg.port) or not check_host(ws.headers.get("host"), cfg.port) \
                 or await asyncio.to_thread(from_jail, ws):  # kostet nur, solange ein Käfig-Prozess lebt
             await ws.close(code=4403)
+            return
+        if not web_auth.valid(web_auth.given(ws.headers, ws.cookies), web_token):
+            await ws.close(code=4401)  # Oberfläche lädt neu und zeigt die Anmeldung
             return
         await ws.accept()
         client = Client(ws)

@@ -129,8 +129,18 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
         return {"gpu": gpu, "presets": mdl.preset_list(gpu["vram_gb"], installed),
                 "pulling": sorted(pulls)}
 
+    def with_fit(item: dict, gpu: dict) -> dict:
+        """Passt das Modell (bei Q4_K_M) in den Speicher, und kennt das installierte llama.cpp seine Architektur?"""
+        from . import llamacpp
+        from . import models as mdl
+        out = dict(item)
+        if out.get("est_gb"):
+            out["fit"] = mdl.fit_need(mdl.need_gb(out["est_gb"]), gpu["vram_gb"])
+        out["supported"] = llamacpp.supports_arch(cfg, out.get("arch") or "")
+        return out
+
     @app.get("/api/models/hf/search")
-    async def hf_search(q: str = ""):
+    async def hf_search(q: str = "", sort: str = "downloads"):
         from . import models as mdl
         if not q.strip():
             return {"results": []}
@@ -138,9 +148,29 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
         if tag and mdl.is_hf(tag):  # Link eingefügt → gleich dieses Repo
             return {"results": [{"repo": tag[6:].split(":", 1)[0], "tag": tag if ":" in tag else None}]}
         try:
-            return {"results": await asyncio.to_thread(mdl.hf_search, q)}
+            found = await asyncio.to_thread(mdl.hf_search, q, 30, None, sort)
         except (httpx.HTTPError, ValueError) as e:
             raise HTTPException(502, f"Hugging Face nicht erreichbar: {e}") from e
+        gpu = await asyncio.to_thread(mdl.detect_gpu)
+        return {"results": [with_fit(r, gpu) for r in found], "gpu": gpu}
+
+    suggest_cache: dict = {}  # Vorschläge eine Stunde merken – nicht bei jedem Öffnen des Reiters fragen
+
+    @app.get("/api/models/hf/suggest")
+    async def hf_suggest(refresh: bool = False):
+        """Beliebte GGUF-Modelle von Hugging Face, die in den Speicher passen (statt einer festen Liste)."""
+        from . import models as mdl
+        gpu = await asyncio.to_thread(mdl.detect_gpu)
+        key = gpu["vram_gb"]
+        hit = suggest_cache.get(key)
+        if hit and not refresh and time.monotonic() - hit[0] < 3600:
+            return {"results": [with_fit(r, gpu) for r in hit[1]], "gpu": gpu}
+        try:
+            found = await asyncio.to_thread(mdl.hf_suggest, gpu["vram_gb"])
+        except (httpx.HTTPError, ValueError) as e:
+            raise HTTPException(502, f"Hugging Face nicht erreichbar: {e}") from e
+        suggest_cache[key] = (time.monotonic(), found)
+        return {"results": [with_fit(r, gpu) for r in found], "gpu": gpu}
 
     @app.get("/api/models/hf/quants")
     async def hf_quants(repo: str):
@@ -148,15 +178,64 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
         from . import models as mdl
         gpu = await asyncio.to_thread(mdl.detect_gpu)
         try:
-            items = await asyncio.to_thread(mdl.hf_quants, repo, gpu["vram_gb"], llamacpp.models_dir(cfg))
+            items, info = await asyncio.gather(
+                asyncio.to_thread(mdl.hf_quants, repo, gpu["vram_gb"], llamacpp.models_dir(cfg)),
+                asyncio.to_thread(mdl.hf_info, repo))
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
         except httpx.HTTPStatusError as e:
-            raise HTTPException(404 if e.response.status_code in (401, 404) else 502,
+            if e.response.status_code in (401, 403):
+                raise HTTPException(403, T(
+                    "Zugangsbeschränktes Modell – Lizenz auf Hugging Face akzeptieren und unter Einstellungen → "
+                    "Allgemein → Hugging Face ein Token eintragen.",
+                    "Gated model – accept the license on Hugging Face and enter a token under Settings → General → "
+                    "Hugging Face.")) from e
+            raise HTTPException(404 if e.response.status_code == 404 else 502,
                                 "Repo nicht gefunden oder nicht öffentlich") from e
         except httpx.HTTPError as e:
             raise HTTPException(502, f"Hugging Face nicht erreichbar: {e}") from e
-        return {"repo": repo, "gpu": gpu, "quants": items, "pulling": sorted(pulls)}
+        gpus = len(gpu.get("gpus") or []) or 1
+        for x in items:
+            x["ctx"] = mdl.context_fit(x["download_gb"], gpu["vram_gb"], gpus, (info or {}).get("context") or 0)
+            x["vram_pct"] = round(100 * x["vram_gb"] / gpu["vram_gb"]) if gpu["vram_gb"] else None
+        info = with_fit(info, gpu) if info else {}
+        info["hf_token"] = bool(mdl.hf_token())
+        return {"repo": repo, "gpu": gpu, "quants": items, "info": info, "pulling": sorted(pulls),
+                "llamacpp": llamacpp.installed(cfg)}
+
+    # ---------- Hugging-Face-Token (für zugangsbeschränkte Modelle) ----------
+    @app.get("/api/hf/token")
+    async def hf_token_status():
+        import os
+        if os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN"):
+            return {"set": True, "source": "env"}
+        from . import keystore
+        return {"set": bool(await asyncio.to_thread(keystore.get, "hf_token")), "source": "saved"}
+
+    @app.post("/api/hf/token")
+    async def hf_token_save(request: Request):
+        """Token speichern (Schlüsselbund) – vorher bei Hugging Face prüfen, ob es gilt."""
+        from . import keystore
+        from . import models as mdl
+        token = str((await request.json()).get("token") or "").strip()
+        if not token:
+            await asyncio.to_thread(keystore.delete, "hf_token")
+            return {"set": False, "source": "saved"}
+        if not re.fullmatch(r"hf_[A-Za-z0-9]{20,}", token):
+            raise HTTPException(400, T("Das sieht nicht nach einem Hugging-Face-Token aus (beginnt mit hf_).",
+                                       "That does not look like a Hugging Face token (starts with hf_)."))
+        user = ""
+        try:
+            r = await asyncio.to_thread(lambda: httpx.get(f"{mdl.HF_API}/whoami-v2", timeout=10,
+                                                          headers={"Authorization": f"Bearer {token}"}))
+            if r.status_code == 401:
+                raise HTTPException(400, T("Hugging Face kennt dieses Token nicht.", "Hugging Face does not know this token."))
+            if r.status_code == 200:
+                user = r.json().get("name", "")
+        except httpx.HTTPError:
+            pass  # offline: trotzdem speichern
+        await asyncio.to_thread(keystore.set, "hf_token", token)
+        return {"set": True, "source": "saved", "user": user}
 
     # ---------- Eigene Modelle über llama.cpp (Hugging Face, ~/models) ----------
     llamacpp_lock = asyncio.Lock()
@@ -202,7 +281,10 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
         except (httpx.HTTPError, LLMError, ValueError, OSError) as e:
             text = str(e)
             if isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (401, 403):
-                text = "Hugging Face verlangt eine Anmeldung für dieses Modell (HF_TOKEN setzen)"
+                text = T("Zugangsbeschränktes Modell – Lizenz auf Hugging Face akzeptieren und unter Einstellungen → "
+                         "Allgemein → Hugging Face ein Token eintragen",
+                         "Gated model – accept the license on Hugging Face and enter a token under Settings → "
+                         "General → Hugging Face")
             await hub.broadcast({"type": "model_pull", "tag": tag, "error": text or type(e).__name__})
         except Exception as e:  # noqa: BLE001 – unerwartet: trotzdem melden, sonst hinge die Anzeige
             log.exception("Modell-Aufgabe %s fehlgeschlagen", tag)

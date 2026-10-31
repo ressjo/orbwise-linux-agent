@@ -57,6 +57,10 @@ def branch_name(chat_id: str, title: str = "") -> str:
     return f"orbwise/{slug}-{chat_id[:6]}"
 
 
+def _valid_branch(name: str) -> bool:
+    return subprocess.run(["git", "check-ref-format", "--branch", name], capture_output=True).returncode == 0
+
+
 def _copy_tracked(project: Path, ws: Path) -> None:
     """Arbeitsstand des Projekts in die Kopie: alle Dateien laut git (auch neue, nicht ignorierte), Gelöschtes weg."""
     files = _git(str(project), "ls-files", "--cached", "--others", "--exclude-standard", "-z").split("\0")
@@ -96,8 +100,11 @@ def _copy_plain(project: Path, ws: Path) -> None:
     shutil.copytree(project, ws, symlinks=True, ignore=ignore)
 
 
-def create(chat_id: str, project: str, title: str = "", identity: dict | None = None) -> dict:
-    """Legt die Arbeitskopie an (oder nimmt die vorhandene) und liefert den Zustand für conv.meta["sandbox"]."""
+def create(chat_id: str, project: str, title: str = "", identity: dict | None = None, branch: str = "") -> dict:
+    """Legt die Arbeitskopie an (oder nimmt die vorhandene) und liefert den Zustand für conv.meta["sandbox"]. branch:
+    Name aus einer früheren Sandbox des Chats – so bleibt es auf GitHub bei einem Branch je Chat, auch wenn sich der
+    Titel inzwischen geändert hat."""
+    wanted = branch.strip()
     src = Path(project).resolve()
     if not src.is_dir():
         raise WorkspaceError(f"Projektordner {project} gibt es nicht.")
@@ -119,7 +126,7 @@ def create(chat_id: str, project: str, title: str = "", identity: dict | None = 
                 else:
                     _git(str(ws), "remote", "remove", "origin", check=False)
                 _copy_tracked(src, ws)
-                branch = branch_name(chat_id, title)
+                branch = wanted if wanted and _valid_branch(wanted) else branch_name(chat_id, title)
                 _git(str(ws), "checkout", "--quiet", "-B", branch)
                 ident = identity or {}
                 name = ident.get("name") or _git(str(src), "config", "user.name", check=False).strip()

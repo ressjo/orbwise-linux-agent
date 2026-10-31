@@ -23,7 +23,7 @@ SECRET_DIRS = (
 SECRET_NAMES = {
     ".netrc", ".pgpass", ".git-credentials", ".env", ".my.cnf", ".pypirc", ".npmrc", "credentials",
     "credentials.json", "secrets.yaml", "secrets.yml", "secrets.json", "id_rsa", "id_dsa", "id_ecdsa",
-    "id_ed25519", "shadow", "gshadow", "shadow-", "gshadow-", "sudoers",
+    "id_ed25519", "shadow", "gshadow", "shadow-", "gshadow-", "sudoers", "web-token",  # web-token: Orbwise-Zugang
 }
 # Wortbestandteile im Dateinamen, die auf Zugangsdaten hindeuten (z. B. secrets.txt, aws-credentials.csv)
 SECRET_WORDS = ("secret", "credential", "passw", "keyring", ".kdbx", "private_key", "private-key", "privkey")

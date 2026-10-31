@@ -255,6 +255,21 @@ async def ensure_running(cfg: Any, sb: dict, progress: Callable[[str], Awaitable
     return binary
 
 
+async def commit_all(cfg: Any, sb: dict, message: str) -> bool:
+    """Alle Änderungen der Arbeitskopie committen – im Container (git im .git der Kopie läuft nie auf dem Host, siehe
+    github.push_from_copy). True, wenn ein Commit entstand."""
+    binary = await ensure_running(cfg, sb)
+    msg = shlex.quote(message.strip() or "Änderungen aus der Orbwise-Sandbox")
+    cmd = f"git add -A && if git diff --cached --quiet; then echo ORBWISE_NOTHING; else git commit -q -m {msg}; fi"
+    proc = await asyncio.create_subprocess_exec(*exec_argv(binary, sb["name"], sb["path"], cmd, 120),
+                                                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    out, _ = await proc.communicate()
+    text = out.decode(errors="replace").strip()
+    if proc.returncode:
+        raise SandboxError("Commit fehlgeschlagen: " + text[-600:])
+    return "ORBWISE_NOTHING" not in text
+
+
 _NEEDS_SECCOMP = re.compile(r"(unshare|clone|newuidmap|user namespace|userns)[^\n]*(operation not permitted|permission denied)",
                             re.I)
 
