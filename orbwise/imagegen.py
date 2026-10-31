@@ -160,6 +160,9 @@ class ImageEngine:
         return setup.spec_of(self.directory, setup.active_id(self.directory))
 
     def can_edit(self) -> bool:
+        api = self.api()
+        if api is not None:  # eigenes Backend: nur ein externer sd-server nimmt Vorlagen an
+            return api["backend"] == "sdcpp"
         spec = self.model()
         vision = model_paths(self.directory).get("vision")
         return bool(spec and spec.edit and vision and vision.exists())
@@ -202,6 +205,68 @@ class ImageEngine:
     def loaded(self) -> bool:
         return bool(self.server and self.server.running())
 
+    # ---------- Eigenes Backend (Experten): Server, den Orbwise nicht startet ----------
+    def api(self) -> dict | None:
+        """Eintrag des aktiven Bildmodells, wenn es ein eigenes Backend ist (openai / a1111 / sdcpp), sonst None."""
+        entry = model_entry(self.directory)
+        return entry if setup.is_api(entry) else None
+
+    def _api_headers(self) -> dict:
+        from . import keystore
+        try:
+            key = keystore.get("image_api_key:" + setup.active_id(self.directory))
+        except Exception:  # noqa: BLE001 – ohne Schlüssel
+            key = ""
+        return {"Authorization": f"Bearer {key}"} if key else {}
+
+    async def _generate_api(self, api: dict, prompt: str, negative: str, width: int, height: int, steps: int,
+                            cfg_scale: float, seed: int, count: int, ref_images: list[bytes] | None,
+                            sampler: str, progress: Progress | None) -> dict:
+        """Ein Bild über das eigene Backend → {"images": [{"b64_json": …}]} wie bei sd-server."""
+        kind, base = api["backend"], api["base_url"].rstrip("/")
+        if progress:
+            await progress({"phase": "generating"})
+        async with httpx.AsyncClient(timeout=httpx.Timeout(900, connect=15), transport=self.transport,
+                                     headers=self._api_headers()) as c:
+            try:
+                if kind == "sdcpp":  # externer sd-server: dieselbe Schnittstelle wie der eigene
+                    body = {"prompt": prompt, "negative_prompt": negative or "", "width": width, "height": height,
+                            "seed": seed, "batch_count": count, "output_format": "png",
+                            "ref_images": [base64.b64encode(b).decode() for b in ref_images or []],
+                            "sample_params": {"sample_method": sampler, "sample_steps": steps,
+                                              **({"guidance": {"txt_cfg": cfg_scale}} if cfg_scale else {})}}
+                    r = await c.post(f"{base}/sdcpp/v1/img_gen", json=body)
+                    self._api_check(r)
+                    self.job = r.json()["id"]
+                    c.base_url = base
+                    return await self._wait(c, self.job, progress)
+                if kind == "a1111":
+                    body = {"prompt": prompt, "negative_prompt": negative or "", "width": width, "height": height,
+                            "steps": steps, "seed": seed, "batch_size": count,
+                            **({"cfg_scale": cfg_scale} if cfg_scale else {}),
+                            **({"override_settings": {"sd_model_checkpoint": api["model"]}} if api.get("model") else {})}
+                    r = await c.post(f"{base}/sdapi/v1/txt2img", json=body)
+                    self._api_check(r)
+                    return {"images": [{"b64_json": img} for img in r.json().get("images") or []]}
+                body = {"prompt": prompt, "n": count, "size": f"{width}x{height}", "response_format": "b64_json",
+                        **({"model": api["model"]} if api.get("model") else {}),
+                        **({"negative_prompt": negative} if negative else {}),
+                        **({"seed": seed} if seed >= 0 else {}), **({"steps": steps} if steps else {})}
+                r = await c.post(f"{base}/images/generations", json=body)
+                self._api_check(r)
+                return {"images": [{"b64_json": d.get("b64_json") or ""} for d in r.json().get("data") or []]}
+            except httpx.HTTPError as e:
+                raise ImageError(T(f"Eigenes Bild-Backend nicht erreichbar ({base}): {e}",
+                                   f"Own image backend not reachable ({base}): {e}")) from e
+            finally:
+                self.job = None
+
+    @staticmethod
+    def _api_check(r: httpx.Response) -> None:
+        if r.status_code >= 400:
+            raise ImageError(T(f"Eigenes Bild-Backend lehnt ab ({r.status_code}): ",
+                               f"Own image backend refused ({r.status_code}): ") + r.text[:300])
+
     def status(self) -> dict:
         spec = self.model()
         steps, cfg_scale, _ = self.defaults()
@@ -210,6 +275,7 @@ class ImageEngine:
                 "resolutions": list(RESOLUTIONS), "megapixels": self.cfg.image.megapixels, "max_refs": MAX_REFS,
                 "steps": steps, "cfg_scale": cfg_scale,
                 "model": spec.id if spec else "", "model_label": spec.label if spec else "",
+                "external": (self.api() or {}).get("backend", ""),
                 "llm_unloaded": self.stopped_llm, "dir": str(self.directory)}
 
     # ---------- Server ----------
@@ -346,8 +412,17 @@ class ImageEngine:
         async with self.lock:
             if self._idle:
                 self._idle.cancel()
-            await self.ensure(progress)
             started = time.monotonic()
+            api = self.api()
+            if api is not None:  # eigenes Backend: nichts starten, nichts entladen – nur ansprechen
+                result = await self._generate_api(api, prompt, negative, width, height, steps, cfg_scale, seed, count,
+                                                  ref_images, sampler, progress)
+                spec = self.model()
+                return self._save(result, {"model": spec.label if spec else "", "prompt": prompt, "negative": negative,
+                                           "width": width, "height": height, "steps": steps, "cfg_scale": cfg_scale,
+                                           "seed": seed, "edit": bool(ref_images), "refs": len(ref_images or []),
+                                           "seconds": round(time.monotonic() - started, 1)})
+            await self.ensure(progress)
             body: dict[str, Any] = {
                 "prompt": prompt, "negative_prompt": negative or "", "width": width, "height": height,
                 "seed": seed, "batch_count": count, "embed_image_metadata": True, "output_format": "png",
@@ -410,9 +485,20 @@ class ImageEngine:
                     await progress(state)
 
     async def cancel(self) -> bool:
+        api = self.api()
+        if api is not None and api["backend"] == "a1111" and self.lock.locked():
+            with contextlib.suppress(httpx.HTTPError):
+                async with httpx.AsyncClient(timeout=10, transport=self.transport, headers=self._api_headers()) as c:
+                    await c.post(api["base_url"].rstrip("/") + "/sdapi/v1/interrupt")
+            return True
         job = self.job
         if not job:
             return False
+        if api is not None and api["backend"] == "sdcpp":
+            with contextlib.suppress(httpx.HTTPError):
+                async with httpx.AsyncClient(timeout=10, transport=self.transport, headers=self._api_headers()) as c:
+                    await c.post(api["base_url"].rstrip("/") + f"/sdcpp/v1/jobs/{job}/cancel")
+            return True
         with contextlib.suppress(httpx.HTTPError):
             async with httpx.AsyncClient(base_url=self.base_url, timeout=10, transport=self.transport) as c:
                 await c.post(f"/sdcpp/v1/jobs/{job}/cancel")

@@ -128,6 +128,21 @@ you), so other programs or users on the machine cannot drive Orbwise. The app me
 Opening `http://localhost:8765` without it shows a sign-in page where you can paste the token. Scripts send it as
 header `X-Orbwise-Token`. The OpenAI-compatible API (`/v1`) keeps its own key.
 
+### Own backend (experts) – e.g. Strata, vLLM, LM Studio, Forge
+
+Orbwise does not have to run the models itself. **Models → Add → Own backend (experts)** takes any
+**OpenAI-compatible server** – Strata, vLLM, LM Studio, TabbyAPI, a llama-server on another machine: name, address
+(`http://host:port/v1`; *Test connection* adds `/v1` if needed and lists the server's models), optional API key and
+optional context window. Orbwise then only talks to it: it starts and stops nothing there, so context window, KV
+cache, GPUs and sampling defaults are up to the server – the context window you enter only tells Orbwise how much
+fits. Switching to such a backend still stops Orbwise's own llama-server (only one model in memory).
+
+The same for images, on the image model page (image mode → *Models*): **OpenAI Images API**
+(`/v1/images/generations`), **Automatic1111 / Forge** (`/sdapi/v1/txt2img`, the model goes in as
+`sd_model_checkpoint`) or an external **stable-diffusion.cpp sd-server** (editing with references works there).
+Prompt, negative prompt, size, steps, seed and count are sent as far as the interface knows them. API keys are kept in
+the keyring, never in `state.json` or `manifest.json`.
+
 ### Updating
 
 The version is shown at the bottom of the sidebar (version · date · commit). Orbwise checks for a newer version at

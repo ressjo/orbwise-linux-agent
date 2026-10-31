@@ -88,12 +88,46 @@ def model_paths(directory: Path, model_id: str | None = None) -> dict[str, Path]
     return {role: directory / "models" / name for role, name in (model_entry(directory, model_id).get("files") or {}).items()}
 
 
+# Eigenes Bild-Backend (Experten): ein Server, den Orbwise nicht startet – nur ansprechen
+API_KINDS = {"openai": "OpenAI Images API", "a1111": "Automatic1111 / Forge", "sdcpp": "stable-diffusion.cpp (sd-server)"}
+
+
+def is_api(entry: dict) -> bool:
+    return entry.get("backend") in API_KINDS
+
+
+def api_id(label: str) -> str:
+    return "api-" + (re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")[:40] or "server")
+
+
+def add_api_model(cfg, label: str, kind: str, base_url: str, model: str = "") -> str:
+    """Eigenes Bild-Backend eintragen (der API-Schlüssel liegt im Schlüsselbund, nicht hier) und aktiv machen."""
+    if kind not in API_KINDS:
+        raise ValueError("unbekannte Schnittstelle")
+    if not re.match(r"^https?://[^\s/]+", base_url.strip()):
+        raise ValueError(T("Adresse bitte mit http:// oder https://", "Address please with http:// or https://"))
+    directory = image_dir(cfg)
+    model_id = api_id(label)
+    data = manifest(directory) or {"models": {}}
+    data["models"][model_id] = {"backend": kind, "base_url": base_url.strip().rstrip("/"), "model": model.strip(),
+                                "label": label.strip() or model_id, "files": {}}
+    data["active"] = model_id
+    _write_manifest(directory, data)
+    return model_id
+
+
 def spec_of(directory: Path, model_id: str) -> ImageModel | None:
-    """Katalogeintrag – oder für ein frei von Hugging Face geladenes Modell der seiner Familie (Bauteile, Optionen,
-    Schritte), mit eigenem Namen."""
+    """Katalogeintrag – für ein frei von Hugging Face geladenes Modell der seiner Familie (Bauteile, Optionen,
+    Schritte), für ein eigenes Backend ein schlichter Eintrag ohne Dateien."""
     if model_id in BY_ID:
         return BY_ID[model_id]
     entry = model_entry(directory, model_id)
+    if is_api(entry):
+        kind = API_KINDS[entry["backend"]]
+        return ImageModel(model_id, entry.get("label") or model_id, f"Eigenes Backend: {kind} · {entry.get('base_url')}",
+                          f"Own backend: {kind} · {entry.get('base_url')}", {}, (), (), lambda t, v: {}, 0, 0,
+                          25 if entry["backend"] == "a1111" else 20, 7.0 if entry["backend"] == "a1111" else 0.0,
+                          edit=entry["backend"] == "sdcpp")
     base = FAMILIES.get(entry.get("family", ""))
     if base is None:
         return None
@@ -104,6 +138,8 @@ def spec_of(directory: Path, model_id: str) -> ImageModel | None:
 
 
 def model_installed(directory: Path, model_id: str) -> bool:
+    if is_api(model_entry(directory, model_id)):
+        return True  # eigenes Backend: keine Dateien
     spec = spec_of(directory, model_id)
     paths = model_paths(directory, model_id)
     need = spec.required if spec else ("diffusion",)
@@ -112,6 +148,8 @@ def model_installed(directory: Path, model_id: str) -> bool:
 
 def is_set_up(directory: Path) -> bool:
     model = active_id(directory)
+    if model and is_api(model_entry(directory, model)):
+        return True  # eigenes Backend braucht kein sd-server hier
     return server_binary(directory).exists() and bool(model) and model_installed(directory, model)
 
 
@@ -648,7 +686,8 @@ def catalog(cfg, vram_gb: float) -> list[dict]:
                     "edit": spec.edit, "license": "", "installed": True, "active": model_id == active,
                     "disk_gb": round(disk_size(directory, model_id) / 1e9, 1), "fit": "ok",
                     "min_vram_gb": 0, "new": False, "custom": True, "repo": entry.get("repo", ""),
-                    "family": entry.get("family", "")})
+                    "family": entry.get("family", ""), "api": entry.get("backend") if is_api(entry) else "",
+                    "base_url": entry.get("base_url", "") if is_api(entry) else ""})
     return out
 
 

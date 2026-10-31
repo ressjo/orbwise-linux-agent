@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Own backend (experts):** use a server Orbwise does not run – for language models any OpenAI-compatible server
+  (Strata, vLLM, LM Studio, llama-server elsewhere; *Test connection* lists its models), for images the OpenAI Images
+  API, Automatic1111/Forge or an external sd-server. Orbwise only talks to it (no context window or KV cache to set);
+  API keys live in the keyring. An own backend named Strata is not touched by the old Strata cleanup.
 - **All text-to-image models from Hugging Face in the image view:** search and sort like for language models; the
   model family is recognised (FLUX.1, FLUX.2 klein, Qwen-Image, Z-Image, SDXL incl. Pony/Illustrious, SD 1.5), the
   loadable files are listed with size and fit, and the family's text encoder and VAE are added on download.
