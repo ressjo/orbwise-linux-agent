@@ -290,7 +290,8 @@
       loadChats();  // Seitenleiste gleich füllen (vorher erst nach NEU oder der ersten Antwort)
       renderBoot();
     };
-    ws.onclose = () => {
+    ws.onclose = (ev) => {
+      if (ev.code === 4401) { signedOut(); return; }  // Zugangs-Token fehlt/abgelaufen → Anmeldeseite
       S.connected = false; S.prewarm = null;
       S.recording = false;
       S.transcribing = false;
@@ -4787,8 +4788,13 @@
     } catch { out.textContent = L("Vorschau fehlgeschlagen", "Preview failed"); }
   };
 
+  // Nicht (mehr) angemeldet (Cookie gelöscht, Token neu): einmal neu laden – der Server zeigt die Anmeldeseite
+  function signedOut() {
+    if (!signedOut.done) { signedOut.done = true; location.reload(); }
+  }
   async function getJSON(url) {
     const r = await fetch(url);
+    if (r.status === 401) signedOut();
     if (!r.ok) throw new Error(r.status);
     return r.json();
   }
@@ -4835,6 +4841,7 @@
   async function api(method, url, body) {
     const r = await fetch(url, { method, headers: body ? { "Content-Type": "application/json" } : {},
                                  body: body ? JSON.stringify(body) : undefined });
+    if (r.status === 401) signedOut();
     if (!r.ok) {
       let msg = `${L("Fehler", "Error")} ${r.status}`;
       try { msg = (await r.json()).detail || msg; } catch { /* egal */ }

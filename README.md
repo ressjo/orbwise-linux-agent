@@ -122,6 +122,12 @@ orbwise serve --open  # starts the server and opens http://localhost:8765
 
 Or click **Orbwise** in the application menu – it opens the UI in its own app window.
 
+**Access token:** the UI and API only answer with a secret token from `~/.config/orbwise/web-token` (readable only by
+you), so other programs or users on the machine cannot drive Orbwise. The app menu entry, `orbwise serve --open` and
+`orbwise open` sign the browser in through a one-time link (a cookie, kept for about a year – bookmarks keep working).
+Opening `http://localhost:8765` without it shows a sign-in page where you can paste the token. Scripts send it as
+header `X-Orbwise-Token`. The OpenAI-compatible API (`/v1`) keeps its own key.
+
 ### Updating
 
 ```bash

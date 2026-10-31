@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Access token for the UI and API:** before, any program on the machine – also one of another user – could drive
+  Orbwise over localhost and, in Auto mode, run commands in your name. Now everything needs a secret token from
+  `~/.config/orbwise/web-token` (readable only by you, created on first start). The app menu entry, `orbwise serve
+  --open` and the new `orbwise open` sign the browser in through a one-time link (HttpOnly cookie, about a year – the
+  token never lands in the browser history); without it a sign-in page asks for the token. The `orbwise` CLI sends it
+  along; `/v1` keeps its own API key.
 - **Code check:** the chat shows the current step ("Code check: Security") instead of "waiting for the model", and
   every running step has a **Stop** button in the activity panel – it ends the check with a report of the state so far
   (findings marked as not verified) and fixes nothing automatically.

@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
-# Starts Orbwise (if needed) and opens the web UI in its own app window.
+# Starts Orbwise (if needed) and opens the web UI in its own app window – signed in through a one-time link
+# (the access token itself never ends up in the browser history, see orbwise/web_auth.py).
 PORT="${ORBWISE_PORT:-8765}"
 URL="http://localhost:$PORT"
+ORBWISE="$HOME/.local/bin/orbwise"
 
-if ! curl -fs "$URL/api/status" >/dev/null 2>&1; then
+if ! curl -fs "$URL/api/alive" >/dev/null 2>&1; then
   mkdir -p "${XDG_STATE_HOME:-$HOME/.local/state}"
-  nohup "$HOME/.local/bin/orbwise" serve >"${XDG_STATE_HOME:-$HOME/.local/state}/orbwise.log" 2>&1 &
+  nohup "$ORBWISE" serve >"${XDG_STATE_HOME:-$HOME/.local/state}/orbwise.log" 2>&1 &
   for _ in $(seq 1 60); do
-    curl -fs "$URL/api/status" >/dev/null 2>&1 && break
+    curl -fs "$URL/api/alive" >/dev/null 2>&1 && break
     sleep 0.5
   done
 fi
+
+LINK="$("$ORBWISE" open --print 2>/dev/null | tail -n 1)"
+case "$LINK" in http://*) URL="$LINK" ;; esac
 
 for browser in chromium google-chrome-stable google-chrome brave vivaldi-stable microsoft-edge-stable; do
   if command -v "$browser" >/dev/null; then

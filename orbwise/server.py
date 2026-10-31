@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import time
 import uuid
@@ -17,7 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from . import agent_safety, askpass, metrics, prompts, retire, usage
@@ -944,6 +945,9 @@ def create_app(cfg: Config) -> FastAPI:
             await asyncio.sleep(300)
 
     app = FastAPI(title="Orbwise", lifespan=lifespan)
+    from . import web_auth
+    web_token = web_auth.load_or_create()
+    app.state.web_token = web_token
     app.state.hub = hub
     app.state.telegram = telegram_bot
     app.state.memory = memory
@@ -968,12 +972,73 @@ def create_app(cfg: Config) -> FastAPI:
         if request.method not in ("GET", "HEAD") and origin and \
                 not check_host(re.sub(r"^https?://", "", origin), cfg.port):
             return JSONResponse({"error": "forbidden origin"}, status_code=403)
+        # Zugangs-Token (web_auth.py): sonst könnte jedes Programm auf dem Rechner Orbwise bedienen
+        path = request.url.path
+        if not web_auth.is_public(path) and path != "/" \
+                and not web_auth.valid(web_auth.given(request.headers, request.cookies), web_token):
+            return JSONResponse({"error": "unauthorized", "detail": T(
+                "Nicht angemeldet – Orbwise über das Startmenü oder mit „orbwise open“ öffnen.",
+                "Not signed in – open Orbwise from the app menu or with “orbwise open”.")}, status_code=401)
         return await call_next(request)
 
+    def signed_in(response, token: str):
+        response.set_cookie(web_auth.COOKIE, token, max_age=web_auth.MAX_AGE, httponly=True, samesite="strict",
+                            path="/")
+        return response
+
+    open_codes: dict[str, float] = {}  # Einmal-Codes für den Starter: Code → gültig bis
+
+    def new_open_url(seconds: float = 60) -> str:
+        now = time.monotonic()
+        for c, until in list(open_codes.items()):
+            if until < now:
+                open_codes.pop(c, None)
+        code = secrets.token_urlsafe(18)
+        open_codes[code] = now + seconds
+        return f"http://localhost:{cfg.port}/?code={code}"
+    app.state.open_url = new_open_url  # orbwise serve --open
+
+    @app.post("/api/open-code")
+    async def open_code():
+        """Für den Starter / „orbwise open“ (mit Token-Header): ein Einmal-Code für die Adresszeile – so landet das
+        Token selbst nie im Browser-Verlauf."""
+        return {"url": new_open_url()}
+
     @app.get("/")
-    async def index():
+    async def index(request: Request, code: str = ""):
+        if code:  # Link aus dem Starter: Code einlösen (nur einmal), Cookie setzen, Code aus der Adresszeile nehmen
+            until = open_codes.pop(code, 0)
+            if until < time.monotonic():
+                return HTMLResponse(web_auth.login_page(cfg.language, expired=True), status_code=401,
+                                    headers={"Cache-Control": "no-store"})
+            return signed_in(RedirectResponse("/", status_code=303), web_token)
+        if not web_auth.valid(web_auth.given(request.headers, request.cookies), web_token):
+            return HTMLResponse(web_auth.login_page(cfg.language), status_code=401, headers={"Cache-Control": "no-store"})
         html = translate_index((WEB_DIR / "index.html").read_text(encoding="utf-8"), cfg.language)
         return HTMLResponse(versioned_assets(html), headers={"Cache-Control": "no-cache"})
+
+    @app.post("/api/login")
+    async def login(request: Request):
+        """Anmeldeseite: Token einfügen (Formular oder JSON) → Cookie."""
+        raw = (await request.body())[:2000].decode(errors="replace")
+        if "json" in request.headers.get("content-type", ""):
+            try:
+                given = str(json.loads(raw).get("token") or "")
+            except (ValueError, AttributeError):
+                given = ""
+        else:
+            from urllib.parse import parse_qs
+            given = (parse_qs(raw).get("token") or [""])[0]
+        if not web_auth.valid(given.strip(), web_token):
+            await asyncio.sleep(1)  # Raten bremsen
+            return HTMLResponse(web_auth.login_page(cfg.language, wrong=True), status_code=401,
+                                headers={"Cache-Control": "no-store"})
+        return signed_in(RedirectResponse("/", status_code=303), web_token)
+
+    @app.get("/api/alive")
+    async def alive():
+        """Lebenszeichen ohne Token – für den Starter (orbwise-open), bevor er die Oberfläche öffnet."""
+        return {"ok": True}
 
     @app.get("/api/startup")
     async def startup_state():
@@ -1973,6 +2038,9 @@ def create_app(cfg: Config) -> FastAPI:
         if not check_host(host, cfg.port) or not check_host(ws.headers.get("host"), cfg.port) \
                 or await asyncio.to_thread(from_jail, ws):  # kostet nur, solange ein Käfig-Prozess lebt
             await ws.close(code=4403)
+            return
+        if not web_auth.valid(web_auth.given(ws.headers, ws.cookies), web_token):
+            await ws.close(code=4401)  # Oberfläche lädt neu und zeigt die Anmeldung
             return
         await ws.accept()
         client = Client(ws)
