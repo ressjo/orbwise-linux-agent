@@ -495,8 +495,8 @@ def test_image_model_api(cfg, monkeypatch, tmp_path):
     from orbwise import models as mdl
     monkeypatch.setattr(mdl, "detect_gpu", lambda: {"vendor": "amd", "name": "x", "vram_gb": 16.0, "gpus": []})
     real_install = setup.install
-    monkeypatch.setattr(setup, "install", lambda gpu, c, out, client, model_id, stop: real_install(
-        gpu, c, out, catalog_client(), model_id, stop))
+    monkeypatch.setattr(setup, "install", lambda gpu, c, out, client, model_id, stop, source=None: real_install(
+        gpu, c, out, catalog_client(), model_id, stop, source))
     with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
         data = client.get("/api/image/models").json()
         assert [m["id"] for m in data["models"]] == ["qwen-image", "z-image-turbo", "flux-schnell", "flux2-klein-4b",
@@ -506,7 +506,8 @@ def test_image_model_api(cfg, monkeypatch, tmp_path):
         assert client.post("/api/image/models/gibtsnicht/install").status_code == 404
         assert client.post("/api/image/models/sdxl/activate").status_code == 404
         with client.websocket_connect("ws://localhost:8765/ws", headers={"Origin": "http://localhost:8765"}) as ws:
-            assert client.post("/api/image/models/z-image-turbo/install").json() == {"started": True}
+            assert client.post("/api/image/models/z-image-turbo/install").json() == {"started": True,
+                                                                                    "model": "z-image-turbo"}
             events = []
             while not any(e.get("type") == "image_install" and e.get("done") for e in events):
                 events.append(ws.receive_json())
@@ -543,3 +544,135 @@ def test_new_models_find_their_repository_by_search(tmp_path):
         assert "nicht gefunden" in out[-1] and "diffusion" in out[-1]
     finally:
         SEARCH["FLUX.2-klein-4B"] = saved
+
+
+# ---------------------------------------------------------------- Alle Text-zu-Bild-Modelle (Suche)
+HF_IMAGE_MODELS = [
+    {"id": "city96/FLUX.1-dev-gguf", "downloads": 900, "tags": ["gguf", "base_model:black-forest-labs/FLUX.1-dev"]},
+    {"id": "someone/juggernaut-xl-v9", "downloads": 800, "likes": 40, "lastModified": "2026-01-02T00:00:00Z",
+     "tags": ["base_model:stabilityai/stable-diffusion-xl-base-1.0", "license:openrail++"]},
+    {"id": "someone/cool-style-lora", "downloads": 700, "tags": ["lora", "base_model:black-forest-labs/FLUX.1-dev"]},
+    {"id": "Lykon/dreamshaper-8", "downloads": 600, "tags": ["stable-diffusion"]},
+    {"id": "someone/mystery-model", "downloads": 500, "tags": []},
+    {"id": "someone/Wan2.2-T2V", "downloads": 400, "tags": []},
+]
+JUGGERNAUT_TREE = [
+    {"type": "file", "path": "juggernautXL_v9.safetensors", "lfs": {"size": int(6.9e9)}},
+    {"type": "file", "path": "juggernautXL_v9-fp16-lora.safetensors", "lfs": {"size": int(0.2e9)}},
+    {"type": "file", "path": "vae/diffusion_pytorch_model.safetensors", "lfs": {"size": int(0.3e9)}},
+    {"type": "file", "path": "unet/diffusion_pytorch_model.safetensors", "lfs": {"size": int(5e9)}},
+    {"type": "file", "path": "README.md", "size": 100},
+]
+FLUX_DEV_TREE = [{"type": "file", "path": f"flux1-dev-{q}.gguf", "lfs": {"size": int(gb * 1e9)}}
+                 for q, gb in (("Q4_K_S", 6.8), ("Q8_0", 12.7), ("F16", 23.8))]
+
+
+@pytest.fixture
+def fake_hf(monkeypatch):
+    from orbwise import models as mdl
+    calls = []
+
+    def get(path, params=None, base=None):
+        calls.append((path, params))
+        if path == "/models":
+            search = dict(params).get("search", "").lower()
+            return [m for m in HF_IMAGE_MODELS if search in m["id"].lower()]
+        if path.endswith("/tree/main"):
+            repo = path[len("/models/"):-len("/tree/main")]
+            return {"someone/juggernaut-xl-v9": JUGGERNAUT_TREE, "city96/FLUX.1-dev-gguf": FLUX_DEV_TREE}.get(repo, [])
+        repo = path[len("/models/"):]
+        return next((m for m in HF_IMAGE_MODELS if m["id"] == repo), {})
+    monkeypatch.setattr(mdl, "_hf_get", get)
+    return calls
+
+
+def test_families_are_detected_from_names_and_tags():
+    d = setup.detect_family
+    assert d("city96/FLUX.1-dev-gguf")[0] == "flux-dev" and d("x/flux1-schnell-Q4")[0] == "flux-schnell"
+    assert d("x/some-flux-finetune")[0] == "flux-dev"  # nur „flux“: wie dev (20 Schritte)
+    assert d("city96/FLUX.1-schnell-gguf")[0] == "flux-schnell"
+    assert d("x/y", ["base_model:stabilityai/stable-diffusion-xl-base-1.0"])[0] == "sdxl"
+    assert d("x/ponyDiffusionV6XL")[0] == "sdxl" and d("Lykon/dreamshaper-8")[0] == "sd15"
+    assert d("x/FLUX.2-klein-9B-GGUF")[0] == "flux2-klein-9b" and d("leejet/Z-Image-Turbo-GGUF")[0] == "z-image-turbo"
+    assert d("x/FLUX.2-dev")[0] == "" and "nicht" in d("x/FLUX.2-dev")[1]
+    assert d("x/style", ["lora"])[1].startswith("LoRA") and d("x/FLUX.1-Kontext-dev")[0] == ""
+    assert d("x/mystery")[0] == "" and "unbekannt" in d("x/mystery")[1]
+
+
+def test_search_lists_all_text_to_image_models(fake_hf):
+    found = {r["repo"]: r for r in setup.hf_image_search("", "downloads")}
+    assert list(found) == ["city96/FLUX.1-dev-gguf", "someone/juggernaut-xl-v9", "Lykon/dreamshaper-8"]  # nur lauffähige
+    params = dict(fake_hf[0][1])
+    assert params["pipeline_tag"] == "text-to-image" and params["sort"] == "trendingScore"
+    hits = {r["repo"]: r for r in setup.hf_image_search("someone", "likes")}
+    assert dict(fake_hf[-1][1])["sort"] == "likes"
+    assert hits["someone/juggernaut-xl-v9"]["family_label"] == "Stable Diffusion XL 1.0"
+    assert hits["someone/juggernaut-xl-v9"]["license"] == "openrail++" and hits["someone/juggernaut-xl-v9"]["supported"]
+    assert not hits["someone/cool-style-lora"]["supported"] and "LoRA" in hits["someone/cool-style-lora"]["reason"]
+    assert not hits["someone/mystery-model"]["supported"] and not hits["someone/Wan2.2-T2V"]["supported"]
+
+
+def test_files_of_a_repo_with_fit(fake_hf):
+    assert setup.hf_image_files("someone/juggernaut-xl-v9", 8)["variants"][0]["fit"] == "tight"  # 6,9 GB + Puffer
+    jugg = setup.hf_image_files("someone/juggernaut-xl-v9", 10)
+    assert jugg["family"] == "sdxl" and [v["file"] for v in jugg["variants"]] == ["juggernautXL_v9.safetensors"]
+    assert jugg["variants"][0]["fit"] == "ok" and jugg["variants"][0]["recommended"]  # ohne LoRA, VAE, Diffusers-Teile
+    flux = setup.hf_image_files("city96/FLUX.1-dev-gguf", 16)
+    assert [v["quant"] for v in flux["variants"]] == ["Q4_K_S", "Q8_0", "F16"]
+    assert [v["fit"] for v in flux["variants"]] == ["ok", "ok", "big"]
+    assert [v["quant"] for v in flux["variants"] if v.get("recommended")] == ["Q8_0"]
+    with pytest.raises(ValueError):
+        setup.hf_image_files("../etc", 8)
+
+
+def test_install_a_searched_model_with_the_family_parts(tmp_path, engine):
+    cfg = engine.cfg
+    d = engine.directory
+    CATALOG_TREES["someone/juggernaut-xl-v9"] = ["juggernautXL_v9.safetensors"]
+    try:
+        model_id = setup.custom_id("someone/juggernaut-xl-v9", "juggernautXL_v9.safetensors")
+        source = {"repo": "someone/juggernaut-xl-v9", "file": "juggernautXL_v9.safetensors", "family": "sdxl",
+                  "label": "juggernaut-xl-v9"}
+        assert setup.install({"vram_gb": 8}, cfg, out=lambda s: None, client=catalog_client(), model_id=model_id,
+                             source=source)
+    finally:
+        CATALOG_TREES.pop("someone/juggernaut-xl-v9")
+    assert setup.active_id(d) == model_id and setup.model_installed(d, model_id)
+    paths = setup.model_paths(d, model_id)
+    assert paths["diffusion"].name == "juggernautXL_v9.safetensors" and paths["vae"].name == "sdxl_vae.safetensors"
+    run(engine.select(model_id))
+    engine.cfg.image.steps = 20  # Standardwert → die Schritte der Familie
+    assert "--model" in engine.command() and engine.defaults() == (25, 7.0, "euler_a")
+    assert engine.status()["model_label"] == "juggernaut-xl-v9"
+    listed = {m["id"]: m for m in setup.catalog(cfg, 8)}
+    assert listed[model_id]["custom"] and listed[model_id]["active"] and listed[model_id]["repo"] == "someone/juggernaut-xl-v9"
+    assert setup.remove_model(cfg, model_id) > 0 and model_id not in {m["id"] for m in setup.catalog(cfg, 8)}
+
+
+def test_api_searches_and_installs_only_listed_files(cfg, monkeypatch, tmp_path, fake_hf):
+    from fastapi.testclient import TestClient
+
+    from orbwise.server import create_app
+    monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    cfg.image.dir = str(tmp_path / "img")
+    cfg.image.output_dir = str(tmp_path / "out")
+    started = []
+    monkeypatch.setattr(setup, "install", lambda *a: started.append(a) or False)
+    with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
+        assert [r["repo"] for r in client.get("/api/image/hf/search").json()["results"]][:1] == ["city96/FLUX.1-dev-gguf"]
+        files = client.get("/api/image/hf/files", params={"repo": "city96/FLUX.1-dev-gguf"}).json()
+        assert files["family"] == "flux-dev" and len(files["variants"]) == 3
+        bad = client.post("/api/image/hf/install", json={"repo": "city96/FLUX.1-dev-gguf", "file": "../../etc/passwd"})
+        assert bad.status_code == 400
+        lora = client.post("/api/image/hf/install", json={"repo": "someone/cool-style-lora", "file": "x.safetensors"})
+        assert lora.status_code == 400 and "LoRA" in lora.json()["detail"]
+        ok = client.post("/api/image/hf/install", json={"repo": "city96/FLUX.1-dev-gguf", "file": "flux1-dev-Q8_0.gguf"})
+        assert ok.json()["model"] == setup.custom_id("city96/FLUX.1-dev-gguf", "flux1-dev-Q8_0.gguf")
+        for _ in range(100):
+            if started:
+                break
+            import time
+            time.sleep(0.02)
+        assert started[0][-1] == {"repo": "city96/FLUX.1-dev-gguf", "file": "flux1-dev-Q8_0.gguf", "family": "flux-dev",
+                                  "label": "FLUX.1-dev-gguf Q8_0"}

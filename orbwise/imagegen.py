@@ -157,7 +157,7 @@ class ImageEngine:
 
     def model(self) -> setup.ImageModel | None:
         """Das aktive Bildmodell (Katalogeintrag)."""
-        return setup.BY_ID.get(setup.active_id(self.directory))
+        return setup.spec_of(self.directory, setup.active_id(self.directory))
 
     def can_edit(self) -> bool:
         spec = self.model()

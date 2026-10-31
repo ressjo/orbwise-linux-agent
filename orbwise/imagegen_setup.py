@@ -21,7 +21,7 @@ import stat
 import threading
 import zipfile
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import httpx
@@ -88,8 +88,23 @@ def model_paths(directory: Path, model_id: str | None = None) -> dict[str, Path]
     return {role: directory / "models" / name for role, name in (model_entry(directory, model_id).get("files") or {}).items()}
 
 
+def spec_of(directory: Path, model_id: str) -> ImageModel | None:
+    """Katalogeintrag – oder für ein frei von Hugging Face geladenes Modell der seiner Familie (Bauteile, Optionen,
+    Schritte), mit eigenem Namen."""
+    if model_id in BY_ID:
+        return BY_ID[model_id]
+    entry = model_entry(directory, model_id)
+    base = FAMILIES.get(entry.get("family", ""))
+    if base is None:
+        return None
+    label = entry.get("label") or model_id
+    return replace(base, id=model_id, label=label, note_de=f"Von Hugging Face: {entry.get('repo', '')} "
+                   f"({base.label}-Familie)", note_en=f"From Hugging Face: {entry.get('repo', '')} ({base.label} family)",
+                   search=(), new=False)
+
+
 def model_installed(directory: Path, model_id: str) -> bool:
-    spec = BY_ID.get(model_id)
+    spec = spec_of(directory, model_id)
     paths = model_paths(directory, model_id)
     need = spec.required if spec else ("diffusion",)
     return bool(paths) and all(paths.get(r) and paths[r].exists() for r in need)
@@ -335,6 +350,71 @@ CATALOG: tuple[ImageModel, ...] = (
 )
 BY_ID = {m.id: m for m in CATALOG}
 
+# Familien für frei gesuchte Modelle: Bauteile und Startoptionen kommen vom passenden Katalogeintrag. SD 1.5 steht
+# nicht im Katalog (zu alt für eine Empfehlung), Feinabstimmungen davon laufen aber.
+SD15 = ImageModel("sd15", "Stable Diffusion 1.5", "", "", {"diffusion": "--model"}, ("diffusion",), (),
+                  lambda t, v: {}, 2, 4, 25, 7.0, sampler="euler_a", license="openrail")
+FAMILIES: dict[str, ImageModel] = {**BY_ID, "sd15": SD15}
+# Ungefährer Zusatzbedarf an Grafikspeicher neben der Modelldatei (Text-Encoder teils auf der CPU, VAE, Puffer)
+FAMILY_EXTRA_GB = {"sd15": 0.8, "sdxl": 1.2}
+
+
+def detect_family(repo: str, tags: list[str] | tuple = ()) -> tuple[str, str]:
+    """(Familie, Grund wenn nicht unterstützt) aus Repo-Namen und Hugging-Face-Tags (base_model:…, lora …)."""
+    tags = [t.lower() for t in tags if isinstance(t, str)]
+    text = " ".join([repo.lower(), *tags])
+    if "lora" in tags or re.search(r"(^|[-_/ ])lora([-_ ]|$)", repo.lower()):
+        return "", T("LoRA – braucht ein Grundmodell, läuft nicht allein", "LoRA – needs a base model, does not run alone")
+    if re.search(r"controlnet|ip-?adapter|inpaint|kontext|[-_]edit\b|video|wan2|ltx|hunyuan", text):
+        return "", T("Sonderform (Steuerung, Bearbeiten, Video) – wird nicht unterstützt",
+                     "special variant (control, editing, video) – not supported")
+    rules = (
+        (r"flux\.?2[-_.]?klein[-_.]?9b|klein[-_.]?9b", "flux2-klein-9b"),
+        (r"flux\.?2[-_.]?klein[-_.]?4b|klein[-_.]?4b", "flux2-klein-4b"),
+        (r"flux\.?2", ""),
+        (r"flux\.?1[-_.]?schnell", "flux-schnell"),
+        (r"flux", "flux-dev"),
+        (r"qwen[-_.]?image", "qwen-image"),
+        (r"z[-_.]?image", "z-image-turbo"),
+        (r"stable-diffusion-xl|sdxl|sd[-_.]?xl|\bpony|illustrious|noobai|playground-v2", "sdxl"),
+        (r"stable-diffusion-v1|sd[-_.]?1[-_.]?5|\bsd15\b|stable-diffusion-1|dreamshaper(?!.*xl)", "sd15"),
+    )
+    for pattern, family in rules:
+        if re.search(pattern, text):
+            return (family, "") if family else ("", T("diese Modellfamilie wird noch nicht unterstützt",
+                                                       "this model family is not supported yet"))
+    return "", T("unbekannte Modellfamilie – nur FLUX, Qwen-Image, Z-Image, SDXL und SD 1.5 laufen",
+                 "unknown model family – only FLUX, Qwen-Image, Z-Image, SDXL and SD 1.5 run")
+
+
+_NOT_A_MODEL = re.compile(r"(^|[-_/.])(vae|ae|clip[-_]?[lg]?|t5(xxl)?|text[-_]?encoder|mmproj|lora|refiner|"
+                          r"controlnet|embedding|tokenizer)([-_.]|$)", re.I)
+
+
+def model_files(family: str, files: list[dict]) -> list[dict]:
+    """Dateien eines Repos, die als Bildmodell taugen: GGUF bzw. ganze Checkpoints – ohne VAE, Text-Encoder, LoRA,
+    Diffusers-Unterordner und geteilte Dateien."""
+    out = []
+    for f in files:
+        path, name = f["path"], f["path"].rsplit("/", 1)[-1]
+        low = name.lower()
+        if not low.endswith((".gguf", ".safetensors")) or _NOT_A_MODEL.search(name.rsplit(".", 1)[0]):
+            continue
+        if "/" in path and path.split("/", 1)[0].lower() in ("unet", "transformer", "vae", "text_encoder",
+                                                              "text_encoder_2", "text_encoder_3", "tokenizer"):
+            continue  # Diffusers-Aufteilung – sd.cpp braucht eine ganze Datei
+        if re.search(r"-\d{5}-of-\d{5}\.", low):
+            continue
+        if family in ("sd15", "sdxl") and f["size"] and f["size"] < 1.5e9:
+            continue  # zu klein für einen ganzen Checkpoint (LoRA, Embedding)
+        out.append(f)
+    return out
+
+
+def custom_id(repo: str, file: str) -> str:
+    stem = file.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    return "hf-" + re.sub(r"[^a-z0-9]+", "-", f"{repo.split('/')[-1]}-{stem}".lower()).strip("-")[:80]
+
 
 class InstallCancelled(Exception):
     pass
@@ -439,9 +519,14 @@ def _auth_headers() -> dict:
 
 
 def install(gpu: dict, cfg=None, out: Out = print, client: httpx.Client | None = None, model_id: str = "qwen-image",
-            stop: threading.Event | None = None) -> bool:
-    """Programm (einmalig) und die Dateien eines Bildmodells laden; das Modell wird danach das aktive."""
-    spec = BY_ID.get(model_id)
+            stop: threading.Event | None = None, source: dict | None = None) -> bool:
+    """Programm (einmalig) und die Dateien eines Bildmodells laden; das Modell wird danach das aktive.
+    source = {"repo", "file", "family", "label"}: ein frei gesuchtes Modell – die Datei kommt von dort, Text-Encoder
+    und VAE wie bei seiner Familie."""
+    spec = FAMILIES.get(source["family"]) if source else BY_ID.get(model_id)
+    if source and spec is None:
+        out(T("✘ Diese Modellfamilie wird nicht unterstützt.", "✘ This model family is not supported."))
+        return False
     if spec is None:
         out(T(f"✘ Unbekanntes Bildmodell {model_id} – vorhanden: ", f"✘ Unknown image model {model_id} – available: ")
             + ", ".join(BY_ID))
@@ -454,10 +539,12 @@ def install(gpu: dict, cfg=None, out: Out = print, client: httpx.Client | None =
     try:
         if not install_binary(directory, client, out):
             return False
-        found = [r for q in spec.search for r in hf_find(q, client)]
+        found = [] if source else [r for q in spec.search for r in hf_find(q, client)]
         trees = {repo: hf_tree(repo, client) for repo in dict.fromkeys([*spec.repos, *found])}
         trees["__search__"] = found
         chosen = spec.choose(trees, vram)
+        if source:  # die gewählte Datei statt der Katalog-Datei, Text-Encoder/VAE der Familie
+            chosen["diffusion"] = (source["repo"], source["file"])
         missing = [r for r in spec.required if r not in chosen]
         if missing:
             out(T("✘ Modelldateien nicht gefunden: ", "✘ Model files not found: ") + ", ".join(missing))
@@ -470,11 +557,14 @@ def install(gpu: dict, cfg=None, out: Out = print, client: httpx.Client | None =
                      stop=stop)
             files[role] = name
         data = manifest(directory) or {"models": {}}
-        data["models"][model_id] = {"files": files, "vram_gb": vram}
+        data["models"][model_id] = {"files": files, "vram_gb": vram, **({
+            "family": source["family"], "repo": source["repo"], "label": source.get("label") or model_id}
+            if source else {})}
         data["active"] = model_id
         _write_manifest(directory, data)
-        out(T(f"✔ {spec.label} eingerichtet ({directory}). Im Dashboard oben links „Bild“ wählen.",
-              f"✔ {spec.label} set up ({directory}). Choose \"Image\" at the top left of the dashboard."))
+        label = (source or {}).get("label") or spec.label
+        out(T(f"✔ {label} eingerichtet ({directory}). Im Dashboard oben links „Bild“ wählen.",
+              f"✔ {label} set up ({directory}). Choose \"Image\" at the top left of the dashboard."))
         return True
     except httpx.HTTPStatusError as e:
         if e.response.status_code in (401, 403):
@@ -544,4 +634,82 @@ def catalog(cfg, vram_gb: float) -> list[dict]:
                     "edit": m.edit, "license": m.license, "installed": installed, "active": installed and m.id == active,
                     "disk_gb": round(disk_size(directory, m.id) / 1e9, 1) if installed else 0, "fit": fit,
                     "min_vram_gb": m.min_vram_gb, "new": m.new})
+    for model_id, entry in (manifest(directory).get("models") or {}).items():  # frei von Hugging Face geladen
+        spec = spec_of(directory, model_id) if model_id not in BY_ID else None
+        if spec is None or not model_installed(directory, model_id):
+            continue
+        out.append({"id": model_id, "label": spec.label, "note": spec.note(), "size_gb": 0, "steps": spec.steps,
+                    "edit": spec.edit, "license": "", "installed": True, "active": model_id == active,
+                    "disk_gb": round(disk_size(directory, model_id) / 1e9, 1), "fit": "ok",
+                    "min_vram_gb": 0, "new": False, "custom": True, "repo": entry.get("repo", ""),
+                    "family": entry.get("family", "")})
     return out
+
+
+# ---------------------------------------------------------------- Alle Text-zu-Bild-Modelle auf Hugging Face
+def hf_image_search(query: str = "", sort: str = "downloads", limit: int = 30) -> list[dict]:
+    """Text-zu-Bild-Modelle auf Hugging Face (ohne Suchbegriff: gerade beliebte, nur unterstützte). Je Treffer die
+    erkannte Familie – oder warum es nicht läuft."""
+    from .models import HF_SORTS, _hf_get
+    words = [w for w in re.split(r"\s+", query.strip().lower()) if w]
+    params = [("pipeline_tag", "text-to-image"), ("direction", "-1"),
+              ("sort", HF_SORTS.get(sort, "downloads") if words else "trendingScore"),
+              *[("expand[]", f) for f in ("downloads", "likes", "lastModified", "gated", "tags", "trendingScore")]]
+    found = _hf_get("/models", [*params, ("search", " ".join(words)), ("limit", str(limit))] if words
+                    else [*params, ("limit", "100")])
+    if not found and len(words) > 1:  # HF sucht Teilstrings – mit dem längsten Wort, dann filtern
+        found = _hf_get("/models", [*params, ("search", max(words, key=len)), ("limit", "100")])
+    out = []
+    for m in found if isinstance(found, list) else []:
+        repo = m.get("id") or ""
+        if "/" not in repo or not all(w in repo.lower() for w in words):
+            continue
+        tags = [t for t in m.get("tags") or [] if isinstance(t, str)]
+        family, reason = detect_family(repo, tags)
+        if not words and not family:
+            continue  # Vorschläge: nur, was hier läuft
+        base = FAMILIES.get(family)
+        out.append({"repo": repo, "downloads": m.get("downloads", 0) or 0, "likes": m.get("likes", 0) or 0,
+                    "updated": str(m.get("lastModified") or "")[:10], "gated": bool(m.get("gated")),
+                    "license": next((t.split(":", 1)[1] for t in tags if t.startswith("license:")), ""),
+                    "gguf": "gguf" in tags, "family": family, "family_label": base.label if base else "",
+                    "supported": bool(family), "reason": reason})
+        if len(out) >= (limit if words else 20):
+            break
+    return out
+
+
+def hf_image_files(repo: str, vram_gb: float, directory: Path | None = None) -> dict:
+    """Die ladbaren Dateien eines Repos (GGUF-Quantisierungen bzw. Checkpoints) mit Größe und Passung."""
+    from .models import QUANT_RE, REPO_RE, _hf_get, fit_need
+    if not REPO_RE.match(repo):
+        raise ValueError("ungültiges Repo")
+    try:
+        info = _hf_get(f"/models/{repo}", [("expand[]", "tags"), ("expand[]", "gated")])
+    except httpx.HTTPError:
+        info = {}
+    tags = [t for t in (info or {}).get("tags") or [] if isinstance(t, str)]
+    family, reason = detect_family(repo, tags)
+    tree = _hf_get(f"/models/{repo}/tree/main", {"recursive": "1"})
+    files = [{"path": f.get("path", ""), "size": int((f.get("lfs") or {}).get("size") or f.get("size") or 0)}
+             for f in tree if isinstance(f, dict) and f.get("type") == "file"] if isinstance(tree, list) else []
+    variants = []
+    extra = FAMILY_EXTRA_GB.get(family, 1.5)
+    installed = {e.get("repo", ""): set((e.get("files") or {}).values())
+                 for e in (manifest(directory).get("models") or {}).values()} if directory else {}
+    for f in model_files(family, files) if family else []:
+        name = f["path"].rsplit("/", 1)[-1]
+        q = QUANT_RE.search(name if name.lower().endswith(".gguf") else name.rsplit(".", 1)[0] + ".gguf")
+        size = f["size"] / 1e9
+        variants.append({"file": f["path"], "name": name, "quant": q.group(1).upper() if q else "",
+                         "size_gb": round(size, 1), "need_gb": round(size + extra, 1),
+                         "fit": fit_need(size + extra, vram_gb), "id": custom_id(repo, f["path"]),
+                         "installed": name in installed.get(repo, set())})
+    variants.sort(key=lambda v: v["size_gb"])
+    ok = [v for v in variants if v["fit"] == "ok"]
+    if ok:
+        max(ok, key=lambda v: v["size_gb"])["recommended"] = True
+    base = FAMILIES.get(family)
+    return {"repo": repo, "family": family, "family_label": base.label if base else "", "reason": reason,
+            "steps": base.steps if base else 0, "gated": bool((info or {}).get("gated")), "variants": variants}
+
