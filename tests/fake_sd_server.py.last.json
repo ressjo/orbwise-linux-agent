@@ -1,0 +1,1 @@
+{"body": {"prompt": "cat", "negative_prompt": "", "width": 1024, "height": 1024, "seed": 97929301, "batch_count": 1, "output_format": "png", "ref_images": ["iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"], "sample_params": {"sample_method": "euler", "sample_steps": 6}}, "args": ["--listen-port", "52011"]}

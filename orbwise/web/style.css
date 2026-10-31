@@ -1479,3 +1479,17 @@ button.file-chip:hover { border-color: var(--accent-line); }
 .td-bar i { display: block; height: 100%; background: var(--accent); }
 .td-row.warn .td-bar i { background: var(--warn); }
 .td-row.crit .td-bar i { background: var(--danger); }
+
+/* Eigenes Backend (Experten) – Sprachmodell und Bild */
+.ext-backend { margin-top: 18px; padding: 10px 14px; border: 1px dashed var(--border-strong); border-radius: var(--r-md); background: var(--surface); max-width: 980px; }
+.ext-backend summary { cursor: pointer; font-weight: 600; font-size: var(--fs-base); color: var(--text-2); }
+.ext-backend .set-hint { margin: 8px 0 10px; }
+.ext-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; }
+.ext-grid label { display: grid; gap: 4px; font-size: var(--fs-sm); color: var(--muted); min-width: 0; }
+.ext-grid .ext-wide, .ext-grid .ext-kind { grid-column: 1 / -1; }
+.ext-grid input, .ext-grid select { height: 34px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  background: var(--bg-2); color: var(--text); font: inherit; font-size: var(--fs-md); min-width: 0; }
+.ext-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.ext-state { font-size: var(--fs-sm); color: var(--muted); }
+.ext-state.ok { color: var(--success); } .ext-state.bad { color: var(--danger); }
+@media (max-width: 640px) { .ext-grid { grid-template-columns: minmax(0, 1fr); } }

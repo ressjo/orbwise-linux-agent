@@ -1355,6 +1355,57 @@ def create_app(cfg: Config) -> FastAPI:
         return start_image_install(variant["id"], {"repo": repo, "file": file, "family": listing["family"],
                                                    "label": label})
 
+    # ---------- Eigenes Bild-Backend (Experten): OpenAI Images API, Automatic1111/Forge, externer sd-server ----------
+    async def probe_image_backend(kind: str, base: str, key: str) -> dict:
+        """Verbindung prüfen → {"ok", "models", "error"} (Modelle, soweit die Schnittstelle sie nennt)."""
+        base = base.strip().rstrip("/")
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+        path = {"openai": "/models", "a1111": "/sdapi/v1/sd-models", "sdcpp": "/sdcpp/v1/capabilities"}.get(kind)
+        if not path or not re.match(r"^https?://[^\s/]+", base):
+            return {"ok": False, "models": [], "error": T("Adresse bitte mit http:// oder https://",
+                                                          "Address please with http:// or https://")}
+        try:
+            async with httpx.AsyncClient(timeout=10) as c:
+                r = await c.get(base + path, headers=headers)
+        except httpx.HTTPError as e:
+            return {"ok": False, "models": [], "error": T(f"nicht erreichbar: {e}", f"not reachable: {e}")}
+        if r.status_code == 401:
+            return {"ok": False, "models": [], "error": T("API-Schlüssel falsch oder fehlt", "API key wrong or missing")}
+        if r.status_code >= 400:
+            return {"ok": False, "models": [], "error": f"HTTP {r.status_code}: {r.text[:200]}"}
+        try:
+            data = r.json()
+        except ValueError:
+            data = {}
+        models = [m.get("id", "") for m in data.get("data") or []] if kind == "openai" and isinstance(data, dict) else \
+            [m.get("title") or m.get("model_name", "") for m in data] if kind == "a1111" and isinstance(data, list) else []
+        return {"ok": True, "models": [m for m in models if m][:200], "error": ""}
+
+    @app.post("/api/image/backend/probe")
+    async def image_backend_probe(request: Request):
+        data = await request.json()
+        return await probe_image_backend(str(data.get("kind") or ""), str(data.get("base_url") or ""),
+                                         str(data.get("api_key") or ""))
+
+    @app.post("/api/image/backend")
+    async def image_backend_add(request: Request):
+        """Eigenes Bild-Backend eintragen und aktiv machen – Orbwise startet dort nichts (der Server läuft selbst)."""
+        from . import imagegen_setup, keystore
+        data = await request.json()
+        kind, base = str(data.get("kind") or ""), str(data.get("base_url") or "")
+        label = str(data.get("label") or "").strip() or imagegen_setup.API_KINDS.get(kind, "Server")
+        try:
+            async with images.lock:  # ein laufendes Bild rechnet erst fertig
+                await images.drop_server()  # immer nur ein Modell: der eigene Bildserver geht aus
+                model_id = await asyncio.to_thread(imagegen_setup.add_api_model, cfg, label, kind, base,
+                                                   str(data.get("model") or ""))
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        key = str(data.get("api_key") or "").strip()
+        await asyncio.to_thread(lambda: keystore.set("image_api_key:" + model_id, key) if key
+                                else keystore.delete("image_api_key:" + model_id))
+        return {"id": model_id, **images.status()}
+
     @app.delete("/api/image/models/install")
     async def image_model_install_cancel():
         stop = image_install.get("stop")
@@ -1380,6 +1431,10 @@ def create_app(cfg: Config) -> FastAPI:
             if model_id == imagegen_setup.active_id(images.directory):
                 await images.drop_server()
             freed = await asyncio.to_thread(imagegen_setup.remove_model, cfg, model_id)
+        if model_id.startswith("api-"):  # Schlüssel eines eigenen Backends mit entfernen
+            from . import keystore
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(keystore.delete, "image_api_key:" + model_id)
         return {"freed_gb": round(freed / 1e9, 1), **images.status()}
 
     @app.post("/api/image/cancel")

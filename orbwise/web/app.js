@@ -3354,8 +3354,8 @@
     b.onclick = () => { MP.tab = b.dataset.mtab; renderModelsPage(); };
   });
   // nach Wechsel, Download oder Änderung neu zeichnen – Eingaben im Hinzufügen-Reiter bleiben stehen
-  function refreshModelViews() {
-    if (openSheetName === "models") renderModelsPage();
+  async function refreshModelViews() {
+    if (openSheetName === "models") await renderModelsPage();
   }
 
   // Kopf: Grafikkarte mit Belegung (live aus den Metriken) und llama.cpp-Version
@@ -4181,6 +4181,95 @@
     } catch { /* Meldung kommt von api() */ }
   }
 
+  // ---- Eigenes Backend (Experten): ein Server, den Orbwise nicht startet – Sprachmodell (OpenAI-kompatibel) oder Bild
+  function backendForm(image) {
+    const box = document.createElement("details");
+    box.className = "ext-backend";
+    box.innerHTML = `<summary></summary><p class="set-hint"></p>
+      <div class="ext-grid">
+        <label class="ext-kind hidden"><span></span><select name="kind"></select></label>
+        <label><span></span><input name="label" type="text" spellcheck="false"></label>
+        <label class="ext-wide"><span></span><input name="base_url" type="url" spellcheck="false"></label>
+        <label><span></span><input name="api_key" type="password" autocomplete="off" spellcheck="false"></label>
+        <label><span></span><input name="model" type="text" list="" spellcheck="false"><datalist></datalist></label>
+        <label class="ext-ctx"><span></span><input name="context" type="number" min="1024" step="1024"></label>
+      </div>
+      <div class="ext-actions"><button type="button" class="btn small ext-probe"></button>
+        <button type="button" class="btn primary small ext-save"></button><span class="ext-state"></span></div>`;
+    const f = (n) => box.querySelector(`[name="${n}"]`);
+    const label = (n, de, en) => { f(n).closest("label").querySelector("span").textContent = L(de, en); };
+    box.querySelector("summary").textContent = L("Eigenes Backend (für Experten)", "Own backend (experts)");
+    box.querySelector(".set-hint").textContent = image
+      ? L("Einen Bildserver nutzen, der schon läuft – Orbwise startet und lädt dort nichts, rechnet nicht selbst und gibt keinen Grafikspeicher frei. Größe, Schritte und Seed werden mitgeschickt, soweit die Schnittstelle sie kennt.",
+          "Use an image server that is already running – Orbwise starts and loads nothing there, does not compute itself and frees no video memory. Size, steps and seed are sent as far as the interface knows them.")
+      : L("Einen beliebigen OpenAI-kompatiblen Server nutzen (z. B. Strata, vLLM, LM Studio, llama-server auf einem anderen Rechner). Orbwise startet dort nichts – Kontextfenster, KV-Cache und Grafikkarten legt der Server fest. Das Kontextfenster hier sagt Orbwise nur, wie viel hineinpasst (leer: der Server meldet es oder der Standard gilt).",
+          "Use any OpenAI-compatible server (e.g. Strata, vLLM, LM Studio, llama-server on another machine). Orbwise starts nothing there – context window, KV cache and GPUs are up to the server. The context window here only tells Orbwise how much fits (empty: the server reports it or the default applies).");
+    if (image) {
+      box.querySelector(".ext-kind").classList.remove("hidden");
+      label("kind", "Schnittstelle", "Interface");
+      for (const [v, t] of [["openai", "OpenAI Images API (/v1/images/generations)"], ["a1111", "Automatic1111 / Forge (/sdapi/v1/txt2img)"],
+                             ["sdcpp", "stable-diffusion.cpp sd-server (/sdcpp/v1)"]]) f("kind").add(new Option(t, v));
+      box.querySelector(".ext-ctx").classList.add("hidden");
+    }
+    label("label", "Name", "Name");
+    label("base_url", "Adresse", "Address");
+    label("api_key", "API-Schlüssel (optional)", "API key (optional)");
+    label("model", image ? "Modell (optional)" : "Modell", image ? "Model (optional)" : "Model");
+    label("context", "Kontextfenster (optional, Token)", "Context window (optional, tokens)");
+    const hintUrl = () => {
+      f("base_url").placeholder = image ? { openai: "http://localhost:8000/v1", a1111: "http://localhost:7860", sdcpp: "http://localhost:1234" }[f("kind").value]
+        : "http://localhost:8000/v1";
+    };
+    hintUrl();
+    f("label").placeholder = image ? L("z. B. Forge im Keller", "e.g. Forge in the basement") : "z. B. Strata";
+    f("model").placeholder = image ? L("leer: Standard des Servers", "empty: the server's default") : L("„Verbindung prüfen“ füllt die Auswahl", "“Test connection” fills the list");
+    const listId = "ext-models-" + (image ? "img" : "llm");
+    box.querySelector("datalist").id = listId;
+    f("model").setAttribute("list", listId);
+    const state = box.querySelector(".ext-state");
+    const values = () => Object.fromEntries(["kind", "label", "base_url", "api_key", "model", "context"].map((n) => [n, f(n).value.trim()]));
+    if (image) f("kind").onchange = hintUrl;
+    box.querySelector(".ext-probe").textContent = L("Verbindung prüfen", "Test connection");
+    box.querySelector(".ext-save").textContent = L("Hinzufügen und nutzen", "Add and use");
+    box.querySelector(".ext-probe").onclick = async () => {
+      state.textContent = L("prüfe …", "testing …"); state.className = "ext-state";
+      let r;
+      try { r = await api("POST", image ? "/api/image/backend/probe" : "/api/models/external/probe", values()); } catch { state.textContent = ""; return; }
+      if (!image && r.base_url && r.base_url !== f("base_url").value.trim()) f("base_url").value = r.base_url;  // /v1 ergänzt
+      const dl = box.querySelector("datalist");
+      dl.innerHTML = "";
+      for (const m of r.models || []) dl.appendChild(new Option(m, m));
+      if (r.ok && !f("model").value && (r.models || []).length === 1) f("model").value = r.models[0];
+      state.className = "ext-state " + (r.ok ? "ok" : "bad");
+      state.textContent = r.ok ? L(`✔ erreichbar${r.models.length ? ` · ${r.models.length} Modell(e)` : ""}`, `✔ reachable${r.models.length ? ` · ${r.models.length} model(s)` : ""}`)
+        : "✘ " + r.error;
+    };
+    box.querySelector(".ext-save").onclick = async () => {
+      const v = values();
+      if (!v.label || !v.base_url || (!image && !v.model)) {
+        toast(image ? L("Bitte Name und Adresse angeben.", "Please give a name and an address.")
+          : L("Bitte Name, Adresse und Modell angeben.", "Please give a name, an address and a model.")); return;
+      }
+      try {
+        if (image) {
+          await api("POST", "/api/image/backend", v);
+          toast(L(`Bild-Backend „${v.label}“ ist aktiv.`, `Image backend “${v.label}” is active.`));
+          f("api_key").value = "";
+          if (IV.open) openImageView(); else loadImageModels();
+        } else {
+          const r = await api("POST", "/api/models/external", v);
+          f("api_key").value = "";
+          toast(L(`„${v.label}“ angelegt – wird geladen …`, `“${v.label}” added – loading …`));
+          MP.tab = "mine"; MP.sel = r.name;  // gleich in „Meine Modelle“ zeigen
+          await refreshModelViews();
+          const p = (MP.data && MP.data.profiles || []).find((x) => x.name === r.name) || { name: r.name, label: v.label };
+          activateModel(p);
+        }
+      } catch { /* Meldung kommt von api() */ }
+    };
+    return box;
+  }
+
   // ---- Reiter „Hinzufügen“: Hugging Face (Vorschläge, Live-Suche, Link, Pfad), Dateien in ~/models, Vorauswahl
   const HF = { q: "", sort: "downloads", fitOnly: false, timer: 0, seq: 0 };
   async function renderAddTab() {
@@ -4221,6 +4310,7 @@
     run(true);
     localModels(box.querySelector(".mp-disk"));
     renderPresets(box.querySelector(".mp-presets"));
+    box.appendChild(backendForm(false));
   }
 
   const kCtx = (n) => (n >= 1024 ? `${Math.round(n / 1024)}k` : String(n || ""));
@@ -5419,6 +5509,7 @@
     if (installed.length) { section(body, L("Installiert", "Installed")); for (const m of installed) body.appendChild(imageModelCard(m, d)); }
     section(body, L("Empfohlen", "Recommended"));
     for (const m of offered) body.appendChild(imageModelCard(m, d));
+    body.appendChild(backendForm(true));
     section(body, L("Gerade beliebt auf Hugging Face", "Trending on Hugging Face"));
     const list = document.createElement("div");
     list.className = "mm-hf";

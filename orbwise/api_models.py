@@ -464,6 +464,76 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
             await task
         return {"ok": True}
 
+    # ---------- Eigenes Backend (Experten): beliebiger OpenAI-kompatibler Server (Strata, vLLM, LM Studio …) ----------
+    @app.post("/api/models/external/probe")
+    async def external_probe(request: Request):
+        """Verbindung prüfen → {"ok", "base_url" (ggf. um /v1 ergänzt), "models", "error"}."""
+        data = await request.json()
+        base = str(data.get("base_url") or "").strip().rstrip("/")
+        key = str(data.get("api_key") or "").strip()
+        if not re.match(r"^https?://[^\s/]+", base):
+            return {"ok": False, "base_url": base, "models": [],
+                    "error": T("Adresse bitte mit http:// oder https://", "Address please with http:// or https://")}
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+        tried = [base] + ([base + "/v1"] if not base.endswith("/v1") else [])
+        last = ""
+        async with httpx.AsyncClient(timeout=10) as client:
+            for candidate in tried:
+                try:
+                    r = await client.get(candidate + "/models", headers=headers)
+                except httpx.HTTPError as e:
+                    last = T(f"nicht erreichbar: {e}", f"not reachable: {e}")
+                    break
+                if r.status_code == 401:
+                    return {"ok": False, "base_url": candidate, "models": [],
+                            "error": T("API-Schlüssel falsch oder fehlt", "API key wrong or missing")}
+                if r.status_code < 400:
+                    try:
+                        ids = [m.get("id", "") for m in (r.json().get("data") or []) if isinstance(m, dict)]
+                    except (ValueError, AttributeError):
+                        ids = []
+                    return {"ok": True, "base_url": candidate, "models": [i for i in ids if i][:200], "error": ""}
+                last = f"HTTP {r.status_code}: {r.text[:200]}"
+        return {"ok": False, "base_url": base, "models": [], "error": last}
+
+    @app.post("/api/models/external")
+    async def external_add(request: Request):
+        """Eigenes Backend als Modell anlegen. Orbwise startet dort nichts – Kontext, KV-Cache usw. legt der Server
+        fest; die Angabe „Kontextfenster“ sagt Orbwise nur, wie viel hineinpasst. Der Schlüssel liegt im
+        Schlüsselbund."""
+        from . import keystore
+        from . import models as mdl
+        if not isinstance(llm, LLMRouter):
+            raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
+        data = await request.json()
+        label = str(data.get("label") or "").strip()
+        base = str(data.get("base_url") or "").strip().rstrip("/")
+        model = str(data.get("model") or "").strip()
+        if not label or not model or not re.match(r"^https?://[^\s/]+", base):
+            raise HTTPException(400, T("Bitte Name, Adresse (http://…) und Modell angeben.",
+                                       "Please give a name, an address (http://…) and a model."))
+        try:
+            context = int(data.get("context") or 0)
+        except (TypeError, ValueError):
+            context = 0
+        name = "api-" + (re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-")[:40] or "server")
+        if name in llm.profiles and not mdl.removable(state_file, name):
+            raise HTTPException(409, T("Diesen Namen gibt es schon in der config.yaml.", "That name exists in config.yaml."))
+        raw = {"backend": "openai", "base_url": base, "model": model, "label": label, "api_key_ref": True,
+               **({"num_ctx": context} if context >= 1024 else {})}
+        key = str(data.get("api_key") or "").strip()
+        await asyncio.to_thread(lambda: keystore.set("llm_api_key:" + name, key) if key
+                                else keystore.delete("llm_api_key:" + name))
+        if name in llm.profiles:  # ersetzen: altes Profil raus, neues rein
+            if name == llm.active:
+                raise HTTPException(409, T("Dieses Backend ist gerade aktiv – erst ein anderes Modell wählen.",
+                                           "This backend is active right now – choose another model first."))
+            await llm.remove_profile(name)
+        await asyncio.to_thread(mdl.register_profile, state_file, name, raw)
+        llm.add_downloaded_models()
+        await hub.broadcast({"type": "models_changed"})
+        return {"name": name}
+
     @app.delete("/api/models/{name}")
     async def model_delete(name: str):
         """Per Oberfläche/CLI hinzugefügtes Modell entfernen und seine Dateien löschen (gibt Speicher frei)."""
@@ -494,6 +564,10 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
             await hub.broadcast({"type": "model_active", "name": llm.active, "unloaded": True})
         await llm.remove_profile(name)
         mdl.unregister_model(state_file, name)
+        if name.startswith("api-"):  # Schlüssel eines eigenen Backends mit entfernen
+            from . import keystore
+            with contextlib.suppress(Exception):
+                await asyncio.to_thread(keystore.delete, "llm_api_key:" + name)
         freed = 0
         if llamacpp_mod.local_record(state_file, name) is not None:  # nur selbst geladene Dateien löschen
             freed = await asyncio.to_thread(llamacpp_mod.forget, cfg, state_file, name)
