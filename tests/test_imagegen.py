@@ -589,7 +589,15 @@ def fake_hf(monkeypatch):
 def test_families_are_detected_from_names_and_tags():
     d = setup.detect_family
     assert d("city96/FLUX.1-dev-gguf")[0] == "flux-dev" and d("x/flux1-schnell-Q4")[0] == "flux-schnell"
-    assert d("x/some-flux-finetune")[0] == "flux-dev"  # nur „flux“: wie dev (20 Schritte)
+    assert d("x/some-flux-finetune")[0] == "" and "unklar" in d("x/some-flux-finetune")[1]  # Version nicht erkennbar
+    assert d("x/some-flux-finetune", ["base_model:black-forest-labs/FLUX.1-dev"])[0] == "flux-dev"
+    # der gemeldete Fall: „flux3-image-klein“ ist ein klein-Modell, kein FLUX.1 (sonst falsche Bauteile)
+    assert d("someone/flux3-image-klein-GGUF")[0] == "flux2-klein"
+    assert d("x/FLUX.3-dev")[0] == "" and "neuere" in d("x/FLUX.3-dev")[1]
+    assert setup.klein_size("flux3-image-klein-Q8_0.gguf", int(4.4e9)) == "flux2-klein-4b"  # ~4 Mrd. Parameter
+    assert setup.klein_size("flux3-image-klein-Q8_0.gguf", int(9.8e9)) == "flux2-klein-9b"
+    assert setup.klein_size("klein-Q4_K_M.gguf", int(5.6e9)) == "flux2-klein-9b"  # 9B in Q4 ist ähnlich groß
+    assert setup.klein_size("flux-2-klein-4b-Q8_0.gguf", int(9e9)) == "flux2-klein-4b"  # Name schlägt Größe
     assert d("city96/FLUX.1-schnell-gguf")[0] == "flux-schnell"
     assert d("x/y", ["base_model:stabilityai/stable-diffusion-xl-base-1.0"])[0] == "sdxl"
     assert d("x/ponyDiffusionV6XL")[0] == "sdxl" and d("Lykon/dreamshaper-8")[0] == "sd15"
@@ -744,3 +752,76 @@ def test_no_background_maintenance_in_image_mode(cfg, monkeypatch, tmp_path):
                 break
             time.sleep(0.02)
         assert resting() is False
+
+
+# ---------------------------------------------------------------- Gemeldet: „flux3-image-klein“ als FLUX.1 gestartet
+def test_klein_model_gets_the_klein_parts_not_flux1(fake_hf, tmp_path):
+    HF_IMAGE_MODELS.append({"id": "someone/flux3-image-klein-GGUF", "downloads": 10, "tags": ["gguf"]})
+    try:
+        from orbwise import models as mdl
+        real = mdl._hf_get
+
+        def get(path, params=None, base=None):
+            if path == "/models/someone/flux3-image-klein-GGUF/tree/main":
+                return [{"type": "file", "path": "flux3-image-klein-Q8_0.gguf", "lfs": {"size": int(4.4e9)}}]
+            return real(path, params, base)
+        mdl._hf_get = get
+        files = setup.hf_image_files("someone/flux3-image-klein-GGUF", 24)
+        assert files["family"] == "flux2-klein" and files["variants"][0]["family"] == "flux2-klein-4b"
+    finally:
+        HF_IMAGE_MODELS.pop()
+        mdl._hf_get = real
+
+
+def test_misfiled_model_is_flagged(tmp_path):
+    cfg = Config.model_validate({"image": {"dir": str(tmp_path / "img")}})
+    d = tmp_path / "img"
+    (d / "models").mkdir(parents=True)
+    for name, size in (("flux3-image-klein-Q8_0.gguf", 10), ("clip_l.safetensors", 1), ("t5xxl_fp8_e4m3fn.safetensors", 1),
+                       ("ae.safetensors", 1)):
+        (d / "models" / name).write_bytes(b"x" * size)
+    (d / "manifest.json").write_text(json.dumps({"active": "hf-klein", "models": {"hf-klein": {
+        "files": {"diffusion": "flux3-image-klein-Q8_0.gguf", "clip_l": "clip_l.safetensors",
+                  "t5xxl": "t5xxl_fp8_e4m3fn.safetensors", "vae": "ae.safetensors"},
+        "family": "flux-dev", "repo": "someone/flux3-image-klein-GGUF", "label": "flux3-image-klein"}}}))
+    item = next(m for m in setup.catalog(cfg, 24) if m["id"] == "hf-klein")
+    assert item["misfiled"] == "FLUX.2 klein 4B"
+
+
+def test_unrecognised_model_file_gets_a_helpful_message(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    d = make_install(tmp_path)
+    (d / "bin" / "sd-server").write_text("#!/bin/sh\necho \"[ERROR] diffusion_engine.cpp:992 - get sd version from file "
+                                         "failed: ''\"\necho '[ERROR] main.cpp:93 - new_sd_ctx_t failed'\nexit 1\n")
+    cfg = Config.model_validate({"image": {"dir": str(d), "output_dir": str(tmp_path / "out"), "port": free_port(),
+                                           "startup_timeout": 20}})
+    engine = ImageEngine(cfg, gpu_info=lambda: {"vram_total": 24 * 1024 ** 3})
+    with pytest.raises(ImageError) as e:
+        run(engine.generate("cat"))
+    assert "sd-server aktualisieren" in str(e.value) and "löschen und neu laden" in str(e.value)
+
+
+def test_sd_server_update_replaces_the_build(tmp_path):
+    builds = {"v1": b"#!/bin/sh\necho eins\n", "v2": b"#!/bin/sh\necho zwei\n"}
+    latest = ["v1"]
+
+    def handler(request):
+        url = str(request.url)
+        if "api.github.com" in url:
+            return httpx.Response(200, json={"tag_name": latest[0], "assets": [
+                {"name": f"sd-{latest[0]}-bin-Linux-x86_64-vulkan.zip", "browser_download_url": f"https://x/{latest[0]}.zip"}]})
+        tag = url.rsplit("/", 1)[-1][:-4]
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            z.writestr("sd-server", builds[tag])
+        return httpx.Response(200, content=buf.getvalue())
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    d = tmp_path / "img"
+    out = []
+    assert setup.install_binary(d, client, out.append)
+    assert setup.runtime_version(d) == "v1" and b"eins" in setup.server_binary(d).read_bytes()
+    assert setup.install_binary(d, client, out.append, update=True) and "aktuell" in out[-1]
+    latest[0] = "v2"
+    assert setup.install_binary(d, client, out.append, update=True) and "aktualisiert" in out[-1]
+    assert setup.runtime_version(d) == "v2" and b"zwei" in setup.server_binary(d).read_bytes()
+    assert not (d / "bin.new").exists() and not (d / "bin.old").exists()

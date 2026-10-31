@@ -406,12 +406,15 @@ def detect_family(repo: str, tags: list[str] | tuple = ()) -> tuple[str, str]:
     if re.search(r"controlnet|ip-?adapter|inpaint|kontext|[-_]edit\b|video|wan2|ltx|hunyuan", text):
         return "", T("Sonderform (Steuerung, Bearbeiten, Video) – wird nicht unterstützt",
                      "special variant (control, editing, video) – not supported")
+    flux1_base = re.search(r"base_model:[^ ]*flux\.?1", text)
     rules = (
-        (r"flux\.?2[-_.]?klein[-_.]?9b|klein[-_.]?9b", "flux2-klein-9b"),
-        (r"flux\.?2[-_.]?klein[-_.]?4b|klein[-_.]?4b", "flux2-klein-4b"),
-        (r"flux\.?2", ""),
-        (r"flux\.?1[-_.]?schnell", "flux-schnell"),
-        (r"flux", "flux-dev"),
+        (r"klein[-_.]?9b", "flux2-klein-9b"),
+        (r"klein[-_.]?4b", "flux2-klein-4b"),
+        (r"klein", "flux2-klein"),  # Größe (4B/9B) ergibt sich aus der Datei (siehe klein_size)
+        (r"flux[-_.]?[2-9]", ""),  # FLUX.2 dev, FLUX.3 … – andere Bauteile, noch nicht unterstützt
+        (r"flux[-_.]?1[-_.]?schnell", "flux-schnell"),
+        (r"flux[-_.]?1|flux1", "flux-dev"),
+        (r"flux", "flux-dev" if flux1_base else "?flux"),
         (r"qwen[-_.]?image", "qwen-image"),
         (r"z[-_.]?image", "z-image-turbo"),
         (r"stable-diffusion-xl|sdxl|sd[-_.]?xl|\bpony|illustrious|noobai|playground-v2", "sdxl"),
@@ -419,10 +422,30 @@ def detect_family(repo: str, tags: list[str] | tuple = ()) -> tuple[str, str]:
     )
     for pattern, family in rules:
         if re.search(pattern, text):
-            return (family, "") if family else ("", T("diese Modellfamilie wird noch nicht unterstützt",
-                                                       "this model family is not supported yet"))
+            if family == "?flux":
+                return "", T("FLUX-Version unklar (weder FLUX.1 noch klein erkennbar) – wird nicht unterstützt",
+                             "FLUX version unclear (neither FLUX.1 nor klein recognisable) – not supported")
+            return (family, "") if family else ("", T("neuere Modellgeneration – wird noch nicht unterstützt",
+                                                       "newer model generation – not supported yet"))
     return "", T("unbekannte Modellfamilie – nur FLUX, Qwen-Image, Z-Image, SDXL und SD 1.5 laufen",
                  "unknown model family – only FLUX, Qwen-Image, Z-Image, SDXL and SD 1.5 run")
+
+
+_QUANT_BITS = (("BF16", 16), ("F16", 16), ("F32", 32), ("Q8", 8.5), ("Q6", 6.6), ("Q5", 5.7), ("Q4", 4.85),
+               ("Q3", 3.5), ("Q2", 2.6))
+
+
+def klein_size(file: str, size_bytes: int) -> str:
+    """FLUX.2 klein ohne Größe im Namen: aus Dateigröße und Quantisierung auf 4B oder 9B schließen."""
+    name = file.rsplit("/", 1)[-1].upper()
+    if re.search(r"9B", name):
+        return "flux2-klein-9b"
+    if re.search(r"4B", name):
+        return "flux2-klein-4b"
+    bits = next((b for q, b in _QUANT_BITS if re.search(rf"(^|[-_.]){q}", name)), 16 if name.endswith(".SAFETENSORS")
+                else 8.5)
+    params = size_bytes * 8 / bits
+    return "flux2-klein-9b" if params > 6.5e9 else "flux2-klein-4b"
 
 
 _NOT_A_MODEL = re.compile(r"(^|[-_/.])(vae|ae|clip[-_]?[lg]?|t5(xxl)?|text[-_]?encoder|mmproj|lora|refiner|"
@@ -516,37 +539,68 @@ def download(url: str, target: Path, client: httpx.Client, out: Out, label: str 
     part.rename(target)
 
 
-def install_binary(directory: Path, client: httpx.Client, out: Out) -> bool:
-    """Neuesten fertigen Linux-Vulkan-Build von stable-diffusion.cpp nach <dir>/bin."""
-    if server_binary(directory).exists():
+def runtime_version(directory: Path) -> str:
+    """Release von stable-diffusion.cpp, das in <dir>/bin liegt (leer: unbekannt bzw. eigener Build)."""
+    try:
+        return (directory / "bin" / ".version").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def install_binary(directory: Path, client: httpx.Client, out: Out, update: bool = False) -> bool:
+    """Neuesten fertigen Linux-Vulkan-Build von stable-diffusion.cpp nach <dir>/bin. update=True: auch wenn schon einer
+    da ist – neuere Modelle (z. B. FLUX.2 klein) brauchen oft einen neueren sd-server. Der alte bleibt, bis der neue
+    vollständig ausgepackt ist."""
+    if server_binary(directory).exists() and not update:
         return True
-    r = client.get(f"https://api.github.com/repos/{SD_REPO}/releases/latest")
+    r = client.get("https://api.github.com/repos/" + SD_REPO + "/releases/latest")
     r.raise_for_status()
-    asset = next((a for a in r.json().get("assets", []) if RELEASE_ASSET.search(a.get("name", ""))), None)
+    release = r.json()
+    tag = str(release.get("tag_name") or release.get("name") or "")
+    asset = next((a for a in release.get("assets", []) if RELEASE_ASSET.search(a.get("name", ""))), None)
     if not asset:
         out(T("✘ Kein fertiger Linux-Vulkan-Build gefunden – stable-diffusion.cpp selbst bauen (docs/build.md) und "
               f"sd-server nach {server_binary(directory)} legen.",
               "✘ No prebuilt Linux Vulkan build found – build stable-diffusion.cpp yourself (docs/build.md) and put "
               f"sd-server at {server_binary(directory)}."))
         return False
+    if update and tag and tag == runtime_version(directory) and server_binary(directory).exists():
+        out(T(f"✔ sd-server ist aktuell ({tag}).", f"✔ sd-server is up to date ({tag})."))
+        return True
     archive = directory / asset["name"]
     out(T(f"Lade {asset['name']} …", f"Downloading {asset['name']} …"))
+    directory.mkdir(parents=True, exist_ok=True)
     download(asset["browser_download_url"], archive, client, out)
-    bin_dir = directory / "bin"
-    bin_dir.mkdir(parents=True, exist_ok=True)
+    staging = directory / "bin.new"
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True)
     with zipfile.ZipFile(archive) as z:
         for member in z.infolist():
             name = Path(member.filename).name
             if not name or member.is_dir():
                 continue
-            target = bin_dir / name
+            target = staging / name
             with z.open(member) as src, target.open("wb") as dst:
                 shutil.copyfileobj(src, dst)
             target.chmod(target.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP)  # Programme und Bibliotheken
     archive.unlink(missing_ok=True)
-    if not server_binary(directory).exists():
+    if not (staging / "sd-server").exists():
+        shutil.rmtree(staging, ignore_errors=True)
         out(T("✘ Im Build fehlt sd-server.", "✘ sd-server is missing from the build."))
         return False
+    if tag:
+        (staging / ".version").write_text(tag + "\n", encoding="utf-8")
+    old = directory / "bin"
+    if old.exists():
+        backup = directory / "bin.old"
+        shutil.rmtree(backup, ignore_errors=True)
+        old.rename(backup)
+        staging.rename(old)
+        shutil.rmtree(backup, ignore_errors=True)
+    else:
+        staging.rename(old)
+    if update:
+        out(T(f"✔ sd-server aktualisiert ({tag or '?'}).", f"✔ sd-server updated ({tag or '?'})."))
     return True
 
 
@@ -682,7 +736,13 @@ def catalog(cfg, vram_gb: float) -> list[dict]:
         spec = spec_of(directory, model_id) if model_id not in BY_ID else None
         if spec is None or not model_installed(directory, model_id):
             continue
+        diff = model_paths(directory, model_id).get("diffusion")
+        now, _ = detect_family(f"{entry.get('repo', '')} {diff.name if diff else ''}") if entry.get("family") else ("", "")
+        if now == "flux2-klein" and diff is not None and diff.exists():
+            now = klein_size(diff.name, diff.stat().st_size)
+        misfiled = bool(entry.get("family")) and now != entry.get("family") and now in FAMILIES
         out.append({"id": model_id, "label": spec.label, "note": spec.note(), "size_gb": 0, "steps": spec.steps,
+                    "misfiled": FAMILIES[now].label if misfiled else "",
                     "edit": spec.edit, "license": "", "installed": True, "active": model_id == active,
                     "disk_gb": round(disk_size(directory, model_id) / 1e9, 1), "fit": "ok",
                     "min_vram_gb": 0, "new": False, "custom": True, "repo": entry.get("repo", ""),
@@ -713,11 +773,12 @@ def hf_image_search(query: str = "", sort: str = "downloads", limit: int = 30) -
         family, reason = detect_family(repo, tags)
         if not words and not family:
             continue  # Vorschläge: nur, was hier läuft
-        base = FAMILIES.get(family)
+        base = FAMILIES.get(family) or (FAMILIES["flux2-klein-4b"] if family == "flux2-klein" else None)
         out.append({"repo": repo, "downloads": m.get("downloads", 0) or 0, "likes": m.get("likes", 0) or 0,
                     "updated": str(m.get("lastModified") or "")[:10], "gated": bool(m.get("gated")),
                     "license": next((t.split(":", 1)[1] for t in tags if t.startswith("license:")), ""),
-                    "gguf": "gguf" in tags, "family": family, "family_label": base.label if base else "",
+                    "gguf": "gguf" in tags, "family": family,
+                    "family_label": "FLUX.2 klein" if family == "flux2-klein" else base.label if base else "",
                     "supported": bool(family), "reason": reason})
         if len(out) >= (limit if words else 20):
             break
@@ -744,9 +805,10 @@ def hf_image_files(repo: str, vram_gb: float, directory: Path | None = None) -> 
                  for e in (manifest(directory).get("models") or {}).values()} if directory else {}
     for f in model_files(family, files) if family else []:
         name = f["path"].rsplit("/", 1)[-1]
+        fam = klein_size(f["path"], f["size"]) if family == "flux2-klein" else family
         q = QUANT_RE.search(name if name.lower().endswith(".gguf") else name.rsplit(".", 1)[0] + ".gguf")
         size = f["size"] / 1e9
-        variants.append({"file": f["path"], "name": name, "quant": q.group(1).upper() if q else "",
+        variants.append({"file": f["path"], "name": name, "quant": q.group(1).upper() if q else "", "family": fam,
                          "size_gb": round(size, 1), "need_gb": round(size + extra, 1),
                          "fit": fit_need(size + extra, vram_gb), "id": custom_id(repo, f["path"]),
                          "installed": name in installed.get(repo, set())})
@@ -754,7 +816,7 @@ def hf_image_files(repo: str, vram_gb: float, directory: Path | None = None) -> 
     ok = [v for v in variants if v["fit"] == "ok"]
     if ok:
         max(ok, key=lambda v: v["size_gb"])["recommended"] = True
-    base = FAMILIES.get(family)
+    base = FAMILIES.get(family) or FAMILIES.get(variants[0]["family"] if variants else "")
     return {"repo": repo, "family": family, "family_label": base.label if base else "", "reason": reason,
             "steps": base.steps if base else 0, "gated": bool((info or {}).get("gated")), "variants": variants}
 

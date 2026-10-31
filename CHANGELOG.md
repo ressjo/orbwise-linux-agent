@@ -83,6 +83,12 @@ All notable changes to this project are documented here. The format follows
   `~/.local/share/orbwise/chromium` (no root; asks first outside Auto, a "no" is remembered).
 
 ### Fixed
+- **FLUX.2 klein models were set up as FLUX.1** (e.g. `flux3-image-klein`): any repo with "flux" in its name got
+  FLUX.1's text encoders and VAE, and sd-server stopped with "get sd version from file failed". Now *klein* is
+  recognised (4B or 9B from the name, else from file size and quantization), newer FLUX generations are marked as not
+  supported, and plain "flux" only counts as FLUX.1 with a matching `base_model` tag. Models set up wrongly before are
+  flagged on the image model page; an unrecognised model file gets a clear message, and the page shows the sd-server
+  version with an **Update** button.
 - **Image mode loaded the language model again in the background:** the daily summaries (every 5 minutes) asked the
   language model, which took the video memory back from the image model – also right after unloading it by hand.
   Now clicking *Image* unloads the language model at once; the active image model loads with the first picture; while

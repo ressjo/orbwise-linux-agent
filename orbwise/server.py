@@ -1288,6 +1288,33 @@ def create_app(cfg: Config) -> FastAPI:
     # ---------- Bildmodelle: auswählen, laden, löschen (Katalog: imagegen_setup.CATALOG) ----------
     image_install: dict = {"model": "", "stop": None, "text": "", "pct": None}
 
+    runtime_update = [False]
+
+    @app.post("/api/image/runtime/update")
+    async def image_runtime_update():
+        """sd-server auf den neuesten Build bringen (neuere Bildmodelle) – ein laufendes Bild wird erst fertig."""
+        from . import imagegen_setup
+        if runtime_update[0]:
+            raise HTTPException(409, T("Wird schon aktualisiert.", "Already updating."))
+        runtime_update[0] = True
+        lines: list[str] = []
+        try:
+            async with images.lock:
+                await images.drop_server()
+                directory = images.directory
+
+                def run() -> bool:
+                    with imagegen_setup._client() as client:
+                        return imagegen_setup.install_binary(directory, client, lines.append, update=True)
+                ok = await asyncio.to_thread(run)
+        except httpx.HTTPError as e:
+            ok, lines = False, [*lines, T(f"✘ GitHub nicht erreichbar: {e}", f"✘ GitHub not reachable: {e}")]
+        finally:
+            runtime_update[0] = False
+        if not ok:
+            raise HTTPException(502, (lines[-1] if lines else T("Aktualisieren fehlgeschlagen", "Update failed")).lstrip("✘ "))
+        return {"ok": True, "version": imagegen_setup.runtime_version(images.directory), "text": lines[-1] if lines else ""}
+
     @app.get("/api/image/models")
     async def image_models():
         from . import imagegen_setup
@@ -1296,6 +1323,8 @@ def create_app(cfg: Config) -> FastAPI:
         home = str(Path.home())
         folder = str(images.directory)
         return {"models": items, "vram_gb": round(vram, 1),
+                "runtime": {"installed": imagegen_setup.server_binary(images.directory).exists(),
+                            "version": imagegen_setup.runtime_version(images.directory), "updating": runtime_update[0]},
                 "dir": "~" + folder[len(home):] if folder.startswith(home + "/") else folder,
                 "installing": image_install["model"], "text": image_install["text"], "pct": image_install["pct"]}
 
@@ -1391,7 +1420,8 @@ def create_app(cfg: Config) -> FastAPI:
         if variant is None:  # nur Dateien aus der eigenen Liste – kein beliebiger Pfad
             raise HTTPException(400, T("Diese Datei gibt es in dem Repo nicht.", "That file is not in the repo."))
         label = repo.split("/")[-1] + (f" {variant['quant']}" if variant["quant"] else "")
-        return start_image_install(variant["id"], {"repo": repo, "file": file, "family": listing["family"],
+        return start_image_install(variant["id"], {"repo": repo, "file": file,
+                                                   "family": variant.get("family") or listing["family"],
                                                    "label": label})
 
     # ---------- Eigenes Bild-Backend (Experten): OpenAI Images API, Automatic1111/Forge, externer sd-server ----------
