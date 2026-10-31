@@ -106,6 +106,7 @@
         <button class="nav-item" data-sheet="planner" title="Planer"><svg class="i"><use href="#i-calendar"/></svg><span>Planer</span></button>
         <button class="nav-item" data-sheet="memory" title="Gedächtnis"><svg class="i"><use href="#i-brain"/></svg><span>Gedächtnis</span></button>
         <button class="nav-item" data-sheet="settings" title="Einstellungen"><svg class="i"><use href="#i-settings"/></svg><span>Einstellungen</span></button>
+        <button class="nav-item nav-quit" id="btn-quit" title="Orbwise beenden"><svg class="i"><use href="#i-power"/></svg><span>Beenden</span></button>
       </nav>
     </aside>
 
@@ -461,6 +462,16 @@
       <ul class="boot-steps" id="boot-steps" aria-live="polite"></ul>
       <button class="btn primary large" id="boot-btn" disabled>Orbwise starten</button>
       <div class="boot-hint" id="boot-hint">Startet von selbst, sobald alles geladen ist</div>
+    </div>
+  </div>
+
+  <div class="overlay hidden" id="shutdown">
+    <div class="boot-box">
+      <div class="boot-mark off" aria-hidden="true"></div>
+      <h1 class="boot-title">Orbwise ist beendet</h1>
+      <div class="boot-sub">Modell, Sandbox-Container und Hintergrund-Jobs sind angehalten.</div>
+      <div class="boot-hint">Neu starten in der Konsole: <code>orbwise serve --open</code></div>
+      <button class="btn large" id="shutdown-reload" type="button">Seite neu laden</button>
     </div>
   </div>
 

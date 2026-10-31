@@ -1034,6 +1034,11 @@ details.card[open] > summary .caret { transform: rotate(180deg); }
 .boot-mark { width: 72px; height: 72px; border-radius: 50%; border: 1.5px solid var(--accent);
   background: radial-gradient(circle, var(--accent) 0 20%, transparent 22%), radial-gradient(circle, transparent 0 48%, var(--accent-strong) 50% 56%, transparent 58%); animation: breathe 2.4s ease-in-out infinite; }
 #boot.ready .boot-mark { animation: none; border-color: var(--success); }
+#shutdown { background: var(--bg); backdrop-filter: none; z-index: 60; }
+#shutdown .boot-mark { animation: none; opacity: .45; }
+#shutdown .boot-hint { margin: 4px 0 18px; }
+#shutdown code { font-family: var(--mono); background: var(--code-bg); padding: 1px 6px; border-radius: var(--r-xs); }
+.nav-quit { color: var(--muted); }
 @keyframes breathe { 50% { transform: scale(1.06); } }
 .boot-title { font-size: var(--fs-2xl); font-weight: 650; margin: 18px 0 2px; letter-spacing: -.01em; }
 .boot-sub { color: var(--muted); font-size: var(--fs-base); margin-bottom: 14px; }

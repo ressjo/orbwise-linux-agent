@@ -38,6 +38,13 @@ def cmd_serve(args) -> None:
     uvicorn.run(app, host=cfg.host, port=cfg.port, log_level="info" if args.verbose else "warning")
 
 
+def cmd_stop(args) -> None:
+    from .update import stop_servers
+    cfg = load_config()
+    n = stop_servers(cfg.port)
+    print(T("✔ Orbwise beendet.", "✔ Orbwise stopped.") if n else T("Orbwise lief nicht.", "Orbwise was not running."))
+
+
 def cmd_init_config(args) -> None:
     path = config_path()
     if path.exists() and not args.force:
@@ -773,6 +780,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("action", choices=["install", "remove"])
     sub.add_parser("update", help=T("Auf den neuesten Stand bringen (git pull, Abhängigkeiten, Neustart)",
                                     "update (git pull, dependencies, restart)"))
+    sub.add_parser("stop", help=T("Laufenden Orbwise-Server beenden (auch einen im Hintergrund)",
+                                  "stop the running Orbwise server (also one in the background)"))
     sub.add_parser("version", help=T("Installierte Version anzeigen", "show the installed version"))
     sub.add_parser("reindex", help=T("Gedächtnis-Suchindex aus den Markdown-Dateien neu aufbauen",
                                      "rebuild the memory search index from the Markdown files"))
@@ -791,7 +800,7 @@ def main(argv: list[str] | None = None) -> None:
         logging.getLogger(noisy).setLevel(logging.WARNING)
     if args.cmd is None:
         args = parser.parse_args(["serve", *(argv or sys.argv[1:])])
-    {"serve": cmd_serve, "doctor": cmd_doctor, "update": cmd_update, "model": cmd_model, "version": cmd_version,
+    {"serve": cmd_serve, "stop": cmd_stop, "doctor": cmd_doctor, "update": cmd_update, "model": cmd_model, "version": cmd_version,
      "reindex": cmd_reindex, "summarize": cmd_summarize, "init-config": cmd_init_config,
      "context-test": cmd_context_test, "voice": cmd_voice, "skills": cmd_skills}[args.cmd](args)
 

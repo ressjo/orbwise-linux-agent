@@ -46,19 +46,39 @@ def server_running(port: int) -> bool:
         return False
 
 
-def restart_server(port: int, root: Path, out: Callable[[str], None] = print) -> None:
-    """Beendet laufende `orbwise serve`-Prozesse und startet im Hintergrund neu."""
+def _is_server(pid: int) -> bool:
+    """Wirklich ein `orbwise serve` (Programm orbwise, erstes Argument serve) – nicht etwa eine Shell, ein Editor oder
+    `tail -f`, in deren Befehlszeile der Text nur vorkommt."""
+    try:
+        args = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+    except OSError:
+        return True  # ohne /proc: wie bisher dem pgrep-Treffer glauben
+    names = [os.path.basename(a.decode(errors="replace")) for a in args]
+    return any(n == "orbwise" and i + 1 < len(names) and names[i + 1] == "serve" for i, n in enumerate(names))
+
+
+def stop_servers(port: int) -> int:
+    """Beendet laufende `orbwise serve`-Prozesse (SIGTERM – sie räumen auf wie bei Strg+C) und wartet, bis der Port
+    frei ist. Liefert, wie viele es waren."""
     pids = subprocess.run(["pgrep", "-f", "orbwise serve"], capture_output=True, text=True).stdout.split()
+    stopped = 0
     for pid in pids:
-        if int(pid) != os.getpid():
+        if int(pid) != os.getpid() and _is_server(int(pid)):
             try:
                 os.kill(int(pid), signal.SIGTERM)
+                stopped += 1
             except (ProcessLookupError, PermissionError):
                 pass
     for _ in range(40):
         if not server_running(port):
             break
         time.sleep(0.25)
+    return stopped
+
+
+def restart_server(port: int, root: Path, out: Callable[[str], None] = print) -> None:
+    """Beendet laufende `orbwise serve`-Prozesse und startet im Hintergrund neu."""
+    stop_servers(port)
     launcher = Path.home() / ".local/bin/orbwise"
     cmd = [str(launcher)] if launcher.exists() else [str(root / ".venv/bin/orbwise")]
     log_dir = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state"))
@@ -69,6 +89,9 @@ def restart_server(port: int, root: Path, out: Callable[[str], None] = print) ->
     for _ in range(60):
         if server_running(port):
             out(T("✔ Server neu gestartet – Browser-Seite neu laden.", "✔ Server restarted – reload the browser page."))
+            out(T("Er läuft jetzt im Hintergrund – beenden mit  orbwise stop  oder in der Oberfläche unten links "
+                  "mit „Beenden“.", "It now runs in the background – stop it with  orbwise stop  or with \"Quit\" "
+                  "at the bottom left of the interface."))
             return
         time.sleep(0.5)
     out(T("Server startet noch …", "Server is still starting …") + f" (Log: {log_dir / 'orbwise.log'})")

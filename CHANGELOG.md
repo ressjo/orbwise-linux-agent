@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Quit button** at the bottom of the sidebar and **`orbwise stop`**: shut Orbwise down cleanly (model server, sandbox
+  containers, background jobs) – also after `orbwise update`, which restarts the server in the background where Ctrl+C
+  no longer reaches it. Stopping/restarting now only hits real `orbwise serve` processes, not shells or editors whose
+  command line merely contains the text.
 - **Code check:** the chat shows the current step ("Code check: Security") instead of "waiting for the model", and
   every running step has a **Stop** button in the activity panel – it ends the check with a report of the state so far
   (findings marked as not verified) and fixes nothing automatically.

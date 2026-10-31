@@ -114,3 +114,42 @@ def test_launcher_self_heals(tmp_path):
     r = subprocess.run([str(launcher)], capture_output=True, text=True,
                        env={**env, "ORBWISE_HOME": str(tmp_path / "weg")})
     assert r.returncode == 1 and "was not found" in r.stderr
+
+
+def test_stop_servers_terminates_others_but_not_itself(monkeypatch):
+    import signal
+    me = os.getpid()
+    monkeypatch.setattr(upd.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, f"{me}\n4242\n4343\n", ""))
+    killed = []
+    monkeypatch.setattr(upd.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+    monkeypatch.setattr(upd, "server_running", lambda port: False)
+    monkeypatch.setattr(upd, "_is_server", lambda pid: True)
+    assert upd.stop_servers(8765) == 2
+    assert killed == [(4242, signal.SIGTERM), (4343, signal.SIGTERM)]
+
+
+def test_shutdown_endpoint_ends_the_own_process(cfg, monkeypatch):
+    import signal
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from orbwise import server
+    monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    killed = []
+    monkeypatch.setattr(server.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+    with TestClient(server.create_app(cfg), base_url="http://localhost:8765") as client:
+        assert client.post("/api/shutdown", headers={"Origin": "http://evil.example"}).status_code == 403
+        assert client.post("/api/shutdown").json() == {"ok": True}
+        time.sleep(0.6)
+    assert killed == [(os.getpid(), signal.SIGTERM)]
+
+
+def test_only_real_servers_count(tmp_path, monkeypatch):
+    """Eine Shell, in deren Befehlszeile „orbwise serve“ nur vorkommt, wird nicht beendet."""
+    proc = subprocess.Popen(["bash", "-c", "sleep 30 # orbwise serve"])
+    try:
+        assert not upd._is_server(proc.pid)
+    finally:
+        proc.kill()

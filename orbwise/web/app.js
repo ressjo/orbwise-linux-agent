@@ -291,6 +291,7 @@
       renderBoot();
     };
     ws.onclose = () => {
+      if (S.shutdown) { showShutdown(); return; }  // „Beenden“: nicht neu verbinden
       S.connected = false; S.prewarm = null;
       S.recording = false;
       S.transcribing = false;
@@ -305,6 +306,21 @@
       handle(JSON.parse(e.data));
     };
   }
+
+  // „Beenden“ unten in der Seitenleiste: Server fährt herunter (wie Strg+C), danach ein ruhiger Schlussbildschirm
+  function showShutdown() {
+    S.connected = false;
+    $("shutdown").classList.remove("hidden");
+    $("shutdown-reload").onclick = () => location.reload();
+  }
+  $("btn-quit").onclick = async () => {
+    if (!await ask(L("Orbwise beenden? Modell, Sandbox-Container und Hintergrund-Jobs werden angehalten. Wieder starten mit „orbwise serve --open“ in der Konsole.",
+                     "Quit Orbwise? The model, sandbox containers and background jobs are stopped. Start again with \"orbwise serve --open\" in a terminal."),
+                   { ok: L("Beenden", "Quit"), danger: true })) return;
+    S.shutdown = true;
+    try { await api("POST", "/api/shutdown"); } catch { S.shutdown = false; return; }
+    setTimeout(showShutdown, 1500);  // falls die Verbindung nicht sauber schließt
+  };
 
   function send(obj) {
     if (S.ws && S.ws.readyState === 1) S.ws.send(JSON.stringify(obj));
@@ -389,6 +405,9 @@
         if (!ev.routine) { S.usage = ev; renderTokenLine(); }
         if (Date.now() - (T.memAt || 0) > 5000) { T.memAt = Date.now(); loadCtxMemory(); }  // Prompt-Cache ändert sich
         return;
+      case "shutdown":
+        S.shutdown = true;
+        break;
       case "state":
         if (ev.routine) orb.addSatellite("rt:" + ev.routine, "⟳ " + ev.routine.toUpperCase());
         if (ev.state === "idle") {  // abgebrochene Werkzeuge nicht hängen lassen
@@ -2715,7 +2734,7 @@
     document.body.appendChild(scrim);
     setTimeout(() => { const first = holder.querySelector("input:not([type=hidden])"); if (first) first.focus(); }, 30);
   }
-  document.querySelectorAll(".nav-item").forEach((n) => { n.onclick = () => openSheet(n.dataset.sheet); });
+  document.querySelectorAll(".nav-item[data-sheet]").forEach((n) => { n.onclick = () => openSheet(n.dataset.sheet); });
   document.querySelectorAll(".set-tab").forEach((t) => { t.onclick = () => showSection(t.dataset.section); });
   document.querySelectorAll("[data-close-sheet]").forEach((b) => { b.onclick = closeSheet; });
   $("scrim").onclick = () => { closeSheet(); app.classList.remove("side-open"); };

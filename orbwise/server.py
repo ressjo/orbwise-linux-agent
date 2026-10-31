@@ -11,6 +11,7 @@ import logging
 import os
 import re
 import shutil
+import signal
 import time
 import uuid
 from datetime import datetime
@@ -1487,6 +1488,14 @@ def create_app(cfg: Config) -> FastAPI:
             if sb:
                 memory.conversation.save()  # gemerktes origin der Arbeitskopie
         return out
+
+    @app.post("/api/shutdown")
+    async def shutdown():
+        """„Beenden“ unten in der Seitenleiste: wie Strg+C – uvicorn fährt herunter, lifespan räumt auf (Modell-Server,
+        Sandbox-Container, Hintergrund-Jobs …). Hilft auch, wenn der Server nach einem Update im Hintergrund läuft."""
+        await hub.broadcast({"type": "shutdown"})
+        asyncio.get_running_loop().call_later(0.3, os.kill, os.getpid(), signal.SIGTERM)
+        return {"ok": True}
 
     @app.post("/api/review/stop")
     async def review_stop():

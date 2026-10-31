@@ -25,6 +25,13 @@ HTML_EN = [
      'title="Memory"><svg class="i"><use href="#i-brain"/></svg><span>Memory<'),
     ('title="Einstellungen"><svg class="i"><use href="#i-settings"/></svg><span>Einstellungen<',
      'title="Settings"><svg class="i"><use href="#i-settings"/></svg><span>Settings<'),
+    ('title="Orbwise beenden"><svg class="i"><use href="#i-power"/></svg><span>Beenden<',
+     'title="Quit Orbwise"><svg class="i"><use href="#i-power"/></svg><span>Quit<'),
+    ('<h1 class="boot-title">Orbwise ist beendet</h1>', '<h1 class="boot-title">Orbwise has stopped</h1>'),
+    ('<div class="boot-sub">Modell, Sandbox-Container und Hintergrund-Jobs sind angehalten.</div>',
+     '<div class="boot-sub">Model, sandbox containers and background jobs are stopped.</div>'),
+    ('<div class="boot-hint">Neu starten in der Konsole: <code>', '<div class="boot-hint">Start again in a terminal: <code>'),
+    ('id="shutdown-reload" type="button">Seite neu laden<', 'id="shutdown-reload" type="button">Reload page<'),
     # Kopfzeile
     ('title="Menü" aria-label="Menü"', 'title="Menu" aria-label="Menu"'),
     ('title="Sprachmodell wechseln"', 'title="Switch language model"'),
