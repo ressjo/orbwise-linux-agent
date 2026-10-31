@@ -78,6 +78,11 @@ All notable changes to this project are documented here. The format follows
   `~/.local/share/orbwise/chromium` (no root; asks first outside Auto, a "no" is remembered).
 
 ### Fixed
+- **Image mode loaded the language model again in the background:** the daily summaries (every 5 minutes) asked the
+  language model, which took the video memory back from the image model – also right after unloading it by hand.
+  Now clicking *Image* unloads the language model at once; the active image model loads with the first picture; while
+  the image view is open no summaries or index rebuilds run, memory embeddings go to the CPU, and after 10 idle
+  minutes only the image server stops. The language model returns when you leave the image view or ask something.
 - **Image mode:** the sidebar navigation (Models, Planner, Memory, Settings) sat right under the mode switch; it is at
   the bottom again like in the other modes.
 - **`orbwise update` did not restart a running server** since the access token: it asked `/api/status`, which now

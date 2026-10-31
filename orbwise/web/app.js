@@ -528,6 +528,10 @@
       case "image_install":
         imageInstallEvent(ev);
         break;
+      case "image_llm_unloaded":
+        if (IV.open) toast(L("Sprachmodell entladen – der Grafikspeicher gehört jetzt dem Bildmodell.",
+                             "Language model unloaded – the video memory now belongs to the image model."));
+        break;
       case "password_done":
         closePassword(ev.id);
         break;
@@ -5335,6 +5339,7 @@
     $("iv-go").textContent = L("Erzeugen", "Generate");
   }
   async function openImageView() {
+    if (!IV.open) api("POST", "/api/image/enter").catch(() => {});  // Sprachmodell raus – Bildmodell lädt beim ersten Bild
     IV.open = true;
     store.set("view", "image");
     app.classList.add("imaging");
