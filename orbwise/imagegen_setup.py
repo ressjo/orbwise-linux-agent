@@ -403,6 +403,12 @@ def detect_family(repo: str, tags: list[str] | tuple = ()) -> tuple[str, str]:
     text = " ".join([repo.lower(), *tags])
     if "lora" in tags or re.search(r"(^|[-_/ ])lora([-_ ]|$)", repo.lower()):
         return "", T("LoRA – braucht ein Grundmodell, läuft nicht allein", "LoRA – needs a base model, does not run alone")
+    if re.search(r"(^|[-_/ ])(te|text[-_]?encoders?|pup|upsampler|prompt[-_]?upsampler)([-_ ]|$)", repo.lower()):
+        return "", T("Text-Encoder bzw. Prompt-Helfer – gehört neben ein Bildmodell, läuft nicht allein",
+                     "text encoder or prompt helper – belongs next to an image model, does not run alone")
+    if re.search(r"flux[-_.]?3", text):  # FLUX 3 Image Klein: eigene Generation (Text-Encoder Qwen3-VL-4B)
+        return "", T("FLUX 3 – neue Modellgeneration, wird noch nicht unterstützt",
+                     "FLUX 3 – new model generation, not supported yet")
     if re.search(r"controlnet|ip-?adapter|inpaint|kontext|[-_]edit\b|video|wan2|ltx|hunyuan", text):
         return "", T("Sonderform (Steuerung, Bearbeiten, Video) – wird nicht unterstützt",
                      "special variant (control, editing, video) – not supported")
@@ -737,12 +743,17 @@ def catalog(cfg, vram_gb: float) -> list[dict]:
         if spec is None or not model_installed(directory, model_id):
             continue
         diff = model_paths(directory, model_id).get("diffusion")
-        now, _ = detect_family(f"{entry.get('repo', '')} {diff.name if diff else ''}") if entry.get("family") else ("", "")
+        now, why = detect_family(f"{entry.get('repo', '')} {diff.name if diff else ''}") if entry.get("family") \
+            else ("", "")
         if now == "flux2-klein" and diff is not None and diff.exists():
             now = klein_size(diff.name, diff.stat().st_size)
-        misfiled = bool(entry.get("family")) and now != entry.get("family") and now in FAMILIES
+        misfiled = ""  # früher falsch eingeordnet: Grund für die Oberfläche (löschen, ggf. passend neu laden)
+        if entry.get("family") and now != entry.get("family"):
+            misfiled = T(f"Falsch eingeordnet – das ist ein {FAMILIES[now].label}-Modell und startet so nicht.",
+                         f"Misfiled – this is a {FAMILIES[now].label} model and does not start like this.") \
+                if now in FAMILIES else T(f"Startet so nicht: {why}.", f"Does not start like this: {why}.")
         out.append({"id": model_id, "label": spec.label, "note": spec.note(), "size_gb": 0, "steps": spec.steps,
-                    "misfiled": FAMILIES[now].label if misfiled else "",
+                    "misfiled": misfiled,
                     "edit": spec.edit, "license": "", "installed": True, "active": model_id == active,
                     "disk_gb": round(disk_size(directory, model_id) / 1e9, 1), "fit": "ok",
                     "min_vram_gb": 0, "new": False, "custom": True, "repo": entry.get("repo", ""),
