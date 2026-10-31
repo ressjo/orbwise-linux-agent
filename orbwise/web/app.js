@@ -2476,7 +2476,12 @@
     if (name === "planner") loadPlanner();
     if (name === "memory") loadMemory();
     if (name === "settings") showSection(section || "general");
-    if (name === "models") renderModelsPage();
+    if (name === "models") {
+      IMS.q = ""; IMS.repo = "";  // Bildmodelle: beim Öffnen die Übersicht, nicht die letzte Suche
+      const box = document.querySelector("#mp-image .ivm-search input");
+      if (box) box.value = "";
+      renderModelsPage();
+    }
   }
   function closeSheet() {
     if (!openSheetName) return false;
@@ -5337,20 +5342,175 @@
     $("pill-llm").title = L("Bildmodell wechseln", "Switch image model");
     $("pill-llm").querySelector("use").setAttribute("href", "#i-image");
   }
+  // Bildmodell-Seite: Suche über alle Text-zu-Bild-Modelle auf Hugging Face, darunter installiert / empfohlen / beliebt
+  const IMS = { q: "", sort: "downloads", timer: 0, seq: 0, repo: "" };
   function renderImageModels() {
     const d = IM.data;
     const panel = $("mp-image");
     if (!d) { panel.innerHTML = `<div class="mm-hint">${L("Bildmodelle nicht ladbar.", "Could not load image models.")}</div>`; return; }
+    if (!panel.querySelector(".ivm-search")) {  // Gerüst einmal – Eingaben bleiben beim Neuzeichnen stehen
+      panel.innerHTML = `<form class="mp-search ivm-search" autocomplete="off"><svg class="i"><use href="#i-search"/></svg>
+          <input type="search" spellcheck="false"><button type="submit" class="btn primary small"></button></form>
+        <div class="hf-tools"><select class="hf-sort"></select></div>
+        <p class="set-hint ivm-intro"></p><div class="ivm-installing hidden"></div><div class="ivm-body"></div>`;
+      const form = panel.querySelector("form"), q = form.querySelector("input"), sort = panel.querySelector(".hf-sort");
+      q.placeholder = L("Alle Text-zu-Bild-Modelle auf Hugging Face durchsuchen (z. B. flux, juggernaut xl, dreamshaper)",
+                        "Search all text-to-image models on Hugging Face (e.g. flux, juggernaut xl, dreamshaper)");
+      form.querySelector("button").textContent = L("Suchen", "Search");
+      for (const [v, de, en] of [["downloads", "Meiste Downloads", "Most downloads"], ["trending", "Gerade beliebt", "Trending"],
+                                 ["likes", "Meiste Likes", "Most likes"], ["updated", "Zuletzt aktualisiert", "Recently updated"]])
+        sort.add(new Option(L(de, en), v));
+      q.value = IMS.q; sort.value = IMS.sort;
+      const run = (now) => {
+        clearTimeout(IMS.timer);
+        IMS.q = q.value.trim(); IMS.repo = "";
+        IMS.timer = setTimeout(renderImageBody, now ? 0 : 400);
+      };
+      form.onsubmit = (e) => { e.preventDefault(); run(true); };
+      q.addEventListener("input", () => run(false));
+      sort.onchange = () => { IMS.sort = sort.value; run(true); };
+    }
     const installed = d.models.filter((m) => m.installed);
-    panel.innerHTML = `<p class="set-hint ivm-intro"></p><div class="ivm-list"></div>`;
     panel.querySelector(".ivm-intro").textContent = (d.vram_gb ? L(`Grafikkarte: ${d.vram_gb} GB · `, `GPU: ${d.vram_gb} GB · `) : "")
-      + (installed.length ? L("Mehrere können installiert sein, eins ist aktiv – wechseln geht auch oben am Modell-Menü. ",
-                              "Several can be installed, one is active – you can also switch at the model menu at the top. ")
-                          : L("Noch kein Bildmodell installiert – eins laden, danach geht es los. ", "No image model installed yet – download one to get started. "))
-      + L(`Die Dateien liegen in ${d.dir}; die Quantisierung richtet sich nach dem Grafikspeicher.`,
-          `Files live in ${d.dir}; the quantization follows the video memory.`);
-    const list = panel.querySelector(".ivm-list");
-    for (const m of d.models) list.appendChild(imageModelCard(m, d));
+      + L("Immer nur ein Modell ist geladen; wechseln geht auch oben am Modell-Menü. ", "Only one model is loaded at a time; you can also switch at the model menu at the top. ")
+      + L(`Dateien in ${d.dir}.`, `Files in ${d.dir}.`) + (installed.length ? "" : " " + L("Noch kein Bildmodell installiert.", "No image model installed yet."));
+    renderInstalling();
+    renderImageBody();
+  }
+  function renderInstalling() {
+    const box = $("mp-image").querySelector(".ivm-installing");
+    if (!box || !IM.data) return;
+    const id = IM.data.installing;
+    box.classList.toggle("hidden", !id);
+    if (!id) { box.innerHTML = ""; return; }
+    const p = IM.progress[id] || { text: IM.data.text, pct: IM.data.pct };
+    if (!box.querySelector(".ivm-progress")) {
+      box.innerHTML = `<b></b><div class="ivm-progress"><div class="iv-bar"><i></i></div><span></span>
+        <button type="button" class="btn small"></button></div>`;
+      box.querySelector("button").textContent = L("Abbrechen", "Cancel");
+      box.querySelector("button").onclick = () => api("DELETE", "/api/image/models/install").catch(() => {});
+    }
+    const known = IM.data.models.find((m) => m.id === id);
+    box.querySelector("b").textContent = L("Lädt: ", "Downloading: ") + (known ? known.label : (IM.label || id));
+    box.querySelector("i").style.width = (p.pct || 0) + "%";
+    box.querySelector("span").textContent = p.text || L("startet …", "starting …");
+  }
+  async function renderImageBody() {
+    const panel = $("mp-image");
+    const body = panel.querySelector(".ivm-body");
+    if (!body || !IM.data) return;
+    const seq = ++IMS.seq;
+    if (IMS.repo) return imageRepoFiles(IMS.repo, body, seq);
+    if (IMS.q.length >= 2) {  // Suche über alle Text-zu-Bild-Modelle
+      body.innerHTML = `<div class="mm-hint">${L("Suche auf Hugging Face …", "Searching Hugging Face …")}</div>`;
+      let data;
+      try { data = await getJSON(`/api/image/hf/search?q=${encodeURIComponent(IMS.q)}&sort=${IMS.sort}`); }
+      catch { if (seq === IMS.seq) body.innerHTML = `<div class="mm-hint">${L("Hugging Face nicht erreichbar.", "Hugging Face not reachable.")}</div>`; return; }
+      if (seq !== IMS.seq) return;
+      body.innerHTML = "";
+      section(body, L(`Ergebnisse für „${IMS.q}“`, `Results for “${IMS.q}”`));
+      if (!data.results.length) body.insertAdjacentHTML("beforeend", `<div class="mm-hint">${L("Nichts gefunden – kürzeren Begriff versuchen.", "Nothing found – try a shorter term.")}</div>`);
+      for (const r of data.results) body.appendChild(imageHfItem(r));
+      return;
+    }
+    body.innerHTML = "";
+    const d = IM.data;
+    const installed = d.models.filter((m) => m.installed), offered = d.models.filter((m) => !m.installed);
+    if (installed.length) { section(body, L("Installiert", "Installed")); for (const m of installed) body.appendChild(imageModelCard(m, d)); }
+    section(body, L("Empfohlen", "Recommended"));
+    for (const m of offered) body.appendChild(imageModelCard(m, d));
+    section(body, L("Gerade beliebt auf Hugging Face", "Trending on Hugging Face"));
+    const list = document.createElement("div");
+    list.className = "mm-hf";
+    list.innerHTML = `<div class="mm-hint">${L("Lade …", "Loading …")}</div>`;
+    body.appendChild(list);
+    let data;
+    try { data = await getJSON("/api/image/hf/search"); }
+    catch { if (seq === IMS.seq) list.innerHTML = `<div class="mm-hint">${L("Hugging Face nicht erreichbar.", "Hugging Face not reachable.")}</div>`; return; }
+    if (seq !== IMS.seq) return;
+    list.innerHTML = "";
+    for (const r of data.results) list.appendChild(imageHfItem(r));
+    if (!data.results.length) list.innerHTML = `<div class="mm-hint">${L("Gerade nichts Passendes.", "Nothing suitable right now.")}</div>`;
+  }
+  function section(box, title) {
+    const h = document.createElement("div");
+    h.className = "mp-hf-title ivm-section";
+    h.textContent = title;
+    box.appendChild(h);
+    return h;
+  }
+  function imageHfItem(r) {
+    const [owner, name] = r.repo.split("/");
+    const stats = [r.downloads ? L(`${r.downloads.toLocaleString(LOCALE)} Downloads`, `${r.downloads.toLocaleString(LOCALE)} downloads`) : "",
+                   r.likes ? `♥ ${r.likes.toLocaleString(LOCALE)}` : "", r.updated ? L(`aktualisiert ${r.updated}`, `updated ${r.updated}`) : ""]
+      .filter(Boolean).join(" · ");
+    const b = hfItem([document.createTextNode(name || r.repo)], r.supported ? r.family_label : L("nicht unterstützt", "not supported"),
+                     `${owner}${stats ? " · " + stats : ""}`, r.supported ? "" : r.reason);
+    const badges = document.createElement("div");
+    badges.className = "hf-badges";
+    const add = (text, cls) => { const t = document.createElement("span"); t.className = "hf-badge" + (cls ? " " + cls : ""); t.textContent = text; badges.appendChild(t); };
+    if (r.gguf) add("GGUF");
+    if (r.license) add(r.license, "muted");
+    if (r.gated) add(L("🔒 Zugang nötig", "🔒 Gated"), "warn");
+    if (badges.childElementCount) b.appendChild(badges);
+    b.classList.toggle("unsupported", !r.supported);
+    b.onclick = () => { if (!r.supported) { toast(r.reason); return; } IMS.repo = r.repo; renderImageBody(); };
+    return b;
+  }
+  async function imageRepoFiles(repo, body, seq) {
+    body.innerHTML = `<div class="mm-hint">${L("Lade Dateiliste …", "Loading file list …")}</div>`;
+    let data;
+    try { data = await api("GET", "/api/image/hf/files?repo=" + encodeURIComponent(repo)); }
+    catch { if (seq === IMS.seq) { IMS.repo = ""; renderImageBody(); } return; }
+    if (seq !== IMS.seq) return;
+    body.innerHTML = "";
+    const head = document.createElement("div");
+    head.className = "hf-detail";
+    head.innerHTML = `<div class="hf-detail-top"><button type="button" class="btn-link hf-back"></button>
+      <a class="hf-link" target="_blank" rel="noopener"></a></div><div class="mp-hf-title"></div><div class="hf-warn"></div>`;
+    head.querySelector(".hf-back").textContent = "← " + L("zurück", "back");
+    head.querySelector(".hf-back").onclick = () => { IMS.repo = ""; renderImageBody(); };
+    head.querySelector(".hf-link").href = `https://huggingface.co/${repo}`;
+    head.querySelector(".hf-link").textContent = L("Auf Hugging Face ansehen ↗", "View on Hugging Face ↗");
+    head.querySelector(".mp-hf-title").textContent = repo;
+    const notes = [];
+    if (data.family) notes.push(L(`Läuft als ${data.family_label}-Modell: Text-Encoder und VAE lädt Orbwise passend dazu (falls noch nicht da), ${data.steps} Schritte.`,
+                                  `Runs as a ${data.family_label} model: Orbwise adds the matching text encoder and VAE (if not there yet), ${data.steps} steps.`));
+    else notes.push(data.reason);
+    if (data.gated) notes.push(L("Zugangsbeschränkt: Lizenz auf der Modellseite akzeptieren und unter Einstellungen → Allgemein → Hugging Face ein Token eintragen.",
+                                 "Gated: accept the license on the model page and enter a token under Settings → General → Hugging Face."));
+    const warn = head.querySelector(".hf-warn");
+    warn.textContent = notes.join(" ");
+    warn.classList.toggle("info", !!data.family && !data.gated);
+    body.appendChild(head);
+    if (!data.variants.length) {
+      body.insertAdjacentHTML("beforeend", `<div class="mm-hint">${data.family
+        ? L("Keine ladbare Datei – sd.cpp braucht eine ganze Modelldatei (GGUF oder .safetensors), keine Diffusers-Aufteilung.",
+            "No loadable file – sd.cpp needs a whole model file (GGUF or .safetensors), not a diffusers split.") : ""}</div>`);
+      return;
+    }
+    const vram = IM.data && IM.data.vram_gb;
+    for (const v of data.variants) {
+      const mark = document.createElement("span");
+      mark.className = "fit-" + v.fit;
+      mark.textContent = FIT_MARKS[v.fit] + " ";
+      const busy = IM.data && IM.data.installing;
+      const b = hfItem([mark, document.createTextNode(v.quant || v.name)],
+                       busy === v.id ? L("Lädt …", "Loading …") : v.installed ? L("Installiert", "Installed") : v.recommended ? L("Empfohlen", "Recommended") : "",
+                       `${v.name} · ~${v.size_gb} GB · ${L("braucht", "needs")} ~${v.need_gb} GB VRAM` + (vram ? ` (${L("du hast", "you have")} ${vram} GB)` : ""));
+      b.disabled = !!busy || v.installed;
+      b.onclick = async () => {
+        if (v.fit === "big" && !await ask(L(`${v.name} ist für deine Grafikkarte zu groß und wird sehr langsam. Trotzdem laden?`,
+                                            `${v.name} is too big for your GPU and will be very slow. Download anyway?`))) return;
+        try {
+          const r = await api("POST", "/api/image/hf/install", { repo, file: v.file });
+          IM.data.installing = r.model; IM.label = `${repo.split("/")[1]} ${v.quant}`.trim(); IM.progress[r.model] = {};
+          renderInstalling(); b.disabled = true;
+          toast(L("Lädt – Fortschritt oben.", "Downloading – progress at the top."));
+        } catch {}
+      };
+      body.appendChild(b);
+    }
   }
   function imageModelCard(m, d) {
     const card = document.createElement("div");
@@ -5370,19 +5530,12 @@
     fit.textContent = FIT_MARKS[m.fit] + " ";
     meta.append(fit, document.createTextNode([
       m.installed ? L(`${m.disk_gb} GB auf der Platte`, `${m.disk_gb} GB on disk`) : L(`~${m.size_gb} GB Download`, `~${m.size_gb} GB download`),
-      L(`ab ${m.min_vram_gb} GB VRAM`, `from ${m.min_vram_gb} GB VRAM`), L(`${m.steps} Schritte`, `${m.steps} steps`), m.license].filter(Boolean).join(" · ")));
+      m.min_vram_gb ? L(`ab ${m.min_vram_gb} GB VRAM`, `from ${m.min_vram_gb} GB VRAM`) : "", L(`${m.steps} Schritte`, `${m.steps} steps`), m.license].filter(Boolean).join(" · ")));
     const btns = card.querySelector(".ivm-btns");
     const btn = (label, cls, fn) => { const b = document.createElement("button"); b.type = "button"; b.className = "btn small " + cls; b.textContent = label; b.onclick = fn; btns.appendChild(b); return b; };
     const busy = d.installing;
     if (busy === m.id) {
-      btn(L("Abbrechen", "Cancel"), "", () => api("DELETE", "/api/image/models/install").catch(() => {}));
-      const p = IM.progress[m.id] || { text: d.text, pct: d.pct };
-      const row = document.createElement("div");
-      row.className = "ivm-progress";
-      row.innerHTML = `<div class="iv-bar"><i></i></div><span></span>`;
-      row.querySelector("i").style.width = (p.pct || 0) + "%";
-      row.querySelector("span").textContent = p.text || L("startet …", "starting …");
-      card.appendChild(row);
+      btn(L("Lädt …", "Loading …"), "", () => {}).disabled = true;
     } else if (!m.installed) {
       const b = btn(L("Laden", "Download"), "primary", async () => {
         if (m.fit === "big" && !await ask(L(`${m.label} ist für deine Grafikkarte zu groß und wird sehr langsam. Trotzdem laden?`,
@@ -5414,15 +5567,12 @@
     if (!ev.done) {
       IM.progress[ev.model] = { text: ev.text, pct: ev.pct };
       if (IM.data) IM.data.installing = ev.model;
-      const card = [...document.querySelectorAll("#mp-image .ivm-card")].find((c) => c.querySelector(".ivm-progress"));
-      if (card) {  // nur Balken und Text erneuern – nicht die ganze Liste
-        card.querySelector(".ivm-progress i").style.width = (ev.pct || 0) + "%";
-        card.querySelector(".ivm-progress span").textContent = ev.text || "";
-      } else if (openSheetName === "models" && IV.open) renderImageModels();
+      if (openSheetName === "models" && IV.open) renderInstalling();  // nur der Fortschrittsblock, nicht die Liste
       return;
     }
+    if (IM.data) IM.data.installing = "";
     delete IM.progress[ev.model];
-    const label = ((IM.data && IM.data.models.find((m) => m.id === ev.model)) || {}).label || ev.model;
+    const label = ((IM.data && IM.data.models.find((m) => m.id === ev.model)) || {}).label || IM.label || ev.model;
     if (ev.ok) toast(L(`${label} ist geladen und aktiv.`, `${label} is downloaded and active.`));
     else if (ev.cancelled) toast(L(`Laden von ${label} abgebrochen – erneut laden macht weiter.`, `Download of ${label} cancelled – downloading again resumes.`));
     else toast(L(`${label}: `, `${label}: `) + (ev.text || L("fehlgeschlagen", "failed")));

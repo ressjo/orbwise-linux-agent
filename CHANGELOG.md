@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **All text-to-image models from Hugging Face in the image view:** search and sort like for language models; the
+  model family is recognised (FLUX.1, FLUX.2 klein, Qwen-Image, Z-Image, SDXL incl. Pony/Illustrious, SD 1.5), the
+  loadable files are listed with size and fit, and the family's text encoder and VAE are added on download.
+  Unsupported repos (LoRA, ControlNet, video, unknown) say why.
+- **Only one model in memory:** `image.unload_llm` now defaults to `always` – the language model leaves the video
+  memory before the first image on every card (`auto` keeps the old behaviour).
 - **Image models:** besides Qwen-Image 2.1 now **Z-Image Turbo**, **FLUX.1 schnell**, **FLUX.1 dev**, the new
   **FLUX.2 klein 4B/9B** and **Stable Diffusion XL** – up to ~20 GB VRAM (Q8 from 20 GB). In image mode the model menu
   at the top lists only the image models and *Models* in the sidebar opens their management: download (progress,

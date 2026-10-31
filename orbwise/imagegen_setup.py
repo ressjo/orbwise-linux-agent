@@ -428,7 +428,7 @@ def _client() -> httpx.Client:
 
 def hf_tree(repo: str, client: httpx.Client) -> list[str]:
     """Dateien eines Repositories – leer, wenn es (noch) nicht existiert (Ausweich-Repositories im Katalog)."""
-    r = client.get(f"https://huggingface.co/api/models/{repo}/tree/main", params={"recursive": "1"},
+    r = client.get(f"{_hf_base()}/api/models/{repo}/tree/main", params={"recursive": "1"},
                    headers=_auth_headers())
     if r.status_code == 404:
         return []
@@ -438,7 +438,7 @@ def hf_tree(repo: str, client: httpx.Client) -> list[str]:
 
 def hf_find(query: str, client: httpx.Client, limit: int = 5) -> list[str]:
     """GGUF-Repositories zu einem Suchbegriff, meiste Downloads zuerst (für neue Modelle im Katalog)."""
-    r = client.get("https://huggingface.co/api/models", headers=_auth_headers(),
+    r = client.get(f"{_hf_base()}/api/models", headers=_auth_headers(),
                    params={"search": query, "filter": "gguf", "sort": "downloads", "direction": "-1", "limit": limit})
     if r.status_code >= 400:
         return []
@@ -455,7 +455,7 @@ def download(url: str, target: Path, client: httpx.Client, out: Out, label: str 
     target.parent.mkdir(parents=True, exist_ok=True)
     have = part.stat().st_size if part.exists() else 0
     headers = {**({"Range": f"bytes={have}-"} if have else {}),
-               **(_auth_headers() if "huggingface.co" in url else {})}
+               **(_auth_headers() if url.startswith(_hf_base()) else {})}
     with client.stream("GET", url, headers=headers) as r:
         if r.status_code == 416:  # schon vollständig
             part.rename(target)
@@ -512,6 +512,12 @@ def install_binary(directory: Path, client: httpx.Client, out: Out) -> bool:
     return True
 
 
+def _hf_base() -> str:
+    """https://huggingface.co – oder der Spiegel aus HF_ENDPOINT (wie bei den Sprachmodellen)."""
+    from .models import HF_API
+    return HF_API[:-4] if HF_API.endswith("/api") else "https://huggingface.co"
+
+
 def _auth_headers() -> dict:
     from .models import hf_token
     tok = hf_token()
@@ -553,7 +559,7 @@ def install(gpu: dict, cfg=None, out: Out = print, client: httpx.Client | None =
         for i, (role, (repo, path)) in enumerate(chosen.items(), 1):
             name = path.rsplit("/", 1)[-1]
             out(T(f"Lade {name} ({role}, {i}/{len(chosen)}) …", f"Downloading {name} ({role}, {i}/{len(chosen)}) …"))
-            download(f"https://huggingface.co/{repo}/resolve/main/{path}", directory / "models" / name, client, out,
+            download(f"{_hf_base()}/{repo}/resolve/main/{path}", directory / "models" / name, client, out,
                      stop=stop)
             files[role] = name
         data = manifest(directory) or {"models": {}}
