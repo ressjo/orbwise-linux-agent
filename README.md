@@ -671,6 +671,14 @@ memory (Q8 with 20 GB and more).
 | **FLUX.1 dev** | the large FLUX.1, very detailed; non-commercial | ~12–18 GB | 12–20 GB | 20 |
 | **Stable Diffusion XL 1.0** | the classic, runs on weaker cards | ~7 GB | from 6 GB | 25 |
 
+**Any text-to-image model from Hugging Face:** the image model page has a search over all text-to-image models (sorted
+by downloads, trend, likes or last update; without a term it shows trending ones that run here). Orbwise recognises
+the model family from the name and Hugging Face's `base_model` tags – FLUX.1 dev/schnell, FLUX.2 klein, Qwen-Image,
+Z-Image, SDXL (also Pony, Illustrious …) and SD 1.5 – and lists the loadable files (GGUF quantizations or whole
+`.safetensors` checkpoints) with size and whether they fit. On download it adds the family's text encoder and VAE
+if they are not there yet and starts the model with the family's options and steps. LoRAs, ControlNets, editing and
+video models and unknown families are shown as *not supported*, with the reason.
+
 The new FLUX.2 klein models look up their GGUF repository on Hugging Face when downloading (most downloads first),
 because their uploaders still change; they need a recent `sd-server` build (delete `~/orbwise-image/bin` to fetch the
 newest one).
@@ -692,11 +700,12 @@ land in `~/Bilder/Orbwise` (or `~/Pictures/Orbwise`); prompt and settings are st
   12 GB, Q8 from 20 GB); Qwen-Image uses the text encoder Qwen3-VL-8B (GGUF + mmproj for editing), Z-Image Qwen3-4B,
   FLUX CLIP-L + T5-XXL (fp8 below 20 GB). The exact files are read from Hugging Face during setup and recorded in
   `~/orbwise-image/manifest.json`; your own build can replace `~/orbwise-image/bin/sd-server`.
-- **Graphics memory:** below 16 GB the language model (its llama-server) is stopped before the first image –
-  both don't fit. As soon as Orbwise needs the language model again (a chat question, a model switch), when you
-  leave the image view or after `image.idle_minutes` (10) without a new image, the image model is unloaded and the
-  language model starts again (`image.unload_llm: auto | always | never`). On 8 GB the text encoder runs on the CPU
-  and the VAE in tiles; expect roughly 1–3 minutes per 1024² image there.
+- **Graphics memory:** only one model is in memory at a time – the language model (its llama-server, Ollama models
+  too) is stopped before the first image, and switching image models stops the previous image server. As soon as
+  Orbwise needs the language model again (a chat question, a model switch), when you leave the image view or after
+  `image.idle_minutes` (10) without a new image, the image model is unloaded and the language model starts again
+  (`image.unload_llm: always`; `auto` keeps both on cards with 16 GB and more, `never` always keeps both). On 8 GB
+  the text encoder runs on the CPU and the VAE in tiles; expect roughly 1–3 minutes per 1024² image there.
 - **Elsewhere:** `generate_image` in the tools mode ("draw me a lighthouse at dusk", with confirmation) and
   `/bild <description>` via Telegram.
 - `orbwise doctor` checks program, Vulkan libraries and the files of every installed image model.

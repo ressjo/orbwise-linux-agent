@@ -265,9 +265,9 @@ class ImageConfig(BaseModel):
     cfg_scale: float = 6.0
     size: str = "1:1"  # Seitenverhältnis: 1:1, 4:3, 3:4, 16:9, 9:16, 3:2, 2:3 – oder z. B. "1280x720"
     megapixels: float = 1.0  # Auflösung: 0.5 schnell · 1 Standard · 1.5 fein · 2 groß (mehr = langsamer, mehr VRAM)
-    # Sprachmodell (eigener llama-server) während der Bilderzeugung aus dem Grafikspeicher nehmen:
-    # auto = bei weniger als 16 GB VRAM, always, never
-    unload_llm: str = "auto"
+    # Immer nur ein Modell im Speicher: das Sprachmodell (eigener llama-server, Ollama) geht vor dem ersten Bild aus dem
+    # Grafikspeicher – always (Standard); auto = nur bei weniger als 16 GB VRAM; never = beide geladen lassen
+    unload_llm: str = "always"
     # so lange bleibt das Bildmodell nach dem letzten Bild geladen (danach kommt das Sprachmodell zurück)
     idle_minutes: int = 10
     # zusätzliche Startoptionen für sd-server (leer = passend zum VRAM: --offload-to-cpu, --vae-tiling …)

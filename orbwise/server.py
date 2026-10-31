@@ -18,6 +18,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -1259,15 +1260,12 @@ def create_app(cfg: Config) -> FastAPI:
                 "dir": "~" + folder[len(home):] if folder.startswith(home + "/") else folder,
                 "installing": image_install["model"], "text": image_install["text"], "pct": image_install["pct"]}
 
-    @app.post("/api/image/models/{model_id}/install")
-    async def image_model_install(model_id: str):
-        """Bildmodell laden (im Hintergrund, Fortschritt per WebSocket: image_install) – danach ist es aktiv."""
+    def start_image_install(model_id: str, source: dict | None = None) -> dict:
+        """Bildmodell im Hintergrund laden (Fortschritt per WebSocket: image_install) – danach ist es aktiv."""
         import threading
 
         from . import imagegen_setup
         from . import models as mdl
-        if model_id not in imagegen_setup.BY_ID:
-            raise HTTPException(404, T("Unbekanntes Bildmodell", "Unknown image model"))
         if image_install["model"]:
             raise HTTPException(409, T("Es wird schon ein Bildmodell geladen.", "An image model is already downloading."))
         stop = threading.Event()
@@ -1285,7 +1283,7 @@ def create_app(cfg: Config) -> FastAPI:
             try:
                 gpu = await asyncio.to_thread(mdl.detect_gpu)
                 gpu = {**gpu, "vram_gb": images.vram_gb() or gpu.get("vram_gb", 0)}  # eine Karte rechnet
-                ok = await asyncio.to_thread(imagegen_setup.install, gpu, cfg, out, None, model_id, stop)
+                ok = await asyncio.to_thread(imagegen_setup.install, gpu, cfg, out, None, model_id, stop, source)
             except imagegen_setup.InstallCancelled:
                 cancelled = True
             except Exception as e:  # noqa: BLE001 – melden statt hängen lassen
@@ -1299,7 +1297,63 @@ def create_app(cfg: Config) -> FastAPI:
             await hub.broadcast({"type": "image_install", "model": model_id, "done": True, "ok": ok,
                                  "cancelled": cancelled, "text": last})
         background.append(asyncio.create_task(run()))
-        return {"started": True}
+        return {"started": True, "model": model_id}
+
+    @app.post("/api/image/models/{model_id}/install")
+    async def image_model_install(model_id: str):
+        from . import imagegen_setup
+        if model_id not in imagegen_setup.BY_ID:
+            raise HTTPException(404, T("Unbekanntes Bildmodell", "Unknown image model"))
+        return start_image_install(model_id)
+
+    # ---------- Alle Text-zu-Bild-Modelle auf Hugging Face: suchen, Datei wählen, laden ----------
+    @app.get("/api/image/hf/search")
+    async def image_hf_search(q: str = "", sort: str = "downloads"):
+        from . import imagegen_setup
+        try:
+            return {"results": await asyncio.to_thread(imagegen_setup.hf_image_search, q, sort)}
+        except (httpx.HTTPError, ValueError) as e:
+            raise HTTPException(502, T(f"Hugging Face nicht erreichbar: {e}", f"Hugging Face not reachable: {e}")) from e
+
+    @app.get("/api/image/hf/files")
+    async def image_hf_files(repo: str):
+        from . import imagegen_setup
+        try:
+            return await asyncio.to_thread(imagegen_setup.hf_image_files, repo, images.vram_gb(), images.directory)
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code in (401, 403):
+                raise HTTPException(403, T(
+                    "Zugangsbeschränktes Modell – Lizenz auf Hugging Face akzeptieren und unter Einstellungen → "
+                    "Allgemein → Hugging Face ein Token eintragen.",
+                    "Gated model – accept the license on Hugging Face and enter a token under Settings → General → "
+                    "Hugging Face.")) from e
+            raise HTTPException(404 if e.response.status_code == 404 else 502,
+                                T("Repo nicht gefunden", "Repo not found")) from e
+        except httpx.HTTPError as e:
+            raise HTTPException(502, T(f"Hugging Face nicht erreichbar: {e}", f"Hugging Face not reachable: {e}")) from e
+
+    @app.post("/api/image/hf/install")
+    async def image_hf_install(request: Request):
+        """{repo, file}: diese Datei als Bildmodell laden – Familie wird erkannt, Text-Encoder/VAE kommen dazu."""
+        from . import imagegen_setup
+        data = await request.json()
+        repo, file = str(data.get("repo") or ""), str(data.get("file") or "")
+        try:
+            listing = await asyncio.to_thread(imagegen_setup.hf_image_files, repo, images.vram_gb())
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
+        except httpx.HTTPError as e:
+            raise HTTPException(502, T(f"Hugging Face nicht erreichbar: {e}", f"Hugging Face not reachable: {e}")) from e
+        if not listing["family"]:
+            raise HTTPException(400, listing["reason"] or T("nicht unterstützt", "not supported"))
+        variant = next((v for v in listing["variants"] if v["file"] == file), None)
+        if variant is None:  # nur Dateien aus der eigenen Liste – kein beliebiger Pfad
+            raise HTTPException(400, T("Diese Datei gibt es in dem Repo nicht.", "That file is not in the repo."))
+        label = repo.split("/")[-1] + (f" {variant['quant']}" if variant["quant"] else "")
+        return start_image_install(variant["id"], {"repo": repo, "file": file, "family": listing["family"],
+                                                   "label": label})
 
     @app.delete("/api/image/models/install")
     async def image_model_install_cancel():

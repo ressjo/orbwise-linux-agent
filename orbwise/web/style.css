@@ -1154,8 +1154,13 @@ details.card[open] > summary .caret { transform: rotate(180deg); }
 /* Bildmodelle: Bild-Variante der Modell-Seite (#mp-image) */
 .mp-imaging .mp-bar-row, .mp-imaging .mp-headinfo { display: none; }
 #mp-image > * { max-width: 980px; }
-.ivm-intro { margin: 0 0 12px; }
-.ivm-list { display: grid; gap: 8px; }
+.ivm-intro { margin: 8px 0 12px; }
+.ivm-section { margin-top: 14px; }
+.ivm-body { display: grid; gap: 8px; }
+.ivm-installing { display: grid; gap: 6px; padding: 10px 12px; margin-bottom: 8px; border: 1px solid var(--image);
+  border-radius: var(--r-md); background: var(--surface); font-size: var(--fs-md); }
+.model-item.unsupported { opacity: .6; }
+.hf-warn.info { border-color: var(--border); background: var(--surface-2); }
 .iv-setup { display: grid; gap: 6px; }
 .iv-setup b { color: var(--text); }
 .iv-setup div { margin-top: 6px; }

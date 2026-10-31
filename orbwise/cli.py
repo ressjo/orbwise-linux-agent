@@ -251,7 +251,7 @@ def cmd_doctor(args) -> None:
                          "install the Vulkan driver (e.g. vulkan-radeon / mesa-vulkan-drivers)"))
         active = imagegen_setup.active_id(image_root)
         for model_id in imagegen_setup.manifest(image_root).get("models", {}):
-            spec = imagegen_setup.BY_ID.get(model_id)
+            spec = imagegen_setup.spec_of(image_root, model_id)
             print(f"  {'▶' if model_id == active else ' '} {spec.label if spec else model_id}")
             paths = imagegen_setup.model_paths(image_root, model_id)
             for role in (spec.flags if spec else paths):
@@ -552,7 +552,8 @@ def cmd_model_manage(args, cfg, state: Path) -> None:
             print(T("Welches Modell? orbwise model remove <name>", "Which model? orbwise model remove <name>"))
             sys.exit(1)
         from . import imagegen_setup
-        if args.tag.strip().lower() in imagegen_setup.BY_ID:  # Bildmodell
+        if args.tag.strip().lower() in imagegen_setup.BY_ID or args.tag.strip().lower() in \
+                imagegen_setup.manifest(imagegen_setup.image_dir(cfg)).get("models", {}):  # Bildmodell
             freed = imagegen_setup.remove_model(cfg, args.tag.strip().lower())
             print(T(f"✔ Bildmodell gelöscht ({freed / 1e9:.1f} GB frei).", f"✔ Image model deleted ({freed / 1e9:.1f} GB freed)."))
             return
