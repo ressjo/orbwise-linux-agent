@@ -690,8 +690,11 @@ memory (Q8 with 20 GB and more).
 | **Qwen-Image 2.1** | very good images and text in images; **editing** with up to 3 references | ~15 GB | from 8 GB | 20 |
 | **Z-Image Turbo** | very fast, photorealistic, small | ~6.5 GB | from 6 GB | 8 |
 | **FLUX.1 schnell** | versatile, good detail, Apache 2.0 | ~12 GB | from 8 GB | 4 |
-| **FLUX.2 klein 4B** *(new)* | newest FLUX generation, small and fast, Apache 2.0 | ~7 GB | from 8 GB | 4 |
-| **FLUX.2 klein 9B** *(new)* | newest FLUX generation, more detail; non-commercial | ~12 GB | 12–20 GB | 4 |
+| **FLUX.3 Image Klein** *(new)* | newest FLUX generation, very good images; **editing** with references | ~8 GB | from 8 GB | 16 |
+| **FLUX.3 Image Klein** (text encoder without refusals) | the same with AtomicChat's uncensored Qwen3-VL encoder | ~8 GB | from 8 GB | 16 |
+| **FLUX.3 Image Klein Base** | non-distilled base, slower and more varied | ~8 GB | from 8 GB | 20 |
+| **FLUX.2 klein 4B** | small and fast, Apache 2.0; editing with references | ~7 GB | from 8 GB | 4 |
+| **FLUX.2 klein 9B** | more detail; non-commercial; editing with references | ~12 GB | 12–20 GB | 4 |
 | **FLUX.1 dev** | the large FLUX.1, very detailed; non-commercial | ~12–18 GB | 12–20 GB | 20 |
 | **Stable Diffusion XL 1.0** | the classic, runs on weaker cards | ~7 GB | from 6 GB | 25 |
 
@@ -703,9 +706,11 @@ Z-Image, SDXL (also Pony, Illustrious …) and SD 1.5 – and lists the loadable
 if they are not there yet and starts the model with the family's options and steps. LoRAs, ControlNets, editing and
 video models and unknown families are shown as *not supported*, with the reason.
 
-The new FLUX.2 klein models look up their GGUF repository on Hugging Face when downloading (most downloads first),
-because their uploaders still change; they need a recent `sd-server` build – the image model page shows its version
-and **Update** fetches the newest one. If a model file is not recognised when the image server starts, Orbwise says
+FLUX.3 Image Klein follows stable-diffusion.cpp's `docs/flux3.md`: the GGUF from `leejet/flux-3-image-klein-GGUF`,
+Qwen3-VL 4B as text encoder (`--llm`) and the FLUX.2 VAE; FLUX.2 klein likewise takes `leejet/FLUX.2-klein-*-GGUF`
+first. Both need a recent `sd-server` – downloading them updates it automatically; the image model page also shows
+its version with an **Update** button. Text-encoder or prompt-upsampler repos ("TE", "pup") are not image models on
+their own; the uncensored FLUX.3 encoder is offered as its own catalog entry instead. If a model file is not recognised when the image server starts, Orbwise says
 whether the sd-server is too old or the model was set up with the wrong parts.
 
 Files another model also uses (FLUX's VAE is shared with Z-Image) are stored once and stay when one of them is

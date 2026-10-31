@@ -369,6 +369,13 @@ CATALOG_TREES = {
     setup.SDXL_REPO: ["sd_xl_base_1.0.safetensors", "sd_xl_base_1.0_0.9vae.safetensors"],
     setup.SDXL_VAE_REPO: ["sdxl_vae.safetensors"],
     setup.FLUX_DEV_GGUF_REPO: ["flux1-dev-Q4_K_S.gguf", "flux1-dev-Q8_0.gguf"],
+    "leejet/flux-3-image-klein-GGUF": ["flux-3-image-klein-Q4_K.gguf", "flux-3-image-klein-Q8_0.gguf"],
+    "leejet/flux-3-image-klein-base-GGUF": ["flux-3-image-klein-base-Q4_K.gguf", "flux-3-image-klein-base-Q8_0.gguf"],
+    setup.QWEN3VL_4B_REPO: ["Qwen3VL-4B-Instruct-Q4_K_M.gguf", "Qwen3VL-4B-Instruct-Q8_0.gguf",
+                            "mmproj-Qwen3VL-4B-Instruct-F16.gguf"],
+    setup.FLUX3_TE_UNCENSORED: ["Qwen3VL-4B-Instruct-Uncensored-Q4_K_M.gguf", "Qwen3VL-4B-Instruct-Uncensored-Q8_0.gguf"],
+    setup.FLUX3_REPO: ["ae.safetensors", "model.safetensors"],
+    "leejet/FLUX.2-klein-4B-GGUF": ["flux-2-klein-4b-Q4_K.gguf"],
     "unsloth/Qwen3-4B-GGUF": ["Qwen3-4B-Q4_K_M.gguf", "Qwen3-4B-Q8_0.gguf"],
     "unsloth/Qwen3-8B-GGUF": ["Qwen3-8B-Q4_K_M.gguf", "Qwen3-8B-Q8_0.gguf"],
     "Comfy-Org/flux2-dev": ["split_files/vae/flux2-vae.safetensors", "split_files/diffusion_models/flux2_dev_fp8.safetensors"],
@@ -499,9 +506,10 @@ def test_image_model_api(cfg, monkeypatch, tmp_path):
         gpu, c, out, catalog_client(), model_id, stop, source))
     with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
         data = client.get("/api/image/models").json()
-        assert [m["id"] for m in data["models"]] == ["qwen-image", "z-image-turbo", "flux-schnell", "flux2-klein-4b",
+        assert [m["id"] for m in data["models"]] == ["qwen-image", "z-image-turbo", "flux-schnell", "flux3-klein",
+                                                      "flux3-klein-uncensored", "flux3-klein-base", "flux2-klein-4b",
                                                       "flux2-klein-9b", "flux-dev", "sdxl"]
-        assert [m["id"] for m in data["models"] if m["new"]] == ["flux2-klein-4b", "flux2-klein-9b"]
+        assert [m["id"] for m in data["models"] if m["new"]] == ["flux3-klein"]
         assert not any(m["installed"] for m in data["models"]) and data["installing"] == ""
         assert client.post("/api/image/models/gibtsnicht/install").status_code == 404
         assert client.post("/api/image/models/sdxl/activate").status_code == 404
@@ -529,7 +537,7 @@ def test_new_models_find_their_repository_by_search(tmp_path):
                          model_id="flux2-klein-4b")
     d = tmp_path / "img"
     assert setup.active_id(d) == "flux2-klein-4b" and setup.is_set_up(d)
-    assert setup.model_paths(d)["diffusion"].name == "flux-2-klein-4b-Q4_K_M.gguf"
+    assert setup.model_paths(d)["diffusion"].name == "flux-2-klein-4b-Q4_K.gguf"  # zuerst das Repo aus der sd.cpp-Doku
     assert any("search=FLUX.2-klein-4B" in u for u in requests)
     # Ausweich-Repositories, die es nicht gibt (404), brechen nichts ab
     assert any("Comfy-Org/flux2-klein/tree" in u for u in requests)
@@ -537,6 +545,7 @@ def test_new_models_find_their_repository_by_search(tmp_path):
     assert setup.model_paths(d, "flux2-klein-9b")["vae"] == setup.model_paths(d, "flux2-klein-4b")["vae"]  # geteilt
     # nichts gefunden → klare Meldung statt Absturz
     SEARCH["FLUX.2-klein-4B"], saved = [], SEARCH["FLUX.2-klein-4B"]
+    leejet = CATALOG_TREES.pop("leejet/FLUX.2-klein-4B-GGUF")  # auch das feste Repo fehlt
     try:
         out = []
         assert not setup.install({"vram_gb": 12}, Config.model_validate({"image": {"dir": str(tmp_path / "b")}}),
@@ -544,6 +553,7 @@ def test_new_models_find_their_repository_by_search(tmp_path):
         assert "nicht gefunden" in out[-1] and "diffusion" in out[-1]
     finally:
         SEARCH["FLUX.2-klein-4B"] = saved
+        CATALOG_TREES["leejet/FLUX.2-klein-4B-GGUF"] = leejet
 
 
 # ---------------------------------------------------------------- Alle Text-zu-Bild-Modelle (Suche)
@@ -592,7 +602,8 @@ def test_families_are_detected_from_names_and_tags():
     assert d("x/some-flux-finetune")[0] == "" and "unklar" in d("x/some-flux-finetune")[1]  # Version nicht erkennbar
     assert d("x/some-flux-finetune", ["base_model:black-forest-labs/FLUX.1-dev"])[0] == "flux-dev"
     # gemeldet: FLUX 3 Image Klein ist eine eigene Generation (Qwen3-VL-4B), das „TE“-Repo nur ihr Text-Encoder
-    assert d("AtomicChat/FLUX-3-Image-Klein-GGUF")[0] == "" and "FLUX 3" in d("AtomicChat/FLUX-3-Image-Klein-GGUF")[1]
+    assert d("AtomicChat/FLUX-3-Image-Klein-GGUF")[0] == "flux3-klein" and d("leejet/flux-3-image-klein-GGUF")[0] == "flux3-klein"
+    assert d("leejet/flux-3-image-klein-base-GGUF")[0] == "flux3-klein-base"
     te = d("AtomicChat/FLUX-3-Image-Klein-TE-Uncensored-GGUF")
     assert te[0] == "" and "Text-Encoder" in te[1]
     assert "Text-Encoder" in d("AtomicChat/FLUX-3-Image-Klein-pup-Uncensored-GGUF")[1]
@@ -830,3 +841,85 @@ def test_sd_server_update_replaces_the_build(tmp_path):
     assert setup.install_binary(d, client, out.append, update=True) and "aktualisiert" in out[-1]
     assert setup.runtime_version(d) == "v2" and b"zwei" in setup.server_binary(d).read_bytes()
     assert not (d / "bin.new").exists() and not (d / "bin.old").exists()
+
+
+def test_typing_loads_a_resting_llm_but_not_in_image_mode(cfg, monkeypatch, tmp_path):
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from orbwise.server import create_app
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
+    cfg.llm.base_url = "http://127.0.0.1:9"
+    cfg.image.dir = str(tmp_path / "img")
+    with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
+        llm = client.app.state.hub.agent.llm
+        images = client.app.state.images
+        calls = []
+
+        async def ensure_loaded():
+            if llm.unloaded:  # wie das echte: nur ein entladenes Modell wird geladen
+                calls.append("load")
+                llm.unloaded = False
+        monkeypatch.setattr(llm, "ensure_loaded", ensure_loaded)
+
+        async def give_back(restart=True):
+            calls.append("image out")
+            llm.gpu_borrowed = None
+
+        def prewarm(ws):
+            ws.send_json({"type": "prewarm"})
+            for _ in range(100):
+                time.sleep(0.02)
+                if calls:
+                    break
+        llm.unloaded = True  # von Hand entladen
+        images.view_open = True  # Bild-Ansicht offen: Tippen dort lädt nichts
+        with client.websocket_connect("ws://localhost:8765/ws", headers={"Origin": "http://localhost:8765"}) as ws:
+            prewarm(ws)
+            assert calls == []
+            images.view_open = False
+            prewarm(ws)  # Tools/Coding: Tippen lädt sofort
+            assert calls == ["load"]
+            calls.clear()
+            llm.gpu_borrowed, llm.unloaded = give_back, False  # Bildmodell hält den Speicher, Ansicht zu
+            prewarm(ws)
+            assert calls == ["image out"]
+
+
+
+# ---------------------------------------------------------------- FLUX.3 Image Klein (sd.cpp docs/flux3.md)
+def test_flux3_klein_gets_qwen3vl_and_the_flux2_vae():
+    normal = setup.BY_ID["flux3-klein"].choose(CATALOG_TREES, 8)
+    assert normal["diffusion"] == ("leejet/flux-3-image-klein-GGUF", "flux-3-image-klein-Q4_K.gguf")
+    assert normal["llm"] == (setup.QWEN3VL_4B_REPO, "Qwen3VL-4B-Instruct-Q4_K_M.gguf")  # nicht mmproj
+    assert normal["vae"][1].endswith("flux2-vae.safetensors")  # FLUX.2-VAE, nicht das FLUX.1-ae
+    uncensored = setup.BY_ID["flux3-klein-uncensored"].choose(CATALOG_TREES, 24)
+    assert uncensored["llm"] == (setup.FLUX3_TE_UNCENSORED, "Qwen3VL-4B-Instruct-Uncensored-Q8_0.gguf")
+    assert uncensored["diffusion"][1] == "flux-3-image-klein-Q8_0.gguf"
+    base = setup.BY_ID["flux3-klein-base"].choose(CATALOG_TREES, 8)
+    assert base["diffusion"] == ("leejet/flux-3-image-klein-base-GGUF", "flux-3-image-klein-base-Q4_K.gguf")
+    assert (setup.BY_ID["flux3-klein"].steps, setup.BY_ID["flux3-klein"].cfg_scale) == (16, 1.0)
+    assert (setup.BY_ID["flux3-klein-base"].steps, setup.BY_ID["flux3-klein-base"].cfg_scale) == (20, 3.5)
+    # ohne Comfy-Repo: das ae.safetensors aus dem FLUX.3-Repo – unter eigenem Namen (FLUX.1 hat auch eins)
+    trees = {k: v for k, v in CATALOG_TREES.items() if not k.startswith("Comfy-Org/")}
+    vae = setup.BY_ID["flux3-klein"].choose(trees, 8)["vae"]
+    assert vae == (setup.FLUX3_REPO, "ae.safetensors")
+    assert setup.local_name(*vae) == "black-forest-labs__flux-3-image-klein__ae.safetensors"
+    assert setup.local_name(setup.FLUX_REPO, "ae.safetensors") == "ae.safetensors"
+
+
+def test_flux3_install_updates_sd_server_and_can_edit(engine, monkeypatch):
+    calls = []
+    real = setup.install_binary
+    monkeypatch.setattr(setup, "install_binary", lambda d, c, o, update=False: calls.append(update) or real(d, c, o, update))
+    assert setup.install({"vram_gb": 12}, engine.cfg, out=lambda s: None, client=catalog_client(), model_id="flux3-klein")
+    assert calls == [True]  # FLUX.3 braucht einen aktuellen sd-server
+    run(engine.select("flux3-klein"))
+    cmd = engine.command()
+    assert "flux-3-image-klein" in cmd and "Qwen3VL-4B" in cmd and "--clip_l" not in cmd and "--t5xxl" not in cmd
+    engine.cfg.image.steps, engine.cfg.image.cfg_scale = 20, 6.0
+    assert engine.defaults() == (16, 1.0, "euler") and engine.can_edit()  # Vorlagen ohne mmproj
+    assert setup.install({"vram_gb": 12}, engine.cfg, out=lambda s: None, client=catalog_client(), model_id="sdxl")
+    assert calls == [True, False]  # ältere Modelle: sd-server bleibt, wie er ist
