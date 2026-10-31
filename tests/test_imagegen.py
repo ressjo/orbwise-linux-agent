@@ -361,7 +361,14 @@ CATALOG_TREES = {
     setup.FLUX_TEXT_REPO: ["clip_l.safetensors", "t5xxl_fp16.safetensors", "t5xxl_fp8_e4m3fn.safetensors"],
     setup.SDXL_REPO: ["sd_xl_base_1.0.safetensors", "sd_xl_base_1.0_0.9vae.safetensors"],
     setup.SDXL_VAE_REPO: ["sdxl_vae.safetensors"],
+    setup.FLUX_DEV_GGUF_REPO: ["flux1-dev-Q4_K_S.gguf", "flux1-dev-Q8_0.gguf"],
+    "unsloth/Qwen3-4B-GGUF": ["Qwen3-4B-Q4_K_M.gguf", "Qwen3-4B-Q8_0.gguf"],
+    "unsloth/Qwen3-8B-GGUF": ["Qwen3-8B-Q4_K_M.gguf", "Qwen3-8B-Q8_0.gguf"],
+    "Comfy-Org/flux2-dev": ["split_files/vae/flux2-vae.safetensors", "split_files/diffusion_models/flux2_dev_fp8.safetensors"],
+    "someone/FLUX.2-klein-4B-GGUF": ["flux-2-klein-4b-Q4_K_M.gguf", "flux-2-klein-4b-Q8_0.gguf"],
+    "someone/FLUX.2-klein-9B-GGUF": ["flux-2-klein-9b-Q4_K_M.gguf", "flux-2-klein-9b-Q8_0.gguf"],
 }
+SEARCH = {"FLUX.2-klein-4B": ["someone/FLUX.2-klein-4B-GGUF"], "FLUX.2-klein-9B": ["someone/FLUX.2-klein-9B-GGUF"]}
 
 
 def catalog_client(requests=None):
@@ -378,8 +385,12 @@ def catalog_client(requests=None):
                                                          "browser_download_url": "https://x/vulkan.zip"}]})
         if url == "https://x/vulkan.zip":
             return httpx.Response(200, content=archive.getvalue())
+        if "/api/models?" in url:  # Suche (neue Modelle)
+            return httpx.Response(200, json=[{"id": r} for r in SEARCH.get(request.url.params.get("search"), [])])
         if "/api/models/" in url:
             repo = url.split("/api/models/")[1].split("/tree")[0]
+            if repo not in CATALOG_TREES:
+                return httpx.Response(404, json={"error": "Repository not found"})
             return httpx.Response(200, json=[{"type": "file", "path": p} for p in CATALOG_TREES[repo]])
         if "/resolve/main/" in url:
             return httpx.Response(200, content=b"weights:" + url.encode())
@@ -389,8 +400,14 @@ def catalog_client(requests=None):
 
 def test_each_catalog_model_finds_its_files():
     for spec in setup.CATALOG:
-        small = spec.choose(CATALOG_TREES, 8)
+        trees = {**CATALOG_TREES, "__search__": [r for q in spec.search for r in SEARCH.get(q, [])]}
+        small = spec.choose(trees, 8)
         assert set(spec.required) <= set(small), spec.id
+    klein = setup.BY_ID["flux2-klein-9b"].choose({**CATALOG_TREES, "__search__": SEARCH["FLUX.2-klein-9B"]}, 20)
+    assert klein["diffusion"] == ("someone/FLUX.2-klein-9B-GGUF", "flux-2-klein-9b-Q8_0.gguf")  # 20 GB → Q8
+    assert klein["llm"][1] == "Qwen3-8B-Q8_0.gguf" and klein["vae"][1].endswith("flux2-vae.safetensors")
+    dev = setup.BY_ID["flux-dev"].choose(CATALOG_TREES, 20)
+    assert dev["diffusion"] == (setup.FLUX_DEV_GGUF_REPO, "flux1-dev-Q8_0.gguf") and dev["vae"][1] == "ae.safetensors"
     flux = setup.BY_ID["flux-schnell"]
     assert flux.choose(CATALOG_TREES, 8)["t5xxl"][1] == "t5xxl_fp8_e4m3fn.safetensors"
     assert flux.choose(CATALOG_TREES, 24)["t5xxl"][1] == "t5xxl_fp16.safetensors"
@@ -475,7 +492,9 @@ def test_image_model_api(cfg, monkeypatch, tmp_path):
         gpu, c, out, catalog_client(), model_id, stop))
     with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
         data = client.get("/api/image/models").json()
-        assert [m["id"] for m in data["models"]] == ["qwen-image", "z-image-turbo", "flux-schnell", "sdxl"]
+        assert [m["id"] for m in data["models"]] == ["qwen-image", "z-image-turbo", "flux-schnell", "flux2-klein-4b",
+                                                      "flux2-klein-9b", "flux-dev", "sdxl"]
+        assert [m["id"] for m in data["models"] if m["new"]] == ["flux2-klein-4b", "flux2-klein-9b"]
         assert not any(m["installed"] for m in data["models"]) and data["installing"] == ""
         assert client.post("/api/image/models/gibtsnicht/install").status_code == 404
         assert client.post("/api/image/models/sdxl/activate").status_code == 404
@@ -493,3 +512,27 @@ def test_image_model_api(cfg, monkeypatch, tmp_path):
         gone = client.delete("/api/image/models/z-image-turbo").json()
         assert gone["available"] is False
         assert client.delete("/api/image/models/install").json() == {"ok": False}
+
+
+def test_new_models_find_their_repository_by_search(tmp_path):
+    cfg = Config.model_validate({"image": {"dir": str(tmp_path / "img")}})
+    requests = []
+    assert setup.install({"vram_gb": 12}, cfg, out=lambda s: None, client=catalog_client(requests),
+                         model_id="flux2-klein-4b")
+    d = tmp_path / "img"
+    assert setup.active_id(d) == "flux2-klein-4b" and setup.is_set_up(d)
+    assert setup.model_paths(d)["diffusion"].name == "flux-2-klein-4b-Q4_K_M.gguf"
+    assert any("search=FLUX.2-klein-4B" in u for u in requests)
+    # Ausweich-Repositories, die es nicht gibt (404), brechen nichts ab
+    assert any("Comfy-Org/flux2-klein/tree" in u for u in requests)
+    assert setup.install({"vram_gb": 12}, cfg, out=lambda s: None, client=catalog_client(), model_id="flux2-klein-9b")
+    assert setup.model_paths(d, "flux2-klein-9b")["vae"] == setup.model_paths(d, "flux2-klein-4b")["vae"]  # geteilt
+    # nichts gefunden → klare Meldung statt Absturz
+    SEARCH["FLUX.2-klein-4B"], saved = [], SEARCH["FLUX.2-klein-4B"]
+    try:
+        out = []
+        assert not setup.install({"vram_gb": 12}, Config.model_validate({"image": {"dir": str(tmp_path / "b")}}),
+                                 out=out.append, client=catalog_client(), model_id="flux2-klein-4b")
+        assert "nicht gefunden" in out[-1] and "diffusion" in out[-1]
+    finally:
+        SEARCH["FLUX.2-klein-4B"] = saved

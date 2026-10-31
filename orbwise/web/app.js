@@ -3324,6 +3324,16 @@
     openSheet("models");
   }
   async function renderModelsPage() {
+    const imaging = IV.open;  // im Bild-Modus: nur die Bildmodelle
+    $("mp-title").textContent = imaging ? L("Bildmodelle", "Image models") : L("Modelle", "Models");
+    $("sheet-models").classList.toggle("mp-imaging", imaging);
+    $("mp-image").classList.toggle("hidden", !imaging);
+    if (imaging) {
+      ["mp-mine", "mp-add", "mp-api", "mp-pulls"].forEach((id) => $(id).classList.add("hidden"));
+      await loadImageModels();
+      renderImageModels();
+      return;
+    }
     try { MP.data = await getJSON("/api/models"); } catch { toast(L("Modelle nicht ladbar", "Could not load models")); return; }
     renderModelsHead();
     renderPulls();
@@ -4623,6 +4633,19 @@
   $("pill-llm").onclick = async (e) => {
     e.stopPropagation();
     const anchor = $("pill-llm");
+    if (IV.open) {  // Bild-Modus: nur die Bildmodelle
+      await loadImageModels();
+      const d = IM.data;
+      const items = (d ? d.models.filter((m) => m.installed) : []).map((m) => ({
+        icon: m.active ? "check" : "image", label: m.label, checked: m.active,
+        sub: [`${m.disk_gb} GB`, L(`${m.steps} Schritte`, `${m.steps} steps`), m.edit ? L("kann bearbeiten", "can edit") : ""].filter(Boolean).join(" · "),
+        run: () => { if (!m.active) activateImageModel(m.id); },
+      }));
+      if (items.length) items.push({ sep: true });
+      items.push({ icon: "settings", label: L("Bildmodelle verwalten …", "Manage image models …"), run: () => openSheet("models") });
+      popMenu(anchor, items);
+      return;
+    }
     let data;
     try { data = await getJSON("/api/models"); } catch { openModelsPage("mine"); return; }
     const items = data.profiles.map((p) => ({
@@ -4977,7 +5000,8 @@
       // „Lade Modell“ nach dem Start stehen, bis man neu lädt
       if (l.switching && asked > S.modelDoneAt) { S.modelSwitching = S.modelSwitching || l.switching; refresh(); }
       else if (!l.switching && S.modelSwitching && asked > S.modelDoneAt) { S.modelSwitching = null; refresh(); }
-      setPill("pill-llm", l.switching ? "warn" : l.unloaded ? "off" : !l.online ? "bad" : l.model_available ? "ok" : "warn",
+      if (IV.open) renderImagePill();  // Bild-Modus: die Pille zeigt das Bildmodell
+      else setPill("pill-llm", l.switching ? "warn" : l.unloaded ? "off" : !l.online ? "bad" : l.model_available ? "ok" : "warn",
         l.switching ? L("lädt …", "loading …") : l.unloaded ? `${l.label || l.model} · ${L("entladen", "unloaded")}` : !l.online ? `${l.label || l.model} offline` : l.model_available ? name : l.model + L(" fehlt", " missing"));
       const v = st.voice;
       const vCls = v.stt && v.tts ? "ok" : v.stt || v.tts ? "warn" : "bad";
@@ -5223,9 +5247,19 @@
     ivText();
     try { IV.status = await getJSON("/api/image/status"); } catch { IV.status = null; }
     const st = IV.status || {};
-    $("iv-setup").classList.add("hidden");
     $("iv-form").classList.toggle("hidden", !st.available);
-    await loadImageModels(st.available ? undefined : true);  // ohne installiertes Modell gleich die Auswahl zeigen
+    $("iv-setup").classList.toggle("hidden", !!st.available);
+    if (!st.available) {  // noch kein Bildmodell: Hinweis mit Knopf zur Verwaltung
+      $("iv-setup").innerHTML = `<b></b><span></span><div><button type="button" class="btn primary"></button></div>`;
+      $("iv-setup").querySelector("b").textContent = L("Noch kein Bildmodell installiert", "No image model installed yet");
+      $("iv-setup").querySelector("span").textContent = L(
+        "Wähle eins aus – z. B. Z-Image Turbo (schnell, ~6 GB) oder Qwen-Image (kann Bilder bearbeiten). Orbwise lädt es von Hugging Face; danach geht es hier los.",
+        "Pick one – e.g. Z-Image Turbo (fast, ~6 GB) or Qwen-Image (can edit pictures). Orbwise downloads it from Hugging Face; then you can start here.");
+      const go = $("iv-setup").querySelector("button");
+      go.textContent = L("Bildmodell auswählen …", "Choose an image model …");
+      go.onclick = () => openSheet("models");
+    }
+    await loadImageModels();
     if (st.available) {
       const sel = $("iv-size");
       if (!sel.options.length) {
@@ -5255,6 +5289,9 @@
     app.classList.remove("imaging");
     markModeTabs();
     api("POST", "/api/image/release").catch(() => {});  // Sprachmodell zurück in den Grafikspeicher
+    $("pill-llm").title = L("Sprachmodell wechseln", "Switch language model");
+    $("pill-llm").querySelector("use").setAttribute("href", "#i-chip");
+    loadStatus();  // Pille oben zeigt wieder das Sprachmodell
   }
   function setImageBusy(busy) {
     IV.busy = busy;
@@ -5285,36 +5322,35 @@
     setImageBusy(false);
     toast(L("Bild: ", "Image: ") + (ev.text || L("fehlgeschlagen", "failed")));
   }
-  // ---- Bildmodelle: auswählen, laden (mit Fortschritt), löschen
-  const IM = { data: null, open: false, progress: {} };
-  async function loadImageModels(open) {
+  // ---- Bildmodelle: Auswahl oben am Modell-Menü (#pill-llm), Verwaltung auf der Modell-Seite (Bild-Variante)
+  const IM = { data: null, progress: {} };
+  async function loadImageModels() {
     try { IM.data = await getJSON("/api/image/models"); } catch { IM.data = null; }
-    if (open !== undefined) IM.open = open;
-    renderImageModels();
+    renderImagePill();
+    if (openSheetName === "models" && IV.open) renderImageModels();
+  }
+  // Im Bild-Modus zeigt die Modell-Pille oben das aktive Bildmodell (statt des Sprachmodells)
+  function renderImagePill() {
+    if (!IV.open) return;
+    const active = IM.data && IM.data.models.find((m) => m.active);
+    setPill("pill-llm", active ? "ok" : "off", active ? active.label : L("kein Bildmodell", "no image model"));
+    $("pill-llm").title = L("Bildmodell wechseln", "Switch image model");
+    $("pill-llm").querySelector("use").setAttribute("href", "#i-image");
   }
   function renderImageModels() {
     const d = IM.data;
-    const bar = $("iv-modelbar"), panel = $("iv-models");
-    if (!d) { bar.classList.add("hidden"); panel.classList.add("hidden"); return; }
+    const panel = $("mp-image");
+    if (!d) { panel.innerHTML = `<div class="mm-hint">${L("Bildmodelle nicht ladbar.", "Could not load image models.")}</div>`; return; }
     const installed = d.models.filter((m) => m.installed);
-    bar.classList.remove("hidden");
-    $("ivm-label").textContent = L("Bildmodell", "Image model");
-    const sel = $("iv-model");
-    sel.innerHTML = "";
-    for (const m of installed) sel.add(new Option(m.label, m.id, false, m.active));
-    sel.classList.toggle("hidden", !installed.length);
-    const active = installed.find((m) => m.active);
-    $("ivm-info").textContent = active ? `${active.note}` : L("Noch kein Bildmodell installiert.", "No image model installed yet.");
-    $("iv-models-btn").textContent = IM.open ? L("Schließen", "Close") : L("Bildmodelle verwalten", "Manage image models");
-    $("iv-models-btn").classList.toggle("hidden", !installed.length && IM.open);
-    panel.classList.toggle("hidden", !IM.open);
-    if (!IM.open) return;
-    panel.innerHTML = `<h3></h3><p></p>`;
-    panel.querySelector("h3").textContent = installed.length ? L("Bildmodelle", "Image models") : L("Bildmodell wählen und laden", "Choose and download an image model");
-    panel.querySelector("p").textContent = (d.vram_gb ? L(`Grafikkarte: ${d.vram_gb} GB · `, `GPU: ${d.vram_gb} GB · `) : "")
-      + L(`Modelle liegen in ${d.dir}. Mehrere können installiert sein, eins ist aktiv – wechseln geht oben.`,
-          `Models live in ${d.dir}. Several can be installed, one is active – switch above.`);
-    for (const m of d.models) panel.appendChild(imageModelCard(m, d));
+    panel.innerHTML = `<p class="set-hint ivm-intro"></p><div class="ivm-list"></div>`;
+    panel.querySelector(".ivm-intro").textContent = (d.vram_gb ? L(`Grafikkarte: ${d.vram_gb} GB · `, `GPU: ${d.vram_gb} GB · `) : "")
+      + (installed.length ? L("Mehrere können installiert sein, eins ist aktiv – wechseln geht auch oben am Modell-Menü. ",
+                              "Several can be installed, one is active – you can also switch at the model menu at the top. ")
+                          : L("Noch kein Bildmodell installiert – eins laden, danach geht es los. ", "No image model installed yet – download one to get started. "))
+      + L(`Die Dateien liegen in ${d.dir}; die Quantisierung richtet sich nach dem Grafikspeicher.`,
+          `Files live in ${d.dir}; the quantization follows the video memory.`);
+    const list = panel.querySelector(".ivm-list");
+    for (const m of d.models) list.appendChild(imageModelCard(m, d));
   }
   function imageModelCard(m, d) {
     const card = document.createElement("div");
@@ -5326,6 +5362,7 @@
     if (m.active) tag(L("aktiv", "active"), true);
     else if (m.installed) tag(L("installiert", "installed"));
     if (m.edit) tag(L("kann bearbeiten", "can edit"));
+    if (m.new) tag(L("neu", "new"));
     card.querySelector(".ivm-note").textContent = m.note;
     const meta = card.querySelector(".ivm-meta");
     const fit = document.createElement("span");
@@ -5361,29 +5398,27 @@
         try {
           const r = await api("DELETE", `/api/image/models/${m.id}`);
           toast(L(`${m.label} gelöscht – ${r.freed_gb} GB frei.`, `${m.label} deleted – ${r.freed_gb} GB freed.`));
-          openImageView();
+          if (IV.open) openImageView(); else loadImageModels();
         } catch {}
       });
     }
     return card;
   }
   async function activateImageModel(id) {
-    if (IV.busy) { toast(L("Erst das laufende Bild abwarten.", "Wait for the running image first.")); renderImageModels(); return; }
+    if (IV.busy) { toast(L("Erst das laufende Bild abwarten.", "Wait for the running image first.")); return; }
     try { IV.status = await api("POST", `/api/image/models/${id}/activate`); } catch { return; }
     toast(L(`Bildmodell: ${IV.status.model_label}`, `Image model: ${IV.status.model_label}`));
-    openImageView();
+    if (IV.open) openImageView(); else loadImageModels();
   }
-  $("iv-model").onchange = (e) => activateImageModel(e.target.value);
-  $("iv-models-btn").onclick = () => { IM.open = !IM.open; loadImageModels(); };
   function imageInstallEvent(ev) {
     if (!ev.done) {
       IM.progress[ev.model] = { text: ev.text, pct: ev.pct };
       if (IM.data) IM.data.installing = ev.model;
-      const card = [...document.querySelectorAll("#iv-models .ivm-card")].find((c) => c.querySelector(".ivm-progress"));
-      if (card && IV.open) {  // nur Balken und Text erneuern – nicht die ganze Liste
+      const card = [...document.querySelectorAll("#mp-image .ivm-card")].find((c) => c.querySelector(".ivm-progress"));
+      if (card) {  // nur Balken und Text erneuern – nicht die ganze Liste
         card.querySelector(".ivm-progress i").style.width = (ev.pct || 0) + "%";
         card.querySelector(".ivm-progress span").textContent = ev.text || "";
-      } else if (IV.open) renderImageModels();
+      } else if (openSheetName === "models" && IV.open) renderImageModels();
       return;
     }
     delete IM.progress[ev.model];
@@ -5391,7 +5426,7 @@
     if (ev.ok) toast(L(`${label} ist geladen und aktiv.`, `${label} is downloaded and active.`));
     else if (ev.cancelled) toast(L(`Laden von ${label} abgebrochen – erneut laden macht weiter.`, `Download of ${label} cancelled – downloading again resumes.`));
     else toast(L(`${label}: `, `${label}: `) + (ev.text || L("fehlgeschlagen", "failed")));
-    if (IV.open) openImageView();
+    if (IV.open) openImageView(); else loadImageModels();
   }
 
   async function loadGallery(fresh = []) {

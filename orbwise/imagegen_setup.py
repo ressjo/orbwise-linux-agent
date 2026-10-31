@@ -170,6 +170,9 @@ class ImageModel:
     sampler: str = "euler"
     license: str = ""
     edit: bool = False   # kann Vorlagen bearbeiten (Rolle vision)
+    search: tuple = ()   # Suchbegriffe: Repositories, die beim Laden auf Hugging Face gesucht werden (neue Modelle,
+                         # deren GGUF-Hochlader noch wechseln) – ihre Dateilisten kommen zu den festen dazu
+    new: bool = False    # in der Oberfläche als „neu“ markiert
 
     def note(self) -> str:
         return T(self.note_de, self.note_en)
@@ -227,6 +230,56 @@ def _choose_flux(trees: dict[str, list[str]], vram: float) -> dict[str, tuple[st
     return out
 
 
+FLUX_DEV_GGUF_REPO = "city96/FLUX.1-dev-gguf"
+QWEN3_4B_REPOS = ("unsloth/Qwen3-4B-GGUF", ZIMAGE_TEXT_REPO)
+QWEN3_8B_REPOS = ("unsloth/Qwen3-8B-GGUF", "Qwen/Qwen3-8B-GGUF")
+FLUX2_VAE_REPOS = ("Comfy-Org/flux2-dev", "Comfy-Org/flux2-klein")
+
+
+def _choose_flux_dev(trees: dict[str, list[str]], vram: float) -> dict[str, tuple[str, str]]:
+    out = _choose_flux({**trees, FLUX_GGUF_REPO: trees.get(FLUX_DEV_GGUF_REPO, [])}, vram)
+    if "diffusion" in out:
+        out["diffusion"] = (FLUX_DEV_GGUF_REPO, out["diffusion"][1])
+    return out
+
+
+def _first(trees: dict[str, list[str]], repos, choose) -> tuple[str, str] | None:
+    """(Repository, Datei) aus dem ersten der Repositories, in dem choose(Dateien) etwas findet."""
+    for repo in repos:
+        hit = choose(trees.get(repo, []))
+        if hit:
+            return repo, hit
+    return None
+
+
+def _searched(trees: dict[str, list[str]]) -> list[str]:
+    """Die beim Laden gesuchten Repositories (siehe ImageModel.search), beliebteste zuerst."""
+    return trees.get("__search__", [])
+
+
+def _choose_flux2_klein(size: str):
+    """FLUX.2 [klein] 4B/9B: GGUF des Diffusionsmodells (gesucht), Text-Encoder Qwen3-4B bzw. -8B, FLUX.2-VAE."""
+    text_repos = QWEN3_4B_REPOS if size == "4b" else QWEN3_8B_REPOS
+
+    def choose(trees: dict[str, list[str]], vram: float) -> dict[str, tuple[str, str]]:
+        out = {}
+        quants = quant_preference(vram) + ["Q8_0", "Q4_0"]
+
+        def model_file(files: list[str]) -> str | None:
+            mine = [f for f in files if "klein" in f.lower() and size in f.lower().replace("-", "").replace("_", "")]
+            return pick(mine or files, quants)
+        if (hit := _first(trees, _searched(trees), model_file)):
+            out["diffusion"] = hit
+        if (hit := _first(trees, text_repos, lambda files: pick(files, _small_text(vram)))):
+            out["llm"] = hit
+        vae = _first(trees, FLUX2_VAE_REPOS, lambda files: next(
+            (f for f in files if re.search(r"flux2[-_]?(vae|ae)\.safetensors$", f.rsplit("/", 1)[-1], re.I)), None))
+        if vae:
+            out["vae"] = vae
+        return out
+    return choose
+
+
 def _choose_sdxl(trees: dict[str, list[str]], vram: float) -> dict[str, tuple[str, str]]:
     out = {}
     if (f := _exact(trees.get(SDXL_REPO, []), "sd_xl_base_1.0.safetensors")):
@@ -255,6 +308,24 @@ CATALOG: tuple[ImageModel, ...] = (
                {"diffusion": "--diffusion-model", "vae": "--vae", "clip_l": "--clip_l", "t5xxl": "--t5xxl"},
                ("diffusion", "vae", "clip_l", "t5xxl"), (FLUX_GGUF_REPO, FLUX_TEXT_REPO, FLUX_REPO), _choose_flux,
                12, 8, 4, 1.0, license="apache-2.0"),
+    ImageModel("flux2-klein-4b", "FLUX.2 klein 4B",
+               "Neueste FLUX-Generation, klein und schnell (4 Schritte), Apache-Lizenz – gut für 8–12 GB.",
+               "Newest FLUX generation, small and fast (4 steps), Apache license – good for 8–12 GB.",
+               {"diffusion": "--diffusion-model", "vae": "--vae", "llm": "--llm"},
+               ("diffusion", "llm", "vae"), (*QWEN3_4B_REPOS, *FLUX2_VAE_REPOS), _choose_flux2_klein("4b"),
+               7, 8, 4, 1.0, license="apache-2.0", search=("FLUX.2-klein-4B",), new=True),
+    ImageModel("flux2-klein-9b", "FLUX.2 klein 9B",
+               "Neueste FLUX-Generation, größer und detailreicher (4 Schritte) – für 12–20 GB; nicht kommerziell.",
+               "Newest FLUX generation, larger and more detailed (4 steps) – for 12–20 GB; non-commercial.",
+               {"diffusion": "--diffusion-model", "vae": "--vae", "llm": "--llm"},
+               ("diffusion", "llm", "vae"), (*QWEN3_8B_REPOS, *FLUX2_VAE_REPOS), _choose_flux2_klein("9b"),
+               12, 12, 4, 1.0, license="flux-non-commercial", search=("FLUX.2-klein-9B",), new=True),
+    ImageModel("flux-dev", "FLUX.1 dev",
+               "Die große FLUX.1-Variante – sehr detailreich, 20 Schritte; ab 12 GB, mit 20 GB in Q8. Nicht kommerziell.",
+               "The large FLUX.1 variant – very detailed, 20 steps; from 12 GB, Q8 with 20 GB. Non-commercial.",
+               {"diffusion": "--diffusion-model", "vae": "--vae", "clip_l": "--clip_l", "t5xxl": "--t5xxl"},
+               ("diffusion", "vae", "clip_l", "t5xxl"), (FLUX_DEV_GGUF_REPO, FLUX_TEXT_REPO, FLUX_REPO),
+               _choose_flux_dev, 12, 12, 20, 1.0, license="flux-1-dev-non-commercial"),
     ImageModel("sdxl", "Stable Diffusion XL 1.0",
                "Der Klassiker – klein, läuft auch auf schwächeren Karten; Prompts am besten auf Englisch.",
                "The classic – small, runs on weaker cards too; prompts work best in English.",
@@ -276,10 +347,22 @@ def _client() -> httpx.Client:
 
 
 def hf_tree(repo: str, client: httpx.Client) -> list[str]:
+    """Dateien eines Repositories – leer, wenn es (noch) nicht existiert (Ausweich-Repositories im Katalog)."""
     r = client.get(f"https://huggingface.co/api/models/{repo}/tree/main", params={"recursive": "1"},
                    headers=_auth_headers())
+    if r.status_code == 404:
+        return []
     r.raise_for_status()
     return [f["path"] for f in r.json() if f.get("type") == "file"]
+
+
+def hf_find(query: str, client: httpx.Client, limit: int = 5) -> list[str]:
+    """GGUF-Repositories zu einem Suchbegriff, meiste Downloads zuerst (für neue Modelle im Katalog)."""
+    r = client.get("https://huggingface.co/api/models", headers=_auth_headers(),
+                   params={"search": query, "filter": "gguf", "sort": "downloads", "direction": "-1", "limit": limit})
+    if r.status_code >= 400:
+        return []
+    return [m.get("id", "") for m in r.json() if isinstance(m, dict) and "/" in m.get("id", "")]
 
 
 def download(url: str, target: Path, client: httpx.Client, out: Out, label: str = "",
@@ -371,7 +454,9 @@ def install(gpu: dict, cfg=None, out: Out = print, client: httpx.Client | None =
     try:
         if not install_binary(directory, client, out):
             return False
-        trees = {repo: hf_tree(repo, client) for repo in spec.repos}
+        found = [r for q in spec.search for r in hf_find(q, client)]
+        trees = {repo: hf_tree(repo, client) for repo in dict.fromkeys([*spec.repos, *found])}
+        trees["__search__"] = found
         chosen = spec.choose(trees, vram)
         missing = [r for r in spec.required if r not in chosen]
         if missing:
@@ -458,5 +543,5 @@ def catalog(cfg, vram_gb: float) -> list[dict]:
         out.append({"id": m.id, "label": m.label, "note": m.note(), "size_gb": m.size_gb, "steps": m.steps,
                     "edit": m.edit, "license": m.license, "installed": installed, "active": installed and m.id == active,
                     "disk_gb": round(disk_size(directory, m.id) / 1e9, 1) if installed else 0, "fit": fit,
-                    "min_vram_gb": m.min_vram_gb})
+                    "min_vram_gb": m.min_vram_gb, "new": m.new})
     return out

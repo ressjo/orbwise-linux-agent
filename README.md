@@ -653,21 +653,31 @@ Locks, alarm panels and garage doors/gates always require confirmation.
 
 ### Image mode (Qwen-Image, Z-Image, FLUX, SDXL)
 
-Pick **Image** in the mode switch at the top of the sidebar. Without an image model the view shows the catalog right
-away; later **Manage image models** above the form opens it. Each model shows what it is good at, the download size,
-the video memory it needs and its license – **Download** (with progress, cancellable; downloading again resumes),
-**Activate** or **Delete**. Several can be installed, the active one is switched in the drop-down above the form
-(steps and sampler follow the model; a loaded image server restarts with the new model on the next image).
+Pick **Image** in the mode switch at the top of the sidebar. In image mode the **model menu at the top** lists only
+the installed image models (switch with one click) and **Models** in the sidebar opens the image model management;
+back in a chat, both show the language models again. Without an image model the view offers a button to choose one.
+Each model shows what it is good at, the download size, the video memory it needs and its license – **Download**
+(with progress, cancellable; downloading again resumes), **Activate** or **Delete**. Steps and sampler follow the
+model; a loaded image server restarts with the new model on the next image. The quantization follows the video
+memory (Q8 with 20 GB and more).
 
 | Model | Good at | Download | VRAM | Steps |
 |---|---|---|---|---|
 | **Qwen-Image 2.1** | very good images and text in images; **editing** with up to 3 references | ~15 GB | from 8 GB | 20 |
 | **Z-Image Turbo** | very fast, photorealistic, small | ~6.5 GB | from 6 GB | 8 |
 | **FLUX.1 schnell** | versatile, good detail, Apache 2.0 | ~12 GB | from 8 GB | 4 |
+| **FLUX.2 klein 4B** *(new)* | newest FLUX generation, small and fast, Apache 2.0 | ~7 GB | from 8 GB | 4 |
+| **FLUX.2 klein 9B** *(new)* | newest FLUX generation, more detail; non-commercial | ~12 GB | 12–20 GB | 4 |
+| **FLUX.1 dev** | the large FLUX.1, very detailed; non-commercial | ~12–18 GB | 12–20 GB | 20 |
 | **Stable Diffusion XL 1.0** | the classic, runs on weaker cards | ~7 GB | from 6 GB | 25 |
 
+The new FLUX.2 klein models look up their GGUF repository on Hugging Face when downloading (most downloads first),
+because their uploaders still change; they need a recent `sd-server` build (delete `~/orbwise-image/bin` to fetch the
+newest one).
+
 Files another model also uses (FLUX's VAE is shared with Z-Image) are stored once and stay when one of them is
-deleted. In a terminal: `orbwise model add qwen-image` (or `z-image-turbo`, `flux-schnell`, `sdxl`) and
+deleted. In a terminal: `orbwise model add qwen-image` (or `z-image-turbo`, `flux-schnell`, `flux2-klein-4b`,
+`flux2-klein-9b`, `flux-dev`, `sdxl`) and
 `orbwise model remove <name>`.
 
 Describe the image (English usually works best), choose format,
