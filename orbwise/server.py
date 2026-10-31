@@ -578,7 +578,7 @@ def create_app(cfg: Config) -> FastAPI:
     heal_failed_at = [-1e9]
 
     def heal_index_soon() -> None:
-        if (memory.index.needs_rebuild and not any(not t.done() for t in healing)
+        if (memory.index.needs_rebuild and not any(not t.done() for t in healing) and not llm_resting()
                 and time.monotonic() - heal_failed_at[0] > 600):  # nach einem Fehlschlag erst in 10 min wieder
             healing[:] = [asyncio.create_task(heal_index())]  # nicht an STOP gebunden
 
@@ -929,10 +929,17 @@ def create_app(cfg: Config) -> FastAPI:
                     log.debug("Telemetrie fehlgeschlagen: %s", e)
             await asyncio.sleep(2)
 
+    def llm_resting() -> bool:
+        """Soll das Sprachmodell gerade aus bleiben? (Bild-Modus hat den Grafikspeicher bzw. von Hand entladen) – dann
+        keine Wartung, die es laden würde (Tageszusammenfassungen, Suchindex mit Embeddings)."""
+        return bool(getattr(llm, "gpu_borrowed", None) or getattr(llm, "unloaded", False) or images.view_open)
+
+    app_state_resting = llm_resting  # für Tests: app.state.llm_resting
+
     async def summary_loop() -> None:
         await asyncio.sleep(30)
         while True:
-            if not agent.lock.locked():
+            if not agent.lock.locked() and not llm_resting():
                 try:
                     done = await memory.summarize_pending()
                     if done:
@@ -953,6 +960,8 @@ def create_app(cfg: Config) -> FastAPI:
     app.state.hub = hub
     app.state.telegram = telegram_bot
     app.state.memory = memory
+    app.state.llm_resting = app_state_resting
+    app.state.images = images
 
     def from_jail(conn) -> bool:
         """Kommt die Verbindung aus dem Käfig des Auto-Modus? Dann darf sie Orbwise nicht bedienen (z. B. sich eine
@@ -1441,11 +1450,23 @@ def create_app(cfg: Config) -> FastAPI:
     async def image_cancel():
         return {"ok": await images.cancel()}
 
+    @app.post("/api/image/enter")
+    async def image_enter():
+        """Bild-Ansicht geöffnet: Sprachmodell jetzt entladen (im Hintergrund – eine laufende Antwort endet erst).
+        Das passende Bildmodell lädt beim ersten Bild."""
+        async def run() -> None:
+            async with agent.lock:  # nie mitten in einer Antwort entladen
+                unloaded = await images.enter()
+            if unloaded:
+                await hub.broadcast({"type": "image_llm_unloaded"})
+        background.append(asyncio.create_task(run()))
+        return {"ok": True}
+
     @app.post("/api/image/release")
     async def image_release():
-        """Bild-Modus verlassen: Bildmodell entladen, Sprachmodell zurück (im Hintergrund)."""
-        if images.loaded() and not images.lock.locked():
-            background.append(asyncio.create_task(images.release()))
+        """Bild-Modus verlassen: Bildmodell entladen, Sprachmodell zurück (im Hintergrund; ein laufendes Bild wird
+        erst fertig)."""
+        background.append(asyncio.create_task(images.leave()))
         return {"ok": True}
 
     @app.post("/api/image/telegram/{name}")
@@ -1499,6 +1520,24 @@ def create_app(cfg: Config) -> FastAPI:
     @app.get("/api/memory/facts")
     async def memory_facts():
         return [{"fact": f, "day": d} for f, d in memory.scoped_facts(memory.active).list()]
+
+    @app.post("/api/memory/facts/delete")
+    async def memory_fact_delete(request: Request):
+        """Einen Fakt aus dem Gedächtnis des offenen Chats löschen (genau diesen, nicht per Suchtext)."""
+        fact = str((await request.json()).get("fact") or "")
+        if not await memory.forget_fact(fact, memory.active):
+            raise HTTPException(404, T("Diesen Fakt gibt es nicht (mehr).", "This fact does not exist (anymore)."))
+        agent._cache_owner = None  # Systemprompt enthält die Fakten – beim nächsten Mal neu einlesen
+        return {"ok": True}
+
+    @app.delete("/api/memory/day/{day}")
+    async def memory_day_delete(day: str):
+        """Tagebuch eines Tages vergessen (Protokoll, Zusammenfassung, Suchindex) – Fakten und Chats bleiben."""
+        if not valid_day(day):
+            raise HTTPException(400, "ungültiges Datum")
+        if not await asyncio.to_thread(memory.forget_day, day, memory.active):
+            raise HTTPException(404, T("Für diesen Tag gibt es keine Einträge.", "There are no entries for this day."))
+        return {"ok": True}
 
     @app.get("/api/history")
     async def history():

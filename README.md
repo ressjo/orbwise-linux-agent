@@ -715,8 +715,12 @@ land in `~/Bilder/Orbwise` (or `~/Pictures/Orbwise`); prompt and settings are st
   12 GB, Q8 from 20 GB); Qwen-Image uses the text encoder Qwen3-VL-8B (GGUF + mmproj for editing), Z-Image Qwen3-4B,
   FLUX CLIP-L + T5-XXL (fp8 below 20 GB). The exact files are read from Hugging Face during setup and recorded in
   `~/orbwise-image/manifest.json`; your own build can replace `~/orbwise-image/bin/sd-server`.
-- **Graphics memory:** only one model is in memory at a time – the language model (its llama-server, Ollama models
-  too) is stopped before the first image, and switching image models stops the previous image server. As soon as
+- **Graphics memory:** only one model is in memory at a time – clicking **Image** stops the language model (its
+  llama-server, Ollama models too) right away, the active image model loads with the first picture, and switching
+  image models stops the previous image server. While the image view is open, no background work loads the language
+  model (daily summaries and index rebuilds wait, memory embeddings run on the CPU); after `image.idle_minutes` only
+  the image server stops. Routines and Telegram messages are your own requests – they do bring the language model
+  back. As soon as
   Orbwise needs the language model again (a chat question, a model switch), when you leave the image view or after
   `image.idle_minutes` (10) without a new image, the image model is unloaded and the language model starts again
   (`image.unload_llm: always`; `auto` keeps both on cards with 16 GB and more, `never` always keeps both). On 8 GB

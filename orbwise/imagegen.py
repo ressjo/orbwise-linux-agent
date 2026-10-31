@@ -142,6 +142,7 @@ class ImageEngine:
         self.stopped_llm = False  # haben wir das Sprachmodell für den Bildserver beendet?
         self.job: str | None = None
         self._idle: asyncio.TimerHandle | None = None
+        self.view_open = False  # Bild-Ansicht offen: das Sprachmodell bleibt draußen, bis man sie verlässt
 
     # ---------- Zustand ----------
     @property
@@ -349,6 +350,27 @@ class ImageEngine:
             await self._release_now()
             raise ImageError(T(f"Bildserver startet nicht: {e}", f"Image server does not start: {e}")) from e
 
+    async def enter(self) -> bool:
+        """Bild-Ansicht geöffnet: das Sprachmodell gleich aus dem Grafikspeicher nehmen (nicht erst beim ersten Bild) –
+        das Bildmodell lädt dann beim Erzeugen. Bei einem eigenen Bild-Backend bleibt es (rechnet woanders).
+        → True, wenn das Sprachmodell jetzt entladen ist."""
+        self.view_open = True
+        if self.api() is not None or not self.available():
+            return False
+        router = self.llm
+        for _ in range(240):  # lädt das Sprachmodell gerade (Start, Wechsel)? Erst fertig werden lassen
+            if not getattr(router, "switching", None):
+                break
+            await asyncio.sleep(0.5)
+        async with self.lock:
+            await self._borrow_gpu(None)
+        return self.stopped_llm
+
+    async def leave(self) -> None:
+        """Bild-Ansicht verlassen: Bildserver beenden, Sprachmodell zurück (läuft ein Bild, erst nach diesem)."""
+        self.view_open = False
+        await self.release()
+
     async def release(self, restart: bool = True) -> None:
         """Bildserver beenden und – falls wir es beendet hatten – das Sprachmodell wieder starten. Läuft gerade ein
         Bild, wird es erst fertig gemalt (eine Chat-Frage wartet so lange, statt das Bild abzubrechen)."""
@@ -378,9 +400,15 @@ class ImageEngine:
         self._idle = loop.call_later(minutes * 60, lambda: loop.create_task(self._idle_release()))
 
     async def _idle_release(self) -> None:
-        if not self.lock.locked():
-            log.info("Bild-Modus ungenutzt – Bildmodell entladen")
-            await self.release()
+        if self.lock.locked():
+            return
+        if self.view_open:  # Bild-Ansicht noch offen: nur den Bildserver freigeben, das Sprachmodell bleibt draußen
+            log.info("Bild-Modus ungenutzt – Bildmodell entladen (Sprachmodell bleibt aus, solange die Ansicht offen ist)")
+            async with self.lock:
+                await self.drop_server()
+            return
+        log.info("Bild-Modus ungenutzt – Bildmodell entladen")
+        await self.release()
 
     # ---------- Erzeugen ----------
     async def generate(self, prompt: str, negative: str = "", size: str = "", steps: int = 0, cfg_scale: float = 0,

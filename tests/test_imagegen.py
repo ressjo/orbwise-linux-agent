@@ -676,3 +676,71 @@ def test_api_searches_and_installs_only_listed_files(cfg, monkeypatch, tmp_path,
             time.sleep(0.02)
         assert started[0][-1] == {"repo": "city96/FLUX.1-dev-gguf", "file": "flux1-dev-Q8_0.gguf", "family": "flux-dev",
                                   "label": "FLUX.1-dev-gguf Q8_0"}
+
+
+# ---------------------------------------------------------------- Bild-Modus: das Sprachmodell bleibt draußen
+def test_entering_image_mode_unloads_the_llm_and_keeps_it_out(engine):
+    router = engine.llm
+    assert run(engine.enter())  # Klick auf „Bild“: sofort entladen, noch kein Bildserver
+    assert router.llm_server.stopped == 1 and router.gpu_borrowed == engine.release and not engine.loaded()
+    run(engine.generate("cat"))  # erst das Bild lädt das (aktive) Bildmodell
+    assert engine.loaded() and "--diffusion-model" in engine.command() and router.prepared == 0
+    run(engine._idle_release())  # Leerlauf bei offener Ansicht: nur der Bildserver geht
+    assert not engine.loaded() and router.gpu_borrowed == engine.release and router.prepared == 0
+    run(engine.leave())  # Ansicht verlassen: Sprachmodell zurück
+    assert router.prepared == 1 and router.gpu_borrowed is None and not engine.view_open
+
+
+def test_idle_after_leaving_brings_the_llm_back(engine):
+    run(engine.generate("cat"))
+    engine.view_open = False
+    run(engine._idle_release())
+    assert engine.llm.prepared == 1 and not engine.loaded()
+
+
+def test_own_image_backend_does_not_unload_the_llm(engine, tmp_path):
+    setup.add_api_model(engine.cfg, "Forge", "a1111", "http://127.0.0.1:9")
+    assert not run(engine.enter()) and engine.llm.llm_server.stopped == 0 and engine.llm.gpu_borrowed is None
+
+
+def test_embeddings_go_to_the_cpu_while_images_have_the_gpu(cfg):
+    from orbwise.llm_router import LLMRouter
+    router = LLMRouter(cfg.llm)
+    seen = []
+
+    async def embed(texts):
+        seen.append(router.ollama.embed_on_cpu)
+        return [[0.0]] * len(texts)
+    router.ollama.embed = embed
+
+    async def borrowed(restart=True):
+        pass
+    run(router.embed(["a"]))
+    router.gpu_borrowed = borrowed
+    run(router.embed(["b"]))
+    assert seen == [False, True] and router.ollama.embed_on_cpu is False  # danach wieder wie eingestellt
+
+
+def test_no_background_maintenance_in_image_mode(cfg, monkeypatch, tmp_path):
+    from fastapi.testclient import TestClient
+
+    from orbwise.server import create_app
+    monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    cfg.image.dir = str(tmp_path / "img")
+    with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
+        resting = client.app.state.llm_resting
+        assert resting() is False
+        client.post("/api/image/enter")
+        for _ in range(50):
+            if client.app.state.images.view_open:
+                break
+            import time
+            time.sleep(0.02)
+        assert resting() is True  # keine Tageszusammenfassung, kein Index-Neuaufbau, solange die Bild-Ansicht offen ist
+        client.post("/api/image/release")
+        for _ in range(50):
+            if not client.app.state.images.view_open:
+                break
+            time.sleep(0.02)
+        assert resting() is False

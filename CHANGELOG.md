@@ -6,6 +6,9 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Delete memory entries:** in *Memory*, every fact and every journal day has a delete button. A fact is removed
+  exactly (not every fact containing the words); a day forgets its log, summary and search entries – learned facts and
+  the chats in the sidebar stay. Works for the regular memory and each coding project's own.
 - **Own backend (experts):** use a server Orbwise does not run – for language models any OpenAI-compatible server
   (Strata, vLLM, LM Studio, llama-server elsewhere; *Test connection* lists its models), for images the OpenAI Images
   API, Automatic1111/Forge or an external sd-server. Orbwise only talks to it (no context window or KV cache to set);
@@ -75,6 +78,13 @@ All notable changes to this project are documented here. The format follows
   `~/.local/share/orbwise/chromium` (no root; asks first outside Auto, a "no" is remembered).
 
 ### Fixed
+- **Image mode loaded the language model again in the background:** the daily summaries (every 5 minutes) asked the
+  language model, which took the video memory back from the image model – also right after unloading it by hand.
+  Now clicking *Image* unloads the language model at once; the active image model loads with the first picture; while
+  the image view is open no summaries or index rebuilds run, memory embeddings go to the CPU, and after 10 idle
+  minutes only the image server stops. The language model returns when you leave the image view or ask something.
+- **Image mode:** the sidebar navigation (Models, Planner, Memory, Settings) sat right under the mode switch; it is at
+  the bottom again like in the other modes.
 - **`orbwise update` did not restart a running server** since the access token: it asked `/api/status`, which now
   needs the token, and took the server for stopped. It now asks the token-free `/api/alive`.
 - **Image mode with several GPUs:** since the multi-GPU change the image engine took the *sum* of all cards' VRAM, so

@@ -253,6 +253,7 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
 .app.side-collapsed .side-chats, .app.side-collapsed .nav-item span { display: none; }
 .app.side-collapsed .new-chat { width: 40px; padding: 0; justify-content: center; }
 .app.side-collapsed .side-nav { margin-top: auto; }
+.app.imaging .side-nav { margin-top: auto; }  /* Bild-Modus: keine Chatliste – Navigation trotzdem unten wie sonst */
 /* Version unten in der Seitenleiste; mit Update ein Punkt in Akzentfarbe */
 .side-version { display: flex; align-items: center; gap: 7px; margin-top: 6px; padding: 4px 10px; min-height: 26px; border: 0;
   background: none; border-radius: var(--radius-sm); color: var(--faint); font-size: var(--fs-xs); text-align: left; cursor: pointer;
@@ -846,11 +847,21 @@ details.card[open] > summary .caret { transform: rotate(180deg); }
 .memory-scope { grid-column: 1 / -1; margin: 0; font-size: var(--fs-sm); color: var(--muted); }
 .memory-scope b { color: var(--text); font-weight: 600; }
 .facts li { font-size: var(--fs-base); padding: 8px 10px; border-radius: var(--r-md); background: var(--bg-2); border: 1px solid var(--border); }
+/* Löschen-Knopf an Fakten und Tagen (erscheint beim Darüberfahren; auf Touch-Geräten immer) */
+.facts li[data-i], .days li { display: flex; align-items: center; gap: 6px; }
+.facts li .mem-text { flex: 1; min-width: 0; }
+.days li .mem-day { flex: 1; min-width: 0; }
+.mem-del { flex: none; width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: var(--r-sm);
+  background: none; color: var(--faint); cursor: pointer; opacity: 0; transition: opacity .15s; }
+.mem-del .i { width: 16px; height: 16px; }
+.facts li:hover .mem-del, .days li:hover .mem-del, .mem-del:focus-visible { opacity: 1; }
+.mem-del:hover { color: var(--danger); background: var(--danger-soft); }
+@media (hover: none) { .mem-del { opacity: 1; } }
 .facts li small { color: var(--faint); font-variant-numeric: tabular-nums; margin-left: 6px; }
-.days li button { width: 100%; text-align: left; display: flex; justify-content: space-between; align-items: center; gap: 8px;
+.days li .mem-day { width: 100%; text-align: left; display: flex; justify-content: space-between; align-items: center; gap: 8px;
   padding: 8px 10px; border-radius: var(--r-md); background: var(--bg-2); border: 1px solid var(--border); color: var(--text-2); font-size: var(--fs-md); }
-.days li button:hover { border-color: var(--border-strong); color: var(--text); }
-.days li button span { color: var(--faint); font-size: var(--fs-sm); }
+.days li .mem-day:hover { border-color: var(--border-strong); color: var(--text); }
+.days li .mem-day span { color: var(--faint); font-size: var(--fs-sm); }
 
 /* Einstellungen */
 .settings { flex: 1; min-height: 0; display: grid; grid-template-columns: 180px minmax(0, 1fr); }

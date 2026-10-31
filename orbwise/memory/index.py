@@ -259,6 +259,20 @@ class MemoryIndex:
             self._matrix = None
         return n
 
+    def delete_day(self, kinds: tuple[str, ...], day: str) -> int:
+        """Einträge eines Tages aus bestimmten Gedächtnis-Arten löschen (Tagebuch eines Tages vergessen)."""
+        if not kinds:
+            return 0
+
+        def run() -> int:
+            marks = ",".join("?" * len(kinds))
+            n = self.db.execute(f"DELETE FROM chunks WHERE day=? AND kind IN ({marks})", (day, *kinds)).rowcount  # noqa: S608
+            self.db.commit()
+            return n
+        n = self._guard(run)
+        self._matrix = None
+        return n or 0
+
     def delete_source(self, source: str) -> None:
         def run() -> None:
             self.db.execute("DELETE FROM chunks WHERE source=?", (source,))
