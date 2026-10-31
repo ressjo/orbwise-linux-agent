@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Image models in the image view:** besides Qwen-Image 2.1 now **Z-Image Turbo**, **FLUX.1 schnell** and
+  **Stable Diffusion XL** – download (progress, cancel, resume), activate and delete right in the image view, no
+  terminal needed. Several can be installed; a drop-down above the form switches the active one (steps and sampler
+  follow the model, editing only where the model can). Shared files (FLUX's VAE) are stored once and kept while
+  another model uses them. Older setups are taken over as Qwen-Image. CLI: `orbwise model add|remove
+  qwen-image|z-image-turbo|flux-schnell|sdxl`.
 - **Version and update in the web UI:** the bottom of the sidebar shows the installed version (version · date ·
   commit). Orbwise checks for updates at most every 3 hours; *Update available (n)* lists what changed and updates
   with one click – git pull, dependencies, restart (also as a systemd user service), then the page reloads itself.

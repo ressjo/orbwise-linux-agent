@@ -1,4 +1,5 @@
-"""Bilder erzeugen und bearbeiten mit Qwen-Image-2.1 über stable-diffusion.cpp (sd-server, eigene Prozessgruppe).
+"""Bilder erzeugen und bearbeiten über stable-diffusion.cpp (sd-server, eigene Prozessgruppe) – mit dem aktiven
+Bildmodell (Qwen-Image 2.1, Z-Image Turbo, FLUX.1 schnell, SDXL; siehe imagegen_setup.CATALOG).
 
 - Der Server wird erst beim ersten Bild gestartet und bleibt geladen, solange Bilder kommen (image.idle_minutes).
 - Grafikspeicher: Auf kleinen Karten passen Sprachmodell und Bildmodell nicht gleichzeitig. Dann wird der
@@ -25,8 +26,9 @@ from typing import Any
 
 import httpx
 
+from . import imagegen_setup as setup
 from .config import ServerConfig
-from .imagegen_setup import image_dir, is_set_up, manifest, model_paths, server_binary
+from .imagegen_setup import image_dir, is_set_up, model_entry, model_paths, server_binary
 from .lang import T
 
 log = logging.getLogger(__name__)
@@ -153,9 +155,38 @@ class ImageEngine:
     def available(self) -> bool:
         return is_set_up(self.directory)
 
+    def model(self) -> setup.ImageModel | None:
+        """Das aktive Bildmodell (Katalogeintrag)."""
+        return setup.BY_ID.get(setup.active_id(self.directory))
+
     def can_edit(self) -> bool:
+        spec = self.model()
         vision = model_paths(self.directory).get("vision")
-        return bool(vision and vision.exists())
+        return bool(spec and spec.edit and vision and vision.exists())
+
+    def defaults(self) -> tuple[int, float, str]:
+        """Schritte, CFG und Sampler: die des Modells – eine eigene Angabe in config.yaml (image.steps/cfg_scale,
+        abweichend vom Standard) gilt für alle."""
+        spec = self.model()
+        steps = spec.steps if spec else 20
+        cfg_scale = spec.cfg_scale if spec else 6.0
+        if self.cfg.image.steps != 20:
+            steps = self.cfg.image.steps
+        if self.cfg.image.cfg_scale != 6.0:
+            cfg_scale = self.cfg.image.cfg_scale
+        return steps, cfg_scale, spec.sampler if spec else "euler"
+
+    async def select(self, model_id: str) -> None:
+        """Anderes installiertes Bildmodell aktiv machen – ein geladener Bildserver wird beendet (startet beim nächsten
+        Bild mit dem neuen Modell)."""
+        async with self.lock:
+            setup.set_active(self.directory, model_id)
+            await self.drop_server()
+
+    async def drop_server(self) -> None:
+        if self.server is not None:
+            await self.server.stop()
+        self.server = None  # neuer Startbefehl beim nächsten Bild
 
     def vram_gb(self) -> float:
         """Grafikspeicher der größten Karte – sd-server rechnet auf einer Karte. Bei mehreren Karten meldet die
@@ -166,25 +197,29 @@ class ImageEngine:
         biggest = max((c.get("vram_total") or 0 for c in cards), default=0)
         if biggest:
             return biggest / 1024 ** 3
-        return float(manifest(self.directory).get("vram_gb") or 0)
+        return float(model_entry(self.directory).get("vram_gb") or 0)
 
     def loaded(self) -> bool:
         return bool(self.server and self.server.running())
 
     def status(self) -> dict:
+        spec = self.model()
+        steps, cfg_scale, _ = self.defaults()
         return {"available": self.available(), "loaded": self.loaded(), "busy": self.lock.locked(),
                 "can_edit": self.can_edit(), "sizes": list(RATIOS), "size": self.cfg.image.size,
                 "resolutions": list(RESOLUTIONS), "megapixels": self.cfg.image.megapixels, "max_refs": MAX_REFS,
-                "steps": self.cfg.image.steps, "cfg_scale": self.cfg.image.cfg_scale,
+                "steps": steps, "cfg_scale": cfg_scale,
+                "model": spec.id if spec else "", "model_label": spec.label if spec else "",
                 "llm_unloaded": self.stopped_llm, "dir": str(self.directory)}
 
     # ---------- Server ----------
     def command(self) -> str:
         paths = model_paths(self.directory)
-        parts = [str(server_binary(self.directory)), "--diffusion-model", str(paths["diffusion"]),
-                 "--vae", str(paths["vae"]), "--llm", str(paths["llm"])]
-        if paths.get("vision") and paths["vision"].exists():
-            parts += ["--llm_vision", str(paths["vision"])]
+        spec = self.model() or setup.BY_ID["qwen-image"]
+        parts = [str(server_binary(self.directory))]
+        for role, flag in spec.flags.items():  # Reihenfolge laut Katalog; optionale Teile nur, wenn vorhanden
+            if paths.get(role) and (role in spec.required or paths[role].exists()):
+                parts += [flag, str(paths[role])]
         parts += ["--listen-ip", "127.0.0.1", "--listen-port", str(self.cfg.image.port), "--fa"]
         if self.cfg.image.extra_args.strip():
             parts += self.cfg.image.extra_args.split()
@@ -223,8 +258,8 @@ class ImageEngine:
 
     async def ensure(self, progress: Progress | None = None) -> None:
         if not self.available():
-            raise ImageError(T("Der Bild-Modus ist noch nicht eingerichtet: orbwise model add qwen-image",
-                               "Image mode is not set up yet: orbwise model add qwen-image"))
+            raise ImageError(T("Noch kein Bildmodell installiert – im Bild-Modus unter „Bildmodelle“ eins laden.",
+                               "No image model installed yet – download one under “Image models” in image mode."))
         from .llm_router import ManagedServer
         if self.server is None:
             bin_dir = str(server_binary(self.directory).parent)
@@ -291,16 +326,21 @@ class ImageEngine:
         if not prompt:
             raise ImageError(T("Bitte beschreiben, was auf das Bild soll.", "Please describe the image."))
         if ref_images and not self.can_edit():
-            raise ImageError(T("Zum Bearbeiten fehlt die Bild-Erkennung des Text-Encoders (mmproj) – "
-                               "orbwise model add qwen-image erneut ausführen.",
-                               "Editing needs the text encoder's vision part (mmproj) – run orbwise model add "
-                               "qwen-image again."))
+            spec = self.model()
+            if spec and spec.edit:  # Qwen-Image, aber ohne Bild-Erkennung des Text-Encoders
+                raise ImageError(T("Zum Bearbeiten fehlt die Bild-Erkennung des Text-Encoders (mmproj) – das Modell "
+                                   "unter „Bildmodelle“ löschen und neu laden.",
+                                   "Editing needs the text encoder's vision part (mmproj) – delete the model under "
+                                   "“Image models” and download it again."))
+            raise ImageError(T("Dieses Bildmodell kann keine Vorlagen bearbeiten – dafür Qwen-Image 2.1 wählen.",
+                               "This image model cannot edit references – choose Qwen-Image 2.1 for that."))
         if ref_images and len(ref_images) > MAX_REFS:
             raise ImageError(T(f"Höchstens {MAX_REFS} Vorlagen auf einmal.", f"At most {MAX_REFS} reference images."))
         ref_size = image_size(ref_images[0]) if ref_images else None
         width, height = size_of(size or self.cfg.image.size, megapixels or self.cfg.image.megapixels, ref_size)
-        steps = max(1, min(80, steps or self.cfg.image.steps))
-        cfg_scale = cfg_scale or self.cfg.image.cfg_scale
+        default_steps, default_cfg, sampler = self.defaults()
+        steps = max(1, min(80, steps or default_steps))
+        cfg_scale = cfg_scale or default_cfg
         seed = seed if seed is not None and seed >= 0 else random.randint(0, 2 ** 31 - 1)
         count = max(1, min(4, count or 1))
         async with self.lock:
@@ -312,7 +352,7 @@ class ImageEngine:
                 "prompt": prompt, "negative_prompt": negative or "", "width": width, "height": height,
                 "seed": seed, "batch_count": count, "embed_image_metadata": True, "output_format": "png",
                 "ref_images": [base64.b64encode(b).decode() for b in ref_images or []],
-                "sample_params": {"sample_method": "euler", "sample_steps": steps,
+                "sample_params": {"sample_method": sampler, "sample_steps": steps,
                                   "guidance": {"txt_cfg": cfg_scale}},
             }
             vram = self.vram_gb()  # fragt nvidia-smi – nur einmal
@@ -327,7 +367,9 @@ class ImageEngine:
                 result = await self._wait(c, job, progress)
             self.job = None
             seconds = round(time.monotonic() - started, 1)
-            saved = self._save(result, {"prompt": prompt, "negative": negative, "width": width, "height": height,
+            spec = self.model()
+            saved = self._save(result, {"model": spec.label if spec else "", "prompt": prompt, "negative": negative,
+                                        "width": width, "height": height,
                                         "steps": steps, "cfg_scale": cfg_scale, "seed": seed,
                                         "edit": bool(ref_images), "refs": len(ref_images or []),
                                         "seconds": seconds})

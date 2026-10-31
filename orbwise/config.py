@@ -254,7 +254,8 @@ class PortainerConfig(BaseModel):
 
 
 class ImageConfig(BaseModel):
-    """Bild-Modus: Qwen-Image-2.1 über stable-diffusion.cpp (sd-server) – einrichten mit `orbwise model add qwen-image`."""
+    """Bild-Modus: stable-diffusion.cpp (sd-server) mit Qwen-Image 2.1, Z-Image Turbo, FLUX.1 schnell oder SDXL – laden im
+    Bild-Modus unter „Bildmodelle“ oder mit `orbwise model add qwen-image` (z-image-turbo, flux-schnell, sdxl)."""
     # Ordner mit bin/sd-server und models/ (leer = ~/orbwise-image bzw. $ORBWISE_IMAGE_DIR)
     dir: str = ""
     # wohin die Bilder kommen (leer = ~/Bilder/Orbwise bzw. ~/Pictures/Orbwise)

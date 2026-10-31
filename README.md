@@ -67,7 +67,7 @@ What Orbwise can do for you – each line links to the details.
 | **Mail** | Proton Mail Bridge or any IMAP mailbox: read, sort, file attachments, optionally reply → [E-mail](#e-mail-proton-mail-bridge-or-any-imap-mailbox) |
 | **Notes & calendar** | Obsidian, Trilium, iCloud/CalDAV calendars, reminders → [Obsidian](#obsidian-notes) · [Calendar](#calendar-icloud--caldav) |
 | **Routines** | Tasks at set times ("every weekday at 8, search Linux news") and a morning briefing → [Routines](#routines) |
-| **Images** | Generate and edit images locally with Qwen-Image; explain screenshots and photos with the loaded model (if it can see images) → [Image mode](#image-mode-qwen-image-21) · [Screen](#screen--images) |
+| **Images** | Generate and edit images locally with Qwen-Image, Z-Image, FLUX or SDXL (choose, download and delete in the image view); explain screenshots and photos with the loaded model (if it can see images) → [Image mode](#image-mode-qwen-image-z-image-flux-sdxl) · [Screen](#screen--images) |
 | **Phone** | Telegram bot: text and voice messages, confirmations, files in both directions → [Telegram](#telegram-phone) |
 | **Planning** | Plan mode: looks things up read-only and presents a plan to run, change or discard → [Plan mode](#plan-mode) |
 
@@ -651,13 +651,26 @@ Tools: `ha_find` (by name, room or type, with state), `ha_state`, `ha_control` (
 colour, temperature, open/close/position for covers, scenes/scripts/buttons, lock/unlock, set values).
 Locks, alarm panels and garage doors/gates always require confirmation.
 
-### Image mode (Qwen-Image-2.1)
+### Image mode (Qwen-Image, Z-Image, FLUX, SDXL)
 
-```bash
-orbwise model add qwen-image     # stable-diffusion.cpp (Vulkan build) + model files, ~10–15 GB depending on the GPU
-```
+Pick **Image** in the mode switch at the top of the sidebar. Without an image model the view shows the catalog right
+away; later **Manage image models** above the form opens it. Each model shows what it is good at, the download size,
+the video memory it needs and its license – **Download** (with progress, cancellable; downloading again resumes),
+**Activate** or **Delete**. Several can be installed, the active one is switched in the drop-down above the form
+(steps and sampler follow the model; a loaded image server restarts with the new model on the next image).
 
-Then pick **Image** in the mode switch at the top of the sidebar. Describe the image (English usually works best), choose format,
+| Model | Good at | Download | VRAM | Steps |
+|---|---|---|---|---|
+| **Qwen-Image 2.1** | very good images and text in images; **editing** with up to 3 references | ~15 GB | from 8 GB | 20 |
+| **Z-Image Turbo** | very fast, photorealistic, small | ~6.5 GB | from 6 GB | 8 |
+| **FLUX.1 schnell** | versatile, good detail, Apache 2.0 | ~12 GB | from 8 GB | 4 |
+| **Stable Diffusion XL 1.0** | the classic, runs on weaker cards | ~7 GB | from 6 GB | 25 |
+
+Files another model also uses (FLUX's VAE is shared with Z-Image) are stored once and stay when one of them is
+deleted. In a terminal: `orbwise model add qwen-image` (or `z-image-turbo`, `flux-schnell`, `sdxl`) and
+`orbwise model remove <name>`.
+
+Describe the image (English usually works best), choose format,
 resolution (0.5 / 1 / 1.5 / 2 megapixels, a custom width × height, or "like reference"), steps, count and seed – or
 **edit**: add up to **3 references** (upload them or press *Use as reference* in the gallery). They are numbered
 image 1–3, so the prompt can combine them – e.g. "the woman from image 1 and the man from image 2 together on a park
@@ -665,10 +678,10 @@ bench, evening light". More megapixels mean finer detail but more time and VRAM.
 land in `~/Bilder/Orbwise` (or `~/Pictures/Orbwise`); prompt and settings are stored in the PNG.
 
 - **Runtime:** stable-diffusion.cpp's prebuilt Linux **Vulkan** build (AMD and NVIDIA, no ROCm/CUDA build needed),
-  `sd-server` stays loaded while you keep painting. Model: Qwen-Image-2.1 GGUF (quantisation by VRAM: Q4 on 8 GB,
-  Q6 on 12 GB, Q8 from 20 GB), text encoder Qwen3-VL-8B (GGUF + mmproj for editing) and its VAE. The exact files are
-  read from Hugging Face during setup and recorded in `~/orbwise-image/manifest.json`; your own build can replace
-  `~/orbwise-image/bin/sd-server`.
+  `sd-server` stays loaded while you keep painting. Quantisation follows the VRAM (e.g. Qwen-Image: Q4 on 8 GB, Q6 on
+  12 GB, Q8 from 20 GB); Qwen-Image uses the text encoder Qwen3-VL-8B (GGUF + mmproj for editing), Z-Image Qwen3-4B,
+  FLUX CLIP-L + T5-XXL (fp8 below 20 GB). The exact files are read from Hugging Face during setup and recorded in
+  `~/orbwise-image/manifest.json`; your own build can replace `~/orbwise-image/bin/sd-server`.
 - **Graphics memory:** below 16 GB the language model (its llama-server) is stopped before the first image –
   both don't fit. As soon as Orbwise needs the language model again (a chat question, a model switch), when you
   leave the image view or after `image.idle_minutes` (10) without a new image, the image model is unloaded and the
@@ -676,8 +689,7 @@ land in `~/Bilder/Orbwise` (or `~/Pictures/Orbwise`); prompt and settings are st
   and the VAE in tiles; expect roughly 1–3 minutes per 1024² image there.
 - **Elsewhere:** `generate_image` in the tools mode ("draw me a lighthouse at dusk", with confirmation) and
   `/bild <description>` via Telegram.
-- `orbwise doctor` checks program, Vulkan libraries and model files; `orbwise model remove qwen-image` deletes the
-  model files.
+- `orbwise doctor` checks program, Vulkan libraries and the files of every installed image model.
 
 ### Docker via Portainer
 
@@ -1255,7 +1267,7 @@ orbwise model [name]           # list or switch model profiles
 orbwise model add [ollama-tag] # download another model (interactive presets without a tag; also HF links)
 orbwise model search <term>    # search GGUF models on Hugging Face (or <user/repo> for its quantizations)
 orbwise model llamacpp --update # newest llama.cpp build for models from Hugging Face / ~/models
-orbwise model add qwen-image   # set up the image mode (Qwen-Image-2.1)
+orbwise model add qwen-image   # image model (also z-image-turbo, flux-schnell, sdxl) – or in the image view
 orbwise model remove <name>    # remove a downloaded model from the list
 orbwise context-test [--quick] # check the context window with the active model (Orbwise must be running)
 orbwise voice install          # install the speech output Pocket TTS and fetch its model (remove: orbwise voice remove)

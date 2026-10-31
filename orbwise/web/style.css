@@ -1151,6 +1151,31 @@ details.card[open] > summary .caret { transform: rotate(180deg); }
 .iv-form, .iv-setup { width: 100%; max-width: 980px; margin: 0 auto; display: grid; gap: 10px; padding: 14px;
   border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface); }
 .iv-setup { color: var(--text-2); font-size: var(--fs-base); line-height: 1.5; }
+/* Bildmodelle: Leiste über dem Formular, Verwaltung (Katalog) aufklappbar */
+.iv-modelbar { width: 100%; max-width: 980px; margin: 0 auto -6px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.ivm-label { font-size: var(--fs-md); color: var(--muted); }
+.iv-modelbar select { height: 32px; padding: 0 8px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  background: var(--bg-2); color: var(--text); font: inherit; font-size: var(--fs-md); max-width: 100%; }
+.ivm-info { font-size: var(--fs-sm); color: var(--muted); flex: 1 1 280px; min-width: 0; }
+.iv-models { width: 100%; max-width: 980px; margin: 0 auto; display: grid; gap: 8px; padding: 14px;
+  border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface); }
+.iv-models h3 { margin: 0; font-size: var(--fs-base); font-weight: 600; }
+.iv-models > p { margin: 0 0 4px; font-size: var(--fs-md); color: var(--text-2); line-height: 1.45; }
+.ivm-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 14px; align-items: center; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg-2); }
+.ivm-card.active { border-color: var(--image); }
+.ivm-name { font-weight: 600; font-size: var(--fs-base); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ivm-tag { font-size: var(--fs-xs); font-weight: 500; padding: 2px 7px; border-radius: 999px; background: var(--surface-3); color: var(--text-2); }
+.ivm-tag.on { background: var(--image); color: #fff; }
+.ivm-note { font-size: var(--fs-md); color: var(--text-2); line-height: 1.4; }
+.ivm-meta { font-size: var(--fs-sm); color: var(--muted); font-variant-numeric: tabular-nums; }
+.ivm-meta .fit-ok { color: var(--success); } .ivm-meta .fit-tight { color: var(--warn); } .ivm-meta .fit-big { color: var(--danger); }
+.ivm-btns { grid-column: 2; grid-row: 1 / span 3; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.ivm-progress { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; font-size: var(--fs-sm); color: var(--text-2); }
+.ivm-progress .iv-bar { flex: 1; }
+.ivm-progress span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+@media (max-width: 640px) { .ivm-info { order: 9; flex-basis: 100%; }
+  .ivm-card { grid-template-columns: minmax(0, 1fr); } .ivm-btns { grid-column: 1; grid-row: auto; justify-content: flex-start; } }
 .iv-setup code { font-family: var(--mono); color: var(--text); }
 .iv-form textarea { width: 100%; resize: vertical; font: inherit; font-size: var(--fs-lg); line-height: 1.45; }
 .iv-neg summary { cursor: pointer; color: var(--muted); font-size: var(--fs-md); }

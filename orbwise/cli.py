@@ -241,19 +241,25 @@ def cmd_doctor(args) -> None:
     from . import imagegen_setup
     image_root = imagegen_setup.image_dir(cfg)
     if not imagegen_setup.server_binary(image_root).exists() and not imagegen_setup.manifest(image_root):
-        print(T("  – nicht eingerichtet", "  – not set up") + " (orbwise model add qwen-image)")
+        print(T("  – nicht eingerichtet", "  – not set up") + " (" + T("im Bild-Modus unter „Bildmodelle“ oder ",
+              "in image mode under “Image models” or ") + "orbwise model add qwen-image)")
     else:
         binary = imagegen_setup.server_binary(image_root)
         missing_bin = llamacpp.missing_libs(binary, str(binary.parent)) if binary.exists() else ["sd-server"]
         line(not missing_bin, f"sd-server ({binary})", T("fehlt: ", "missing: ") + ", ".join(missing_bin)
              + " – " + T("Vulkan-Treiber installieren (z. B. vulkan-radeon / mesa-vulkan-drivers)",
                          "install the Vulkan driver (e.g. vulkan-radeon / mesa-vulkan-drivers)"))
-        paths = imagegen_setup.model_paths(image_root)
-        for role in ("diffusion", "llm", "vae", "vision"):
-            p = paths.get(role)
-            if p or role != "vision":
-                line(bool(p and p.exists()), f"{role}: {p.name if p else '?'}" + (
-                    f" ({p.stat().st_size / 1e9:.1f} GB)" if p and p.exists() else ""), "orbwise model add qwen-image")
+        active = imagegen_setup.active_id(image_root)
+        for model_id in imagegen_setup.manifest(image_root).get("models", {}):
+            spec = imagegen_setup.BY_ID.get(model_id)
+            print(f"  {'▶' if model_id == active else ' '} {spec.label if spec else model_id}")
+            paths = imagegen_setup.model_paths(image_root, model_id)
+            for role in (spec.flags if spec else paths):
+                p = paths.get(role)
+                if p or (spec and role in spec.required):
+                    line(bool(p and p.exists()), f"  {role}: {p.name if p else '?'}" + (
+                        f" ({p.stat().st_size / 1e9:.1f} GB)" if p and p.exists() else ""),
+                        f"orbwise model add {model_id}")
     print("SSH:")
     from .tools.ssh import ssh_status
     sh = ssh_status()
@@ -545,9 +551,9 @@ def cmd_model_manage(args, cfg, state: Path) -> None:
         if not args.tag:
             print(T("Welches Modell? orbwise model remove <name>", "Which model? orbwise model remove <name>"))
             sys.exit(1)
-        if args.tag.strip().lower() == "qwen-image":
-            from . import imagegen_setup
-            freed = imagegen_setup.remove(cfg)
+        from . import imagegen_setup
+        if args.tag.strip().lower() in imagegen_setup.BY_ID:  # Bildmodell
+            freed = imagegen_setup.remove_model(cfg, args.tag.strip().lower())
             print(T(f"✔ Bildmodell gelöscht ({freed / 1e9:.1f} GB frei).", f"✔ Image model deleted ({freed / 1e9:.1f} GB freed)."))
             return
         tag = mdl.unregister_model(state, args.tag)
@@ -575,9 +581,9 @@ def cmd_model_manage(args, cfg, state: Path) -> None:
     if not tag:
         print(T("Ungültiger Modellname.", "Invalid model name."))
         sys.exit(1)
-    if tag == "qwen-image":  # Bild-Modus: stable-diffusion.cpp + Qwen-Image-2.1
-        from . import imagegen_setup
-        if not imagegen_setup.install(gpu, cfg):
+    from . import imagegen_setup
+    if tag in imagegen_setup.BY_ID:  # Bild-Modus: stable-diffusion.cpp + Bildmodell (qwen-image, z-image-turbo …)
+        if not imagegen_setup.install(gpu, cfg, model_id=tag):
             sys.exit(1)
         return
     if mdl.is_hf(tag):  # Hugging Face → Datei nach ~/models, läuft mit llama.cpp
@@ -775,7 +781,7 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("doctor", help=T("Installation prüfen", "check the installation"))
     p = sub.add_parser("model", help=T("Modelle anzeigen, umschalten, laden (add) oder entfernen (remove)",
                                        "list, switch, download (add) or remove (remove) models"))
-    p.add_argument("name", nargs="?", help=T("Profilname zum Umschalten – oder add / remove / search (auch: add qwen-image)",
+    p.add_argument("name", nargs="?", help=T("Profilname zum Umschalten – oder add / remove / search (Bildmodelle: add qwen-image, z-image-turbo, flux-schnell, sdxl)",
                                              "profile to switch to – or add / remove / search"))
     p.add_argument("tag", nargs="*", help=T("bei add: Ollama-Name oder Hugging-Face-Link · bei search: Suchbegriff",
                                             "with add: Ollama name or Hugging Face link · with search: search term"))

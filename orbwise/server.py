@@ -1245,6 +1245,89 @@ def create_app(cfg: Config) -> FastAPI:
         image_task[:] = [asyncio.create_task(run())]
         return JSONResponse({"started": True}, status_code=202)
 
+    # ---------- Bildmodelle: auswählen, laden, löschen (Katalog: imagegen_setup.CATALOG) ----------
+    image_install: dict = {"model": "", "stop": None, "text": "", "pct": None}
+
+    @app.get("/api/image/models")
+    async def image_models():
+        from . import imagegen_setup
+        vram = await asyncio.to_thread(images.vram_gb)
+        items = await asyncio.to_thread(imagegen_setup.catalog, cfg, vram)
+        home = str(Path.home())
+        folder = str(images.directory)
+        return {"models": items, "vram_gb": round(vram, 1),
+                "dir": "~" + folder[len(home):] if folder.startswith(home + "/") else folder,
+                "installing": image_install["model"], "text": image_install["text"], "pct": image_install["pct"]}
+
+    @app.post("/api/image/models/{model_id}/install")
+    async def image_model_install(model_id: str):
+        """Bildmodell laden (im Hintergrund, Fortschritt per WebSocket: image_install) – danach ist es aktiv."""
+        import threading
+
+        from . import imagegen_setup
+        from . import models as mdl
+        if model_id not in imagegen_setup.BY_ID:
+            raise HTTPException(404, T("Unbekanntes Bildmodell", "Unknown image model"))
+        if image_install["model"]:
+            raise HTTPException(409, T("Es wird schon ein Bildmodell geladen.", "An image model is already downloading."))
+        stop = threading.Event()
+        image_install.update(model=model_id, stop=stop, text="", pct=None)
+        loop = asyncio.get_running_loop()
+
+        def out(line: str) -> None:
+            m = re.search(r"\((\d+) %\)", line)
+            image_install["text"], image_install["pct"] = line.strip(), int(m.group(1)) if m else None
+            asyncio.run_coroutine_threadsafe(hub.broadcast({"type": "image_install", "model": model_id,
+                                                            "text": line.strip(), "pct": image_install["pct"]}), loop)
+
+        async def run() -> None:
+            ok, cancelled = False, False
+            try:
+                gpu = await asyncio.to_thread(mdl.detect_gpu)
+                gpu = {**gpu, "vram_gb": images.vram_gb() or gpu.get("vram_gb", 0)}  # eine Karte rechnet
+                ok = await asyncio.to_thread(imagegen_setup.install, gpu, cfg, out, None, model_id, stop)
+            except imagegen_setup.InstallCancelled:
+                cancelled = True
+            except Exception as e:  # noqa: BLE001 – melden statt hängen lassen
+                log.exception("Bildmodell %s nicht geladen", model_id)
+                out(f"✘ {e}")
+            finally:
+                last = image_install["text"]
+                image_install.update(model="", stop=None, text="", pct=None)
+            if ok:
+                await images.select(model_id)  # neuer Startbefehl beim nächsten Bild
+            await hub.broadcast({"type": "image_install", "model": model_id, "done": True, "ok": ok,
+                                 "cancelled": cancelled, "text": last})
+        background.append(asyncio.create_task(run()))
+        return {"started": True}
+
+    @app.delete("/api/image/models/install")
+    async def image_model_install_cancel():
+        stop = image_install.get("stop")
+        if stop is not None:
+            stop.set()  # die .part-Datei bleibt – erneut laden macht dort weiter
+        return {"ok": stop is not None}
+
+    @app.post("/api/image/models/{model_id}/activate")
+    async def image_model_activate(model_id: str):
+        from . import imagegen_setup
+        if not imagegen_setup.model_installed(images.directory, model_id):
+            raise HTTPException(404, T("Dieses Bildmodell ist nicht installiert.", "This image model is not installed."))
+        await images.select(model_id)
+        return images.status()
+
+    @app.delete("/api/image/models/{model_id}")
+    async def image_model_delete(model_id: str):
+        """Bildmodell löschen (gemeinsam genutzte Dateien bleiben). Läuft gerade ein Bild, wird es erst fertig."""
+        from . import imagegen_setup
+        if model_id == image_install["model"]:
+            raise HTTPException(409, T("Wird gerade geladen – erst abbrechen.", "Downloading right now – cancel first."))
+        async with images.lock:
+            if model_id == imagegen_setup.active_id(images.directory):
+                await images.drop_server()
+            freed = await asyncio.to_thread(imagegen_setup.remove_model, cfg, model_id)
+        return {"freed_gb": round(freed / 1e9, 1), **images.status()}
+
     @app.post("/api/image/cancel")
     async def image_cancel():
         return {"ok": await images.cancel()}
