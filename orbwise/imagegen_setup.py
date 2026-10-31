@@ -226,6 +226,7 @@ class ImageModel:
     search: tuple = ()   # Suchbegriffe: Repositories, die beim Laden auf Hugging Face gesucht werden (neue Modelle,
                          # deren GGUF-Hochlader noch wechseln) – ihre Dateilisten kommen zu den festen dazu
     new: bool = False    # in der Oberfläche als „neu“ markiert
+    fresh_runtime: bool = False  # braucht einen aktuellen sd-server – beim Laden wird er mit aktualisiert
 
     def note(self) -> str:
         return T(self.note_de, self.note_en)
@@ -287,6 +288,13 @@ FLUX_DEV_GGUF_REPO = "city96/FLUX.1-dev-gguf"
 QWEN3_4B_REPOS = ("unsloth/Qwen3-4B-GGUF", ZIMAGE_TEXT_REPO)
 QWEN3_8B_REPOS = ("unsloth/Qwen3-8B-GGUF", "Qwen/Qwen3-8B-GGUF")
 FLUX2_VAE_REPOS = ("Comfy-Org/flux2-dev", "Comfy-Org/flux2-klein")
+KLEIN_GGUF = {"4b": "leejet/FLUX.2-klein-4B-GGUF", "9b": "leejet/FLUX.2-klein-9B-GGUF"}  # laut sd.cpp-Doku
+# FLUX.3 Image Klein (sd.cpp docs/flux3.md): FLUX.3-Transformer, FLUX.2-VAE, Qwen3-VL 4B als Text-Encoder
+FLUX3_GGUF = ("leejet/flux-3-image-klein-GGUF", "AtomicChat/FLUX-3-Image-Klein-GGUF")
+FLUX3_BASE_GGUF = ("leejet/flux-3-image-klein-base-GGUF",)
+FLUX3_REPO = "black-forest-labs/flux-3-image-klein"  # hat ein eigenes ae.safetensors (= FLUX.2-VAE)
+QWEN3VL_4B_REPO = "Qwen/Qwen3-VL-4B-Instruct-GGUF"
+FLUX3_TE_UNCENSORED = "AtomicChat/FLUX-3-Image-Klein-TE-Uncensored-GGUF"
 
 
 def _choose_flux_dev(trees: dict[str, list[str]], vram: float) -> dict[str, tuple[str, str]]:
@@ -321,13 +329,41 @@ def _choose_flux2_klein(size: str):
         def model_file(files: list[str]) -> str | None:
             mine = [f for f in files if "klein" in f.lower() and size in f.lower().replace("-", "").replace("_", "")]
             return pick(mine or files, quants)
-        if (hit := _first(trees, _searched(trees), model_file)):
+        if (hit := _first(trees, [KLEIN_GGUF[size], *_searched(trees)], model_file)):
             out["diffusion"] = hit
         if (hit := _first(trees, text_repos, lambda files: pick(files, _small_text(vram)))):
             out["llm"] = hit
-        vae = _first(trees, FLUX2_VAE_REPOS, lambda files: next(
-            (f for f in files if re.search(r"flux2[-_]?(vae|ae)\.safetensors$", f.rsplit("/", 1)[-1], re.I)), None))
-        if vae:
+        if (vae := _flux2_vae(trees)):
+            out["vae"] = vae
+        return out
+    return choose
+
+
+def _flux2_vae(trees: dict[str, list[str]]) -> tuple[str, str] | None:
+    """FLUX.2-VAE: Comfy-Org (flux2-vae.safetensors), sonst das ae.safetensors aus dem FLUX.3-Repo."""
+    hit = _first(trees, FLUX2_VAE_REPOS, lambda files: next(
+        (f for f in files if re.search(r"flux2[-_]?(vae|ae)\.safetensors$", f.rsplit("/", 1)[-1], re.I)), None))
+    return hit or _first(trees, (FLUX3_REPO,), lambda files: _exact(files, "ae.safetensors"))
+
+
+def _choose_flux3(base: bool = False, uncensored: bool = False):
+    """FLUX.3 Image Klein (bzw. Klein Base): GGUF des Transformers, Qwen3-VL 4B (oder der unzensierte von AtomicChat –
+    gleicher Aufbau, „drop-in --llm“), FLUX.2-VAE."""
+    repos = FLUX3_BASE_GGUF if base else FLUX3_GGUF
+
+    def choose(trees: dict[str, list[str]], vram: float) -> dict[str, tuple[str, str]]:
+        out = {}
+        quants = quant_preference(vram) + ["Q8_0", "Q4_0"]
+
+        def model_file(files: list[str]) -> str | None:
+            mine = [f for f in files if ("base" in f.lower()) == base and not _NOT_A_MODEL.search(f.rsplit("/", 1)[-1])]
+            return pick(mine or files, quants)
+        if (hit := _first(trees, [*repos, *_searched(trees)], model_file)):
+            out["diffusion"] = hit
+        te = (FLUX3_TE_UNCENSORED, QWEN3VL_4B_REPO) if uncensored else (QWEN3VL_4B_REPO,)
+        if (hit := _first(trees, te, lambda files: pick(files, _small_text(vram)))):
+            out["llm"] = hit
+        if (vae := _flux2_vae(trees)):
             out["vae"] = vae
         return out
     return choose
@@ -361,18 +397,44 @@ CATALOG: tuple[ImageModel, ...] = (
                {"diffusion": "--diffusion-model", "vae": "--vae", "clip_l": "--clip_l", "t5xxl": "--t5xxl"},
                ("diffusion", "vae", "clip_l", "t5xxl"), (FLUX_GGUF_REPO, FLUX_TEXT_REPO, FLUX_REPO), _choose_flux,
                12, 8, 4, 1.0, license="apache-2.0"),
+    ImageModel("flux3-klein", "FLUX.3 Image Klein",
+               "Neueste FLUX-Generation – sehr gute Bilder in 16 Schritten, kann auch Bilder bearbeiten. Ab 8 GB.",
+               "Newest FLUX generation – very good images in 16 steps, also edits pictures. From 8 GB.",
+               {"diffusion": "--diffusion-model", "vae": "--vae", "llm": "--llm"},
+               ("diffusion", "llm", "vae"), (*FLUX3_GGUF, QWEN3VL_4B_REPO, *FLUX2_VAE_REPOS, FLUX3_REPO),
+               _choose_flux3(), 8, 8, 16, 1.0, license="flux-3", edit=True, search=("flux-3-image-klein",),
+               new=True, fresh_runtime=True),
+    ImageModel("flux3-klein-uncensored", "FLUX.3 Image Klein (Text-Encoder ohne Ablehnungen)",
+               "Wie FLUX.3 Image Klein, mit dem Text-Encoder von AtomicChat, dem die Ablehnungen entfernt wurden – "
+               "laut Messung ändert das an den Bildern kaum etwas.",
+               "Like FLUX.3 Image Klein, with AtomicChat's text encoder whose refusals were removed – by their "
+               "measurements this barely changes the pictures.",
+               {"diffusion": "--diffusion-model", "vae": "--vae", "llm": "--llm"},
+               ("diffusion", "llm", "vae"),
+               (*FLUX3_GGUF, FLUX3_TE_UNCENSORED, QWEN3VL_4B_REPO, *FLUX2_VAE_REPOS, FLUX3_REPO),
+               _choose_flux3(uncensored=True), 8, 8, 16, 1.0, license="flux-3", edit=True,
+               search=("flux-3-image-klein",), fresh_runtime=True),
+    ImageModel("flux3-klein-base", "FLUX.3 Image Klein Base",
+               "Nicht destillierte Grundversion – langsamer (20 Schritte, CFG 3.5), dafür mehr Vielfalt; zum Feintunen.",
+               "Non-distilled base version – slower (20 steps, CFG 3.5) but more varied; for fine-tuning.",
+               {"diffusion": "--diffusion-model", "vae": "--vae", "llm": "--llm"},
+               ("diffusion", "llm", "vae"), (*FLUX3_BASE_GGUF, QWEN3VL_4B_REPO, *FLUX2_VAE_REPOS, FLUX3_REPO),
+               _choose_flux3(base=True), 8, 8, 20, 3.5, license="flux-3", edit=True,
+               search=("flux-3-image-klein-base",), fresh_runtime=True),
     ImageModel("flux2-klein-4b", "FLUX.2 klein 4B",
                "Neueste FLUX-Generation, klein und schnell (4 Schritte), Apache-Lizenz – gut für 8–12 GB.",
                "Newest FLUX generation, small and fast (4 steps), Apache license – good for 8–12 GB.",
                {"diffusion": "--diffusion-model", "vae": "--vae", "llm": "--llm"},
-               ("diffusion", "llm", "vae"), (*QWEN3_4B_REPOS, *FLUX2_VAE_REPOS), _choose_flux2_klein("4b"),
-               7, 8, 4, 1.0, license="apache-2.0", search=("FLUX.2-klein-4B",), new=True),
+               ("diffusion", "llm", "vae"), (KLEIN_GGUF["4b"], *QWEN3_4B_REPOS, *FLUX2_VAE_REPOS, FLUX3_REPO),
+               _choose_flux2_klein("4b"), 7, 8, 4, 1.0, license="apache-2.0", search=("FLUX.2-klein-4B",),
+               edit=True, fresh_runtime=True),
     ImageModel("flux2-klein-9b", "FLUX.2 klein 9B",
                "Neueste FLUX-Generation, größer und detailreicher (4 Schritte) – für 12–20 GB; nicht kommerziell.",
                "Newest FLUX generation, larger and more detailed (4 steps) – for 12–20 GB; non-commercial.",
                {"diffusion": "--diffusion-model", "vae": "--vae", "llm": "--llm"},
-               ("diffusion", "llm", "vae"), (*QWEN3_8B_REPOS, *FLUX2_VAE_REPOS), _choose_flux2_klein("9b"),
-               12, 12, 4, 1.0, license="flux-non-commercial", search=("FLUX.2-klein-9B",), new=True),
+               ("diffusion", "llm", "vae"), (KLEIN_GGUF["9b"], *QWEN3_8B_REPOS, *FLUX2_VAE_REPOS, FLUX3_REPO),
+               _choose_flux2_klein("9b"), 12, 12, 4, 1.0, license="flux-non-commercial", search=("FLUX.2-klein-9B",),
+               edit=True, fresh_runtime=True),
     ImageModel("flux-dev", "FLUX.1 dev",
                "Die große FLUX.1-Variante – sehr detailreich, 20 Schritte; ab 12 GB, mit 20 GB in Q8. Nicht kommerziell.",
                "The large FLUX.1 variant – very detailed, 20 steps; from 12 GB, Q8 with 20 GB. Non-commercial.",
@@ -406,9 +468,10 @@ def detect_family(repo: str, tags: list[str] | tuple = ()) -> tuple[str, str]:
     if re.search(r"(^|[-_/ ])(te|text[-_]?encoders?|pup|upsampler|prompt[-_]?upsampler)([-_ ]|$)", repo.lower()):
         return "", T("Text-Encoder bzw. Prompt-Helfer – gehört neben ein Bildmodell, läuft nicht allein",
                      "text encoder or prompt helper – belongs next to an image model, does not run alone")
-    if re.search(r"flux[-_.]?3", text):  # FLUX 3 Image Klein: eigene Generation (Text-Encoder Qwen3-VL-4B)
-        return "", T("FLUX 3 – neue Modellgeneration, wird noch nicht unterstützt",
-                     "FLUX 3 – new model generation, not supported yet")
+    if re.search(r"flux[-_.]?3", text):  # FLUX.3 Image Klein: eigene Generation (Qwen3-VL 4B, FLUX.2-VAE)
+        if "klein" in text:
+            return ("flux3-klein-base" if re.search(r"klein[-_.]?base|base[-_.]gguf", text) else "flux3-klein"), ""
+        return "", T("FLUX 3 – nur „Image Klein“ wird unterstützt", "FLUX 3 – only “Image Klein” is supported")
     if re.search(r"controlnet|ip-?adapter|inpaint|kontext|[-_]edit\b|video|wan2|ltx|hunyuan", text):
         return "", T("Sonderform (Steuerung, Bearbeiten, Video) – wird nicht unterstützt",
                      "special variant (control, editing, video) – not supported")
@@ -545,6 +608,18 @@ def download(url: str, target: Path, client: httpx.Client, out: Out, label: str 
     part.rename(target)
 
 
+GENERIC_NAMES = {"ae.safetensors", "model.safetensors", "vae.safetensors", "diffusion_pytorch_model.safetensors"}
+
+
+def local_name(repo: str, path: str) -> str:
+    """Dateiname in <dir>/models. Allgemeine Namen (ae.safetensors …) bekommen das Repo davor – das FLUX.1-VAE und das
+    FLUX.2-VAE heißen beide ae.safetensors. Das FLUX.1-VAE behält seinen Namen (ältere Einrichtungen teilen es)."""
+    name = path.rsplit("/", 1)[-1]
+    if name.lower() in GENERIC_NAMES and repo != FLUX_REPO:
+        return re.sub(r"[^\w.-]+", "_", repo.replace("/", "__")) + "__" + name
+    return name
+
+
 def runtime_version(directory: Path) -> str:
     """Release von stable-diffusion.cpp, das in <dir>/bin liegt (leer: unbekannt bzw. eigener Build)."""
     try:
@@ -641,7 +716,7 @@ def install(gpu: dict, cfg=None, out: Out = print, client: httpx.Client | None =
     own = client is None
     client = client or _client()
     try:
-        if not install_binary(directory, client, out):
+        if not install_binary(directory, client, out, update=spec.fresh_runtime):
             return False
         found = [] if source else [r for q in spec.search for r in hf_find(q, client)]
         trees = {repo: hf_tree(repo, client) for repo in dict.fromkeys([*spec.repos, *found])}
@@ -655,7 +730,7 @@ def install(gpu: dict, cfg=None, out: Out = print, client: httpx.Client | None =
             return False
         files = {}
         for i, (role, (repo, path)) in enumerate(chosen.items(), 1):
-            name = path.rsplit("/", 1)[-1]
+            name = local_name(repo, path)
             out(T(f"Lade {name} ({role}, {i}/{len(chosen)}) …", f"Downloading {name} ({role}, {i}/{len(chosen)}) …"))
             download(f"{_hf_base()}/{repo}/resolve/main/{path}", directory / "models" / name, client, out,
                      stop=stop)

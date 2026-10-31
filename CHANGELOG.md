@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **FLUX.3 Image Klein** (also with AtomicChat's text encoder without refusals, and Klein Base): set up as
+  stable-diffusion.cpp documents it – FLUX.3 GGUF, Qwen3-VL 4B, FLUX.2 VAE, 16 steps at CFG 1.0 – with editing from
+  reference images; found by the Hugging Face search too. Downloading FLUX.2/FLUX.3 klein updates the sd-server first
+  (support arrived in October 2026). FLUX.2 klein now also edits with references and takes the GGUF repos named in
+  the sd.cpp docs first; the FLUX.2 VAE no longer collides with FLUX.1's `ae.safetensors`.
 - **Delete memory entries:** in *Memory*, every fact and every journal day has a delete button. A fact is removed
   exactly (not every fact containing the words); a day forgets its log, summary and search entries – learned facts and
   the chats in the sidebar stay. Works for the regular memory and each coding project's own.

@@ -165,8 +165,12 @@ class ImageEngine:
         if api is not None:  # eigenes Backend: nur ein externer sd-server nimmt Vorlagen an
             return api["backend"] == "sdcpp"
         spec = self.model()
-        vision = model_paths(self.directory).get("vision")
-        return bool(spec and spec.edit and vision and vision.exists())
+        if not spec or not spec.edit:
+            return False
+        if "vision" not in spec.flags:  # FLUX.2/3 klein: Vorlagen gehen direkt an das Modell
+            return True
+        vision = model_paths(self.directory).get("vision")  # Qwen-Image: braucht die Bild-Erkennung (mmproj)
+        return bool(vision and vision.exists())
 
     def defaults(self) -> tuple[int, float, str]:
         """Schritte, CFG und Sampler: die des Modells – eine eigene Angabe in config.yaml (image.steps/cfg_scale,
