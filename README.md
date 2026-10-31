@@ -315,10 +315,15 @@ API server) loads it again, warming the prompt cache does not. Handy before a ga
 deleting. It also survives a restart: Orbwise then starts without loading the model. Deleting the selected model
 unloads it first and selects another one (loaded with the next question).
 
-**Any model from Hugging Face – no config needed:** in **Add model** (tab **Add**) type a search term (`qwen3.6 27b`) or paste
-a Hugging Face link into the search field. Pick a repository, then a quantization: each shows its download size, the
-estimated video memory (weights + vision module + ~1.5 GB for context) and whether it fits; the largest one that fits
-completely is marked **Recommended**. Orbwise then
+**Any model from Hugging Face – no config needed:** the tab **Add** opens with **trending GGUF models that fit your
+video memory** (one entry per model, even if several people uploaded it; refreshed hourly). Results appear while you
+type a search term (`qwen3.6 27b`) or paste a Hugging Face link; sort them by downloads, trend, likes or last update
+and tick *only what fits my memory*. Each model shows its size, parameters, architecture, maximum context, license and
+whether it understands images, supports tool calls or is gated. Pick one, then a quantization: each shows its
+download size, the video memory it needs (weights + vision module + ~1.5 GB for context) as a bar, roughly how much
+context fits next to it and a short quality note (*Q4_K_M – usually the best pick*, *Q8_0 – nearly lossless* …); the
+largest one that fits completely is marked **Recommended**. If your llama.cpp does not know the model's architecture
+yet, Orbwise says so before the download (update llama.cpp at the top of the page). Orbwise then
 
 - downloads the GGUF file – split files (`-00001-of-00003`) and the vision module (`mmproj`, for pictures in the chat)
   included, resumable – to `~/models/<user>_<repo>/` (`llm.models_dir`),
@@ -340,7 +345,9 @@ the same version – downloaded first if it is not there yet – and restarts a 
 updated by Orbwise – it is a system package with kernel drivers that needs a reboot, and a broken update leaves the
 GPU unusable. Update it yourself following the guide, then press **Update** on the llama.cpp line so the build
 matches; `orbwise doctor` warns when the build was made for a different ROCm major version. Deleting a model (**⋯ → Delete**) removes files Orbwise downloaded; files you put into `~/models` yourself stay.
-Gated repositories need a Hugging Face token in `HF_TOKEN`. Ollama is still used for the memory embeddings and the
+Gated repositories (e.g. Llama, Gemma) need a Hugging Face token: accept the license on the model page and enter a
+read token under **Settings → General → Hugging Face** (kept in the keyring; `HF_TOKEN` in the environment works too).
+`HF_ENDPOINT` points Orbwise at a mirror instead of huggingface.co. Ollama is still used for the memory embeddings and the
 Ollama presets above.
 
 **Context window, KV cache and sampling per model** (Models page, for any model – changes to a model that is not

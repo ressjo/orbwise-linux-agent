@@ -2481,6 +2481,45 @@
     if (section === "voice") openVoiceMenu();
     if (section === "status") loadStatus();
     if (section === "skills") loadSkills();
+    if (section === "general") renderHfToken();
+  }
+
+  // Hugging-Face-Token (für zugangsbeschränkte Modelle wie Llama oder Gemma) – liegt im Schlüsselbund
+  async function renderHfToken() {
+    const row = $("set-hf");
+    let st = { set: false, source: "saved" };
+    try { st = await getJSON("/api/hf/token"); } catch { /* offline: Formular trotzdem zeigen */ }
+    row.innerHTML = `<div><b></b><small></small></div><form class="hf-token"><input type="password" autocomplete="off" spellcheck="false">
+      <button type="submit" class="btn small"></button></form>`;
+    row.querySelector("b").textContent = "Hugging Face";
+    const small = row.querySelector("small");
+    small.textContent = st.source === "env" ? L("Token kommt aus der Umgebung (HF_TOKEN).", "Token comes from the environment (HF_TOKEN).")
+      : st.set ? L("Token gespeichert – zugangsbeschränkte Modelle lassen sich laden (Lizenz auf der Modellseite akzeptieren).",
+                   "Token saved – gated models can be downloaded (accept the license on the model page).")
+      : L("Nur für zugangsbeschränkte Modelle (z. B. Llama, Gemma): Token mit Leserecht von huggingface.co/settings/tokens.",
+          "Only for gated models (e.g. Llama, Gemma): a read token from huggingface.co/settings/tokens.");
+    const form = row.querySelector("form");
+    const input = form.querySelector("input");
+    const btn = form.querySelector("button");
+    form.classList.toggle("hidden", st.source === "env");
+    input.placeholder = st.set ? "hf_••••••••" : "hf_…";
+    btn.textContent = st.set ? L("Ersetzen", "Replace") : L("Speichern", "Save");
+    if (st.set && st.source !== "env") {
+      const del = document.createElement("button");
+      del.type = "button"; del.className = "btn small"; del.textContent = L("Entfernen", "Remove");
+      del.onclick = async () => { try { await api("POST", "/api/hf/token", { token: "" }); renderHfToken(); } catch {} };
+      form.appendChild(del);
+    }
+    form.onsubmit = async (e) => {
+      e.preventDefault();
+      if (!input.value.trim()) return;
+      btn.disabled = true;
+      try {
+        const r = await api("POST", "/api/hf/token", { token: input.value.trim() });
+        toast(r.user ? L(`Angemeldet als ${r.user}.`, `Signed in as ${r.user}.`) : L("Token gespeichert.", "Token saved."));
+        renderHfToken();
+      } catch { btn.disabled = false; }
+    };
   }
 
   // ---------------------------------------------------------------- Skills: einrichten, an-/abschalten
@@ -4116,12 +4155,14 @@
     } catch { /* Meldung kommt von api() */ }
   }
 
-  // ---- Reiter „Hinzufügen“: Hugging Face (Suche, Link, Pfad), Dateien in ~/models, Vorauswahl
+  // ---- Reiter „Hinzufügen“: Hugging Face (Vorschläge, Live-Suche, Link, Pfad), Dateien in ~/models, Vorauswahl
+  const HF = { q: "", sort: "downloads", fitOnly: false, timer: 0, seq: 0 };
   async function renderAddTab() {
     const box = $("mp-add");
     box.innerHTML = `
       <form class="mp-search" autocomplete="off"><svg class="i"><use href="#i-search"/></svg><input type="search" spellcheck="false">
         <button type="submit" class="btn primary small"></button></form>
+      <div class="hf-tools"><select class="hf-sort"></select><label class="hf-fit"><input type="checkbox"> <span></span></label></div>
       <p class="set-hint mp-search-hint"></p>
       <div class="mm-hf mp-hf"></div>
       <div class="mp-add-cols"><section class="mp-col mp-disk"></section><section class="mp-col mp-presets"></section></div>`;
@@ -4129,16 +4170,96 @@
     const q = form.querySelector("input");
     q.placeholder = L("Hugging Face durchsuchen, Link oder Pfad zu einer .gguf einfügen (z. B. qwen3.6 27b)",
                       "Search Hugging Face, paste a link or a path to a .gguf (e.g. qwen3.6 27b)");
+    q.value = HF.q;
     form.querySelector("button").textContent = L("Suchen", "Search");
+    const sort = box.querySelector(".hf-sort");
+    for (const [v, de, en] of [["downloads", "Meiste Downloads", "Most downloads"], ["trending", "Gerade beliebt", "Trending"],
+                               ["likes", "Meiste Likes", "Most likes"], ["updated", "Zuletzt aktualisiert", "Recently updated"]])
+      sort.add(new Option(L(de, en), v));
+    sort.value = HF.sort;
+    const fitBox = box.querySelector(".hf-fit input");
+    fitBox.checked = HF.fitOnly;
+    box.querySelector(".hf-fit span").textContent = L("nur was in meinen Speicher passt", "only what fits my memory");
     const hf = box.querySelector(".mp-hf");
-    form.onsubmit = (e) => {
-      e.preventDefault();
+    const run = (now) => {
+      clearTimeout(HF.timer);
       const text = q.value.trim();
-      if (/^[~/].*\.gguf$/i.test(text)) { addLocal(text); return; }  // Pfad zu einer eigenen GGUF-Datei
-      hfSearch(text, hf);
+      HF.q = text;
+      if (/^[~/].*\.gguf$/i.test(text)) { if (now) addLocal(text); return; }  // Pfad zu einer eigenen GGUF-Datei
+      HF.timer = setTimeout(() => (text.length >= 2 ? hfSearch(text, hf) : hfSuggest(hf)), now ? 0 : 400);
     };
+    form.onsubmit = (e) => { e.preventDefault(); run(true); };
+    q.addEventListener("input", () => run(false));  // Ergebnisse schon beim Tippen
+    sort.onchange = () => { HF.sort = sort.value; run(true); };
+    fitBox.onchange = () => { HF.fitOnly = fitBox.checked; run(true); };
+    run(true);
     localModels(box.querySelector(".mp-disk"));
     renderPresets(box.querySelector(".mp-presets"));
+  }
+
+  const kCtx = (n) => (n >= 1024 ? `${Math.round(n / 1024)}k` : String(n || ""));
+  // Kurzinfos eines Modells als kleine Marken: 27B · qwen3 · 128k · Bild · Werkzeuge · Lizenz · gesperrt
+  function hfBadges(r) {
+    const wrap = document.createElement("div");
+    wrap.className = "hf-badges";
+    const add = (text, cls, title) => {
+      const b = document.createElement("span");
+      b.className = "hf-badge" + (cls ? " " + cls : "");
+      b.textContent = text;
+      if (title) b.title = title;
+      wrap.appendChild(b);
+    };
+    if (r.params_b) add(`${r.params_b >= 10 ? Math.round(r.params_b) : r.params_b}B`, "", L("Parameter", "Parameters"));
+    if (r.arch) add(r.arch, r.supported === false ? "warn" : "", r.supported === false
+      ? L("Diese Architektur kennt dein llama.cpp noch nicht – erst aktualisieren", "Your llama.cpp does not know this architecture yet – update it first")
+      : L("Architektur", "Architecture"));
+    if (r.context) add(kCtx(r.context), "", L("Maximaler Kontext laut Modell", "Maximum context according to the model"));
+    if (r.vision) add(L("Bild", "Vision"), "", L("Versteht Bilder (Bildmodul wird mitgeladen)", "Understands images (vision module is downloaded too)"));
+    if (r.tools) add(L("Werkzeuge", "Tools"), "", L("Die Chat-Vorlage kennt Werkzeug-Aufrufe", "The chat template supports tool calls"));
+    if (r.license) add(r.license, "muted", L("Lizenz", "License"));
+    if (r.gated) add(L("🔒 Zugang nötig", "🔒 Gated"), "warn", L("Lizenz auf Hugging Face akzeptieren und ein Token eintragen", "Accept the license on Hugging Face and enter a token"));
+    return wrap;
+  }
+  function hfResult(r) {
+    const mark = document.createElement("span");
+    mark.className = "fit-" + (r.fit || "tight");
+    mark.textContent = r.fit ? FIT_MARKS[r.fit] + " " : "";
+    const [owner, name] = r.repo.split("/");
+    const stats = [r.downloads ? L(`${r.downloads.toLocaleString(LOCALE)} Downloads`, `${r.downloads.toLocaleString(LOCALE)} downloads`) : "",
+                   r.likes ? `♥ ${r.likes.toLocaleString(LOCALE)}` : "", r.updated ? L(`aktualisiert ${r.updated}`, `updated ${r.updated}`) : ""]
+      .filter(Boolean).join(" · ");
+    const b = hfItem([mark, document.createTextNode(name || r.repo)], r.est_gb ? `~${r.est_gb} GB (Q4)` : "",
+                     `${owner}${stats ? " · " + stats : ""}`);
+    b.appendChild(hfBadges(r));
+    b.onclick = () => hfQuants(r.repo, $("mp-add").querySelector(".mp-hf"));
+    return b;
+  }
+  function hfList(box, title, results, extra) {
+    box.innerHTML = "";
+    const head = document.createElement("div");
+    head.className = "mp-hf-title hf-head";
+    head.textContent = title;
+    if (extra) head.appendChild(extra);
+    box.appendChild(head);
+    const shown = HF.fitOnly ? results.filter((r) => r.fit !== "big") : results;
+    for (const r of shown) box.appendChild(hfResult(r));
+    if (!shown.length) box.insertAdjacentHTML("beforeend", `<div class="mm-hint">${results.length
+      ? L("Nichts davon passt in deinen Speicher – Filter ausschalten, um alles zu sehen.", "None of these fits your memory – turn the filter off to see all.")
+      : L("Nichts gefunden – kürzeren Begriff versuchen (z. B. nur „qwen3.6“).", "Nothing found – try a shorter term (e.g. just “qwen3.6”).")}</div>`);
+  }
+
+  async function hfSuggest(box, refresh = false) {
+    const seq = ++HF.seq;
+    box.innerHTML = `<div class="mm-hint">${L("Lade Vorschläge von Hugging Face …", "Loading suggestions from Hugging Face …")}</div>`;
+    let data;
+    try { data = await getJSON("/api/models/hf/suggest" + (refresh ? "?refresh=1" : "")); }
+    catch { if (seq === HF.seq) box.innerHTML = `<div class="mm-hint">${L("Hugging Face nicht erreichbar – unten die feste Vorauswahl.", "Hugging Face not reachable – see the presets below.")}</div>`; return; }
+    if (seq !== HF.seq) return;  // inzwischen getippt
+    const again = document.createElement("button");
+    again.type = "button"; again.className = "btn-link"; again.textContent = L("neu laden", "reload");
+    again.onclick = () => hfSuggest(box, true);
+    hfList(box, L("Gerade beliebt auf Hugging Face – passend für deinen Speicher", "Trending on Hugging Face – fitting your memory"),
+           data.results, again);
   }
 
   async function renderPresets(box) {
@@ -4191,45 +4312,57 @@
 
   async function hfSearch(text, box) {
     text = text.trim();
-    if (!text) { box.innerHTML = ""; return; }
+    if (!text) return hfSuggest(box);
+    const seq = ++HF.seq;
     box.innerHTML = `<div class="mm-hint">${L("Suche auf Hugging Face …", "Searching Hugging Face …")}</div>`;
     let data;
-    try { data = await getJSON("/api/models/hf/search?q=" + encodeURIComponent(text)); }
-    catch { box.innerHTML = `<div class="mm-hint">${L("Hugging Face nicht erreichbar.", "Hugging Face not reachable.")}</div>`; return; }
-    box.innerHTML = "";
-    if (!data.results.length) {
-      box.innerHTML = `<div class="mm-hint">${L("Nichts gefunden – kürzeren Begriff versuchen (z. B. nur „qwen3.6“).",
-                                                "Nothing found – try a shorter term (e.g. just “qwen3.6”).")}</div>`;
-      return;
-    }
+    try { data = await getJSON(`/api/models/hf/search?q=${encodeURIComponent(text)}&sort=${HF.sort}`); }
+    catch { if (seq === HF.seq) box.innerHTML = `<div class="mm-hint">${L("Hugging Face nicht erreichbar.", "Hugging Face not reachable.")}</div>`; return; }
+    if (seq !== HF.seq) return;  // inzwischen weitergetippt
     if (data.results.length === 1 && data.results[0].tag) {  // Link auf eine bestimmte Datei
       const r = data.results[0];
       return hfQuants(r.repo, box, r.tag);
     }
-    if (data.results.length === 1) return hfQuants(data.results[0].repo, box);
-    for (const r of data.results) {
-      const b = hfItem([document.createTextNode(r.repo)], r.downloads ? L(`${r.downloads.toLocaleString(LOCALE)} Downloads`, `${r.downloads.toLocaleString(LOCALE)} downloads`) : "",
-                       L("GGUF · Quantisierung wählen →", "GGUF · choose quantization →"));
-      b.onclick = () => hfQuants(r.repo, box);
-      box.appendChild(b);
-    }
+    if (data.results.length === 1 && !data.results[0].downloads && !data.results[0].arch) return hfQuants(data.results[0].repo, box);  // Link aufs Repo
+    hfList(box, L(`Ergebnisse für „${text}“`, `Results for “${text}”`), data.results);
   }
 
   async function hfQuants(repo, box, only) {
+    ++HF.seq;
     box.innerHTML = `<div class="mm-hint">${L("Lade Dateiliste …", "Loading file list …")}</div>`;
     let data;
     try { data = await api("GET", "/api/models/hf/quants?repo=" + encodeURIComponent(repo)); }
     catch { box.innerHTML = ""; return; }
     box.innerHTML = "";
-    const title = document.createElement("div");
-    title.className = "mp-hf-title";
-    title.textContent = repo;
-    box.appendChild(title);
+    const head = document.createElement("div");
+    head.className = "hf-detail";
+    head.innerHTML = `<div class="hf-detail-top"><button type="button" class="btn-link hf-back"></button>
+      <a class="hf-link" target="_blank" rel="noopener"></a></div><div class="mp-hf-title"></div><div class="hf-warn hidden"></div>`;
+    head.querySelector(".hf-back").textContent = "← " + L("zurück", "back");
+    head.querySelector(".hf-back").onclick = () => (HF.q.length >= 2 ? hfSearch(HF.q, box) : hfSuggest(box));
+    const link = head.querySelector(".hf-link");
+    link.href = `https://huggingface.co/${repo}`;
+    link.textContent = L("Auf Hugging Face ansehen ↗", "View on Hugging Face ↗");
+    head.querySelector(".mp-hf-title").textContent = repo;
+    const info = data.info || {};
+    if (info.repo) head.appendChild(hfBadges(info));
+    const warn = head.querySelector(".hf-warn");
+    const warnings = [];
+    if (info.gated) warnings.push(info.hf_token
+      ? L("Zugangsbeschränkt: Lizenz auf der Hugging-Face-Seite akzeptieren, dann klappt der Download mit deinem Token.",
+          "Gated: accept the license on the Hugging Face page, then the download works with your token.")
+      : L("Zugangsbeschränkt: Lizenz auf der Hugging-Face-Seite akzeptieren und unter Einstellungen → Allgemein → Hugging Face ein Token eintragen.",
+          "Gated: accept the license on the Hugging Face page and enter a token under Settings → General → Hugging Face."));
+    if (info.supported === false) warnings.push(L(`Dein llama.cpp kennt die Architektur „${info.arch}“ noch nicht – oben unter llama.cpp aktualisieren, sonst startet das Modell nicht.`,
+                                                 `Your llama.cpp does not know the “${info.arch}” architecture yet – update llama.cpp above, otherwise the model will not start.`));
+    if (warnings.length) { warn.textContent = warnings.join(" "); warn.classList.remove("hidden"); }
+    box.appendChild(head);
     const items = only ? data.quants.filter((x) => x.tag.toLowerCase() === only.toLowerCase()) : data.quants;
     if (!items.length) {
       box.insertAdjacentHTML("beforeend", `<div class="mm-hint">${L("Keine GGUF-Datei in diesem Repo.", "No GGUF file in this repo.")}</div>`);
       return;
     }
+    const vram = data.gpu && data.gpu.vram_gb;
     for (const x of items) {
       const mark = document.createElement("span");
       mark.className = "fit-" + x.fit;
@@ -4240,7 +4373,22 @@
                          : x.recommended ? L("Empfohlen", "Recommended") : "",
                        `~${x.download_gb} GB · ${L("braucht", "needs")} ~${x.vram_gb} GB VRAM`
                          + (x.parts > 1 ? ` · ${x.parts} ${L("Teile", "parts")}` : "")
-                         + (x.mmproj ? L(" · + Bildmodul", " · + vision") : ""));
+                         + (x.mmproj ? L(" · + Bildmodul", " · + vision") : ""),
+                       x.note || "");
+      if (vram) {  // Balken: wie viel vom Grafikspeicher die Variante belegt – und was an Kontext daneben passt
+        const bar = document.createElement("div");
+        bar.className = "hf-vram";
+        bar.innerHTML = `<div class="hf-vram-bar"><i></i></div><span></span>`;
+        const i = bar.querySelector("i");
+        i.style.width = Math.min(100, x.vram_pct || 0) + "%";
+        i.className = "fit-" + x.fit;
+        bar.querySelector("span").textContent = x.fit === "ok"
+          ? L(`${x.vram_pct} % von ${vram} GB · ≈ ${kCtx(x.ctx)} Kontext`, `${x.vram_pct} % of ${vram} GB · ≈ ${kCtx(x.ctx)} context`)
+          : x.fit === "tight" ? L("teils im Arbeitsspeicher – langsamer", "partly in system RAM – slower")
+          : L("zu groß für den Grafikspeicher", "too big for the video memory");
+        if (x.fit === "ok" && !x.ctx) bar.querySelector("span").textContent = L(`${x.vram_pct} % von ${vram} GB · kaum Platz für Kontext`, `${x.vram_pct} % of ${vram} GB · little room for context`);
+        b.appendChild(bar);
+      }
       b.disabled = pulling;
       b.onclick = () => startPull(x.tag, `${repo} ${x.quant}`, x.fit);
       box.appendChild(b);

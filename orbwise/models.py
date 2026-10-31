@@ -4,6 +4,7 @@ interaktive Auswahl (Installer und `orbwise model add`). Zusätzlich geladene Mo
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import subprocess
@@ -209,34 +210,162 @@ def preset_list(vram_gb: float, installed: set[str]) -> list[dict]:
 
 # ---------------------------------------------------------------- Hugging Face: suchen, Quantisierung wählen
 
-HF_API = "https://huggingface.co/api"
+# HF_ENDPOINT wie bei huggingface_hub: anderer Server bzw. Spiegel (z. B. https://hf-mirror.com)
+HF_API = (os.environ.get("HF_ENDPOINT") or "https://huggingface.co").rstrip("/") + "/api"
+HF_SORTS = {"downloads": "downloads", "likes": "likes", "updated": "lastModified", "trending": "trendingScore"}
+# Felder, die die HF-API zusätzlich liefern soll: GGUF-Kopf (Architektur, Kontext, Parameter, Chat-Vorlage) u. a.
+HF_EXPAND = ("downloads", "likes", "lastModified", "gguf", "gated", "tags", "pipeline_tag", "trendingScore")
+TEXT_PIPELINES = {"text-generation", "image-text-to-text", "conversational", None, ""}
 
 
-def _hf_get(path: str, params: dict | None = None, base: str | None = None):
-    r = httpx.get(f"{base or HF_API}{path}", params=params, timeout=15, follow_redirects=True,
-                  headers={"User-Agent": "orbwise"})
+def hf_token() -> str:
+    """Token für zugangsbeschränkte Modelle (gated): HF_TOKEN aus der Umgebung, sonst in den Einstellungen gespeichert."""
+    tok = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+    if tok:
+        return tok.strip()
+    try:
+        from . import keystore
+        return keystore.get("hf_token").strip()
+    except Exception:  # noqa: BLE001 – kein Schlüsselbund: ohne Token
+        return ""
+
+
+def _hf_get(path: str, params: dict | list | None = None, base: str | None = None):
+    tok = hf_token()
+    headers = {"User-Agent": "orbwise", **({"Authorization": f"Bearer {tok}"} if tok else {})}
+    r = httpx.get(f"{base or HF_API}{path}", params=params, timeout=15, follow_redirects=True, headers=headers)
     r.raise_for_status()
     return r.json()
 
 
-def hf_search(query: str, limit: int = 20, base: str | None = None) -> list[dict]:
-    """GGUF-Modelle auf Hugging Face (meiste Downloads zuerst). Mehrere Wörter („qwen 3.6 27b“) müssen alle im Namen
-    vorkommen – die HF-Suche selbst kennt nur Teilstrings, daher wird bei Bedarf mit dem längsten Wort gesucht."""
+def _expand() -> list[tuple[str, str]]:
+    return [("expand[]", f) for f in HF_EXPAND]
+
+
+def q4_gb(params: int | float | None) -> float:
+    """Ungefähre Dateigröße bei Q4_K_M (~4,85 Bit je Gewicht) – für Vorschläge, bevor die Dateiliste geladen ist."""
+    return round((params or 0) * 4.85 / 8 / 1e9, 1)
+
+
+def hf_summary(m: dict) -> dict:
+    """Das Wichtige eines Modells für die Anzeige: Größe, Architektur, Kontext, Lizenz, Bild/Werkzeuge, gated."""
+    rid = m.get("id") or m.get("modelId") or ""
+    gguf = m.get("gguf") or {}
+    tags = [t for t in m.get("tags") or [] if isinstance(t, str)]
+    template = str(gguf.get("chat_template") or "")
+    lic = next((t.split(":", 1)[1] for t in tags if t.startswith("license:")), "")
+    pipeline = m.get("pipeline_tag") or ""
+    params = gguf.get("total") or 0
+    return {"repo": rid, "downloads": m.get("downloads", 0) or 0, "likes": m.get("likes", 0) or 0,
+            "updated": str(m.get("lastModified") or "")[:10], "gated": bool(m.get("gated")),
+            "params": params, "params_b": round(params / 1e9, 1) if params else None,
+            "arch": gguf.get("architecture") or "", "context": gguf.get("context_length") or 0,
+            "license": lic, "pipeline": pipeline,
+            "vision": pipeline == "image-text-to-text" or "vision" in tags or "image-text-to-text" in tags,
+            "tools": bool(re.search(r"\btools\b", template)), "est_gb": q4_gb(params) if params else None}
+
+
+def hf_search(query: str, limit: int = 20, base: str | None = None, sort: str = "downloads") -> list[dict]:
+    """GGUF-Modelle auf Hugging Face (Sortierung: downloads, likes, updated, trending). Mehrere Wörter („qwen 3.6
+    27b“) müssen alle im Namen vorkommen – die HF-Suche selbst kennt nur Teilstrings, daher wird bei Bedarf mit dem
+    längsten Wort gesucht."""
     words = [w for w in re.split(r"\s+", query.strip().lower()) if w]
     if not words:
         return []
-    params = {"filter": "gguf", "sort": "downloads", "direction": "-1"}
-    found = _hf_get("/models", {**params, "search": " ".join(words), "limit": limit}, base)
+    params = [("filter", "gguf"), ("sort", HF_SORTS.get(sort, "downloads")), ("direction", "-1"), *_expand()]
+    found = _hf_get("/models", [*params, ("search", " ".join(words)), ("limit", str(limit))], base)
     if not found and len(words) > 1:
-        found = _hf_get("/models", {**params, "search": max(words, key=len), "limit": 100}, base)
+        found = _hf_get("/models", [*params, ("search", max(words, key=len)), ("limit", "100")], base)
     out = []
     for m in found if isinstance(found, list) else []:
         rid = m.get("id") or m.get("modelId") or ""
-        flat = rid.lower()
-        if "/" not in rid or not all(w in flat for w in words):
+        if "/" not in rid or not all(w in rid.lower() for w in words):
             continue
-        out.append({"repo": rid, "downloads": m.get("downloads", 0), "likes": m.get("likes", 0)})
+        out.append(hf_summary(m))
     return out[:limit]
+
+
+def _family(repo: str) -> str:
+    """Modell ohne Hochlader und GGUF-Zusätze – gleiche Modelle mehrerer Hochlader zählen als eins."""
+    name = repo.split("/", 1)[-1].lower()
+    name = re.sub(r"[-_.](gguf|i1|imatrix|imat)$", "", name)
+    name = re.sub(r"[-_.](gguf|i1|imatrix|imat)(?=[-_.]|$)", "", name)
+    return re.sub(r"^(qwen|meta-llama|mistralai|google|microsoft)[_-]", "", name)
+
+
+def hf_suggest(vram_gb: float, limit: int = 12, base: str | None = None) -> list[dict]:
+    """Vorschläge ohne Suchbegriff: gerade beliebte GGUF-Sprachmodelle von Hugging Face, die in den Grafikspeicher
+    passen (bzw. teilweise) – je Modell nur der beliebteste Hochlader."""
+    found = _hf_get("/models", [("filter", "gguf"), ("sort", "trendingScore"), ("direction", "-1"),
+                                ("limit", "100"), *_expand()], base)
+    out, seen = [], set()
+    for m in found if isinstance(found, list) else []:
+        s = hf_summary(m)
+        if "/" not in s["repo"] or s["pipeline"] not in TEXT_PIPELINES or not s["params"]:
+            continue
+        if s["params"] < 0.5e9 or "embed" in s["repo"].lower() or "rerank" in s["repo"].lower():
+            continue
+        fam = _family(s["repo"])
+        if fam in seen:
+            continue
+        seen.add(fam)
+        s["fit"] = fit_need(need_gb(s["est_gb"]), vram_gb)
+        if s["fit"] == "big":
+            continue
+        out.append(s)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def hf_info(repo: str, base: str | None = None) -> dict:
+    """Details eines Repos (für die Quant-Auswahl); leer, wenn HF sie nicht liefert."""
+    if not REPO_RE.match(repo):
+        raise ValueError("ungültiges Repo")
+    try:
+        data = _hf_get(f"/models/{repo}", _expand(), base)
+    except httpx.HTTPError:
+        return {}
+    return hf_summary(data) if isinstance(data, dict) else {}
+
+
+# Kurze Einordnung der Quantisierungen (ungefähre Bit je Gewicht, Qualität)
+QUANT_NOTES = (
+    (r"^(F32|F16|BF16)$", 16, ("unquantisiert – riesig, nur zum Weiterverarbeiten", "unquantized – huge, for conversion")),
+    (r"^Q8_0$", 8.5, ("nahezu verlustfrei", "nearly lossless")),
+    (r"Q6_K", 6.6, ("sehr nah am Original", "very close to the original")),
+    (r"Q5_K", 5.7, ("hohe Qualität", "high quality")),
+    (r"Q4_K_XL|Q4_K_L", 5.0, ("guter Kompromiss, wichtige Teile genauer", "good trade-off, key parts more precise")),
+    (r"Q4_K|Q4_K_M", 4.85, ("guter Kompromiss – meist die beste Wahl", "good trade-off – usually the best pick")),
+    (r"MXFP4", 4.25, ("Originalformat des Modells (4 Bit)", "the model's native 4-bit format")),
+    (r"IQ4|Q4_0|Q4_1", 4.5, ("etwas kleiner, kaum schlechter", "a bit smaller, barely worse")),
+    (r"Q3|IQ3", 3.5, ("merklich ungenauer – nur wenn nichts Größeres passt", "noticeably less precise – only if "
+                                                                              "nothing bigger fits")),
+    (r"Q2|IQ2|IQ1|TQ", 2.5, ("stark verkleinert, deutlich schlechter", "heavily shrunk, clearly worse")),
+)
+
+
+def quant_note(quant: str) -> str:
+    q = re.sub(r"^UD-", "", quant.upper())
+    for pattern, _bits, (de, en) in QUANT_NOTES:
+        if re.search(pattern, q):
+            return T(de, en)
+    return ""
+
+
+def context_fit(size_gb: float, vram_gb: float, gpus: int = 1, train: int = 0) -> int:
+    """Wie viel Kontext neben dem Modell grob in den Grafikspeicher passt (Schätzung ohne die Datei: ~160 KB je
+    Token wie llamacpp.pick_context, wenn es nichts Genaueres weiß). 0 = nicht einmal das Modell."""
+    from .llamacpp import CONTEXT_STEPS
+    budget = vram_gb * 0.95 - max(1, gpus) - size_gb
+    if vram_gb <= 0 or budget <= 0:
+        return 0
+    for ctx in sorted({*CONTEXT_STEPS, 131072}, reverse=True):
+        if train and ctx > train:
+            continue
+        if ctx * 160 * 1024 / 1024 ** 3 <= budget:
+            return ctx
+    return 0
 
 
 def need_gb(size_gb: float) -> float:
@@ -304,7 +433,7 @@ def hf_quants(repo: str, vram_gb: float, models_dir: Path | None = None, base: s
         p = Preset(tag, label_of(tag), round(size, 1), need_gb(size + extra), "", "")
         items.append({"tag": tag, "quant": quant, "file": parts[0]["path"], "files": parts, "parts": len(parts),
                       "mmproj": mmproj, "mtp": _pick_mtp(files, quant), "download_gb": round(size + extra, 1), "vram_gb": p.vram_gb,
-                      "fit": fit(p, vram_gb),
+                      "fit": fit(p, vram_gb), "note": quant_note(quant),
                       "installed": bool(target and all((target / f["path"].rsplit("/", 1)[-1]).exists()
                                                        for f in parts))})
     items.sort(key=lambda x: x["download_gb"])

@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Adding models, LM-Studio-style:** the *Add* tab opens with trending GGUF models from Hugging Face that fit your
+  video memory (deduplicated across uploaders) instead of only a fixed list; search runs while you type, sorted by
+  downloads, trend, likes or last update, with a *fits my memory* filter. Every model shows parameters, architecture,
+  maximum context, license, vision, tool calls and whether it is gated; every quantization a video-memory bar, the
+  context that roughly fits next to it and a short quality note. A warning appears before the download when the
+  installed llama.cpp does not know the model's architecture yet.
+- **Hugging Face token in the settings** (*General → Hugging Face*, checked with Hugging Face, kept in the keyring) for
+  gated models, with a clear "accept the license" message and link instead of a bare 401. `HF_ENDPOINT` selects a
+  mirror.
 - **Access token for the UI and API:** before, any program on the machine – also one of another user – could drive
   Orbwise over localhost and, in Auto mode, run commands in your name. Now everything needs a secret token from
   `~/.config/orbwise/web-token` (readable only by you, created on first start). The app menu entry, `orbwise serve
