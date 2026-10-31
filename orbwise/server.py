@@ -966,6 +966,25 @@ def create_app(cfg: Config) -> FastAPI:
 
     app_state_resting = llm_resting  # für Tests: app.state.llm_resting
 
+    waking: list[asyncio.Task] = []
+
+    def model_resting() -> bool:
+        """Sprachmodell entladen (von Hand oder für Bilder), aber die Bild-Ansicht ist zu – dann soll Tippen es laden."""
+        return isinstance(llm, LLMRouter) and not images.view_open and bool(llm.gpu_borrowed or llm.unloaded)
+
+    async def wake_model() -> None:
+        """Beim Tippen in Tools/Coding: Sprachmodell im Hintergrund laden (Bildserver geht vorher aus), danach den
+        Chat schon einlesen – die Frage muss dann nicht auf das Laden warten."""
+        try:
+            if llm.gpu_borrowed:
+                await llm.gpu_borrowed()  # Bildmodell raus, Sprachmodell rein (ein laufendes Bild wird erst fertig)
+            if llm.unloaded:
+                await llm.ensure_loaded()  # zeigt „lädt …“ wie beim Absenden
+        except Exception as e:  # noqa: BLE001 – dann lädt es eben beim Absenden (mit Fehlermeldung dort)
+            log.info("Sprachmodell beim Tippen nicht geladen: %s", e)
+            return
+        hub.prewarm_soon()
+
     async def summary_loop() -> None:
         await asyncio.sleep(30)
         while True:
@@ -2513,7 +2532,10 @@ def create_app(cfg: Config) -> FastAPI:
                         hub.prewarm_soon()
                     await hub.broadcast({"type": "settings_sync", **settings_info()})
                 elif t == "prewarm":  # die Oberfläche merkt: gleich kommt eine Frage (Tippen, Sprechen)
-                    hub.prewarm_soon()
+                    if model_resting() and not any(not w.done() for w in waking):
+                        waking[:] = [asyncio.create_task(wake_model())]  # entladen → schon beim Tippen laden
+                    else:
+                        hub.prewarm_soon()
                 elif t == "compact":  # Knopf an der Kontext-Kachel
                     task = asyncio.create_task(hub.compact(str(data.get("focus", ""))[:500]))
                     hub.tasks.add(task)

@@ -830,3 +830,48 @@ def test_sd_server_update_replaces_the_build(tmp_path):
     assert setup.install_binary(d, client, out.append, update=True) and "aktualisiert" in out[-1]
     assert setup.runtime_version(d) == "v2" and b"zwei" in setup.server_binary(d).read_bytes()
     assert not (d / "bin.new").exists() and not (d / "bin.old").exists()
+
+
+def test_typing_loads_a_resting_llm_but_not_in_image_mode(cfg, monkeypatch, tmp_path):
+    import time
+
+    from fastapi.testclient import TestClient
+
+    from orbwise.server import create_app
+    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
+    monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
+    cfg.llm.base_url = "http://127.0.0.1:9"
+    cfg.image.dir = str(tmp_path / "img")
+    with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
+        llm = client.app.state.hub.agent.llm
+        images = client.app.state.images
+        calls = []
+
+        async def ensure_loaded():
+            if llm.unloaded:  # wie das echte: nur ein entladenes Modell wird geladen
+                calls.append("load")
+                llm.unloaded = False
+        monkeypatch.setattr(llm, "ensure_loaded", ensure_loaded)
+
+        async def give_back(restart=True):
+            calls.append("image out")
+            llm.gpu_borrowed = None
+
+        def prewarm(ws):
+            ws.send_json({"type": "prewarm"})
+            for _ in range(100):
+                time.sleep(0.02)
+                if calls:
+                    break
+        llm.unloaded = True  # von Hand entladen
+        images.view_open = True  # Bild-Ansicht offen: Tippen dort lädt nichts
+        with client.websocket_connect("ws://localhost:8765/ws", headers={"Origin": "http://localhost:8765"}) as ws:
+            prewarm(ws)
+            assert calls == []
+            images.view_open = False
+            prewarm(ws)  # Tools/Coding: Tippen lädt sofort
+            assert calls == ["load"]
+            calls.clear()
+            llm.gpu_borrowed, llm.unloaded = give_back, False  # Bildmodell hält den Speicher, Ansicht zu
+            prewarm(ws)
+            assert calls == ["image out"]

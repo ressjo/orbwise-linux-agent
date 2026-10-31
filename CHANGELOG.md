@@ -56,6 +56,9 @@ All notable changes to this project are documented here. The format follows
   chat and fixes confirmed findings and failing checks automatically (re-checking, up to two rounds).
 
 ### Changed
+- **Typing loads the language model:** after *Unload model* (or when the image model still holds the video memory
+  and the image view is closed), typing or speaking in Tools/Coding now loads the language model in the background –
+  the question no longer waits for the whole load after sending. In the image view nothing is loaded.
 - **Piper is the speech output again (default), Pocket TTS stays selectable:** Piper reads numbers, dates and times
   itself (espeak-ng) and is fast on the CPU – no video memory. It runs in its own Python environment as a local
   server (GPL-3.0, never inside Orbwise), sets itself up on first start with the voice of your language (German:
