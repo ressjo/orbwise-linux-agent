@@ -159,8 +159,15 @@ def test_several_cards_count_the_biggest_not_the_sum(engine):
     assert engine.vram_gb() == 12 and engine._should_unload() and "--offload-to-cpu" in engine.command()
 
 
-def test_big_card_keeps_llm(engine):
+def test_only_one_model_in_memory_even_on_a_big_card(engine):
     engine._vram["gb"] = 24
+    run(engine.generate("cat"))  # Standard „always“: auch mit 24 GB geht das Sprachmodell vorher raus
+    assert engine.llm.llm_server.stopped == 1 and engine.llm.gpu_borrowed == engine.release
+
+
+def test_big_card_keeps_llm_when_asked(engine):
+    engine._vram["gb"] = 24
+    engine.cfg.image.unload_llm = "auto"
     run(engine.generate("cat"))
     assert engine.llm.llm_server.stopped == 0 and engine.llm.gpu_borrowed is None
 

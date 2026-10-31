@@ -692,11 +692,12 @@ land in `~/Bilder/Orbwise` (or `~/Pictures/Orbwise`); prompt and settings are st
   12 GB, Q8 from 20 GB); Qwen-Image uses the text encoder Qwen3-VL-8B (GGUF + mmproj for editing), Z-Image Qwen3-4B,
   FLUX CLIP-L + T5-XXL (fp8 below 20 GB). The exact files are read from Hugging Face during setup and recorded in
   `~/orbwise-image/manifest.json`; your own build can replace `~/orbwise-image/bin/sd-server`.
-- **Graphics memory:** below 16 GB the language model (its llama-server) is stopped before the first image –
-  both don't fit. As soon as Orbwise needs the language model again (a chat question, a model switch), when you
-  leave the image view or after `image.idle_minutes` (10) without a new image, the image model is unloaded and the
-  language model starts again (`image.unload_llm: auto | always | never`). On 8 GB the text encoder runs on the CPU
-  and the VAE in tiles; expect roughly 1–3 minutes per 1024² image there.
+- **Graphics memory:** only one model is in memory at a time – the language model (its llama-server, Ollama models
+  too) is stopped before the first image, and switching image models stops the previous image server. As soon as
+  Orbwise needs the language model again (a chat question, a model switch), when you leave the image view or after
+  `image.idle_minutes` (10) without a new image, the image model is unloaded and the language model starts again
+  (`image.unload_llm: always`; `auto` keeps both on cards with 16 GB and more, `never` always keeps both). On 8 GB
+  the text encoder runs on the CPU and the VAE in tiles; expect roughly 1–3 minutes per 1024² image there.
 - **Elsewhere:** `generate_image` in the tools mode ("draw me a lighthouse at dusk", with confirmation) and
   `/bild <description>` via Telegram.
 - `orbwise doctor` checks program, Vulkan libraries and the files of every installed image model.
