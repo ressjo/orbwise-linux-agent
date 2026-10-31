@@ -2120,6 +2120,8 @@
       if (!$("day-modal").classList.contains("hidden")) { $("day-modal").classList.add("hidden"); return; }
       if (closeSheet()) return;
       if (app.classList.contains("side-open")) { app.classList.remove("side-open"); $("scrim").classList.add("hidden"); return; }
+      // schmales Fenster: die Aktivität liegt über dem Chat – Esc schließt sie wie die anderen Einblendungen
+      if (app.classList.contains("drawer-open") && window.innerWidth < 900) { setDrawer(false, true); return; }
       send({ type: "stop" });
       stopSpeech(true);
       return;
@@ -5303,6 +5305,10 @@
   }
   document.querySelectorAll(".mode-switch [data-mode]").forEach((b) => {
     b.onclick = async () => {
+      if (app.classList.contains("side-open")) {  // Handy: Seitenleiste nach der Wahl schließen, sonst verdeckt sie den Modus
+        app.classList.remove("side-open");
+        if (!openSheetName) $("scrim").classList.add("hidden");
+      }
       if (b.dataset.mode === "image") { openImageView(); return; }
       if (IV.open) closeImageView();
       if (b.dataset.mode === S.mode || !await confirmLeaveSandbox()) return;

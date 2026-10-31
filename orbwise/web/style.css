@@ -1064,9 +1064,11 @@ details.card[open] > summary .caret { transform: rotate(180deg); }
 @media (max-width: 480px) { .boot-step { grid-template-columns: 22px 1fr; } .bs-text { grid-column: 2; } }
 
 /* Hinweise und Erinnerungen */
-.toast { position: fixed; right: 16px; top: 16px; z-index: 40; max-width: min(560px, 92vw);
+/* Unter der Kopfzeile und klick-durchlässig (außer Links) – sonst blockiert er die Knöpfe darunter, solange er steht */
+.toast { position: fixed; right: 16px; top: 64px; z-index: 40; max-width: min(560px, 92vw); pointer-events: none;
   background: var(--surface-2); border: 1px solid var(--border-strong); color: var(--text); padding: 10px 16px; font-size: var(--fs-base);
   border-radius: var(--r-md); box-shadow: var(--shadow); animation: msg-in .25s; }
+.toast a { pointer-events: auto; }
 .reminder-banner { position: fixed; top: 18px; left: 50%; transform: translateX(-50%); z-index: 35; width: min(560px, calc(100vw - 32px));
   display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: var(--r-lg); background: var(--surface);
   border: 1px solid var(--warn-line); box-shadow: var(--shadow-lg); animation: msg-in .35s; }

@@ -45,8 +45,7 @@ def _push_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
 
 
 @tool("Lädt den aktuellen Branch des Projekts (in der Sandbox: der Arbeitskopie) zu GitHub hoch (git push -u origin). "
-      "Vorher mit git committen – oder message angeben, dann werden alle Änderungen vorher committet (in der Sandbox "
-      "werden offene Änderungen immer vorher committet). Liefert den "
+      "Vorher mit git committen – oder message angeben, dann werden alle Änderungen vorher committet. Liefert den "
       "Link, um einen Pull Request zu erstellen. Hat das Projekt noch kein GitHub-Repo (kein origin), repo angeben: "
       "dann wird es damit verbunden (notfalls git init und erster Commit) und hochgeladen.",
       risk=_push_risk, enabled=_connected)

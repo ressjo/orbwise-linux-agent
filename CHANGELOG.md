@@ -41,6 +41,16 @@ All notable changes to this project are documented here. The format follows
   `~/.local/share/orbwise/chromium` (no root; asks first outside Auto, a "no" is remembered).
 
 ### Fixed
+- **Image mode with several GPUs:** since the multi-GPU change the image engine took the *sum* of all cards' VRAM, so
+  on e.g. 2×12 GB it kept the language model loaded and skipped `--offload-to-cpu` – the image model then had no room
+  on the one card sd-server runs on. It now goes by the biggest single card. A seed of 0 is no longer turned into a
+  random seed.
+- **Auto mode saw `sudo` only by name:** `/usr/bin/sudo`, `/bin/su`, `s""udo` or `/usr/bin/git push` ran without the
+  password dialog or the push question. Root and push are now also recognised behind paths and quotes, and
+  `/usr/bin/sudo` gets the password dialog like `sudo`.
+- **Toasts blocked the buttons under them** (activity, model, voice in the header; the mode tabs on the phone) for as
+  long as they were shown. They now sit below the header and let clicks through (links in them stay clickable).
+- **Phone:** choosing a mode closes the sidebar; Esc closes the activity panel when it covers the chat.
 - **Push to GitHub from the sandbox** landed only an empty branch: the push took the branch of the working copy as
   committed, while the agent's changes were still uncommitted. Open changes are now committed first (in the
   container); without new commits nothing is pushed instead of creating an empty branch.

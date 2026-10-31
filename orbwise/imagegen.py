@@ -158,9 +158,14 @@ class ImageEngine:
         return bool(vision and vision.exists())
 
     def vram_gb(self) -> float:
+        """Grafikspeicher der größten Karte – sd-server rechnet auf einer Karte. Bei mehreren Karten meldet die
+        Telemetrie die Summe (metrics.combine); die zählt hier nicht, sonst bliebe das Sprachmodell geladen und dem
+        Bildmodell fehlte der Platz."""
         gpu = self.gpu_info() or {}
-        if gpu.get("vram_total"):
-            return gpu["vram_total"] / 1024 ** 3
+        cards = gpu.get("gpus") or [gpu]
+        biggest = max((c.get("vram_total") or 0 for c in cards), default=0)
+        if biggest:
+            return biggest / 1024 ** 3
         return float(manifest(self.directory).get("vram_gb") or 0)
 
     def loaded(self) -> bool:
@@ -310,7 +315,8 @@ class ImageEngine:
                 "sample_params": {"sample_method": "euler", "sample_steps": steps,
                                   "guidance": {"txt_cfg": cfg_scale}},
             }
-            if self.vram_gb() and self.vram_gb() < 10:
+            vram = self.vram_gb()  # fragt nvidia-smi – nur einmal
+            if vram and vram < 10:
                 body["vae_tiling_params"] = {"enabled": True}
             async with httpx.AsyncClient(base_url=self.base_url, timeout=60, transport=self.transport) as c:
                 r = await c.post("/sdcpp/v1/img_gen", json=body)

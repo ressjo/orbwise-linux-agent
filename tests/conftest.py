@@ -32,6 +32,16 @@ def _not_root(monkeypatch):
     monkeypatch.setattr(agent_safety, "running_as_root", lambda: False)
 
 
+@pytest.fixture(autouse=True)
+def _no_github_login(monkeypatch):
+    """Kein GitHub-Token vom Testrechner (GH_TOKEN, gh auth) – sonst sind die GitHub-Werkzeuge je nach Rechner an
+    oder aus. Tests, die ein Token brauchen, setzen cfg.github.token."""
+    from orbwise import github
+    for name in ("ORBWISE_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(github, "_gh_cache", (float("inf"), ""))  # „gh auth token“ gilt als schon gefragt: keins
+
+
 @pytest.fixture
 def cfg(tmp_path: Path) -> Config:
     c = Config()

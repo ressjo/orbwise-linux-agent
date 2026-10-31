@@ -697,9 +697,9 @@ def create_app(cfg: Config) -> FastAPI:
             await asyncio.to_thread(sbx.stop, cfg, name)
         bg_jobs.set_broadcast(None)
         from .tools.ssh import close_all as close_ssh
-        await close_ssh()
+        await close_ssh()  # offene SSH-Verbindungen schließen (sonst bleiben sie bis zum Zeitlimit angemeldet)
         if images.server is not None:
-            await images.server.stop()  # Bildserver nicht verwaist laufen lassen  # offene SSH-Verbindungen schließen (sonst bleiben sie bis zum Zeitlimit angemeldet)
+            await images.server.stop()  # Bildserver nicht verwaist laufen lassen
         await hub.speaker.close()
         if tts:
             await asyncio.to_thread(tts.pocket.stop)
@@ -1116,7 +1116,7 @@ def create_app(cfg: Config) -> FastAPI:
                 saved = await images.generate(
                     str(data.get("prompt") or ""), negative=str(data.get("negative") or ""),
                     size=str(data.get("size") or ""), steps=int(data.get("steps") or 0),
-                    cfg_scale=float(data.get("cfg_scale") or 0), seed=int(data.get("seed", -1) or -1),
+                    cfg_scale=float(data.get("cfg_scale") or 0), seed=int(-1 if data.get("seed") in (None, "") else data["seed"]),
                     count=int(data.get("count") or 1), ref_images=refs, progress=progress,
                     megapixels=float(data.get("megapixels") or 0))
                 await hub.broadcast({"type": "image_done", "images": saved})

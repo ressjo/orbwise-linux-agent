@@ -2,7 +2,9 @@
 belegte Funde landen im Bericht und im Auftrag zum Beheben."""
 
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -95,6 +97,8 @@ def caged(project, monkeypatch, cfg, memory):
     monkeypatch.setattr(workspace, "changes", lambda state: [{"path": "calc.py", "status": "modified", "add": 1, "del": 1}])
     monkeypatch.setattr(workspace, "diff", lambda state, path: "-    return a + b\n+    return a - b")
     monkeypatch.setenv("PYTHONPATH", str(project))
+    # „python3“ der Prüfungen = das Python dieser Tests (hat pytest) – nicht ein System-Python ohne pytest
+    monkeypatch.setenv("PATH", f"{os.path.dirname(sys.executable)}{os.pathsep}{os.environ.get('PATH', '')}")
     return sb
 
 
