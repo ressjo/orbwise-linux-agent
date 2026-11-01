@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **LLM benchmark script** (`scripts/llm_bench.py`, outside the web UI): runs the model profiles through MMLU-Pro,
+  GSM8K, HumanEval, ARC-Challenge, IFEval and a speed test (prefill/generation tok/s) and prints a score table like
+  in model announcements – fixed samples from the original Hugging Face datasets, starts/stops llama-server profiles
+  itself, can resume interrupted runs; results as Markdown, CSV and JSON.
 - **Charts in the chat**: images the agent creates (charts, `generate_image`) appear under the answer instead of
   opening in an image viewer – new tool `show_image`, and `open_file` shows freshly created images in the chat.
 - **Artifacts folder** (`<data>/artifacts`): charts, exports and helper files without a requested location land there

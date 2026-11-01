@@ -573,6 +573,35 @@ The menu follows what the loaded model can do. Orbwise reads it from the model's
 Only in a small context window (< 16k) is the reasoning capped so the answer still fits; if it runs longer, the step
 continues without further thinking, with the thoughts so far (the activity shows "enough thinking – acting now").
 
+### Benchmarking your models
+
+A standalone script (not part of the web UI) runs your model profiles one after another through the benchmarks
+model announcements use and prints a score table at the end:
+
+| Column | Dataset | Measures |
+|---|---|---|
+| MMLU-Pro | TIGER-Lab/MMLU-Pro | knowledge, 10 choices, 0-shot CoT |
+| GSM8K | openai/gsm8k | maths word problems |
+| HumanEval | openai/openai_humaneval | writing Python functions (pass@1) |
+| ARC-C | allenai/ai2_arc (Challenge) | science reasoning |
+| IFEval | google/IFEval | following verifiable instructions (strict, prompt-level) |
+| Speed | – | prompt reading (prefill) and generation in tokens/s |
+
+```bash
+uv run python scripts/llm_bench.py --list                        # profiles and benchmarks
+uv run python scripts/llm_bench.py --profiles qwen3-14b,gemma --limit 50
+uv run python scripts/llm_bench.py --resume                      # continue an interrupted run
+```
+
+Profiles that start their own llama-server are started and stopped by the script (stop Orbwise first with
+`orbwise stop` – both would share the GPU memory); Ollama models are unloaded after each profile. Datasets are
+downloaded once from the Hugging Face datasets API and cached in `~/.cache/orbwise/bench`; by default a fixed sample
+of 200 questions per benchmark (`--seed`, `--full` for everything), greedy decoding, thinking off (`--think`).
+Results land in `~/.local/share/orbwise/bench/<time>/` as `results.md`, `results.csv`, `results.json`, plus every
+single answer per profile for checking. Samples with 0-shot prompts are comparable between your models, not identical
+to official numbers. HumanEval runs the model's code locally in a separate process with time and memory limits –
+`--no-exec` skips it.
+
 ## Voice & voice effect
 
 Orbwise speaks with **[Piper](https://github.com/OHF-Voice/piper1-gpl)** by default – fast on the CPU (no video
