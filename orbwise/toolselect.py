@@ -111,7 +111,8 @@ SMALL_KEYWORDS = {
     "files": r"schreib(?!.*\b(e-?mail|mail|nachricht|notiz|sms|telegram)\b)|\bwrite(?!.*\b(e-?mail|mail|note)\b)|abspeicher|speicher\w* (das|es|die|den|unter|in|als)\b|\bsave\b|anleg|erstell|"
              r"\bcreate\b|änder|ersetz|bearbeit|\bedit|umbenenn|rename|öffne\w*\b.*\b(datei|ordner|pdf|bild|foto|"
              r"dokument)|\bopen\b.*\b(file|folder|pdf|image)|durchsuch|grep|enthält|enthalten|contains|"
-             r"in welche[nr]? dateien|which files",
+             r"in welche[nr]? dateien|which files|diagramm|diagram|\bchart|\bplot|grafik|graphic|\bgraph\b|"
+             r"visualis|zeig\w* (mir )?(das |ein )?bild|show (me )?the (image|picture)",
     "web": r"https?://|www\.|\.(de|com|org|net|io|eu)\b|website|webseite|internetseite|seite|\bsite\b|\bpage\b|"
            r"\burl\b|\blink|youtube|artikel|article",
     "system": r"system|rechner|computer|\bpc\b|kernel|version|hardware|uptime|laufzeit|distribution|distro",

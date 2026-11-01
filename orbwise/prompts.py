@@ -123,6 +123,9 @@ HINTS = {
                            "portainer_deploy_stack (komplette docker-compose.yml; Daten in Volumes/Bind-Mounts).\n",
         "image": "- Bilder malen/erzeugen: generate_image mit einem konkreten englischen Prompt (Motiv, Stil, Licht). "
                  "Bearbeiten und Varianten gehen im Bild-Modus (Umschalter oben links).\n",
+        "artifacts": "- Diagramme, Grafiken, Exporte und Hilfsskripte ohne gewünschten Ort nach {folder} speichern "
+                     "(Temp-Ordner, in den Einstellungen leerbar). Diagramme als PNG (z. B. matplotlib savefig, dpi "
+                     "150) und dann mit show_image im Chat zeigen – nicht mit open_file.\n",
         "ssh": "- Andere Rechner (NAS, Server) per SSH: ssh_run(host, command) führt Befehle dort aus wie run_shell hier – "
                "run_shell ist nur dieser PC. Benutzername und Passwort fragt Orbwise selbst im Dashboard ab: frag NIE "
                "im Chat danach und schreib sie nie in Befehle. Kurznamen wie 'nas' kommen aus der Config.\n",
@@ -196,6 +199,9 @@ HINTS = {
                            "portainer_deploy_stack (complete docker-compose.yml; data in volumes/bind mounts).\n",
         "image": "- Draw/generate images: generate_image with a concrete English prompt (subject, style, light). "
                  "Editing and variations work in image mode (switch at the top left).\n",
+        "artifacts": "- Save charts, graphics, exports and helper scripts without a requested location to {folder} "
+                     "(temp folder, can be emptied in the settings). Charts as PNG (e.g. matplotlib savefig, dpi 150), "
+                     "then show them in the chat with show_image – not with open_file.\n",
         "ssh": "- Other computers (NAS, server) via SSH: ssh_run(host, command) runs commands there like run_shell here – "
                "run_shell is only this PC. Orbwise asks for user name and password itself in the dashboard: NEVER ask "
                "for them in the chat and never put them into commands. Short names like 'nas' come from the config.\n",
@@ -260,7 +266,7 @@ TEXTS = {
         "auto_full": "ohne Root-Rechte (Auto)",
         "auto_jail": "läuft isoliert (Lesen + Bearbeiten): ohne Netz, sieht keine Zugangsdaten, schreibt nur {where}",
         "auto_jail_where_project": "im Projektordner und in /tmp",
-        "auto_jail_where_tmp": "in /tmp – dein Home ist dabei nur lesbar",
+        "auto_jail_where_tmp": "in /tmp und im Artefakt-Ordner – dein Home ist dabei nur lesbar",
         "auto_sudo": "braucht Root-Rechte (Auto) – der Passwortdialog zeigt den Befehl",
         "jail_escalate_root": "Lief isoliert und brauchte Root-Rechte. Ohne Isolation ausführen? (sudo fragt dann nach "
                               "dem Passwort)",
@@ -340,7 +346,7 @@ TEXTS = {
         "auto_full": "without root privileges (Auto)",
         "auto_jail": "runs isolated (Read + edit): no network, sees no credentials, writes only {where}",
         "auto_jail_where_project": "in the project folder and /tmp",
-        "auto_jail_where_tmp": "in /tmp – your home folder is read-only meanwhile",
+        "auto_jail_where_tmp": "in /tmp and the artifacts folder – your home folder is read-only meanwhile",
         "auto_sudo": "needs root privileges (Auto) – the password dialog shows the command",
         "jail_escalate_root": "Ran isolated and needed root privileges. Run it without isolation? (sudo then asks for "
                               "the password)",
@@ -610,12 +616,12 @@ HINT_TOOLS = {
     "portainer": ("portainer_containers", "portainer_check_updates"),
     "portainer_write": ("portainer_update", "portainer_container_action", "portainer_deploy_stack"),
     "ssh": ("ssh_run",),
-    "image": ("generate_image",),
+    "image": ("generate_image",), "artifacts": ("show_image",),
     "mail": ("mail_list", "mail_search", "mail_read"), "mail_write": ("mail_manage", "mail_to_paperless"),
 }
 HINT_ORDER = ("remember", "recall", "dates", "power", "actions", "tool_loader", "sysadmin", "shell_sys", "packages",
               "routines", "calendar", "calendar_write", "services", "paperless", "paperless_write", "trilium", "trilium_write",
-              "obsidian", "obsidian_write", "homeassistant", "portainer", "portainer_write", "ssh", "image",
+              "obsidian", "obsidian_write", "homeassistant", "portainer", "portainer_write", "ssh", "image", "artifacts",
               "mail", "mail_write")
 ACTION_HINTS = (("briefing", "daily_briefing"), ("reminder", "set_reminder"), ("website", "open_website"),
                 ("weather", "weather"), ("cleanup", "cleanup_system"))  # eine gemeinsame Zeile für die kurzen Zuordnungen
@@ -650,7 +656,11 @@ def hints(cfg, tools: set[str]) -> str:
                 out += h[key]
         elif any(name in tools for name in HINT_TOOLS[key]):
             loaded = ", ".join(name for name in HINT_TOOLS[key] if name in tools)
-            out += h[key].format(tools=loaded) if "{tools}" in h[key] else h[key]
+            if key == "artifacts":
+                from . import artifacts
+                out += h[key].format(folder=artifacts.folder(cfg))
+            else:
+                out += h[key].format(tools=loaded) if "{tools}" in h[key] else h[key]
     return out
 
 

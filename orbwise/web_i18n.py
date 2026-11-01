@@ -10,6 +10,9 @@ HTML_EN = [
      'type="button" data-theme-pick="system">System<',
      'data-theme-pick="light">Light</button><button type="button" data-theme-pick="dark">Dark</button><button '
      'type="button" data-theme-pick="system">System<'),
+    ('<b>Artefakte</b><small>Diagramme, Exporte und Hilfsdateien, die Orbwise nebenbei erzeugt.</small>',
+     '<b>Artifacts</b><small>Charts, exports and helper files Orbwise creates along the way.</small>'),
+    ('id="btn-artifacts-clear">Leeren<', 'id="btn-artifacts-clear">Empty<'),
     ('<html lang="de">', '<html lang="en">'),
     # Seitenleiste
     ('title="Seitenleiste ein-/ausklappen" aria-label="Seitenleiste ein-/ausklappen"',

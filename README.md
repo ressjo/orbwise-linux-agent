@@ -1143,6 +1143,14 @@ read). Scanned PDFs without a text layer are flagged right away when attaching. 
 an e-mail (actions in that chat need confirmation), and the data-leak guard knows its text. Regenerating or editing
 the question keeps the PDF.
 
+**Charts and other artifacts.** Ask for a chart ("plot my disk usage per folder", "make a bar chart of these numbers")
+and the image appears right in the chat under the answer – also after reloading – instead of opening in an image
+viewer; images generated with `generate_image` show up there too. Files Orbwise creates without a location you named
+(charts, exports, helper scripts) go to a temp folder, `~/.local/share/orbwise/artifacts`; in auto mode "Read + edit"
+it stays writable inside the cage. **Settings → General → Artifacts** shows how much space it takes and empties it.
+Images already shown in the chat keep a copy with the attachments and stay visible. Asking to open an older picture
+still opens it in your viewer; naming a program ("open it in GIMP") always does.
+
 ### Morning briefing
 
 "Good morning", "briefing" or "what's on today?" gives you a short overview. Choose its items and their order in

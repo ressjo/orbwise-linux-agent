@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Charts in the chat**: images the agent creates (charts, `generate_image`) appear under the answer instead of
+  opening in an image viewer – new tool `show_image`, and `open_file` shows freshly created images in the chat.
+- **Artifacts folder** (`<data>/artifacts`): charts, exports and helper files without a requested location land there
+  (writable in the auto-mode cage); Settings → General shows its size and empties it.
 - **Quit button** at the bottom of the sidebar and **`orbwise stop`**: shut Orbwise down cleanly (model server, sandbox
   containers, background jobs) – also after `orbwise update`, which restarts the server in the background where Ctrl+C
   no longer reaches it. Stopping/restarting now only hits real `orbwise serve` processes, not shells or editors whose

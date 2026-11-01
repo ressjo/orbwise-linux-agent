@@ -1416,6 +1416,8 @@ details.card[open] > summary .caret { transform: rotate(180deg); }
 .hf-vram-bar { flex: 0 0 120px; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; border: 1px solid var(--border); }
 .hf-vram-bar i { display: block; height: 100%; background: var(--success); }
 .hf-vram-bar i.fit-tight { background: var(--warn); } .hf-vram-bar i.fit-big { background: var(--danger); }
+.artifacts-ctl { display: flex; align-items: center; gap: 10px; }
+.artifacts-size { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hf-token { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .hf-token input { width: 220px; max-width: 100%; }
 @media (max-width: 520px) { .hf-vram-bar { flex-basis: 70px; } .hf-token input { width: 100%; } }

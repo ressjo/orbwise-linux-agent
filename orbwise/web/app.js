@@ -2523,7 +2523,36 @@
     if (section === "voice") openVoiceMenu();
     if (section === "status") loadStatus();
     if (section === "skills") loadSkills();
-    if (section === "general") renderHfToken();
+    if (section === "general") { renderHfToken(); renderArtifacts(); }
+  }
+
+  // Artefakte: Temp-Ordner für Diagramme, Exporte & Co. – Platz anzeigen, leeren
+  function bytesText(n) {
+    if (!n) return L("leer", "empty");
+    const units = ["B", "KB", "MB", "GB"];
+    let i = 0;
+    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+    return (i ? n.toFixed(n < 10 ? 1 : 0) : n) + " " + units[i];
+  }
+  async function renderArtifacts() {
+    const size = $("artifacts-size"), btn = $("btn-artifacts-clear");
+    let st;
+    try { st = await getJSON("/api/artifacts"); } catch { size.textContent = "–"; return; }
+    size.textContent = st.files ? `${bytesText(st.bytes)} · ${st.files} ${st.files === 1 ? L("Datei", "file") : L("Dateien", "files")}`
+                                : bytesText(0);
+    size.title = st.path;
+    btn.disabled = !st.files;
+    btn.onclick = async () => {
+      if (!await ask(L(`Alle Artefakte löschen (${bytesText(st.bytes)})?\n\nDiagramme und Exporte im Ordner ${st.path} werden gelöscht. Bilder im Chat bleiben sichtbar.`,
+                       `Delete all artifacts (${bytesText(st.bytes)})?\n\nCharts and exports in ${st.path} are deleted. Images in the chat stay visible.`),
+                     { ok: L("Leeren", "Empty"), danger: true })) return;
+      btn.disabled = true;
+      try {
+        const r = await api("DELETE", "/api/artifacts");
+        toast(L(`${bytesText(r.freed)} freigegeben.`, `${bytesText(r.freed)} freed.`));
+      } catch { /* api meldet selbst */ }
+      renderArtifacts();
+    };
   }
 
   // Hugging-Face-Token (für zugangsbeschränkte Modelle wie Llama oder Gemma) – liegt im Schlüsselbund

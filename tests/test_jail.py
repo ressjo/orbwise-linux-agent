@@ -71,7 +71,9 @@ def test_read_edit_runs_builds_in_the_cage_without_network(cfg, llm, memory, mon
     agent.auto_mode = "files"  # „Lesen + Bearbeiten“
     monkeypatch.setattr(jail, "available", lambda force=False: (True, ""))
     risk, reason, cage = _risk(agent, "python3 -c 'import shutil'")
-    assert risk == "safe" and cage and cage["writable"] == [] and not cage["net"] and "isoliert" in reason
+    from orbwise import artifacts
+    assert risk == "safe" and cage and not cage["net"] and "isoliert" in reason
+    assert cage["writable"] == [str(artifacts.folder(cfg))] and artifacts.folder(cfg).is_dir()  # Diagramme & Co.
     risk, _, cage = _risk(agent, "ls -la")  # lesend (Positivliste): wie bisher, ohne Käfig
     assert risk == "safe" and cage is None
     risk, _, cage = _risk(agent, "rm x")  # die Sperrliste fragt weiter – dann ohne Käfig, wie gesehen

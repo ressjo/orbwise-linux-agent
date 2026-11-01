@@ -217,6 +217,9 @@ async def _resolve_target(ctx: ToolContext, target: str) -> tuple[Path | None, s
         return p, ""
     if not p.is_absolute() and (Path.home() / p).exists():
         return Path.home() / p, ""
+    from .. import artifacts
+    if not p.is_absolute() and (artifacts.folder(ctx.cfg) / p).exists():
+        return artifacts.folder(ctx.cfg) / p, ""
     name = p.name
     if not name:
         return None, f"Nicht gefunden: {p}"
@@ -231,6 +234,40 @@ async def _resolve_target(ctx: ToolContext, target: str) -> tuple[Path | None, s
         return None, f"Nicht gefunden: {target} (auch keine Datei mit diesem Namen im Home/NAS)."
     return None, ("Mehrere Dateien passen – bitte den vollständigen Pfad nennen:\n"
                   + _describe(candidates, 10))
+
+
+async def show_in_chat(ctx: ToolContext, p: Path) -> str:
+    """Zeigt ein Bild unter der laufenden Antwort (wie die Screenshots) – auch nach dem Neuladen. Liefert einen
+    Fehlertext oder ""."""
+    from .. import attachments
+    if is_secret_path(p):
+        return secret_reason()
+    try:
+        if p.stat().st_size > attachments.MAX_BYTES:
+            return f"{p} ist zu groß für den Chat ({_human_size(p.stat().st_size)}, höchstens 20 MB)."
+        data = await asyncio.to_thread(p.read_bytes)
+    except OSError as e:
+        return f"{p} lässt sich nicht lesen ({e.strerror or e})."
+    if attachments.kind(data) not in (".png", ".jpg", ".webp", ".gif"):
+        return f"{p} ist kein Bild, das der Chat zeigen kann (PNG, JPEG, WebP, GIF – SVG vorher als PNG speichern)."
+    name = await asyncio.to_thread(attachments.save, ctx.cfg, data, p.name)
+    if ctx.agent is not None:
+        ctx.agent._shots = [*getattr(ctx.agent, "_shots", []), name]
+    if ctx.emit:
+        await ctx.emit({"type": "tool_images", "id": ctx.call_id, "images": [name]})
+    return ""
+
+
+@tool("Zeigt ein Bild (PNG, JPEG, WebP, GIF) direkt im Chat – z. B. ein gerade erzeugtes Diagramm. Dafür statt "
+      "open_file nutzen.")
+async def show_image(ctx: ToolContext, path: Annotated[str, "Pfad oder Dateiname"]) -> str:
+    resolved, problem = await _resolve_target(ctx, path.strip())
+    if not resolved:
+        return problem
+    if resolved.is_dir():
+        return f"{resolved} ist ein Ordner – show_image zeigt eine Bilddatei."
+    problem = await show_in_chat(ctx, resolved)
+    return problem or f"Wird dem Nutzer im Chat gezeigt: {resolved}"
 
 
 @tool("Öffnet eine Datei, einen Ordner oder eine URL mit dem Standard- oder einem gewünschten Programm. Ein "
@@ -248,6 +285,12 @@ async def open_file(
         if not resolved:
             return problem
         target = str(resolved)
+        from .. import artifacts
+        # gerade erzeugte Bilder (Diagramm, Grafik) gehören in den Chat, nicht in einen Bildbetrachter
+        if not app.strip() and ctx.emit and artifacts.is_image(resolved) and artifacts.fresh(ctx.cfg, resolved):
+            if not await show_in_chat(ctx, resolved):
+                return (f"Im Chat gezeigt: {target} (nicht extern geöffnet – soll es ein Programm sein, open_file "
+                        "mit app aufrufen).")
 
     if app.strip():
         match = match_app(app, list_apps())

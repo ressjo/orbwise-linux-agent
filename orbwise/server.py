@@ -1208,6 +1208,18 @@ def create_app(cfg: Config) -> FastAPI:
                         model_progress=model_progress, idle_if_free=idle_if_free)
 
     # ---------- Angehängte Bilder und PDFs im Chat ----------
+    # ---------- Artefakte: Temp-Ordner für Diagramme, Exporte & Co. (siehe artifacts.py) ----------
+    @app.get("/api/artifacts")
+    async def artifacts_usage():
+        from . import artifacts
+        return await asyncio.to_thread(artifacts.usage, cfg)
+
+    @app.delete("/api/artifacts")
+    async def artifacts_clear():
+        from . import artifacts
+        before = await asyncio.to_thread(artifacts.clear, cfg)
+        return {**await asyncio.to_thread(artifacts.usage, cfg), "freed": before["bytes"], "removed": before["files"]}
+
     @app.post("/api/attachments")
     async def attachment_upload(request: Request):
         from . import attachments

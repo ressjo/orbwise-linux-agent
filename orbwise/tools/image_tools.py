@@ -36,7 +36,12 @@ async def generate_image(
     except ImageError as e:
         return str(e)
     img = saved[0]
-    return T(f"Bild gespeichert: {img['path']} ({img['width']}×{img['height']}, Seed {img['seed']}, {img['seconds']} s). "
-             "Es steht auch im Bild-Modus in der Galerie; zum Ansehen open_file nutzen.",
-             f"Image saved: {img['path']} ({img['width']}×{img['height']}, seed {img['seed']}, {img['seconds']} s). "
-             "It is also in the image mode gallery; use open_file to show it.")
+    from pathlib import Path
+
+    from .files import show_in_chat
+    shown = not await show_in_chat(ctx, Path(img["path"])) if ctx.emit else False
+    where = T("Der Nutzer sieht es im Chat und in der Galerie des Bild-Modus.",
+              "The user sees it in the chat and in the image mode gallery.") if shown else \
+        T("Es steht in der Galerie des Bild-Modus.", "It is in the image mode gallery.")
+    return T(f"Bild gespeichert: {img['path']} ({img['width']}×{img['height']}, Seed {img['seed']}, {img['seconds']} s). ",
+             f"Image saved: {img['path']} ({img['width']}×{img['height']}, seed {img['seed']}, {img['seconds']} s). ") + where

@@ -199,6 +199,12 @@ class SafetyMixin:
         if not jail.available()[0]:
             return CONFIRM, reason
         writable = ([project] if project else []) + list(getattr(self.cfg.tools, "jail_writable", []) or [])
+        if not project:  # Tools-Modus: Diagramme & Co. landen im Artefakt-Ordner – der bleibt beschreibbar
+            from . import artifacts
+            try:
+                writable.append(str(artifacts.ensure(self.cfg)))
+            except OSError:
+                pass
         ctx.jail = {"writable": writable, "key": getattr(self.memory.conversation, "chat_id", "") or "tools",
                     "net": False, "allowed": ", ".join([*writable, "/tmp"]),
                     "where": prompts.text(self.cfg, "auto_jail_where_project" if project else "auto_jail_where_tmp")}
