@@ -154,24 +154,65 @@ def test_sample_is_stable_and_respects_keep():
     assert [i for i, _ in bench.sample(ifeval, mixed, None, 0)] == ["0"]
 
 
-def test_fetch_rows_pages_and_caches():
-    calls = []
+def _rows_api(total: int, calls: list, fail: dict | None = None):
+    """Test-Datasets-API: fail = {offset: [status, …]} – diese Antworten kommen vor dem Erfolg."""
+    fail = {k: list(v) for k, v in (fail or {}).items()}
 
     def handler(request: httpx.Request):
         offset = int(request.url.params["offset"])
         calls.append(offset)
-        rows = [{"row_idx": i, "row": {"question": f"q{i}"}, "truncated_cells": []}
-                for i in range(offset, min(offset + 100, 250))]
-        return httpx.Response(200, json={"rows": rows, "num_rows_total": 250})
+        if fail.get(offset):
+            return httpx.Response(fail[offset].pop(0), headers={"Retry-After": "0"}, text="slow down")
+        rows = [{"row_idx": i, "row": {"question": f"q{i}", "answer": "#### 1"}, "truncated_cells": []}
+                for i in range(offset, min(offset + 100, total))]
+        return httpx.Response(200, json={"rows": rows, "num_rows_total": total})
+    return httpx.MockTransport(handler)
 
+
+def _load(transport, limit=None, seed=0, say=lambda _: None):
     async def scenario():
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
-            first = await bench.fetch_rows(bench.BENCHES["gsm8k"], c, say=lambda _: None)
-            again = await bench.fetch_rows(bench.BENCHES["gsm8k"], c, say=lambda _: None)
-        return first, again
+        async with httpx.AsyncClient(transport=transport) as c:
+            return await bench.load_rows(bench.BENCHES["gsm8k"], c, limit, seed, say)
+    return asyncio.run(scenario())
 
-    first, again = asyncio.run(scenario())
-    assert len(first) == 250 and first == again and calls == [0, 100, 200]  # zweites Mal aus dem Cache
+
+@pytest.fixture
+def fast(monkeypatch):
+    monkeypatch.setattr(bench, "BACKOFF", (0, 0, 0))
+    monkeypatch.setattr(bench, "PAUSE", 0)
+
+
+def test_load_rows_pages_and_caches(fast):
+    calls = []
+    first = _load(_rows_api(250, calls))
+    assert sorted(first) == list(range(250)) and calls == [0, 100, 200]
+    assert _load(_rows_api(250, calls)) == first and calls == [0, 100, 200]  # zweites Mal aus dem Cache
+
+
+def test_load_rows_waits_visibly_on_rate_limit(fast):
+    calls, said = [], []
+    rows = _load(_rows_api(250, calls, fail={100: [429, 503]}), say=said.append)
+    assert len(rows) == 250 and calls == [0, 100, 100, 100, 200]
+    assert any("429" in s and "warte" in s and "2/3" in s for s in said)
+
+
+def test_load_rows_resumes_after_failure(fast):
+    calls = []
+    with pytest.raises(bench.BenchError, match="HF_TOKEN"):
+        _load(_rows_api(450, calls, fail={300: [429, 429, 429]}))
+    calls.clear()
+    assert len(_load(_rows_api(450, calls))) == 450
+    assert calls == [300, 400]  # die Seiten davor kamen aus dem Cache
+
+
+def test_big_dataset_loads_only_sampled_pages(fast):
+    calls = []
+    rows = _load(_rows_api(12_000, calls), limit=20, seed=7)
+    pages = sorted({i - i % 100 for i in rows})
+    assert len(pages) == 4 and calls == [0, *[p for p in pages if p]]  # Seite 0 liefert die Gesamtzahl
+    picked = bench.sample(bench.BENCHES["gsm8k"], rows, 20, 7)
+    assert len(picked) == 20 and picked == bench.sample(bench.BENCHES["gsm8k"], _load(_rows_api(12_000, []), limit=20, seed=7), 20, 7)
+    assert len(_load(_rows_api(12_000, []), limit=None)) == 12_000  # --full: alles
 
 
 # ---------------------------------------------------------------- Ablauf und Tabelle
