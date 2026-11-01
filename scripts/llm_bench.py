@@ -395,53 +395,107 @@ ALL_BENCHES = [*BENCHES, "speed"]
 # Datensätze
 # ---------------------------------------------------------------------------------------------------------------
 
-async def fetch_rows(bench: Bench, client: httpx.AsyncClient, say: Callable[[str], None] = print) -> list[dict]:
-    """Ganzen Datensatz-Split laden (in Seiten zu 100 Zeilen) und cachen."""
-    path = cache_dir() / f"{bench.key}.json"
-    if path.exists():
-        return json.loads(path.read_text(encoding="utf-8"))
-    rows: list[dict] = []
-    total = None
-    while total is None or len(rows) < total:
-        params = {"dataset": bench.dataset, "config": bench.config, "split": bench.split,
-                  "offset": len(rows), "length": PAGE}
-        resp = None
-        for attempt in range(6):
-            try:
-                resp = await client.get(ROWS_API, params=params)
-            except httpx.HTTPError as e:
-                resp = None
-                err = str(e) or type(e).__name__
-            else:
-                if resp.status_code == 200:
-                    break
-                err = f"HTTP {resp.status_code}: {resp.text[:200]}"
-                if resp.status_code not in (429, 500, 502, 503, 504):
-                    break
-            await asyncio.sleep(2 * 2 ** attempt)
-        if resp is None or resp.status_code != 200:
-            raise BenchError(T(f"Datensatz {bench.dataset} nicht ladbar ({err})",
-                               f"Could not load dataset {bench.dataset} ({err})"))
-        data = resp.json()
-        total = data.get("num_rows_total") or 0
-        page = data.get("rows") or []
-        if not page:
+BIG = 2000  # ab hier lädt eine Stichprobe nur ausgewählte Seiten statt des ganzen Datensatzes
+ROWS_PER_PAGE_PICK = 5  # so viele Fragen je ausgewählter Seite (200 Fragen → 40 Seiten, über alles verteilt)
+BACKOFF = (5, 10, 20, 40, 60, 60, 60, 60)  # Wartezeiten bei Rate-Limit/Serverfehler, Sekunden
+PAUSE = 0.3  # zwischen zwei Seiten – damit das Rate-Limit seltener greift
+REQUEST_TIMEOUT = 30.0
+
+
+def _retry_after(resp: httpx.Response, default: float) -> float:
+    try:
+        return max(0.0, min(float(resp.headers.get("Retry-After", "")), 300.0))
+    except ValueError:
+        return default
+
+
+async def fetch_page(bench: Bench, client: httpx.AsyncClient, offset: int,
+                     say: Callable[[str], None] = print) -> dict:
+    """Eine Seite (100 Zeilen) von der Datasets-API – wartet sichtbar bei Rate-Limit, Timeout, Serverfehler."""
+    params = {"dataset": bench.dataset, "config": bench.config, "split": bench.split,
+              "offset": offset, "length": PAGE}
+    attempts = len(BACKOFF)
+    err = ""
+    for attempt, wait in enumerate(BACKOFF, 1):
+        try:
+            resp = await client.get(ROWS_API, params=params, timeout=REQUEST_TIMEOUT)
+        except httpx.TimeoutException:
+            err = T(f"keine Antwort in {int(REQUEST_TIMEOUT)} s", f"no answer within {int(REQUEST_TIMEOUT)} s")
+        except httpx.HTTPError as e:
+            err = str(e) or type(e).__name__
+        else:
+            if resp.status_code == 200:
+                return resp.json()
+            err = f"HTTP {resp.status_code}"
+            if resp.status_code not in (429, 500, 502, 503, 504):
+                raise BenchError(T(f"Datensatz {bench.dataset} nicht ladbar ({err}: {resp.text[:200]})",
+                                   f"Could not load dataset {bench.dataset} ({err}: {resp.text[:200]})"))
+            wait = _retry_after(resp, wait)
+        if attempt == attempts:
             break
-        for item in page:
-            if item.get("truncated_cells"):
-                raise BenchError(f"{bench.dataset}: Zeile {item.get('row_idx')} abgeschnitten (truncated_cells)")
-            rows.append(item["row"])
-        say(T(f"  {bench.column}: {len(rows)}/{total} Zeilen geladen", f"  {bench.column}: {len(rows)}/{total} rows"))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".part")
-    tmp.write_text(json.dumps(rows, ensure_ascii=False), encoding="utf-8")
-    tmp.replace(path)
-    return rows
+        reason = T("Hugging Face bremst", "Hugging Face is throttling") if "429" in err else T("Problem", "problem")
+        say(T(f"  {bench.column}: {reason} ({err}) – warte {wait:g} s … (Versuch {attempt + 1}/{attempts})",
+              f"  {bench.column}: {reason} ({err}) – waiting {wait:g} s … (attempt {attempt + 1}/{attempts})"))
+        await asyncio.sleep(wait)
+    raise BenchError(T(
+        f"Datensatz {bench.dataset} nicht ladbar ({err}). Mit HF_TOKEN=… (Hugging-Face-Token) ist das Limit höher; "
+        "ein Neustart macht bei der fehlenden Seite weiter.",
+        f"Could not load dataset {bench.dataset} ({err}). With HF_TOKEN=… (Hugging Face token) the limit is higher; "
+        "a restart continues at the missing page."))
 
 
-def sample(bench: Bench, rows: list[dict], limit: int | None, seed: int) -> list[tuple[str, dict]]:
+def page_offsets(bench: Bench, total: int, limit: int | None, seed: int) -> list[int]:
+    """Welche Seiten gebraucht werden: alle – oder bei großen Datensätzen und Stichprobe zufällige (fester Seed)."""
+    pages = max(1, -(-total // PAGE))
+    if limit is None or total <= BIG:
+        return [i * PAGE for i in range(pages)]
+    count = min(pages, max(1, -(-limit // ROWS_PER_PAGE_PICK)))
+    return sorted(i * PAGE for i in random.Random(f"{seed}:{bench.key}:pages").sample(range(pages), count))
+
+
+async def load_rows(bench: Bench, client: httpx.AsyncClient, limit: int | None, seed: int,
+                    say: Callable[[str], None] = print) -> dict[int, dict]:
+    """Benötigte Zeilen {Zeilennummer: Zeile}. Jede Seite wird sofort gecacht – ein Abbruch verliert nichts."""
+    legacy = cache_dir() / f"{bench.key}.json"  # ganzer Datensatz in einer Datei (ältere Läufe, Tests)
+    if legacy.exists():
+        rows = json.loads(legacy.read_text(encoding="utf-8"))
+        wanted = set(page_offsets(bench, len(rows), limit, seed))
+        return {i: row for i, row in enumerate(rows) if i - i % PAGE in wanted}
+    folder = cache_dir() / bench.key
+    meta = _read_json(folder / "meta.json", {})
+    total = meta.get("total")
+    if total is None:
+        data = await fetch_page(bench, client, 0, say)
+        total = data.get("num_rows_total") or 0
+        _store_page(bench, folder, 0, data)
+        _write_json(folder / "meta.json", {"total": total, "dataset": bench.dataset})
+    offsets = page_offsets(bench, total, limit, seed)
+    missing = [o for o in offsets if not (folder / f"{o}.json").exists()]
+    for n, offset in enumerate(missing, 1):
+        _store_page(bench, folder, offset, await fetch_page(bench, client, offset, say))
+        say(T(f"  {bench.column}: Seite {len(offsets) - len(missing) + n}/{len(offsets)} geladen",
+              f"  {bench.column}: page {len(offsets) - len(missing) + n}/{len(offsets)} loaded"))
+        await asyncio.sleep(PAUSE)
+    out: dict[int, dict] = {}
+    for offset in offsets:
+        for i, row in enumerate(_read_json(folder / f"{offset}.json", [])):
+            out[offset + i] = row
+    return out
+
+
+def _store_page(bench: Bench, folder: Path, offset: int, data: dict) -> None:
+    rows = []
+    for item in data.get("rows") or []:
+        if item.get("truncated_cells"):
+            raise BenchError(f"{bench.dataset}: Zeile {item.get('row_idx')} abgeschnitten (truncated_cells)")
+        rows.append(item["row"])
+    _write_json(folder / f"{offset}.json", rows)
+
+
+def sample(bench: Bench, rows: dict[int, dict] | list[dict], limit: int | None, seed: int) -> list[tuple[str, dict]]:
     """Feste Stichprobe (gleicher Seed → gleiche Fragen); IDs = Zeilennummer im Datensatz."""
-    usable = [(str(i), row) for i, row in enumerate(rows) if bench.keep(row)]
+    pairs = sorted(rows.items()) if isinstance(rows, dict) else list(enumerate(rows))
+    usable = [(str(i), row) for i, row in pairs if bench.keep(row)]
     if limit is None or limit >= len(usable):
         return usable
     picked = sorted(random.Random(f"{seed}:{bench.key}").sample(range(len(usable)), limit))
@@ -796,12 +850,12 @@ async def main_async(args) -> int:
     print(T("Datensätze …", "Datasets …"), flush=True)
     items: dict[str, list] = {}
     headers = {"Authorization": f"Bearer {os.environ['HF_TOKEN']}"} if os.environ.get("HF_TOKEN") else {}
-    async with httpx.AsyncClient(timeout=60, headers=headers, follow_redirects=True) as http:
+    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, headers=headers, follow_redirects=True) as http:
         for key in args.bench:
             if key == "speed":
                 continue
             bench = BENCHES[key]
-            items[key] = sample(bench, await fetch_rows(bench, http), args.limit, args.seed)
+            items[key] = sample(bench, await load_rows(bench, http, args.limit, args.seed), args.limit, args.seed)
             print(f"  {bench.column}: {len(items[key])} " + T("Fragen", "questions"), flush=True)
 
     meta.update({"started": meta.get("started") or datetime.now().isoformat(timespec="seconds"),

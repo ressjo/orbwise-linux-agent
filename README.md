@@ -594,8 +594,10 @@ uv run python scripts/llm_bench.py --resume                      # continue an i
 ```
 
 Profiles that start their own llama-server are started and stopped by the script (stop Orbwise first with
-`orbwise stop` – both would share the GPU memory); Ollama models are unloaded after each profile. Datasets are
-downloaded once from the Hugging Face datasets API and cached in `~/.cache/orbwise/bench`; by default a fixed sample
+`orbwise stop` – both would share the GPU memory); Ollama models are unloaded after each profile. Datasets come
+from the Hugging Face datasets API and are cached page by page in `~/.cache/orbwise/bench` (an interrupted download
+continues where it stopped; for large sets like MMLU-Pro a sample only loads randomly chosen pages; `HF_TOKEN`
+raises the rate limit); by default a fixed sample
 of 200 questions per benchmark (`--seed`, `--full` for everything), greedy decoding, thinking off (`--think`).
 Results land in `~/.local/share/orbwise/bench/<time>/` as `results.md`, `results.csv`, `results.json`, plus every
 single answer per profile for checking. Samples with 0-shot prompts are comparable between your models, not identical
