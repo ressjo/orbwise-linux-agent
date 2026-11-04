@@ -849,7 +849,10 @@ def auto_shell_ok(command: str, cwd: str | None = None, _depth: int = 0) -> tupl
     return True, ""
 
 
-_SUDO_RE = re.compile(r"(^|[;&|(]\s*|\s)(?:(?:/[\w.+-]+)*/)?sudo((?:\s+(?:-[ugpCrtUDRTh]\s+[^\s-]\S*|-[A-Za-z]+))*)\s+")
+# Davor: Zeilen-/Befehlsanfang, Leerraum – oder der Anfang des Befehlstexts einer Shell (bash -c 'sudo …', sh -lc "…"),
+# sonst bekäme ein sudo darin kein -A und könnte ohne Terminal nicht nach dem Passwort fragen
+_SUDO_RE = re.compile(r"(^|[;&|(]\s*|\s|\b(?:ba|z|da|k)?sh(?:\s+-[A-Za-z]+)*?\s+-[A-Za-z]*c[A-Za-z]*\s+['\"]\s*)"
+                      r"(?:(?:/[\w.+-]+)*/)?sudo((?:\s+(?:-[ugpCrtUDRTh]\s+[^\s-]\S*|-[A-Za-z]+))*)\s+")
 # Optionen mit Wert (z. B. -u root) bleiben erhalten; -n/-S/-A werden durch den gewählten Modus ersetzt
 _SUDO_OWN_FLAGS = re.compile(r"\s+-[nSA]+\b")
 

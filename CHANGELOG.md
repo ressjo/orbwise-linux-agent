@@ -103,6 +103,9 @@ All notable changes to this project are documented here. The format follows
   `~/.local/share/orbwise/chromium` (no root; asks first outside Auto, a "no" is remembered).
 
 ### Fixed
+- **sudo inside `bash -c '…'` / `sh -c "…"`** got no password dialog (not even in Auto): it ran without `-A`, failed
+  for lack of a terminal and the model was told root had been refused. It now gets the dialog like a plain `sudo`; if
+  sudo is buried in a script or Makefile, the model is told to rerun it with `sudo` in front instead of giving up.
 - **Text encoders and FLUX 3 Image Klein were set up as image models:** repos like
   `FLUX-3-Image-Klein-TE-Uncensored-GGUF` hold only a text encoder (or a prompt upsampler, "pup") and are now shown as
   "belongs next to an image model"; FLUX 3 Image Klein (text encoder Qwen3-VL-4B) is its own generation and marked as
