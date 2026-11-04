@@ -221,6 +221,14 @@ NEEDS_ROOT_HINT = ("\n→ Der Befehl braucht Root-Rechte: mit sudo voranstellen 
                    "Pakete besser mit install_package installieren (kann auch AUR).")
 
 
+# sudo konnte gar nicht fragen: kein -A (sudo steckte in einem Skript, make, einem Unterprogramm …) – kein Nein des Nutzers
+SUDO_NO_PROMPT_RE = re.compile(r"sudo: (?:a terminal is required|no askpass program)", re.I)
+SUDO_NO_PROMPT_HINT = ("\n→ sudo konnte nicht nach dem Passwort fragen: es wurde nicht direkt aufgerufen (z. B. in einem "
+                       "Skript, Makefile oder Unterprogramm). Den Befehl mit sudo ganz vorne erneut ausführen "
+                       "(z. B. `sudo bash ./install.sh`, `sudo make install`) – dann erscheint der Passwortdialog. "
+                       "Nichts selbst an den Rechten ändern.")
+
+
 def root_denied(output: str) -> bool:
     return bool(ROOT_DENIED_RE.search(output or ""))
 
@@ -228,7 +236,11 @@ def root_denied(output: str) -> bool:
 def format_result(rc: int | None, output: str, limit: int) -> str:
     status = "Zeitüberschreitung" if rc is None else f"Exit-Code {rc}"
     body = clip_saved(output.strip(), limit) or "(keine Ausgabe)"
-    hint = ROOT_DENIED_HINT if rc not in (None, 0) and root_denied(output) else ""
+    hint = ""
+    if rc not in (None, 0) and SUDO_NO_PROMPT_RE.search(output or ""):
+        hint = SUDO_NO_PROMPT_HINT
+    elif rc not in (None, 0) and root_denied(output):
+        hint = ROOT_DENIED_HINT
     if not hint and rc not in (None, 0) and NEEDS_ROOT_RE.search(output or ""):
         hint = NEEDS_ROOT_HINT
     return f"{status}\n{body}{hint}"

@@ -30,6 +30,11 @@ def ctx(cfg):
     ("echo x | sudo tee /etc/f", "echo x | sudo -A tee /etc/f"),
     ("pkexec systemctl restart sshd", "sudo -A systemctl restart sshd"),
     ("ls -la", "ls -la"),
+    # sudo im Befehlstext einer Shell: bekommt auch -A (sonst ohne Terminal kein Passwortdialog)
+    ("bash -c 'sudo pacman -Syu'", "bash -c 'sudo -A pacman -Syu'"),
+    ('sh -lc "sudo systemctl restart x && sudo ls"', 'sh -lc "sudo -A systemctl restart x && sudo -A ls"'),
+    ("grep 'sudo ' /var/log/auth.log", "grep 'sudo ' /var/log/auth.log"),  # nur Text, kein Befehl
+    ('echo "sudo is fine"', 'echo "sudo is fine"'),
 ])
 def test_apply_privilege_dashboard(cmd, expected):
     assert apply_privilege(cmd, "dashboard") == expected
@@ -63,6 +68,15 @@ def test_root_denied_hint():
     assert "NICHT erteilt" in out and "Nicht mit anderen Befehlen" in out
     assert "NICHT erteilt" not in proc.format_result(0, "ok", 1000)
     assert "NICHT erteilt" not in proc.format_result(1, "No such file", 1000)
+
+
+def test_sudo_without_prompt_is_not_a_refusal():
+    """sudo in einem Skript ohne -A: kein Nein des Nutzers – das Modell soll es mit sudo vorne erneut versuchen."""
+    for msg in ("sudo: a terminal is required to read the password; either use the -S option to read from standard "
+                "input or configure an askpass helper\nsudo: a password is required",
+                "sudo: no askpass program specified, try setting SUDO_ASKPASS"):
+        out = proc.format_result(1, msg, 1000)
+        assert "nicht nach dem Passwort fragen" in out and "NICHT erteilt" not in out
 
 
 # ---------------------------------------------------------------- Helfer-Skript (so wie sudo es aufruft)
