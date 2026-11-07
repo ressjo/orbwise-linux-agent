@@ -74,5 +74,11 @@ SHELL = sorted(glob.glob("/opt/pw-browsers/chromium_headless_shell-*/chrome-head
 def test_real_browser_reads_a_javascript_page(cfg, memory, site, monkeypatch):
     if not browser.binary():
         monkeypatch.setattr(browser, "binary", lambda: SHELL[-1])
+    # Startet Chromium hier überhaupt (manche Container lassen es mit eigenem Profil hängen)? Sonst überspringen –
+    # das prüft den Rechner, nicht Orbwise
+    monkeypatch.setattr(browser, "TIMEOUT", 20)
+    if not run(browser.render("data:text/html,<p>probe</p>")):
+        pytest.skip("Chromium rendert in dieser Umgebung nicht")
+    monkeypatch.setattr(browser, "TIMEOUT", 45)
     out = run(fetch_page(ToolContext(cfg=cfg, memory=memory), site + "/", "text"))
     assert "Tagesangebot" in out or "frischen Kaffee" in out

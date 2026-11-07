@@ -157,7 +157,10 @@ orbwise update
 ```
 
 pulls the latest version (`git pull`), updates the Python dependencies and restarts a running Orbwise server –
-then just reload the browser page. `orbwise version` shows what is installed. Your **configuration**
+then just reload the browser page. `orbwise version` shows what is installed (`0.3.0 · commit title (date)`).
+Updates follow the repository's main branch: if the branch your installation sits on is gone on GitHub or holds
+nothing the main branch lacks, Orbwise switches to the main branch by itself; a branch with your own unmerged commits
+stays. Your **configuration**
 (`~/.config/orbwise/`), **voices** and **memory** (`~/.local/share/orbwise/`) live outside the project folder and
 are never touched by updates.
 

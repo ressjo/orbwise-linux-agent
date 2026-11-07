@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # Standardbranch – nach einem Umbenennen in main greift die erste Zeile
+    branches: [main, claude/epic-volta-vyvxlk]
   pull_request:
 
 jobs:
@@ -19,5 +20,10 @@ jobs:
         run: uv run ruff check orbwise tests
       - name: Test
         run: uv run pytest -q
+      - name: Version and changelog agree
+        run: |
+          version=$(grep -m1 '^__version__' orbwise/__init__.py | cut -d'"' -f2)
+          grep -q "^## \[$version\]" CHANGELOG.md || { echo "CHANGELOG.md has no section [$version] for orbwise/__init__.py"; exit 1; }
+          uv build --wheel -q -o /tmp/dist && ls /tmp/dist/orbwise-$version-*.whl
       - name: Installer syntax
         run: bash -n scripts/install.sh && bash -n scripts/bootstrap.sh && bash -n scripts/orbwise-launcher

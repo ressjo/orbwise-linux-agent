@@ -10,6 +10,17 @@ All notable changes to this project are documented here. The format follows
   dialog instead of failing for lack of a terminal: shell commands the model runs get a small `sudo` wrapper in front
   of the `PATH` that adds `-A`. The dialog shows what really gets root (`./install.sh → sudo pacman -S …`), and a
   remembered password never applies to such calls.
+- **Version shown as 0.1.0 after updating:** `orbwise update` and the Update button only followed the branch the
+  installation sits on – one that is gone on GitHub, or an old one long merged, never got new commits. Updates now
+  follow the repository's main branch in those cases (a branch with your own unmerged commits stays), and
+  `scripts/bootstrap.sh` no longer insists on a branch named `main` that does not exist. `orbwise version` and
+  `orbwise doctor` show the version number again, not only the commit.
+
+### Changed
+- **One place for the version:** `orbwise/__init__.py`; `pyproject.toml` reads it (hatch). CI checks that the
+  version has a changelog section and that the wheel carries it, also on pushes to the main branch (CI only ran for
+  pull requests so far); the release workflow checks the changelog section too. The real-browser test skips itself
+  where Chromium does not render instead of failing.
 
 ### Security
 - The password dialog only hands the password to the askpass helper when the request really comes from it, started

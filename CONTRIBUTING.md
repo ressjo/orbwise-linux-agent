@@ -53,3 +53,12 @@ async def restart_container(ctx: ToolContext, name: Annotated[str, "container na
 - Keep changes focused, add tests, make sure `pytest` and `ruff` pass.
 - User-visible texts exist in German and English (`prompts.py`, `web_i18n.py`, `L("…", "…")` in `app.js`,
   `T("…", "…")` in the CLI).
+
+## Releases
+
+1. Set the version in `orbwise/__init__.py` (`__version__`) – the only place; `pyproject.toml` reads it from there.
+2. Rename `## [Unreleased]` in `CHANGELOG.md` to `## [x.y.z] – YYYY-MM-DD` and start a new empty `[Unreleased]`.
+   CI fails when the version has no changelog section.
+3. Merge into the main branch, then push the tag `vx.y.z` on that commit (or create it in GitHub's release form).
+   The *Release* workflow checks tag, version and changelog, runs the tests, builds the wheel and publishes the
+   release with the changelog section as notes.

@@ -17,8 +17,9 @@ jobs:
           python-version: "3.12"
       - name: Check that the tag matches pyproject.toml
         run: |
-          version=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2)
-          [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "Tag $GITHUB_REF_NAME != version $version"; exit 1; }
+          version=$(grep -m1 '^__version__' orbwise/__init__.py | cut -d'"' -f2)
+          [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "Tag $GITHUB_REF_NAME != version $version (orbwise/__init__.py)"; exit 1; }
+          grep -q "^## \[$version\]" CHANGELOG.md || { echo "CHANGELOG.md has no section [$version]"; exit 1; }
       - name: Test
         run: |
           uv sync --extra dev --extra voice

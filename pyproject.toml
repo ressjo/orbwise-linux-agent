@@ -1,6 +1,7 @@
 [project]
 name = "orbwise"
-version = "0.3.0"
+# Versionsnummer: nur in orbwise/__init__.py (__version__) pflegen
+dynamic = ["version"]
 description = "Orbwise – a local, voice-controlled AI assistant for Linux: Ollama/llama.cpp, persistent memory, tool use and an animated web UI"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -60,6 +61,9 @@ orbwise = "orbwise.cli:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "orbwise/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["orbwise"]

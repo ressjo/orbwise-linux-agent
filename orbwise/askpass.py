@@ -90,9 +90,13 @@ def write_helper(path: Path | None = None) -> Path:
 
 def real_sudo(skip: Path | None = None) -> str | None:
     """Das echte sudo im PATH (nicht der eigene Wrapper)."""
-    import shutil
-    dirs = [d for d in os.environ.get("PATH", "").split(os.pathsep) if d and (skip is None or Path(d) != skip)]
-    return shutil.which("sudo", path=os.pathsep.join(dirs))
+    for folder in os.environ.get("PATH", "").split(os.pathsep):
+        if not folder or (skip is not None and Path(folder) == skip):
+            continue
+        candidate = os.path.join(folder, "sudo")
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
 
 
 def write_wrapper(folder: Path) -> Path | None:
