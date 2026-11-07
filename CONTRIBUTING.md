@@ -21,8 +21,12 @@ ORBWISE_FAKE_LLM=1 uv run orbwise serve --open   # UI demo with a fake model
 | `orbwise/llm.py`, `orbwise/llm_router.py` | Ollama and OpenAI-compatible clients, model profiles, managed llama-server |
 | `orbwise/memory/` | Journal, summaries, facts, chats, search index, context budget |
 | `orbwise/tools/` | All tools – one module per group |
-| `orbwise/server.py` | FastAPI app, WebSocket hub, REST API |
-| `orbwise/web/` | The web UI (vanilla JS, no build step) |
+| `orbwise/tools/safety/` | Which shell commands run without asking: parsing (`shellwords`), read-only rules per program (`readonly.RULES`), credentials, the auto modes (`auto.AUTO_RULES`), `sudo` rewriting |
+| `orbwise/server.py` | `create_app`: builds the FastAPI app from the parts below |
+| `orbwise/hub.py` | WebSocket hub: clients, requests to the agent, confirmations, questions |
+| `orbwise/webapp/` | Shared app state (`context.AppContext`), start/stop (`lifecycle`), Telegram, background loops |
+| `orbwise/webapp/routes/` | HTTP and WebSocket endpoints, one module per area, each with `register(app, ctx)` |
+| `orbwise/web/` | The web UI (vanilla JS, no build step): `app.js` loads the ES modules in `web/js/` and calls their `init()` in order |
 | `scripts/` | Installer, launcher, desktop files |
 
 ## Writing a new tool
@@ -48,10 +52,21 @@ async def restart_container(ctx: ToolContext, name: Annotated[str, "container na
 - Add tests in `tests/` (mock external services with `httpx.MockTransport`, see `tests/fake_*.py`).
 - If the tool belongs to a large optional group, add keywords for it in `orbwise/toolselect.py`.
 
+### Where new code goes
+
+- **New endpoint:** in the matching module under `orbwise/webapp/routes/` (or a new one, registered in
+  `server.create_app` – the order there is the order FastAPI matches paths in). Shared objects come from `ctx`;
+  a helper other parts need is put on `ctx` at the end of `register`.
+- **New UI code:** in the matching module under `orbwise/web/js/`; import what you use, export what others use.
+  Code that has to run on page load goes into the module's `init()`. A new module must be imported somewhere
+  (a test checks that every module is reachable from `app.js`).
+- **Shell command rules:** a program that only reads with certain arguments gets a function in
+  `tools/safety/readonly.RULES`; what Auto mode should still ask for goes into `tools/safety/auto.AUTO_RULES`.
+
 ## Pull requests
 
 - Keep changes focused, add tests, make sure `pytest` and `ruff` pass.
-- User-visible texts exist in German and English (`prompts.py`, `web_i18n.py`, `L("…", "…")` in `app.js`,
+- User-visible texts exist in German and English (`prompts.py`, `web_i18n.py`, `L("…", "…")` in `web/js/`,
   `T("…", "…")` in the CLI).
 
 ## Releases
