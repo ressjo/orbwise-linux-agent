@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **sudo inside scripts, Makefiles and other programs** (`./install.sh`, `make install`) now gets the password
+  dialog instead of failing for lack of a terminal: shell commands the model runs get a small `sudo` wrapper in front
+  of the `PATH` that adds `-A`. The dialog shows what really gets root (`./install.sh → sudo pacman -S …`), and a
+  remembered password never applies to such calls.
+
+### Security
+- The password dialog only hands the password to the askpass helper when the request really comes from it, started
+  by a `sudo` running as root – a command that read the one-time token from its environment and asked by itself
+  gets nothing.
+
 ## [0.3.0] – 2026-11-07
 
 ### Added

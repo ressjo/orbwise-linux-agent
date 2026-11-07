@@ -656,7 +656,10 @@ async def code_shell(
             await ctx.emit({"type": "job", "phase": "link", "id": job.id, "call": ctx.call_id})
         return (f"Läuft im Hintergrund als Job {job.id} (Ausgabe vollständig in {job.log}). Du bekommst eine Notiz, "
                 "wenn er endet – nicht abfragen; bei Bedarf mit job_output hineinsehen oder ihn stoppen.")
-    rc, out = await proc.run(ctx, prefix or command, timeout=limit + (15 if prefix else 0), cwd=cwd)
+    if prefix:  # Sandbox-Container: dort ist man root, kein Passwortdialog
+        rc, out = await proc.run(ctx, prefix, timeout=limit + 15, cwd=cwd)
+    else:
+        rc, out = await proc.run_user_shell(ctx, command, timeout=limit, cwd=cwd)
     if prefix and rc == 124:
         out += f"\n[Abgebrochen: Zeitlimit von {int(limit)} s überschritten]"
     return proc.format_result(rc, out, ctx.limit())

@@ -19,6 +19,8 @@ import subprocess
 import time
 from pathlib import Path
 
+from . import procnet
+
 BWRAP = "bwrap"
 # Einzelne Dateien mit Zugangsdaten im Home – im Käfig leer (/dev/null)
 SECRET_FILES = (".netrc", ".pgpass", ".git-credentials", ".my.cnf", ".pypirc", ".npmrc", ".env",
@@ -192,31 +194,13 @@ def _jailed_pids(roots: set[int]) -> set[int]:
     return out
 
 
-def _socket_inodes(client_port: int, server_port: int) -> set[str]:
-    """Inodes der Sockets, die von client_port aus mit server_port verbunden sind (Client-Seite)."""
-    out = set()
-    for table in ("/proc/net/tcp", "/proc/net/tcp6"):
-        try:
-            lines = Path(table).read_text().splitlines()[1:]
-        except OSError:
-            continue
-        for line in lines:
-            parts = line.split()
-            if len(parts) < 10:
-                continue
-            local, remote = parts[1], parts[2]
-            if int(local.rsplit(":", 1)[1], 16) == client_port and int(remote.rsplit(":", 1)[1], 16) == server_port:
-                out.add(parts[9])
-    return out
-
-
 def peer_is_jailed(client_port: int | None, server_port: int) -> bool:
     """Kommt diese Verbindung aus einem Käfig? Nur, solange ein Käfig-Prozess lebt – sonst kostenlos.
     Lassen sich die offenen Dateien eines Käfig-Prozesses nicht lesen, gilt die Verbindung im Zweifel als eingesperrt."""
     roots = _alive()
     if not roots or not client_port:
         return False
-    inodes = _socket_inodes(client_port, server_port)
+    inodes = procnet.socket_inodes(client_port, server_port)
     if not inodes:
         return False
     wanted = {f"socket:[{i}]" for i in inodes}
@@ -233,19 +217,10 @@ def _owner(pids: set[int], wanted: set[str]) -> bool | None:
     """True: einer der Prozesse hält den Socket; False: keiner (alle lesbar); None: unklar (nicht lesbar)."""
     unknown = False
     for pid in pids:
-        try:
-            fds = os.listdir(f"/proc/{pid}/fd")
-        except FileNotFoundError:
-            continue
-        except PermissionError:
-            unknown = True
-            continue
-        for fd in fds:
-            try:
-                if os.readlink(f"/proc/{pid}/fd/{fd}") in wanted:
-                    return True
-            except OSError:
-                continue
+        held = procnet.holds_socket(pid, wanted)
+        if held:
+            return True
+        unknown = unknown or held is None
     return None if unknown else False
 
 
@@ -277,4 +252,5 @@ async def run(ctx, command: str, cwd: str, timeout: float, name: str) -> tuple[i
         return rc, out + declined
     if ctx.emit:
         await ctx.emit({"type": "state", "state": "executing", "tool": name})
-    return await proc.run(ctx, apply_privilege(command, ctx.cfg.tools.privilege_cmd), timeout=timeout, cwd=cwd)
+    return await proc.run_user_shell(ctx, apply_privilege(command, ctx.cfg.tools.privilege_cmd), timeout=timeout,
+                                     cwd=cwd)

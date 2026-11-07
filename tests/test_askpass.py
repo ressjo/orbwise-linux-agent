@@ -106,7 +106,7 @@ def test_helper_script_prints_password_and_ignores_proxy(tmp_path):
     res = subprocess.run([str(helper), "[sudo] Passwort für alex: "], env=env, capture_output=True, text=True,
                          timeout=20)
     assert res.returncode == 0 and res.stdout == "geh eim!\n"
-    assert seen == {"token": "tok123", "body": {"prompt": "[sudo] Passwort für alex: "}}
+    assert seen == {"token": "tok123", "body": {"prompt": "[sudo] Passwort für alex: ", "sudo_command": ""}}
     # ohne Token: sofort Fehler (sudo bricht dann ab)
     env.pop("ORBWISE_ASKPASS_TOKEN")
     assert subprocess.run([str(helper)], env=env, capture_output=True, timeout=20).returncode == 1
@@ -318,3 +318,143 @@ def test_not_remembered_when_unticked_disabled_or_expired(tmp_path):
 
 def run_async(coro):
     asyncio.run(coro)
+
+
+# ---------------------------------------------------------------- sudo aus Skripten (Wrapper im PATH)
+
+FAKE_SUDO = """#!/bin/sh
+echo "FAKE-SUDO $* token=${ORBWISE_ASKPASS_TOKEN:+ja} inner=$ORBWISE_SUDO_CMD"
+"""
+
+
+@pytest.fixture
+def fake_sudo(tmp_path, monkeypatch):
+    """Ein „sudo“, das nur seine Argumente ausgibt – vorn im PATH, damit der Wrapper es als echtes sudo findet."""
+    folder = tmp_path / "realbin"
+    folder.mkdir()
+    (folder / "sudo").write_text(FAKE_SUDO)
+    (folder / "sudo").chmod(0o755)
+    monkeypatch.setenv("PATH", f"{folder}{os.pathsep}{os.environ['PATH']}")
+    return folder / "sudo"
+
+
+def _wrapper(tmp_path, fake_sudo):
+    target = askpass.write_wrapper(tmp_path / "bin")
+    assert target and str(fake_sudo) in target.read_text()
+    return target
+
+
+@pytest.mark.parametrize("args, expected", [
+    (["pacman", "-Syu"], "-A pacman -Syu"),
+    (["-u", "root", "id"], "-A -u root id"),
+    (["-E", "make", "install"], "-A -E make install"),
+    (["-n", "true"], "-n true"),          # nicht-interaktiv gewollt: so lassen
+    (["-S", "ls"], "-S ls"),              # Passwort von stdin gewollt: so lassen
+    (["-nE", "ls"], "-nE ls"),
+    (["-A", "ls"], "-A ls"),              # schon -A: nicht doppelt
+    (["ls", "-n"], "-A ls -n"),           # -n gehört hier zu ls, nicht zu sudo
+])
+def test_wrapper_adds_askpass_only_with_token(tmp_path, fake_sudo, args, expected):
+    wrapper = _wrapper(tmp_path, fake_sudo)
+    env = {**os.environ, "ORBWISE_ASKPASS_TOKEN": "t"}
+    out = subprocess.run([str(wrapper), *args], env=env, capture_output=True, text=True, timeout=10).stdout
+    assert out.startswith(f"FAKE-SUDO {expected} token=ja inner={' '.join(args)}")
+    # ohne Token (z. B. du selbst im Terminal): unverändert
+    env.pop("ORBWISE_ASKPASS_TOKEN")
+    out = subprocess.run([str(wrapper), *args], env=env, capture_output=True, text=True, timeout=10).stdout
+    assert out.startswith(f"FAKE-SUDO {' '.join(args)} token= inner=")
+
+
+def test_no_wrapper_without_sudo(tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", str(tmp_path / "leer"))
+    assert askpass.write_wrapper(tmp_path / "bin") is None and not (tmp_path / "bin" / "sudo").exists()
+
+
+def test_user_shell_gives_scripts_the_password_dialog(cfg, tmp_path, monkeypatch, fake_sudo):
+    """Ein Skript ruft sudo selbst auf (ohne sudo im Befehl): es bekommt -A, ein Token und nie das gemerkte
+    Passwort; interne Werkzeugaufrufe (proc.run) bleiben, wie sie waren."""
+    helper = askpass.write_helper(tmp_path / "rt" / "orbwise" / "askpass")
+    broker = askpass.AskpassBroker(8765, helper=helper)
+    monkeypatch.setattr(askpass, "BROKER", broker)
+    script = tmp_path / "install.sh"
+    script.write_text("#!/bin/sh\nsudo pacman -S htop\n")
+    script.chmod(0o755)
+    seen = []
+    original = broker.grant
+
+    def spy(command, use_cache=True, implicit=False):
+        seen.append((command, use_cache, implicit))
+        return original(command, use_cache, implicit)
+    monkeypatch.setattr(broker, "grant", spy)
+    rc, out = run(proc.run_user_shell(ctx(cfg), str(script), timeout=10))
+    assert "FAKE-SUDO -A pacman -S htop token=ja inner=pacman -S htop" in out
+    assert seen == [(str(script), False, True)] and broker.tokens == {}
+    # sichtbares sudo -A im Befehl: wie bisher (gemerktes Passwort erlaubt)
+    seen.clear()
+    run(proc.run_user_shell(ctx(cfg), "sudo -A true", timeout=10))
+    assert seen == [("sudo -A true", True, False)]
+    # interner Aufruf ohne Wrapper: kein Token, sudo bleibt sudo
+    rc, out = run(proc.run(ctx(cfg), str(script), timeout=10, stream=False))
+    assert "FAKE-SUDO pacman -S htop token= inner=" in out
+
+
+def test_implicit_sudo_needs_a_verified_caller_and_shows_the_inner_command(tmp_path):
+    async def scenario():
+        asked = []
+
+        async def notify(ev):
+            if ev["type"] == "password_request":
+                asked.append(ev)
+                broker.answer(ev["id"], "pw", False)
+
+        broker = askpass.AskpassBroker(8765, notify=notify, helper=askpass.write_helper(tmp_path / "askpass"))
+        with broker.grant("./install.sh", use_cache=False, implicit=True) as env:
+            token = env["ORBWISE_ASKPASS_TOKEN"]
+            # ein Skript fragt selbst mit dem Token an (kein sudo dahinter) → abgelehnt, ohne Dialog
+            assert await broker.request(token, caller=lambda: False) is None
+            # nicht feststellbar, wer fragt → bei sudo aus Skripten ebenfalls abgelehnt
+            assert await broker.request(token, caller=lambda: None) is None
+            assert asked == []
+            # echtes sudo über den Helfer → Dialog mit dem, was wirklich Root bekommt
+            assert await broker.request(token, "[sudo] pw", "pacman -S htop", caller=lambda: True) == "pw"
+            assert asked[0]["command"] == "./install.sh\n→ sudo pacman -S htop"
+        with broker.grant("sudo -A pacman -Syu") as env:  # sichtbares sudo: „unklar“ reicht wie bisher
+            assert await broker.request(env["ORBWISE_ASKPASS_TOKEN"], "", "pacman -Syu", caller=lambda: None) == "pw"
+            assert asked[1]["command"] == "sudo -A pacman -Syu"  # nichts doppelt angehängt
+
+    run_async(scenario())
+
+
+def test_caller_check_finds_the_helper_under_sudo(tmp_path):
+    """Echte Prozesskette: der Helfer verbindet sich mit einem Test-Server; der Server prüft, wem die Verbindung
+    gehört. Direkt gestartet (Elternprozess pytest) → nein; unter einem Elternprozess namens sudo nur, wenn dieser
+    als root läuft (setuid wie das echte sudo)."""
+    helper = askpass.write_helper(tmp_path / "askpass")
+    verdicts = []
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            verdicts.append(askpass.caller_is_sudo_helper(self.client_address[1], srv.server_port, helper))
+            body = b'{"password": "x"}'
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    env = {**os.environ, "ORBWISE_ASKPASS_URL": f"http://127.0.0.1:{srv.server_port}/api/askpass",
+           "ORBWISE_ASKPASS_TOKEN": "t", "NO_PROXY": "127.0.0.1"}
+    try:
+        subprocess.run([str(helper)], env=env, capture_output=True, timeout=20)
+        parent = tmp_path / "sudo"  # Prozessname „sudo“ – wie sudo, das den Helfer startet
+        parent.write_text(f"#!/bin/sh\n{helper} prompt\n")
+        parent.chmod(0o755)
+        subprocess.run([str(parent)], env=env, capture_output=True, timeout=20)
+    finally:
+        srv.shutdown()
+    assert verdicts == [False, os.geteuid() == 0]

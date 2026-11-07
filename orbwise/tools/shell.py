@@ -71,5 +71,5 @@ async def run_shell(
         rc, out = await jail.run(ctx, command, ctx.cwd or os.path.expanduser("~"), timeout, "run_shell")
         return proc.format_result(rc, out, ctx.limit())
     command = apply_privilege(command, ctx.cfg.tools.privilege_cmd)
-    rc, out = await proc.run(ctx, command, timeout=timeout, cwd=ctx.cwd)
+    rc, out = await proc.run_user_shell(ctx, command, timeout=timeout, cwd=ctx.cwd)
     return proc.format_result(rc, out, ctx.limit())
