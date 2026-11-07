@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] – 2026-11-07
+
 ### Added
 - **LLM benchmark script** (`scripts/llm_bench.py`, outside the web UI): runs the model profiles through MMLU-Pro,
   GSM8K, HumanEval, ARC-Challenge, IFEval and a speed test (prefill/generation tok/s) and prints a score table like
@@ -71,6 +73,48 @@ All notable changes to this project are documented here. The format follows
   scanners (ruff, bandit, semgrep, gitleaks, shellcheck – new in sandbox image `:4`) in the sandbox, then reviews with
   fresh eyes in separate passes (bugs, security, structure), has a sceptical pass prove every finding, reports in the
   chat and fixes confirmed findings and failing checks automatically (re-checking, up to two rounds).
+- **Goal mode (`/goal <goal>`):** works on a goal without "continue" – no step limit per answer, finished only when
+  the model reports `[GOAL REACHED]` (otherwise it is nudged to carry on), `[QUESTION]` waits for you; chip with the
+  goal and step count above the input, `/goal stop`, limits `coding.goal_max_steps`/`goal_max_minutes`.
+- **Leaving a sandbox chat asks first:** with changes not yet applied, a new chat, another chat, a mode switch, a
+  project change, cloning or deleting the chat offers *Apply and continue*, *Continue without applying* (they stay in
+  that chat) or *Cancel*; deleting a chat with a sandbox warns that the working copy goes with it.
+- **Docker in the sandbox (opt-in per chat, rootless Podman only):** build and run Docker projects inside the
+  sandbox – nested rootless Podman as an unprivileged user behind `docker`/`docker compose`, with only `/dev/fuse` and
+  `/dev/net/tun` added (no `--privileged`, no `CAP_SYS_ADMIN`, `no-new-privileges` kept); a self-test runs on
+  switching it on and falls back to a bundled seccomp profile only if needed. Published ports work with `screenshot`.
+  Image `orbwise-sandbox:3`; older sandboxes switch to it when Docker is turned on.
+- **Screenshots in coding mode:** new tool `screenshot` renders a page (dev server on localhost, HTML file) with
+  headless Chromium – inside the sandbox container (image `orbwise-sandbox:2` now ships Chromium) or with the
+  browser on the machine – and shows it under the answer, also after reloading; models that see images get a
+  description back. Screenshots of foreign web pages count as untrusted content.
+- **Clone from GitHub with a branch:** click a repo to pick its branch; `github_clone` takes `branch`, an existing
+  folder is switched to it.
+- **Skills:** every integration and built-in ability can be set up and switched without editing `config.yaml` –
+  in the installer (pick by number, enter details, connection tested right away), under **Settings → Skills** in the
+  web UI (state, on/off switch, form with help per field, *Test connection*, changes apply at once; Telegram finds
+  its chat ID after `/start`) and with `orbwise skills [setup|enable|disable]`. The installer's Brave question is
+  now part of the skill selection.
+- **Credentials in the keyring:** tokens, passwords and API keys go to the session keyring (Secret Service via the
+  new `keyring` dependency), without one to `~/.config/orbwise/secrets.json` (0600). Plain-text credentials in
+  `config.yaml` are moved there on start (backup `config.yaml.bak`, comments kept). `orbwise doctor` shows where they
+  live and warns about leftovers. There is no `.env`; `$ORBWISE_…` variables still work as a fallback.
+- **Coding sandbox (like Claude on the web):** a working copy of the project on its own branch, the agent's
+  commands run in a Podman/Docker container (no credentials inside, limits, network on/off per chat, stops when
+  idle). Shell and file changes in the copy run without asking; **View changes** with diffs, **Apply to project**
+  with conflict check, **End sandbox**. Default image `orbwise-sandbox:1` is built on first use (`sandbox.*`).
+- **Tables in answers:** Markdown tables (with column alignment) are shown as real tables; also *italic*,
+  ~~strikethrough~~, quotes and horizontal rules.
+- **No more browser pop-ups:** all questions (delete, confirm, feedback text, project folder) appear as Orbwise's
+  own dialog; the project folder dialog lets you click through the folders.
+- **Project chip shows repo and branch:** `owner/repo` and the current branch (in the sandbox the `orbwise/…` branch
+  of the working copy), updated after every answer.
+- **GitHub:** sign in via `gh` or a token; clone your repos from the project chip, push the branch (sandbox menu or
+  `github_push`, always asks) with a link to create the pull request. The token never lands in `.git/config`.
+- **Brave quota in the activity panel:** the quota Brave reports with every answer
+  (`X-RateLimit-*`) is kept – Orbwise does not count itself; a tile shows used / limit / remaining / reset date (orange from 80 %, a notice below
+  10 %), `orbwise doctor` prints it, and a used-up quota is not queried again until it resets (with
+  `search_fallback` the result pages are used instead).
 
 ### Changed
 - **Typing loads the language model:** after *Unload model* (or when the image model still holds the video memory
@@ -101,60 +145,6 @@ All notable changes to this project are documented here. The format follows
   it without isolation.
 - **Chromium for hard web pages:** if none is installed, Orbwise downloads Google's chrome-headless-shell once to
   `~/.local/share/orbwise/chromium` (no root; asks first outside Auto, a "no" is remembered).
-
-### Fixed
-- **sudo inside `bash -c '…'` / `sh -c "…"`** got no password dialog (not even in Auto): it ran without `-A`, failed
-  for lack of a terminal and the model was told root had been refused. It now gets the dialog like a plain `sudo`; if
-  sudo is buried in a script or Makefile, the model is told to rerun it with `sudo` in front instead of giving up.
-- **Text encoders and FLUX 3 Image Klein were set up as image models:** repos like
-  `FLUX-3-Image-Klein-TE-Uncensored-GGUF` hold only a text encoder (or a prompt upsampler, "pup") and are now shown as
-  "belongs next to an image model"; FLUX 3 Image Klein (text encoder Qwen3-VL-4B) is its own generation and marked as
-  not supported yet instead of being set up as FLUX.2 klein. Models already set up like this are flagged with the reason.
-- **FLUX.2 klein models were set up as FLUX.1** (e.g. `flux3-image-klein`): any repo with "flux" in its name got
-  FLUX.1's text encoders and VAE, and sd-server stopped with "get sd version from file failed". Now *klein* is
-  recognised (4B or 9B from the name, else from file size and quantization), newer FLUX generations are marked as not
-  supported, and plain "flux" only counts as FLUX.1 with a matching `base_model` tag. Models set up wrongly before are
-  flagged on the image model page; an unrecognised model file gets a clear message, and the page shows the sd-server
-  version with an **Update** button.
-- **Image mode loaded the language model again in the background:** the daily summaries (every 5 minutes) asked the
-  language model, which took the video memory back from the image model – also right after unloading it by hand.
-  Now clicking *Image* unloads the language model at once; the active image model loads with the first picture; while
-  the image view is open no summaries or index rebuilds run, memory embeddings go to the CPU, and after 10 idle
-  minutes only the image server stops. The language model returns when you leave the image view or ask something.
-- **Image mode:** the sidebar navigation (Models, Planner, Memory, Settings) sat right under the mode switch; it is at
-  the bottom again like in the other modes.
-- **`orbwise update` did not restart a running server** since the access token: it asked `/api/status`, which now
-  needs the token, and took the server for stopped. It now asks the token-free `/api/alive`.
-- **Image mode with several GPUs:** since the multi-GPU change the image engine took the *sum* of all cards' VRAM, so
-  on e.g. 2×12 GB it kept the language model loaded and skipped `--offload-to-cpu` – the image model then had no room
-  on the one card sd-server runs on. It now goes by the biggest single card. A seed of 0 is no longer turned into a
-  random seed.
-- **Auto mode saw `sudo` only by name:** `/usr/bin/sudo`, `/bin/su`, `s""udo` or `/usr/bin/git push` ran without the
-  password dialog or the push question. Root and push are now also recognised behind paths and quotes, and
-  `/usr/bin/sudo` gets the password dialog like `sudo`.
-- **Toasts blocked the buttons under them** (activity, model, voice in the header; the mode tabs on the phone) for as
-  long as they were shown. They now sit below the header and let clicks through (links in them stay clickable).
-- **Phone:** choosing a mode closes the sidebar; Esc closes the activity panel when it covers the chat.
-- **Push to GitHub from the sandbox** landed only an empty branch: the push took the branch of the working copy as
-  committed, while the agent's changes were still uncommitted. Open changes are now committed first (in the
-  container); without new commits nothing is pushed instead of creating an empty branch.
-- **One branch per chat:** a sandbox switched on again (or started by the code check) reuses the chat's earlier
-  `orbwise/…` branch instead of creating a second one named after the changed chat title.
-- **sudo failed silently in the cage** (e.g. installing a package via `yay`): the cage forbids it; Auto no longer
-  cages, yay/paru get the password dialog, and a package manager without `sudo` gets a hint.
-- **`curl -A "$UA" …` was flagged as "reads credentials"** – curl options are no longer taken for file names.
-- **Reload kept only the last 40 messages** – the whole chat is shown again.
-- **Live thinking slid out of view:** when the model thought again after text or a tool, the open thinking block sat
-  above it; now it stays at the bottom while thinking and moves back to the top when collapsed.
-- **Activity panel showed no tools** (same cause as "New chat": the failing UI update).
-- **"New chat" did nothing** (and other buttons stopped updating the page): a hint in the Auto menu shared a CSS
-  class with the thinking menu, which removed it – every later UI update failed. Chat switches right after an answer
-  now also wait for the clean-up (journal, search index) instead of being refused.
-- **Auto mode seemed ignored in the same chat:** after a web page, e-mail, PDF or image, everything that changes
-  something asks – in every auto mode, as long as that content is in the chat. The card now says so clearly and offers
-  **Allow + stop asking in this chat** (asks again when new outside content arrives).
-
-### Changed
 - **Auto mode isolates shell commands (bubblewrap).** What Auto runs without asking now runs in a cage: only the
   project folder (coding) and a private `/tmp` are writable, the rest of the system and your home read-only;
   credentials, browser profiles, Orbwise's config, tokens in the environment, the session D-Bus and the Docker socket
@@ -223,106 +213,120 @@ All notable changes to this project are documented here. The format follows
   local models they rarely helped, and reflecting while idle pushed the chat out of the prompt cache (the next
   question re-read everything). Stored lessons (`lessons.json`) are deleted on the first start; old
   `memory.learning` / `memory.lessons_max` settings are ignored.
-- **Piper speech output:** replaced by Pocket TTS – the Piper voice catalogue, voice uploads, `voice.tts_voice` /
-  `voice.tts_length_scale` and the `piper-tts` dependency are gone. Downloaded Piper voices in
-  `~/.local/share/orbwise/voices/` are deleted on the first start. Without Pocket TTS the browser speaks.
-- **Strata engine:** the experimental Strata integration for Qwen3.8-Flash-Next is gone again – the dense
-  Qwen3.8-27B on llama.cpp answered better, and loading froze AMD desktops. On the first start Orbwise removes Strata
-  profiles from `state.json`, stops a running Strata server and deletes the model (`~/models/strata`) and the engine it
-  installed (`~/.local/share/strata`).
-- **Bonsai setup:** `orbwise model add bonsai`/`bonsai-kompakt`, the PrismML fork with its own launcher and the
-  `BONSAI_*` settings are gone; GGUF models from Hugging Face run on Orbwise's own llama.cpp. Bonsai profiles are
-  removed on the first start; `~/bonsai` stays and can be deleted by hand. The prompt-cache options
-  (`--ctx-checkpoints`, `--cache-ram`, `--cache-idle-slots`) still apply to every llama-server Orbwise starts.
-- **Ollama → llama.cpp conversion** ("Reload with llama.cpp" for old `hf.co/…` Ollama models): such models simply stay
-  Ollama models; new Hugging Face downloads always run on llama.cpp.
 
-### Changed
-- **Coding permissions:** from the auto level *Read + edit files* on, files inside the project folder are changed without
-  asking (also outside `$HOME` and in hidden folders like `.github`; never `.git/`, credentials or as root); files
-  outside the project ask.
-- **Activity panel:** steps are grouped under the question (or routine / Telegram run) that caused them, with readable
-  names and an icon ("Web search · linux 6.18 release notes" instead of `web_search query=…`), a spinner while running
-  and a check mark with the duration or a cross when done. Clicking a step shows the raw call and its output. Reading
-  the chat into the prompt cache is now a single quiet note above the list instead of a row per question.
-- **Redesign:** a warm, calm look in **light, dark or system** (Settings → General → Appearance) with a petrol
-  accent; headings and answers in a serif reading font (Newsreader), controls in Inter – both bundled under the SIL
-  Open Font License. The composer has the text on top and the switches below; the user's message sits in a soft bubble,
-  the answer reads as plain text. The orb is now three fine rings around a dot (same states, running tools as dots, the
-  context as an outer arc) instead of the glowing neural network. **Planner and Memory open as large windows** like the
-  model page, with their cards side by side.
-- **Confirmations in the chat:** a request for approval now appears as a card below the last message (title, command,
-  reason, Cancel/Run; Enter/Esc and "yes"/"no" by voice as before; mail fields editable in the card) instead of a
-  dialog over the whole page. The sidebar shows the product name **Orbwise**.
-- **Think menu follows the model:** levels (Brief/Normal/Thorough) only for models with real levels (gpt-oss), plain
-  on/off for the others, greyed out for models that cannot think – read from the chat template or Ollama's
-  capabilities. "On" no longer invents a level or a token budget.
-- **One setting for all windows:** the server keeps *Think* and the auto mode and sends them to every window (phone
-  and PC no longer overwrite each other silently); Telegram and routines use the same values.
-- **Calmer interface:** one scale for font sizes, corner radii and colours; normal capitalisation instead of
-  ALL-CAPS buttons and tags; SVG icons instead of emoji; less glow and shorter help texts; monospace only for code,
-  paths and numbers.
-- **Brave tile shows Brave's numbers:** instead of Orbwise's own request count, the tile shows the usage Brave reports
-  (used / limit / left / reset) on plans with a monthly quota; on credit plans – where Brave reports no usage and has
-  no balance API – it links to the Brave dashboard. `orbwise doctor` says the same.
-- **Thoughts in the chat:** in thinking mode the reasoning now streams directly into Orbwise's answer and collapses
-  as soon as the model answers or calls a tool ("Thoughts · 12 s"), instead of a bubble next to the orb with zoom.
-- **Tidier model page:** a *Performance* section (prompt speed, find the fastest setting) follows the context window;
-  KV cache, manual batch size and speculative decoding moved under a collapsed *Advanced* section (only for
-  llama.cpp models where they apply), and the explanations show one sentence with **More** for the rest.
-- **Code structure:** `agent.py` is split into focused parts – `agent_compact.py` (making room, summarising),
-  `agent_tools.py` (which tools go along), `agent_safety.py` (approvals, foreign content, leak guard) and
-  `agent_speed.py` (prompt speed, prewarming); the model endpoints moved from `server.py` into `api_models.py`, with one helper for "restart the
-  loaded model with a new option" instead of four copies; unused constants removed.
-- **state.json is written safely:** all model profiles and settings go through one module that writes atomically
-  (temporary file + rename) under a lock – a crash while saving can no longer leave a half-written file, and two
-  changes at the same time (a download finishing while you change a setting) no longer overwrite each other.
-- **Fewer full re-reads in big windows:** from 32k on all tools go along from the start (if they take ≤ 25 % of the
-  budget and < 60 s to read) instead of growing mid-chat, which re-read the whole chat; the step-limit summary keeps
-  the tool list as well.
-- **Auto mode after foreign content:** after a web page, e-mail, PDF or image, reading tools (web search,
-  `fetch_url`, reading and listing files, recall, calendar/notes/Home Assistant/Portainer lookups) no longer ask –
-  only actions that change or start something do; the data-leak guard still checks what goes out.
+### Fixed
+- **sudo inside `bash -c '…'` / `sh -c "…"`** got no password dialog (not even in Auto): it ran without `-A`, failed
+  for lack of a terminal and the model was told root had been refused. It now gets the dialog like a plain `sudo`; if
+  sudo is buried in a script or Makefile, the model is told to rerun it with `sudo` in front instead of giving up.
+- **Text encoders and FLUX 3 Image Klein were set up as image models:** repos like
+  `FLUX-3-Image-Klein-TE-Uncensored-GGUF` hold only a text encoder (or a prompt upsampler, "pup") and are now shown as
+  "belongs next to an image model"; FLUX 3 Image Klein (text encoder Qwen3-VL-4B) is its own generation and marked as
+  not supported yet instead of being set up as FLUX.2 klein. Models already set up like this are flagged with the reason.
+- **FLUX.2 klein models were set up as FLUX.1** (e.g. `flux3-image-klein`): any repo with "flux" in its name got
+  FLUX.1's text encoders and VAE, and sd-server stopped with "get sd version from file failed". Now *klein* is
+  recognised (4B or 9B from the name, else from file size and quantization), newer FLUX generations are marked as not
+  supported, and plain "flux" only counts as FLUX.1 with a matching `base_model` tag. Models set up wrongly before are
+  flagged on the image model page; an unrecognised model file gets a clear message, and the page shows the sd-server
+  version with an **Update** button.
+- **Image mode loaded the language model again in the background:** the daily summaries (every 5 minutes) asked the
+  language model, which took the video memory back from the image model – also right after unloading it by hand.
+  Now clicking *Image* unloads the language model at once; the active image model loads with the first picture; while
+  the image view is open no summaries or index rebuilds run, memory embeddings go to the CPU, and after 10 idle
+  minutes only the image server stops. The language model returns when you leave the image view or ask something.
+- **Image mode:** the sidebar navigation (Models, Planner, Memory, Settings) sat right under the mode switch; it is at
+  the bottom again like in the other modes.
+- **`orbwise update` did not restart a running server** since the access token: it asked `/api/status`, which now
+  needs the token, and took the server for stopped. It now asks the token-free `/api/alive`.
+- **Image mode with several GPUs:** since the multi-GPU change the image engine took the *sum* of all cards' VRAM, so
+  on e.g. 2×12 GB it kept the language model loaded and skipped `--offload-to-cpu` – the image model then had no room
+  on the one card sd-server runs on. It now goes by the biggest single card. A seed of 0 is no longer turned into a
+  random seed.
+- **Auto mode saw `sudo` only by name:** `/usr/bin/sudo`, `/bin/su`, `s""udo` or `/usr/bin/git push` ran without the
+  password dialog or the push question. Root and push are now also recognised behind paths and quotes, and
+  `/usr/bin/sudo` gets the password dialog like `sudo`.
+- **Toasts blocked the buttons under them** (activity, model, voice in the header; the mode tabs on the phone) for as
+  long as they were shown. They now sit below the header and let clicks through (links in them stay clickable).
+- **Phone:** choosing a mode closes the sidebar; Esc closes the activity panel when it covers the chat.
+- **Push to GitHub from the sandbox** landed only an empty branch: the push took the branch of the working copy as
+  committed, while the agent's changes were still uncommitted. Open changes are now committed first (in the
+  container); without new commits nothing is pushed instead of creating an empty branch.
+- **One branch per chat:** a sandbox switched on again (or started by the code check) reuses the chat's earlier
+  `orbwise/…` branch instead of creating a second one named after the changed chat title.
+- **sudo failed silently in the cage** (e.g. installing a package via `yay`): the cage forbids it; Auto no longer
+  cages, yay/paru get the password dialog, and a package manager without `sudo` gets a hint.
+- **`curl -A "$UA" …` was flagged as "reads credentials"** – curl options are no longer taken for file names.
+- **Reload kept only the last 40 messages** – the whole chat is shown again.
+- **Live thinking slid out of view:** when the model thought again after text or a tool, the open thinking block sat
+  above it; now it stays at the bottom while thinking and moves back to the top when collapsed.
+- **Activity panel showed no tools** (same cause as "New chat": the failing UI update).
+- **"New chat" did nothing** (and other buttons stopped updating the page): a hint in the Auto menu shared a CSS
+  class with the thinking menu, which removed it – every later UI update failed. Chat switches right after an answer
+  now also wait for the clean-up (journal, search index) instead of being refused.
+- **Auto mode seemed ignored in the same chat:** after a web page, e-mail, PDF or image, everything that changes
+  something asks – in every auto mode, as long as that content is in the chat. The card now says so clearly and offers
+  **Allow + stop asking in this chat** (asks again when new outside content arrives).
+- **Switching the sandbox off and on within a chat:** the model kept using absolute paths of the previous place from
+  the conversation and wrote into the real project. Paths now follow the switch – with the sandbox on, paths in the
+  real project (file tools, `workdir`, `cd …` in shell commands) point to the working copy; after switching it off,
+  paths of the old copy point to the project. The next message tells the model about the switch, and a leftover of an
+  old copy without `.git` is replaced by a fresh one.
+- **Sandbox asked for every file in Next.js-style projects:** paths with `[ ]`/`{ }` (`app/forms/[id]/page.tsx`)
+  counted as glob patterns and therefore as “maybe outside”; file tools now check them literally (also in the auto
+  modes without sandbox). A file really outside the working copy says so in the prompt.
+- **A cut-off tool call broke the chat for good:** the truncated arguments were stored as a raw string and sent back
+  with every request, so llama-server answered 500 until a new chat was started. Truncated arguments never enter the
+  history any more – a cut-off `write` is saved up to its last complete line and the model continues with
+  `append=true`, other calls are retried; arguments that are not valid JSON (older chats) are sent as `{}`, so
+  affected chats work again. Coding mode keeps a quarter of the window (up to 16k tokens) free for output, so a
+  whole file fits more often.
+- Cut-off tool calls: errors llama-server sends as `error:` lines in the stream are recognised too, and the retry
+  always makes room first.
+- A tool call cut off mid-way (e.g. a huge file in one `write`, until the output/context limit) ended the answer with
+  llama-server's 500 “Failed to parse tool call arguments”: Orbwise now retries the step once with a hint – only for
+  that request, not stored – to write large files in parts; `write` got `append=true` for that, and the coding
+  prompt suggests it for files over ~250 lines. A second failure shows a clear message instead of the raw error.
+- Chat did not always follow while generating (e.g. when the thinking block opened): every change in the chat now
+  keeps it at the bottom unless you scroll up yourself (scrolling back down follows again); following scrolls
+  instantly instead of the CSS smooth animation, which lagged behind and broke off while streaming.
+- Building the sandbox image failed when the host had no usable `/dev/net/tun` (pasta: “No such device”): the build
+  now uses the host network (only apt-get for the own Containerfile), and errors naming `/dev/net/tun` explain the
+  usual cause (kernel update without reboot → reboot or `sudo modprobe tun`; meanwhile “Network: off” works).
+- `screenshot` reported only “no image”, so the model guessed a reason (e.g. TUN from an earlier Docker attempt):
+  it now checks first whether a server answers at the URL (otherwise: start it with `background=true`, or pass the
+  HTML file path), passes on Chromium's own error, and avoids the common renderer crash in containers
+  (`--disable-dev-shm-usage`); a refused connection no longer yields a screenshot of Chrome's error page.
+- Sandbox with Podman installed showed Docker's “failed to connect to the docker API”: when Podman is not usable its
+  reason now comes first, with a fix for common causes (missing subuid ranges, timeout on first start, missing
+  `XDG_RUNTIME_DIR` when run as a service – now set automatically); `podman info` may take up to 60 s, failures are
+  only cached for 15 s.
+- **Sandbox escape via git:** Orbwise ran git on the host inside the working copy's `.git`, which the container can
+  write – a hook or `core.fsmonitor` placed by the agent would have run on the host (with the GitHub token in the
+  environment during a push), and a rewritten `origin` would have received the token. Commits now run in the
+  container, pushes go through a fresh repository to the remote remembered when the copy was made, branch and repo
+  are read without git. Host writes into the copy no longer follow a symlink swapped in by the container.
+- Auto mode no longer asks for `ps -o user` / `ps -C name` (option values were taken for the BSD `e` modifier) and
+  for reading `/etc/passwd` (world-readable, no passwords).
+- **Read-only shell commands with awk asked for confirmation:** an awk program like `'{print $2}'` was checked as
+  if it were a file name (and flagged as "reads credentials"), and awk had no read-only rule. Programs and search
+  patterns of awk, grep, rg and sed are no longer treated as files, and awk without `system()`, pipes, output
+  redirection, `getline` or program files counts as read-only.
+- **Prewarming while typing was wasted with thinking on:** it always warmed up the prompt *without* thinking, but chat
+  templates render a different prompt start with thinking enabled – the question afterwards read everything again
+  (a new chat: ~14k tokens of system prompt and tools). Prewarming now uses the thinking mode (and level) of the next
+  question; toggling the thinking button warms up the new variant, and the activity names "thinking mode changed"
+  as the reason instead of "server".
+- **Long chats fell out of the model server's cache:** the RAM prompt cache (`--cache-ram`) was capped at 4 GB, and
+  llama-server does not store a chat state larger than that – after a daily summary, a Telegram message or a chat
+  switch a 40–60k-token chat on a 27B model was read in full again. The cache is now sized for about two full chats
+  of the loaded model (at most 25 % of RAM, never less than before). After daily summaries the open chat is read in
+  again even if a summary failed or came out empty.
+- **Daily summaries no longer repeat:** whether a day needs a (new) summary now depends on the journal's content,
+  not its file time. A journal with a file time in the future (backup, sync) made Orbwise summarise the same day
+  every 5 minutes, each time pushing the chat out of the prompt cache.
+
+## [0.2.0] – 2026-10-24
 
 ### Added
-- **Goal mode (`/goal <goal>`):** works on a goal without "continue" – no step limit per answer, finished only when
-  the model reports `[GOAL REACHED]` (otherwise it is nudged to carry on), `[QUESTION]` waits for you; chip with the
-  goal and step count above the input, `/goal stop`, limits `coding.goal_max_steps`/`goal_max_minutes`.
-- **Leaving a sandbox chat asks first:** with changes not yet applied, a new chat, another chat, a mode switch, a
-  project change, cloning or deleting the chat offers *Apply and continue*, *Continue without applying* (they stay in
-  that chat) or *Cancel*; deleting a chat with a sandbox warns that the working copy goes with it.
-- **Docker in the sandbox (opt-in per chat, rootless Podman only):** build and run Docker projects inside the
-  sandbox – nested rootless Podman as an unprivileged user behind `docker`/`docker compose`, with only `/dev/fuse` and
-  `/dev/net/tun` added (no `--privileged`, no `CAP_SYS_ADMIN`, `no-new-privileges` kept); a self-test runs on
-  switching it on and falls back to a bundled seccomp profile only if needed. Published ports work with `screenshot`.
-  Image `orbwise-sandbox:3`; older sandboxes switch to it when Docker is turned on.
-- **Screenshots in coding mode:** new tool `screenshot` renders a page (dev server on localhost, HTML file) with
-  headless Chromium – inside the sandbox container (image `orbwise-sandbox:2` now ships Chromium) or with the
-  browser on the machine – and shows it under the answer, also after reloading; models that see images get a
-  description back. Screenshots of foreign web pages count as untrusted content.
-- **Clone from GitHub with a branch:** click a repo to pick its branch; `github_clone` takes `branch`, an existing
-  folder is switched to it.
-- **Skills:** every integration and built-in ability can be set up and switched without editing `config.yaml` –
-  in the installer (pick by number, enter details, connection tested right away), under **Settings → Skills** in the
-  web UI (state, on/off switch, form with help per field, *Test connection*, changes apply at once; Telegram finds
-  its chat ID after `/start`) and with `orbwise skills [setup|enable|disable]`. The installer's Brave question is
-  now part of the skill selection.
-- **Credentials in the keyring:** tokens, passwords and API keys go to the session keyring (Secret Service via the
-  new `keyring` dependency), without one to `~/.config/orbwise/secrets.json` (0600). Plain-text credentials in
-  `config.yaml` are moved there on start (backup `config.yaml.bak`, comments kept). `orbwise doctor` shows where they
-  live and warns about leftovers. There is no `.env`; `$ORBWISE_…` variables still work as a fallback.
-- **Coding sandbox (like Claude on the web):** a working copy of the project on its own branch, the agent's
-  commands run in a Podman/Docker container (no credentials inside, limits, network on/off per chat, stops when
-  idle). Shell and file changes in the copy run without asking; **View changes** with diffs, **Apply to project**
-  with conflict check, **End sandbox**. Default image `orbwise-sandbox:1` is built on first use (`sandbox.*`).
-- **Tables in answers:** Markdown tables (with column alignment) are shown as real tables; also *italic*,
-  ~~strikethrough~~, quotes and horizontal rules.
-- **No more browser pop-ups:** all questions (delete, confirm, feedback text, project folder) appear as Orbwise's
-  own dialog; the project folder dialog lets you click through the folders.
-- **Project chip shows repo and branch:** `owner/repo` and the current branch (in the sandbox the `orbwise/…` branch
-  of the working copy), updated after every answer.
-- **GitHub:** sign in via `gh` or a token; clone your repos from the project chip, push the branch (sandbox menu or
-  `github_push`, always asks) with a link to create the pull request. The token never lands in `.git/config`.
 - **Coding mode like OpenCode 2:** the coding agent gets its own tools – `read` (line numbers, folders, PDFs, nested
   `AGENTS.md`), `edit` (exact replace that forgives curly quotes, dashes and wrong indentation, strips copied line
   numbers, keeps CRLF, refuses stale files, returns a diff), `write`, `grep` (ripgrep with matching lines), `glob`,
@@ -349,10 +353,6 @@ All notable changes to this project are documented here. The format follows
   llama.cpp server, unloads Ollama) while the model stays selected; the next question or API request loads it
   again (prompt-cache warming does not), and an unloaded model stays unloaded across a restart. The selected model
   can now be deleted: Orbwise unloads it and selects another one without loading it.
-- **Brave quota in the activity panel:** the quota Brave reports with every answer
-  (`X-RateLimit-*`) is kept – Orbwise does not count itself; a tile shows used / limit / remaining / reset date (orange from 80 %, a notice below
-  10 %), `orbwise doctor` prints it, and a used-up quota is not queried again until it resets (with
-  `search_fallback` the result pages are used instead).
 - **Why was it read again?** Every model request is compared with the previous one; when more than 5,000 tokens had
   to be read again, the answer's stats line and the activity name the reason (tool list changed, old results hidden,
   summary, other chat/model, edited message, server lost the cache – restart, image mode, API use or hybrid model
@@ -428,65 +428,69 @@ All notable changes to this project are documented here. The format follows
   start (code word), and whether an oversized prompt is rejected instead of silently cut. Uses its own messages –
   the open chat stays untouched.
 
+### Changed
+- **Coding permissions:** from the auto level *Read + edit files* on, files inside the project folder are changed without
+  asking (also outside `$HOME` and in hidden folders like `.github`; never `.git/`, credentials or as root); files
+  outside the project ask.
+- **Activity panel:** steps are grouped under the question (or routine / Telegram run) that caused them, with readable
+  names and an icon ("Web search · linux 6.18 release notes" instead of `web_search query=…`), a spinner while running
+  and a check mark with the duration or a cross when done. Clicking a step shows the raw call and its output. Reading
+  the chat into the prompt cache is now a single quiet note above the list instead of a row per question.
+- **Redesign:** a warm, calm look in **light, dark or system** (Settings → General → Appearance) with a petrol
+  accent; headings and answers in a serif reading font (Newsreader), controls in Inter – both bundled under the SIL
+  Open Font License. The composer has the text on top and the switches below; the user's message sits in a soft bubble,
+  the answer reads as plain text. The orb is now three fine rings around a dot (same states, running tools as dots, the
+  context as an outer arc) instead of the glowing neural network. **Planner and Memory open as large windows** like the
+  model page, with their cards side by side.
+- **Confirmations in the chat:** a request for approval now appears as a card below the last message (title, command,
+  reason, Cancel/Run; Enter/Esc and "yes"/"no" by voice as before; mail fields editable in the card) instead of a
+  dialog over the whole page. The sidebar shows the product name **Orbwise**.
+- **Think menu follows the model:** levels (Brief/Normal/Thorough) only for models with real levels (gpt-oss), plain
+  on/off for the others, greyed out for models that cannot think – read from the chat template or Ollama's
+  capabilities. "On" no longer invents a level or a token budget.
+- **One setting for all windows:** the server keeps *Think* and the auto mode and sends them to every window (phone
+  and PC no longer overwrite each other silently); Telegram and routines use the same values.
+- **Calmer interface:** one scale for font sizes, corner radii and colours; normal capitalisation instead of
+  ALL-CAPS buttons and tags; SVG icons instead of emoji; less glow and shorter help texts; monospace only for code,
+  paths and numbers.
+- **Brave tile shows Brave's numbers:** instead of Orbwise's own request count, the tile shows the usage Brave reports
+  (used / limit / left / reset) on plans with a monthly quota; on credit plans – where Brave reports no usage and has
+  no balance API – it links to the Brave dashboard. `orbwise doctor` says the same.
+- **Thoughts in the chat:** in thinking mode the reasoning now streams directly into Orbwise's answer and collapses
+  as soon as the model answers or calls a tool ("Thoughts · 12 s"), instead of a bubble next to the orb with zoom.
+- **Tidier model page:** a *Performance* section (prompt speed, find the fastest setting) follows the context window;
+  KV cache, manual batch size and speculative decoding moved under a collapsed *Advanced* section (only for
+  llama.cpp models where they apply), and the explanations show one sentence with **More** for the rest.
+- **Code structure:** `agent.py` is split into focused parts – `agent_compact.py` (making room, summarising),
+  `agent_tools.py` (which tools go along), `agent_safety.py` (approvals, foreign content, leak guard) and
+  `agent_speed.py` (prompt speed, prewarming); the model endpoints moved from `server.py` into `api_models.py`, with one helper for "restart the
+  loaded model with a new option" instead of four copies; unused constants removed.
+- **state.json is written safely:** all model profiles and settings go through one module that writes atomically
+  (temporary file + rename) under a lock – a crash while saving can no longer leave a half-written file, and two
+  changes at the same time (a download finishing while you change a setting) no longer overwrite each other.
+- **Fewer full re-reads in big windows:** from 32k on all tools go along from the start (if they take ≤ 25 % of the
+  budget and < 60 s to read) instead of growing mid-chat, which re-read the whole chat; the step-limit summary keeps
+  the tool list as well.
+- **Auto mode after foreign content:** after a web page, e-mail, PDF or image, reading tools (web search,
+  `fetch_url`, reading and listing files, recall, calendar/notes/Home Assistant/Portainer lookups) no longer ask –
+  only actions that change or start something do; the data-leak guard still checks what goes out.
+
+### Removed
+- **Piper speech output:** replaced by Pocket TTS – the Piper voice catalogue, voice uploads, `voice.tts_voice` /
+  `voice.tts_length_scale` and the `piper-tts` dependency are gone. Downloaded Piper voices in
+  `~/.local/share/orbwise/voices/` are deleted on the first start. Without Pocket TTS the browser speaks.
+- **Strata engine:** the experimental Strata integration for Qwen3.8-Flash-Next is gone again – the dense
+  Qwen3.8-27B on llama.cpp answered better, and loading froze AMD desktops. On the first start Orbwise removes Strata
+  profiles from `state.json`, stops a running Strata server and deletes the model (`~/models/strata`) and the engine it
+  installed (`~/.local/share/strata`).
+- **Bonsai setup:** `orbwise model add bonsai`/`bonsai-kompakt`, the PrismML fork with its own launcher and the
+  `BONSAI_*` settings are gone; GGUF models from Hugging Face run on Orbwise's own llama.cpp. Bonsai profiles are
+  removed on the first start; `~/bonsai` stays and can be deleted by hand. The prompt-cache options
+  (`--ctx-checkpoints`, `--cache-ram`, `--cache-idle-slots`) still apply to every llama-server Orbwise starts.
+- **Ollama → llama.cpp conversion** ("Reload with llama.cpp" for old `hf.co/…` Ollama models): such models simply stay
+  Ollama models; new Hugging Face downloads always run on llama.cpp.
+
 ### Fixed
-- **Switching the sandbox off and on within a chat:** the model kept using absolute paths of the previous place from
-  the conversation and wrote into the real project. Paths now follow the switch – with the sandbox on, paths in the
-  real project (file tools, `workdir`, `cd …` in shell commands) point to the working copy; after switching it off,
-  paths of the old copy point to the project. The next message tells the model about the switch, and a leftover of an
-  old copy without `.git` is replaced by a fresh one.
-- **Sandbox asked for every file in Next.js-style projects:** paths with `[ ]`/`{ }` (`app/forms/[id]/page.tsx`)
-  counted as glob patterns and therefore as “maybe outside”; file tools now check them literally (also in the auto
-  modes without sandbox). A file really outside the working copy says so in the prompt.
-- **A cut-off tool call broke the chat for good:** the truncated arguments were stored as a raw string and sent back
-  with every request, so llama-server answered 500 until a new chat was started. Truncated arguments never enter the
-  history any more – a cut-off `write` is saved up to its last complete line and the model continues with
-  `append=true`, other calls are retried; arguments that are not valid JSON (older chats) are sent as `{}`, so
-  affected chats work again. Coding mode keeps a quarter of the window (up to 16k tokens) free for output, so a
-  whole file fits more often.
-- Cut-off tool calls: errors llama-server sends as `error:` lines in the stream are recognised too, and the retry
-  always makes room first.
-- A tool call cut off mid-way (e.g. a huge file in one `write`, until the output/context limit) ended the answer with
-  llama-server's 500 “Failed to parse tool call arguments”: Orbwise now retries the step once with a hint – only for
-  that request, not stored – to write large files in parts; `write` got `append=true` for that, and the coding
-  prompt suggests it for files over ~250 lines. A second failure shows a clear message instead of the raw error.
-- Chat did not always follow while generating (e.g. when the thinking block opened): every change in the chat now
-  keeps it at the bottom unless you scroll up yourself (scrolling back down follows again); following scrolls
-  instantly instead of the CSS smooth animation, which lagged behind and broke off while streaming.
-- Building the sandbox image failed when the host had no usable `/dev/net/tun` (pasta: “No such device”): the build
-  now uses the host network (only apt-get for the own Containerfile), and errors naming `/dev/net/tun` explain the
-  usual cause (kernel update without reboot → reboot or `sudo modprobe tun`; meanwhile “Network: off” works).
-- `screenshot` reported only “no image”, so the model guessed a reason (e.g. TUN from an earlier Docker attempt):
-  it now checks first whether a server answers at the URL (otherwise: start it with `background=true`, or pass the
-  HTML file path), passes on Chromium's own error, and avoids the common renderer crash in containers
-  (`--disable-dev-shm-usage`); a refused connection no longer yields a screenshot of Chrome's error page.
-- Sandbox with Podman installed showed Docker's “failed to connect to the docker API”: when Podman is not usable its
-  reason now comes first, with a fix for common causes (missing subuid ranges, timeout on first start, missing
-  `XDG_RUNTIME_DIR` when run as a service – now set automatically); `podman info` may take up to 60 s, failures are
-  only cached for 15 s.
-- **Sandbox escape via git:** Orbwise ran git on the host inside the working copy's `.git`, which the container can
-  write – a hook or `core.fsmonitor` placed by the agent would have run on the host (with the GitHub token in the
-  environment during a push), and a rewritten `origin` would have received the token. Commits now run in the
-  container, pushes go through a fresh repository to the remote remembered when the copy was made, branch and repo
-  are read without git. Host writes into the copy no longer follow a symlink swapped in by the container.
-- Auto mode no longer asks for `ps -o user` / `ps -C name` (option values were taken for the BSD `e` modifier) and
-  for reading `/etc/passwd` (world-readable, no passwords).
-- **Read-only shell commands with awk asked for confirmation:** an awk program like `'{print $2}'` was checked as
-  if it were a file name (and flagged as "reads credentials"), and awk had no read-only rule. Programs and search
-  patterns of awk, grep, rg and sed are no longer treated as files, and awk without `system()`, pipes, output
-  redirection, `getline` or program files counts as read-only.
-- **Prewarming while typing was wasted with thinking on:** it always warmed up the prompt *without* thinking, but chat
-  templates render a different prompt start with thinking enabled – the question afterwards read everything again
-  (a new chat: ~14k tokens of system prompt and tools). Prewarming now uses the thinking mode (and level) of the next
-  question; toggling the thinking button warms up the new variant, and the activity names "thinking mode changed"
-  as the reason instead of "server".
-- **Long chats fell out of the model server's cache:** the RAM prompt cache (`--cache-ram`) was capped at 4 GB, and
-  llama-server does not store a chat state larger than that – after a daily summary, a Telegram message or a chat
-  switch a 40–60k-token chat on a 27B model was read in full again. The cache is now sized for about two full chats
-  of the loaded model (at most 25 % of RAM, never less than before). After daily summaries the open chat is read in
-  again even if a summary failed or came out empty.
-- **Daily summaries no longer repeat:** whether a day needs a (new) summary now depends on the journal's content,
-  not its file time. A journal with a file time in the future (backup, sync) made Orbwise summarise the same day
-  every 5 minutes, each time pushing the chat out of the prompt cache.
 - **Auto mode as root:** when Orbwise runs as root, *Read + edit files* and *Auto* no longer approve system changes as
   "without root" – they ask, and `orbwise doctor` warns.
 - **Cache numbers for one-token requests:** llama-server sometimes omits the generation speed when only one token is
@@ -616,8 +620,6 @@ All notable changes to this project are documented here. The format follows
   default `qwen2.5vl:7b`, Ollama or OpenAI-compatible) and answers; also for image files and photos from Telegram.
   Screenshots are deleted afterwards, screen content counts as untrusted (like e-mails), an eye symbol shows at the
   orb, `orbwise doctor` checks the model and the screenshot program.
-
-### Fixed
 - The chat list in the sidebar stayed empty after starting Orbwise until *New chat* was clicked.
 - The context tile showed a moving limit (e.g. "9k/8k", later "11k/9k"): it divided an estimate by a budget that
   changed with the thinking reserve and the learned token estimate. It now shows real tokens (from the model server
