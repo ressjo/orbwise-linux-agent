@@ -91,4 +91,4 @@ def test_context_event_reports_cache_and_condensed(cfg, memory, llm):
     ctx = [e for e in events if e["type"] == "context"][-1]
     assert ctx["real"] == 900 and ctx["cached"] == 850 and ctx["summarized"] is True
     assert ctx["compact_at"] < ctx["window"] and agent.last_context["real"] == 900
-    assert datetime.now().strftime("%H:") in agent._turn_time
+    assert datetime.now().strftime("%H:") in agent._turn_stamp  # Uhrzeit der Anfrage für die Kontext-Notiz
