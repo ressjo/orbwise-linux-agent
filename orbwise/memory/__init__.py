@@ -89,12 +89,6 @@ class Memory:
             marker.parent.mkdir(parents=True, exist_ok=True)
             marker.write_text(project + "\n", encoding="utf-8")
 
-    def project_name(self, pid: str) -> str:
-        try:
-            return (self.project_dir(pid) / "project.txt").read_text(encoding="utf-8").strip()
-        except OSError:
-            return ""
-
     def facts_of(self, pid: str | None) -> Facts:
         if pid is None:
             return self.facts

@@ -133,7 +133,6 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
         self._budget_scale = 1.0  # < 1, wenn der Server „Kontext zu klein“ gemeldet hat
         # Verhältnis echte/geschätzte Prompt-Token je Modellprofil (lernt aus den Zahlen des Servers)
         self._token_ratio: dict[str, float] = {}
-        self._turn_time = ""  # Uhrzeit der aktuellen Anfrage
         self._turn_stamp = ""  # Datum + Uhrzeit für die Kontext-Notiz der aktuellen Anfrage
         self._turn_memories = ""  # zur aktuellen Anfrage gefundene Erinnerungen
         self._turn_open = False  # läuft gerade eine Anfrage (deren Notiz noch eingefroren werden darf)?
@@ -607,7 +606,6 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
 
     async def _run(self, user_text: str, emit: Emit, confirm: Confirm, images: list[str] | None = None) -> str:
         now = datetime.now()
-        self._turn_time = now.strftime("%H:%M")
         self._turn_stamp = prompts.note_stamp(self.cfg, now)
         conv = self.memory.conversation
         # Steht noch Mail-Text (oder ein angehängtes PDF) im Prompt, kann er auch in späteren Anfragen wirken – dann

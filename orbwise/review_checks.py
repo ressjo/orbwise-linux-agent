@@ -31,7 +31,6 @@ LABELS = {
 }
 # Diese Prüfungen betreffen Sicherheit – ihre Funde gehen an den Sicherheits-Durchgang
 SECURITY = {"bandit", "gitleaks", "semgrep"}
-HIGH = {"pytest", "npm-test", "make-test", "cargo-test", "go-test", "gitleaks", "tsc", "npm-typecheck"}
 
 
 def label(name: str, en: bool = False) -> str:
