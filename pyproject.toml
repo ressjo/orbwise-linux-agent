@@ -1,6 +1,6 @@
 [project]
 name = "orbwise"
-version = "0.1.0"
+version = "0.3.0"
 description = "Orbwise – a local, voice-controlled AI assistant for Linux: Ollama/llama.cpp, persistent memory, tool use and an animated web UI"
 readme = "README.md"
 requires-python = ">=3.11"
