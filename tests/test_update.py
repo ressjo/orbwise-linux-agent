@@ -138,7 +138,7 @@ def test_shutdown_endpoint_ends_the_own_process(cfg, monkeypatch):
     monkeypatch.setenv("ORBWISE_FAKE_LLM", "1")
     monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
     killed = []
-    monkeypatch.setattr(server.os, "kill", lambda pid, sig: killed.append((pid, sig)))
+    monkeypatch.setattr(os, "kill", lambda pid, sig: killed.append((pid, sig)))
     with TestClient(server.create_app(cfg), base_url="http://localhost:8765") as client:
         assert client.post("/api/shutdown", headers={"Origin": "http://evil.example"}).status_code == 403
         assert client.post("/api/shutdown").json() == {"ok": True}

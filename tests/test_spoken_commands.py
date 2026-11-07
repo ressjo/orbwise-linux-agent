@@ -2,7 +2,7 @@
 
 import asyncio
 
-from orbwise.server import Hub, spoken_confirm
+from orbwise.hub import Hub, spoken_confirm
 from orbwise.voice.tts import SentenceSplitter, clean_for_speech
 
 

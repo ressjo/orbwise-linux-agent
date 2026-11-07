@@ -1,7 +1,8 @@
-from orbwise.server import check_host, parse_yes_no
+from orbwise.hub import parse_yes_no
 from orbwise.tools.apps import App, match_app
 from orbwise.tools.registry import coerce_args, get_tool, load_all_tools
 from orbwise.voice.tts import SentenceSplitter, clean_for_speech
+from orbwise.webapp.security import check_host
 
 
 def test_schemas_valid():
