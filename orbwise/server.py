@@ -1194,10 +1194,13 @@ def create_app(cfg: Config) -> FastAPI:
         """Vom Askpass-Helfer (sudo -A) aufgerufen – nur mit gültigem Einmal-Token."""
         token = request.headers.get("x-orbwise-askpass", "")
         try:
-            prompt = str((await request.json()).get("prompt", ""))[:200]
-        except ValueError:
-            prompt = ""
-        password = await broker.request(token, prompt)
+            body = await request.json()
+            prompt, inner = str(body.get("prompt", ""))[:200], str(body.get("sudo_command", ""))[:300]
+        except (ValueError, AttributeError):
+            prompt = inner = ""
+        client_port = request.client.port if request.client else None
+        password = await broker.request(token, prompt, inner, caller=lambda: askpass.caller_is_sudo_helper(
+            client_port, cfg.port, broker.helper))
         if password is None:
             return JSONResponse({"error": "abgelehnt"}, status_code=403)
         return JSONResponse({"password": password}, headers={"Cache-Control": "no-store"})

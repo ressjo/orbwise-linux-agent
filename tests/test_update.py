@@ -260,3 +260,52 @@ def test_restart_self_starts_again_once_the_port_is_free(tmp_path, monkeypatch):
             break
         time.sleep(0.1)
     assert marker.read_text().strip() == "serve"
+
+
+# ---------------------------------------------------------------- Versionsnummer und Branch, dem das Update folgt
+
+def test_version_number_comes_from_the_package(repos):
+    _, clone = repos
+    (clone / "orbwise").mkdir()
+    (clone / "orbwise" / "__init__.py").write_text('"""x"""\n\n__version__ = "0.3.0"\n')
+    (clone / "pyproject.toml").write_text('[project]\nname = "orbwise"\nversion = "0.1.0"\n')  # alter Rest: zählt nicht
+    assert upd.package_version(clone) == "0.3.0" and upd.details(clone)["version"] == "0.3.0"
+    assert upd.version(clone).startswith("0.3.0 · ") and "Erster Stand" in upd.version(clone)
+    from orbwise import __version__
+    assert upd.package_version(ROOT) == __version__  # dieser Checkout
+
+
+def test_update_switches_from_a_branch_that_is_gone(repos):
+    """Der ausgecheckte Branch existiert auf dem Server nicht mehr (Hauptbranch umbenannt): das Update wechselt auf den
+    neuen Hauptbranch, statt für immer „aktuell“ auf dem alten Stand zu bleiben."""
+    origin, clone = repos
+    git(origin, "branch", "-m", "main", "stable")
+    (origin / "a.txt").write_text("2")
+    git(origin, "commit", "-qam", "Version 0.3.0")
+    info = upd.check(clone)
+    assert info["target"] == "stable" and info["behind"] == 1 and info["can_update"]
+    out = []
+    assert upd.update(clone, runner=fake_runner([]), out=out.append) == 0
+    assert (clone / "a.txt").read_text() == "2" and upd.details(clone)["branch"] == "stable"
+    assert any("wechsle auf stable" in line for line in out)
+
+
+def test_update_leaves_merged_branch_for_the_main_one(repos):
+    origin, clone = repos
+    git(clone, "checkout", "-q", "-b", "alt")
+    git(clone, "push", "-q", "origin", "alt")  # gibt es noch auf dem Server, ist aber längst im Hauptbranch
+    (origin / "a.txt").write_text("2")
+    git(origin, "commit", "-qam", "Neu auf main")
+    assert upd.update(clone, runner=fake_runner([]), out=lambda s: None) == 0
+    assert upd.details(clone)["branch"] == "main" and (clone / "a.txt").read_text() == "2"
+
+
+def test_update_keeps_a_branch_with_own_commits(repos):
+    origin, clone = repos
+    git(clone, "checkout", "-q", "-b", "eigen")
+    (clone / "b.txt").write_text("meins")
+    git(clone, "add", "b.txt")
+    git(clone, "commit", "-qm", "Eigene Arbeit")
+    git(clone, "push", "-q", "origin", "eigen")
+    assert upd.target_branch(clone, "eigen") == "eigen"
+    assert upd.check(clone)["target"] == "eigen"

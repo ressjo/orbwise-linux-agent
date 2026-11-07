@@ -639,10 +639,6 @@ def attachment_note(cfg, paths: list[str], can_look: bool) -> str:
             "aktuellen Modell keine Bilder sehen kannst]")
 
 
-def strip_think_text(text: str) -> str:
-    return re.sub(r"<think>.*?</think>", "", text, flags=re.S)
-
-
 def hints(cfg, tools: set[str]) -> str:
     """Hinweise zu den geladenen Werkzeugen (tools: Namen)."""
     h = HINTS[lang_of(cfg)]

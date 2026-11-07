@@ -93,6 +93,21 @@ async def run(ctx: ToolContext, cmd: str | list[str], timeout: float, stream: bo
     return await _run(ctx, cmd, timeout, stream, cwd, {}, started)
 
 
+async def run_user_shell(ctx: ToolContext, command: str, timeout: float, cwd: str | None = None) -> tuple[int | None, str]:
+    """Ein Shell-Befehl, den das Modell formuliert hat (run_shell, shell, nach „ohne Isolation ausführen“). Ruft er
+    sudo nicht selbst auf, sondern ein Skript, Makefile oder Unterprogramm tut es, fragt sudo trotzdem über den
+    Passwortdialog: der Orbwise-sudo-Wrapper liegt vorn im PATH und hängt -A an. Ein gemerktes Passwort gilt dafür
+    nie – der Dialog erscheint jedes Mal und zeigt, was wirklich Root bekommt."""
+    from ..askpass import BROKER, privileged_env, wrapper_dir
+    folder = wrapper_dir(BROKER.helper) if BROKER is not None and BROKER.ready() else None
+    if folder is None or _ASKPASS_RE.search(command):  # sichtbares sudo -A: wie bisher (siehe run)
+        return await run(ctx, command, timeout, cwd=cwd)
+    with privileged_env(command, use_cache=False, implicit=True) as extra:
+        if extra:
+            extra = {**extra, "PATH": f"{folder}{os.pathsep}{os.environ.get('PATH', '')}"}
+        return await _run(ctx, command, timeout, True, cwd, extra)
+
+
 async def _run(ctx: ToolContext, cmd: str | list[str], timeout: float, stream: bool, cwd: str | None,
                extra_env: dict, started=None) -> tuple[int | None, str]:
     env = {**os.environ, **QUIET_ENV, **extra_env}

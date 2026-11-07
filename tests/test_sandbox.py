@@ -517,8 +517,8 @@ def test_containers_add_only_minimal_rights(cfg):
     assert "/dev/net/tun" not in " ".join(plain) and not any(a.startswith("seccomp=") for a in argv)
     tight = sandbox.run_argv("/usr/bin/podman", cfg, "orbwise-x", "/w", True, "img:3", containers=True, seccomp=True)
     assert f"seccomp={sandbox.SECCOMP_NESTED}" in tight and sandbox.SECCOMP_NESTED.is_file()
-    assert sandbox.containers_allowed("/usr/bin/podman") == (os.geteuid() != 0)
-    assert not sandbox.containers_allowed("/usr/bin/docker") and not sandbox.containers_allowed(None)
+    assert (not sandbox.containers_blocked("/usr/bin/podman")) == (os.geteuid() != 0)
+    assert sandbox.containers_blocked("/usr/bin/docker") and sandbox.containers_blocked(None)
 
 
 @git_missing

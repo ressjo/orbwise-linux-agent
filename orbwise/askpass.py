@@ -29,7 +29,8 @@ import json, os, sys, urllib.request
 url, token = os.environ.get("ORBWISE_ASKPASS_URL"), os.environ.get("ORBWISE_ASKPASS_TOKEN")
 if not url or not token:
     sys.exit(1)
-req = urllib.request.Request(url, data=json.dumps({{"prompt": " ".join(sys.argv[1:])}}).encode(), method="POST",
+body = {{"prompt": " ".join(sys.argv[1:]), "sudo_command": os.environ.get("ORBWISE_SUDO_CMD", "")}}
+req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
                              headers={{"Content-Type": "application/json", "X-Orbwise-Askpass": token}})
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({{}}))  # nie über einen Proxy
 try:
@@ -39,6 +40,27 @@ except Exception:
     sys.exit(1)
 sys.stdout.write(password + "\\n")
 '''
+
+# Orbwise-sudo: liegt für Shell-Befehle des Modells vorn im PATH. Ruft ein Skript, Makefile oder Unterprogramm sudo
+# auf, fragt sudo damit über den Passwortdialog (-A) statt ohne Terminal zu scheitern – aber nur, solange Orbwise für
+# genau diesen Befehl ein Einmal-Token gesetzt hat. -n/-S/-A des Aufrufers bleiben, wie sie sind.
+WRAPPER_TEMPLATE = """#!/bin/sh
+if [ -n "$ORBWISE_ASKPASS_TOKEN" ]; then
+  ORBWISE_SUDO_CMD="$*"
+  export ORBWISE_SUDO_CMD
+  for arg in "$@"; do
+    case "$arg" in
+      --askpass|--non-interactive|--stdin) exec {sudo} "$@" ;;
+      --*) ;;
+      -*[nSA]*) exec {sudo} "$@" ;;
+      -*) ;;
+      *) break ;;
+    esac
+  done
+  exec {sudo} -A "$@"
+fi
+exec {sudo} "$@"
+"""
 
 MAX_USES = 3        # sudo fragt bei falschem Passwort bis zu dreimal
 WAIT_SECONDS = 150  # so lange wartet Orbwise auf die Eingabe
@@ -62,7 +84,61 @@ def write_helper(path: Path | None = None) -> Path:
     tmp.write_text(HELPER_TEMPLATE.format(python=sys.executable), encoding="utf-8")
     os.chmod(tmp, 0o700)
     tmp.replace(path)
+    write_wrapper(path.parent / "bin")
     return path
+
+
+def real_sudo(skip: Path | None = None) -> str | None:
+    """Das echte sudo im PATH (nicht der eigene Wrapper)."""
+    for folder in os.environ.get("PATH", "").split(os.pathsep):
+        if not folder or (skip is not None and Path(folder) == skip):
+            continue
+        candidate = os.path.join(folder, "sudo")
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
+def write_wrapper(folder: Path) -> Path | None:
+    """sudo-Wrapper (siehe WRAPPER_TEMPLATE) anlegen – ohne sudo auf dem Rechner keiner."""
+    sudo = real_sudo(folder)
+    target = folder / "sudo"
+    if not sudo:
+        target.unlink(missing_ok=True)
+        return None
+    import shlex
+    folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+    tmp = folder / "sudo.tmp"
+    tmp.write_text(WRAPPER_TEMPLATE.format(sudo=shlex.quote(sudo)), encoding="utf-8")
+    os.chmod(tmp, 0o700)
+    tmp.replace(target)
+    return target
+
+
+def wrapper_dir(helper: Path | None) -> Path | None:
+    """Ordner mit dem sudo-Wrapper neben dem Askpass-Helfer – None, wenn es keinen gibt."""
+    if helper is None:
+        return None
+    folder = helper.parent / "bin"
+    return folder if (folder / "sudo").exists() else None
+
+
+def caller_is_sudo_helper(client_port: int | None, server_port: int, helper: Path | None) -> bool | None:
+    """Fragt wirklich der Askpass-Helfer im Auftrag eines echten sudo? Der Prozess hinter der Verbindung muss der
+    Helfer sein und sein Elternprozess ein sudo, das als root läuft (setuid) – ein Skript, das das Einmal-Token aus
+    der Umgebung nimmt und selbst anfragt, bekäme sonst das eingetippte Passwort. None: nicht feststellbar."""
+    from . import procnet
+    if not client_port or helper is None:
+        return None
+    pid = procnet.socket_owner(client_port, server_port)
+    if pid is None:
+        return None
+    if str(helper) not in procnet.command_line(pid):
+        return False
+    parent = procnet.parent_pid(pid)
+    if parent is None:
+        return None
+    return procnet.process_name(parent) == "sudo" and procnet.effective_uid(parent) == 0
 
 
 class AskpassBroker:
@@ -123,7 +199,7 @@ class AskpassBroker:
         return bool(self.helper and self.helper.exists())
 
     @contextlib.contextmanager
-    def grant(self, command: str, use_cache: bool = True):
+    def grant(self, command: str, use_cache: bool = True, implicit: bool = False):
         """Umgebung für genau einen privilegierten Befehl; das Token verfällt danach. use_cache=False: das gemerkte
         Passwort gilt nicht – der Dialog erscheint auf jeden Fall (Auto-Modus: er ist dort die einzige Rückfrage)."""
         if not self.ready():
@@ -131,7 +207,7 @@ class AskpassBroker:
             return
         token = secrets.token_urlsafe(32)
         info = {"uses": 0, "command": command, "local": not REMOTE.get(), "from_cache": False, "candidate": None,
-                "no_cache": not use_cache}
+                "no_cache": not use_cache or implicit, "implicit": implicit}
         self.tokens[token] = info
         try:
             yield {"SUDO_ASKPASS": str(self.helper), "ORBWISE_ASKPASS_URL": self.url, "ORBWISE_ASKPASS_TOKEN": token}
@@ -189,8 +265,11 @@ class AskpassBroker:
                 return info
         return None
 
-    async def request(self, token: str, prompt: str = "") -> str | None:
-        """Vom Helfer aufgerufen. None = abgelehnt/abgebrochen."""
+    async def request(self, token: str, prompt: str = "", sudo_command: str = "",
+                      caller: Callable[[], bool | None] | None = None) -> str | None:
+        """Vom Helfer aufgerufen. None = abgelehnt/abgebrochen. caller prüft, ob wirklich der Helfer im Auftrag von
+        sudo fragt (siehe caller_is_sudo_helper) – ein klares Nein lehnt immer ab, „unklar“ nur bei sudo, das nicht
+        im Befehl stand (aus einem Skript heraus)."""
         info = self._check(token)
         if info is not None and "secret" in info:  # schon bekanntes Passwort (grant_secret)
             if info["uses"] >= info["max"]:
@@ -199,6 +278,10 @@ class AskpassBroker:
             return info["secret"]
         if info is None or info["uses"] >= MAX_USES:
             return None
+        if caller is not None:
+            verdict = await asyncio.to_thread(caller)
+            if verdict is False or (verdict is None and info.get("implicit")):
+                return None
         cached = self._cached[0] if info["local"] and not info.get("no_cache") and self.cached_until() else None
         if cached is not None and info["uses"] == 0:  # gemerktes Passwort, ohne erneut zu fragen
             info["uses"], info["from_cache"] = 1, True
@@ -214,7 +297,11 @@ class AskpassBroker:
         fut = asyncio.get_running_loop().create_future()
         self.pending[req_id] = fut
         retry = info["uses"] > (2 if info.get("cache_failed") else 1)
-        await self.notify({"type": "password_request", "id": req_id, "command": info["command"], "retry": retry,
+        command = info["command"]
+        inner = " ".join(sudo_command.split())[:300]
+        if inner and f"sudo -A {inner}" not in command and f"sudo {inner}" not in command:
+            command += f"\n→ sudo {inner}"  # sudo aus einem Skript heraus: was wirklich Root bekommt
+        await self.notify({"type": "password_request", "id": req_id, "command": command, "retry": retry,
                            "prompt": "Falsches Passwort – bitte erneut eingeben" if retry else "Root-Passwort (sudo)",
                            "remember": int(self.remember_seconds // 60) if info["local"] else 0})
         if self.say and not retry:
@@ -246,9 +333,9 @@ BROKER: AskpassBroker | None = None
 
 
 @contextlib.contextmanager
-def privileged_env(command: str, use_cache: bool = True):
+def privileged_env(command: str, use_cache: bool = True, implicit: bool = False):
     if BROKER is None:
         yield {}
     else:
-        with BROKER.grant(command, use_cache) as env:
+        with BROKER.grant(command, use_cache, implicit) as env:
             yield env

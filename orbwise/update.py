@@ -32,21 +32,33 @@ def _git(root: Path, *args: str, runner: Runner = subprocess.run, **kw) -> subpr
 
 
 def version(root: Path | None = None, runner: Runner = subprocess.run) -> str:
+    """Für Menschen: „0.3.0 · a1b2c3d Titel (07.11.2026)“ – ohne Git nur die Nummer."""
     root = root or project_root()
+    number = package_version(root)
     if not (root / ".git").exists() or not shutil.which("git"):
-        return T("unbekannt (kein Git-Checkout)", "unknown (not a git checkout)")
+        return number or T("unbekannt (kein Git-Checkout)", "unknown (not a git checkout)")
     r = _git(root, "log", "-1", "--format=%h %s (%cd)", "--date=format:%d.%m.%Y", runner=runner)
-    return r.stdout.strip() or T("unbekannt", "unknown")
+    commit = r.stdout.strip()
+    return " · ".join(p for p in (number, commit) if p) or T("unbekannt", "unknown")
+
+
+_VERSION_RE = re.compile(r'^__version__\s*=\s*"([^"]+)"', re.M)
 
 
 def package_version(root: Path | None = None) -> str:
-    """Versionsnummer aus pyproject.toml (z. B. 0.1.0)."""
-    try:
-        text = ((root or project_root()) / "pyproject.toml").read_text(encoding="utf-8")
-    except OSError:
-        return ""
-    m = re.search(r'^version\s*=\s*"([^"]+)"', text, re.M)
-    return m.group(1) if m else ""
+    """Versionsnummer (z. B. 0.3.0) – frisch von der Platte, damit sie nach einem git pull sofort stimmt. Quelle ist
+    orbwise/__init__.py (pyproject.toml liest sie von dort); ältere Stände hatten sie in pyproject.toml."""
+    root = root or project_root()
+    for path, pattern in ((root / "orbwise" / "__init__.py", _VERSION_RE),
+                          (root / "pyproject.toml", re.compile(r'^version\s*=\s*"([^"]+)"', re.M))):
+        try:
+            m = pattern.search(path.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        if m:
+            return m.group(1)
+    from . import __version__  # installiert ohne Quellordner
+    return __version__ if root == project_root() else ""
 
 
 def details(root: Path | None = None, runner: Runner = subprocess.run) -> dict:
@@ -67,6 +79,40 @@ def details(root: Path | None = None, runner: Runner = subprocess.run) -> dict:
 FETCH_ENV = {"GIT_TERMINAL_PROMPT": "0", "GIT_SSH_COMMAND": "ssh -o BatchMode=yes -o ConnectTimeout=10"}
 
 
+def remote_default(root: Path, runner: Runner = subprocess.run) -> str:
+    """Hauptbranch des Repos auf dem Server (origin/HEAD) – leer, wenn nicht feststellbar."""
+    try:
+        r = _git(root, "ls-remote", "--symref", "origin", "HEAD", runner=runner, timeout=45,
+                 env={**os.environ, **FETCH_ENV})
+    except subprocess.TimeoutExpired:
+        return ""
+    m = re.search(r"^ref: refs/heads/(\S+)\s+HEAD", r.stdout or "", re.M)
+    return m.group(1) if m else ""
+
+
+def target_branch(root: Path, branch: str, runner: Runner = subprocess.run) -> str:
+    """Welchem Branch folgt das Update? Dem ausgecheckten – außer er ist auf dem Server weg (umbenannt, gelöscht) oder
+    enthält nichts, was der Hauptbranch nicht schon hat (z. B. ein alter, längst gemergter Branch): dann dem
+    Hauptbranch. Sonst blieben Installationen für immer auf einem alten Stand stehen. Eigene, nicht gemergte Commits
+    bleiben, wo sie sind (dann gilt der ausgecheckte Branch weiter)."""
+    default = remote_default(root, runner)
+    if not default or default == branch:
+        return branch
+    try:
+        fetched = _git(root, "fetch", "--quiet", "origin", default, runner=runner, timeout=45,
+                       env={**os.environ, **FETCH_ENV})
+        heads = _git(root, "ls-remote", "--heads", "origin", branch, runner=runner, timeout=45,
+                     env={**os.environ, **FETCH_ENV})
+    except subprocess.TimeoutExpired:
+        return branch
+    if fetched.returncode != 0:
+        return branch
+    if heads.returncode == 0 and not heads.stdout.strip():
+        return default
+    merged = _git(root, "merge-base", "--is-ancestor", "HEAD", f"origin/{default}", runner=runner).returncode == 0
+    return default if merged else branch
+
+
 def check(root: Path | None = None, runner: Runner = subprocess.run, fetch: bool = True) -> dict:
     """Gibt es einen neueren Stand? → details + behind (Anzahl), changes (Commit-Titel), can_update, reason."""
     root = root or project_root()
@@ -79,6 +125,9 @@ def check(root: Path | None = None, runner: Runner = subprocess.run, fetch: bool
     if branch in ("", "HEAD"):
         info["reason"] = T("kein Branch ausgecheckt", "no branch checked out")
         return info
+    if fetch:
+        branch = target_branch(root, branch, runner)
+    info["target"] = branch
     if fetch:
         try:
             r = _git(root, "fetch", "--quiet", "origin", branch, runner=runner, timeout=45,
@@ -239,6 +288,18 @@ def update(root: Path | None = None, port: int = 8765, runner: Runner = subproce
     before = _git(root, "rev-parse", "HEAD", runner=runner).stdout.strip()
     branch = _git(root, "rev-parse", "--abbrev-ref", "HEAD", runner=runner).stdout.strip() or "HEAD"
     out(T("Aktueller Stand: ", "Current version: ") + version(root, runner))
+    target = target_branch(root, branch, runner) if branch != "HEAD" else branch
+    if target != branch:
+        out(T(f"Der Branch {branch} wird nicht mehr weitergeführt – wechsle auf {target} …",
+              f"Branch {branch} is no longer maintained – switching to {target} …"))
+        exists = _git(root, "rev-parse", "--verify", "--quiet", f"refs/heads/{target}", runner=runner).returncode == 0
+        switched = _git(root, "checkout", "-q", target, runner=runner) if exists else \
+            _git(root, "checkout", "-q", "-b", target, "--track", f"origin/{target}", runner=runner)
+        if switched.returncode != 0:
+            out(T("Wechsel fehlgeschlagen:", "Switching failed:"))
+            out((switched.stderr or switched.stdout).strip())
+            return 1
+        branch = target
     out(T("Hole Updates", "Fetching updates") + f" ({branch}) …")
     pulled = _git(root, "pull", "--ff-only", "origin", branch, runner=runner)
     if pulled.returncode != 0:

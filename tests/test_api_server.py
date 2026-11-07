@@ -102,7 +102,8 @@ def test_forwards_to_the_loaded_model(client):
                     json={"model": "irgendwas", "messages": [{"role": "user", "content": "Hi"}], "temperature": 0.2})
     assert r.status_code == 200 and r.json()["choices"][0]["message"]["content"] == "Hallo"
     assert r.json()["model"] == "local"
-    sent = FakeLlamaServer.seen[-1]
+    # die eigene Anfrage – nicht eine, die Orbwise nebenbei schickt (Vorwärmen o. Ä.)
+    sent = next(s for s in reversed(FakeLlamaServer.seen) if s.get("messages") == [{"role": "user", "content": "Hi"}])
     assert sent["path"] == "/v1/chat/completions" and sent["model"] == "m-local" and sent["temperature"] == 0.2
     assert sent["auth"] == "Bearer innen"  # der Schlüssel des Modell-Servers, nicht der des Programms
     assert sent["messages"] == [{"role": "user", "content": "Hi"}]  # roh: kein Systemprompt, kein Gedächtnis

@@ -157,7 +157,10 @@ orbwise update
 ```
 
 pulls the latest version (`git pull`), updates the Python dependencies and restarts a running Orbwise server –
-then just reload the browser page. `orbwise version` shows what is installed. Your **configuration**
+then just reload the browser page. `orbwise version` shows what is installed (`0.3.0 · commit title (date)`).
+Updates follow the repository's main branch: if the branch your installation sits on is gone on GitHub or holds
+nothing the main branch lacks, Orbwise switches to the main branch by itself; a branch with your own unmerged commits
+stays. Your **configuration**
 (`~/.config/orbwise/`), **voices** and **memory** (`~/.local/share/orbwise/`) live outside the project folder and
 are never touched by updates.
 
@@ -1249,8 +1252,12 @@ Orbwise can run commands on your system, so:
   in the dashboard. It works through `sudo -A` with a small helper that uses a one-time token for exactly that
   command; the password goes straight to sudo and is never written to disk, logged or shown to the model. With
   "remember" ticked it is kept in memory for 15 minutes (`tools.sudo_remember_minutes`) for requests at the
-  computer – not for Telegram or routines; Settings → Status shows it and can forget it. Alternatives:
-  `pkexec` (desktop polkit dialog) or `sudo` with a NOPASSWD rule.
+  computer – not for Telegram or routines; Settings → Status shows it and can forget it. If a script, Makefile or
+  other program the model runs calls `sudo` itself (`./install.sh`, `make install`), a small `sudo` wrapper in front
+  of the `PATH` routes it to the same dialog, which then also shows what really gets root
+  (`./install.sh → sudo pacman -S …`); a remembered password never applies there. The password is only handed to the
+  helper when the request really comes from it running under a root `sudo` – a script that grabbed the one-time token
+  and asks by itself gets nothing. Alternatives: `pkexec` (desktop polkit dialog) or `sudo` with a NOPASSWD rule.
 - **SSH logins** (NAS, servers): user name and password are asked in the dashboard for every new connection, handed
   to `ssh` through the same one-time-token helper and never stored, logged or shown to the model; remote commands
   are classified like local ones and remote `sudo` asks again.

@@ -153,10 +153,6 @@ def containers_blocked(binary: str | None) -> str:
     return ""
 
 
-def containers_allowed(binary: str | None) -> bool:
-    return not containers_blocked(binary)
-
-
 def run_argv(binary: str, cfg: Any, name: str, ws: str, network: bool, img: str, containers: bool = False,
              seccomp: bool = False) -> list[str]:
     sb = getattr(cfg, "sandbox", None)
