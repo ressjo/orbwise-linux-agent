@@ -18,6 +18,9 @@ import { init as skills } from "./js/skills.js";
 import { init as voice } from "./js/voice.js";
 import { init as telemetry } from "./js/telemetry.js";
 import { init as models } from "./js/models.js";
+import { init as model_detail } from "./js/model_detail.js";
+import { init as model_tuning } from "./js/model_tuning.js";
+import { init as model_add } from "./js/model_add.js";
 import { init as planner } from "./js/planner.js";
 import { init as history } from "./js/history.js";
 import { init as images } from "./js/images.js";
@@ -27,4 +30,4 @@ import { init as project } from "./js/project.js";
 import { init as reminders } from "./js/reminders.js";
 import { init as startup } from "./js/startup.js";
 
-for (const init of [core, audio, ws, chat, activity, coding, mic, password, attach, nav, skills, voice, telemetry, models, planner, history, images, update, modes, project, reminders, startup]) init();
+for (const init of [core, audio, ws, chat, activity, coding, mic, password, attach, nav, skills, voice, telemetry, models, model_detail, model_tuning, model_add, planner, history, images, update, modes, project, reminders, startup]) init();
