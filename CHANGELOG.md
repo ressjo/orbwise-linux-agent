@@ -5,6 +5,10 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Orb next to the input bar:** a long status line under the orb ("40,658 tokens · at most ~56 s") ran into the input
+  bar. It now stays in the orb's column and wraps to at most two lines.
+
 ## [0.3.5] – 2026-11-08
 
 ### Changed
