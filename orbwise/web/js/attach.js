@@ -176,6 +176,19 @@ function renderTheme() {
   const pick = store.get("theme", "system");
   document.querySelectorAll("[data-theme-pick]").forEach((b) => b.classList.toggle("on", b.dataset.themePick === pick));
 }
+// Orb im Chat: Größe (aus/klein/mittel/groß) und Platz (links, rechts, oben rechts) – je Gerät gemerkt wie die Darstellung
+const ORB_SIZES = ["off", "s", "m", "l"], ORB_POS = ["bl", "br", "tr"];
+function renderOrb() {
+  const size = ORB_SIZES.includes(store.get("orb_size", "m")) ? store.get("orb_size", "m") : "m";
+  const pos = ORB_POS.includes(store.get("orb_pos", "br")) ? store.get("orb_pos", "br") : "br";
+  document.documentElement.dataset.orbSize = size;
+  document.documentElement.dataset.orbPos = pos;
+  document.querySelectorAll("[data-orb-size]").forEach((b) => b.classList.toggle("on", b.dataset.orbSize === size));
+  document.querySelectorAll("[data-orb-pos]").forEach((b) => {
+    b.classList.toggle("on", b.dataset.orbPos === pos);
+    b.disabled = size === "off";
+  });
+}
 function setAutoMenu(open) {
   autoMenu.classList.toggle("hidden", !open);
   $("btn-auto").setAttribute("aria-expanded", String(open));
@@ -268,6 +281,13 @@ export function init() {
     b.onclick = () => { store.set("theme", b.dataset.themePick); window.orbwiseApplyTheme(b.dataset.themePick); renderTheme(); };
   });
   renderTheme();
+  document.querySelectorAll("button[data-orb-size]").forEach((b) => {
+    b.onclick = () => { store.set("orb_size", b.dataset.orbSize); renderOrb(); };
+  });
+  document.querySelectorAll("button[data-orb-pos]").forEach((b) => {
+    b.onclick = () => { store.set("orb_pos", b.dataset.orbPos); renderOrb(); };
+  });
+  renderOrb();
 
   // Auto-Modus: aufklappbarer Knopf neben „Denken“ (und Auswahl in den Einstellungen)
   autoMenu = $("auto-menu");

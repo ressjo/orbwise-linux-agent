@@ -5,7 +5,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **No autostart by default:** the installer only adds the *Orbwise* entry to the application menu (it starts the
+  server when needed). Starting at login is opt-in: `install.sh --autostart`, **Settings → General → Start at login**
+  or `orbwise autostart on|off`. An existing autostart entry from an earlier install stays until you turn it off.
+
 ### Added
+- **Orb in the chat:** Settings → General sets its size (off, small, medium, large) and place (bottom left, bottom
+  right, top right) during a conversation – remembered per device like the theme. On phones only the size applies.
 - **Step limit** in Settings → General: how many tool steps an answer may take before Orbwise sums up and offers to
   continue – separately for tools and coding mode (10 … 500), or unlimited; then only loop detection and the stop
   button end an answer. The choice survives restarts and takes precedence over `tools.max_steps` / `coding.max_steps`,

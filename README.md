@@ -100,7 +100,8 @@ pre-selected), the **language model** from a list of presets that shows what fit
 (RX 6600/6650/6700, RX 7600) it offers to set the needed `HSA_OVERRIDE_GFX_VERSION` for Ollama.
 
 Options: `--model qwen3:8b` (skip the model question), `--gpu auto|cuda|rocm|vulkan|cpu`, `--lang de|en`,
-`--yes` (no questions, use the detected/recommended defaults), `--no-autostart`.
+`--yes` (no questions, use the detected/recommended defaults), `--autostart` (also start Orbwise at login – off by
+default).
 
 > Please install with **git**, not as a ZIP – then updates are a single command (`orbwise update`).
 > If you start `install.sh` from a ZIP folder it offers to move to `~/orbwise`.
@@ -111,7 +112,9 @@ The installer
 2. sets up the Python environment (`uv sync --extra voice`),
 3. pulls the chosen model (recommendation: ≥ 22 GB → `qwen3:30b`, ≥ 12 GB → `qwen3:14b`, ≥ 6 GB → `qwen3:8b`, otherwise `qwen3:4b`) together with `bge-m3` (embeddings) – if a download fails you can pick another model,
 4. installs the speech output Piper with the voice of your language (`orbwise voice install`), the wake word model and Whisper,
-5. creates `~/.config/orbwise/config.yaml`, an **Orbwise** entry in the application menu and an autostart entry.
+5. creates `~/.config/orbwise/config.yaml` and an **Orbwise** entry in the application menu – it starts the server
+   when needed and opens the UI in its own window. Orbwise does **not** start at login unless you ask for it
+   (`--autostart`, **Settings → General → Start at login** or `orbwise autostart on|off`); *Quit* in the sidebar stops it.
 
 Then:
 
@@ -989,7 +992,8 @@ can ask follow-up questions right there. When a run finishes you get a short not
 notification. If a routine wants to do something that needs confirmation, the normal confirmation card appears when the
 dashboard is open; otherwise the action is declined and the routine says what would still be needed.
 
-Routines run while Orbwise is running (autostart). A run that was missed because the PC was off is caught up only
+Routines run while Orbwise is running (turn on **Settings → General → Start at login** if they should run without
+opening Orbwise first). A run that was missed because the PC was off is caught up only
 if it is at most an hour late. The Planner also lists your reminders and holds the briefing settings.
 
 ### Telegram (phone)

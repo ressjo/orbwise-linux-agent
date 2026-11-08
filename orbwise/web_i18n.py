@@ -195,6 +195,21 @@ HTML_EN = [
      'id="btn-sudo-forget">Vergessen<',
      '<b>Root password</b><em>not remembered</em><button type="button" class="btn-link hidden" '
      'id="btn-sudo-forget">Forget<'),
+    ('<b>Orb im Chat</b><small>Größe und Platz der Statuskugel während eines Gesprächs.</small>',
+     '<b>Orb in the chat</b><small>Size and place of the status orb during a conversation.</small>'),
+    ('data-orb-size="off">Aus</button><button type="button" data-orb-size="s">Klein</button><button type="button" '
+     'data-orb-size="m">Mittel</button><button type="button" data-orb-size="l">Groß<',
+     'data-orb-size="off">Off</button><button type="button" data-orb-size="s">Small</button><button type="button" '
+     'data-orb-size="m">Medium</button><button type="button" data-orb-size="l">Large<'),
+    ('data-orb-pos="bl">Links</button><button type="button" data-orb-pos="br">Rechts</button><button type="button" '
+     'data-orb-pos="tr">Oben rechts<',
+     'data-orb-pos="bl">Left</button><button type="button" data-orb-pos="br">Right</button><button type="button" '
+     'data-orb-pos="tr">Top right<'),
+    ('<b>Beim Anmelden starten</b><small>Sonst startet Orbwise über den Eintrag im Anwendungsmenü. Routinen und Telegram '
+     'laufen nur, solange Orbwise läuft.</small>',
+     '<b>Start at login</b><small>Otherwise Orbwise starts from its entry in the application menu. Routines and Telegram '
+     'only run while Orbwise is running.</small>'),
+    ('id="btn-autostart">Aus<', 'id="btn-autostart">Off<'),
     ('<b>Schritt-Limit</b><small>Werkzeug-Schritte je Antwort – danach fasst Orbwise zusammen und bietet „mach weiter“ an.</small>',
      '<b>Step limit</b><small>Tool steps per answer – then Orbwise sums up and offers to continue.</small>'),
     ('<b>Denkmodus</b><small>Gründlicher, dafür langsamer.</small>',

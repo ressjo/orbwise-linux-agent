@@ -44,7 +44,29 @@ export function showSection(section) {
   if (section === "voice") openVoiceMenu();
   if (section === "status") loadStatus();
   if (section === "skills") loadSkills();
-  if (section === "general") { renderHfToken(); renderSteps(); renderStorage(); }
+  if (section === "general") { renderHfToken(); renderAutostart(); renderSteps(); renderStorage(); }
+}
+
+// Beim Anmelden starten (Autostart-Eintrag in ~/.config/autostart) – standardmäßig aus
+async function renderAutostart() {
+  const sw = $("btn-autostart");
+  const show = (on) => { sw.classList.toggle("on", on); sw.textContent = on ? L("An", "On") : L("Aus", "Off"); };
+  let st;
+  try { st = await getJSON("/api/autostart"); } catch { sw.disabled = true; return; }
+  sw.disabled = false;
+  show(st.enabled);
+  sw.title = st.path;
+  sw.onclick = async () => {
+    sw.disabled = true;
+    try {
+      const r = await api("POST", "/api/autostart", { enabled: !sw.classList.contains("on") });
+      show(r.enabled);
+      toast(r.enabled ? L("Orbwise startet ab jetzt beim Anmelden.", "Orbwise now starts at login.")
+                      : L("Kein Autostart mehr – Orbwise startet über das Anwendungsmenü.",
+                          "No more autostart – start Orbwise from the application menu."));
+    } catch { /* api meldet selbst */ }
+    sw.disabled = false;
+  };
 }
 
 // Schritt-Limit je Antwort (Tools-/Coding-Modus), 0 = unbegrenzt

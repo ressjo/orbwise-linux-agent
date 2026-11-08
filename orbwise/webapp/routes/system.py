@@ -142,6 +142,22 @@ def register(app, ctx) -> None:
                         model_progress=model_progress, idle_if_free=idle_if_free)
 
     # ---------- Angehängte Bilder und PDFs im Chat ----------
+    # ---------- Autostart beim Anmelden (Einstellungen → Allgemein), standardmäßig aus ----------
+    @app.get("/api/autostart")
+    async def autostart_get():
+        from ... import autostart
+        return {"enabled": autostart.enabled(), "path": str(autostart.path())}
+
+    @app.post("/api/autostart")
+    async def autostart_set(request: Request):
+        from ... import autostart
+        body = await request.json()
+        try:
+            on = await asyncio.to_thread(autostart.set_enabled, isinstance(body, dict) and body.get("enabled") is True)
+        except OSError as e:
+            raise HTTPException(500, str(e)) from e
+        return {"enabled": on, "path": str(autostart.path())}
+
     # ---------- Schritt-Limit je Antwort (Einstellungen → Allgemein), 0 = unbegrenzt ----------
     @app.get("/api/steps")
     async def steps_get():

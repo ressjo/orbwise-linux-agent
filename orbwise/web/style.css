@@ -291,7 +291,7 @@ input[type=checkbox], input[type=range] { accent-color: var(--accent); }
 .app.coding .chat > * { max-width: 980px; }
 .app.coding .composer { max-width: 980px; }
 .app.coding .main.has-messages .stage { width: auto; bottom: 156px; right: 22px; }
-.app.coding .main.has-messages .chat { padding-right: 24px; }
+.app.coding .main.has-messages .chat { --dock: 24px !important; }
 .app.coding .main.has-messages .stage-info { margin-top: 0; align-items: flex-end; padding: 4px 10px; border-radius: var(--r-md);
   background: var(--glass); border: 1px solid var(--border); }
 .app.coding .main.has-messages .stage-info:has(.substate:empty) .state:is(:empty) { display: none; }
@@ -465,7 +465,7 @@ textarea.ui-dialog-input { height: auto; padding: 9px 12px; resize: vertical; }
   font-size: var(--fs-base); text-align: right; padding: 6px 10px; border-radius: var(--r-md); background: var(--glass); }
 .main.has-messages .live-transcript:empty { display: none; }
 /* Chat nicht unter dem Dock verstecken: rechts Platz lassen, solange die Spalte sonst darunter reichen würde */
-.main.has-messages .chat { padding-right: 150px; }
+.main.has-messages .chat { --dock: 150px; padding-right: var(--dock); }
 @container main (min-width: 1060px) {
   .main.has-messages .stage { bottom: 18px; }
 }
@@ -476,9 +476,42 @@ textarea.ui-dialog-input { height: auto; padding: 9px 12px; resize: vertical; }
   .main.has-messages .stage { width: 140px; right: 22px; }
   .main.has-messages .orb-wrap { width: 140px; height: 124px; }
   .main.has-messages .substate { max-width: 160px; }
-  .main.has-messages .chat { padding-right: 24px; }
+  .main.has-messages .chat { --dock: 24px; }
 }
 @media (prefers-reduced-motion: reduce) { #orb, .main, .orb-wrap, .app { transition: none !important; } }
+
+/* Orb im Chat: Größe und Platz (Einstellungen → Allgemein, <html data-orb-size / data-orb-pos>); „m“/„br“ = oben */
+html[data-orb-size="off"] .main.has-messages .stage { display: none; }
+html[data-orb-size="off"] .main.has-messages .chat { --dock: 24px; }
+html[data-orb-size="s"] .main.has-messages .stage { width: 100px; }
+html[data-orb-size="s"] .main.has-messages .orb-wrap { width: 76px; height: 68px; }
+html[data-orb-size="s"] .main.has-messages .substate { max-width: 110px; }
+html[data-orb-size="s"] .main.has-messages .chat { --dock: 116px; }
+html[data-orb-size="l"] .main.has-messages .stage { width: 200px; }
+html[data-orb-size="l"] .main.has-messages .orb-wrap { width: 196px; height: 172px; }
+html[data-orb-size="l"] .main.has-messages .substate { max-width: 210px; }
+html[data-orb-size="l"] .main.has-messages .chat { --dock: 226px; }
+@container main (min-width: 1150px) { html[data-orb-size="s"] .main.has-messages .chat { --dock: 24px; } }
+@container main (min-width: 1290px) { html[data-orb-size="l"] .main.has-messages .chat { --dock: 24px; } }
+html[data-orb-pos="bl"] .main.has-messages .stage { right: auto; left: 18px; }
+html[data-orb-pos="bl"] .main.has-messages .live-transcript { right: auto; left: 0; text-align: left; }
+html[data-orb-pos="bl"] .main.has-messages .chat { padding-right: 24px; padding-left: var(--dock); }
+html[data-orb-pos="tr"] .main.has-messages .stage { top: 70px; bottom: auto; }
+html[data-orb-pos="tr"] .main.has-messages .live-transcript { top: calc(100% + 8px); bottom: auto; }
+.orb-ctl { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+@media (max-width: 760px) {  /* Handy: der Orb steht als Streifen über dem Chat – nur die Größe zählt */
+  html[data-orb-size="off"] .main.has-messages { grid-template-rows: 56px 0 minmax(0, 1fr) auto; }
+  html[data-orb-size="s"] .main.has-messages { grid-template-rows: 56px 88px minmax(0, 1fr) auto; }
+  html[data-orb-size="s"] .main.has-messages .orb-wrap { width: 100%; height: 64px; }
+  html[data-orb-size="l"] .main.has-messages { grid-template-rows: 56px 196px minmax(0, 1fr) auto; }
+  html[data-orb-size="l"] .main.has-messages .orb-wrap { width: 100%; height: 172px; }
+  html[data-orb-size] .main.has-messages .stage { width: auto; left: auto; top: auto; }
+  html[data-orb-size] .main.has-messages .substate { max-width: none; }
+  html[data-orb-size] .main.has-messages .chat { --dock: 14px; }
+  html[data-orb-pos] .main.has-messages .chat { padding-left: 24px; padding-right: var(--dock); }
+  html[data-orb-pos] .main.has-messages .live-transcript { right: 0; left: 0; bottom: auto; top: 100%; text-align: center; }
+  .orb-ctl { align-items: flex-start; }
+}
 
 /* ---------- Gespräch ---------- */
 .conversation { position: relative; min-height: 0; overflow: hidden; }
@@ -1129,7 +1162,7 @@ details.card[open] > summary .caret { transform: rotate(180deg); }
   .main.has-messages .stage { position: relative; grid-row: 2; right: auto; bottom: auto; width: auto; animation: none; justify-content: flex-start; }
   .main.has-messages .orb-wrap { width: 100%; height: 108px; }
   .main.has-messages .stage-info { margin-top: 0; flex-direction: row; gap: 8px; justify-content: center; }
-  .main.has-messages .chat { padding-right: 14px; }
+  .main.has-messages .chat { --dock: 14px; }
   .main.has-messages .live-transcript { right: 0; left: 0; bottom: auto; top: 100%; margin: 0 auto; text-align: center; }
 }
 @media (max-width: 860px) {
