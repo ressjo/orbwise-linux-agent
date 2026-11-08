@@ -24,6 +24,15 @@ def env(name: str, default: str = "") -> str:
     return os.environ.get(f"ORBWISE_{name}") or default
 
 
+
+MAX_STEPS_LIMIT = 500  # höchstes einstellbares Schritt-Limit; 0 = unbegrenzt
+
+
+def clamp_steps(v) -> int:
+    """Schritt-Limit je Antwort: 0 = unbegrenzt, sonst 1 … MAX_STEPS_LIMIT."""
+    v = int(v)
+    return 0 if v <= 0 else min(v, MAX_STEPS_LIMIT)
+
 class ServerConfig(BaseModel):
     """Optionaler Modell-Server, den Orbwise selbst startet und stoppt (z. B. llama-server)."""
     command: str
@@ -148,7 +157,7 @@ class ToolsConfig(BaseModel):
     # Werkzeuge, die standardmäßig aus sind (dünne Hüllen um einzelne Befehle wie ps, systemctl, df – das Modell nutzt
     # dafür run_shell), wieder einschalten: Gruppen- oder Werkzeugnamen, z. B. [sysadmin] oder [list_directory]
     extra: list[str] = Field(default_factory=list)
-    # so viele Modellschritte (Tool-Runden) darf eine Aufgabe höchstens brauchen
+    # so viele Modellschritte (Tool-Runden) darf eine Aufgabe höchstens brauchen (0 = unbegrenzt)
     max_steps: int = 25
     # „Lesen + Bearbeiten“: Bauen/Tests laufen isoliert ohne Netz (bubblewrap) – zusätzlich schreibbare Ordner
     jail_writable: list[str] = Field(default_factory=list)
@@ -168,6 +177,11 @@ class ToolsConfig(BaseModel):
     @classmethod
     def _privilege(cls, v: str) -> str:
         return "dashboard" if v == "orbwise" else v  # „orbwise“: früherer Name des Passwortfelds
+
+    @field_validator("max_steps")
+    @classmethod
+    def _steps(cls, v: int) -> int:
+        return clamp_steps(v)
 
     @field_validator("search_paths", "nas_paths", mode="before")
     @classmethod
@@ -446,7 +460,7 @@ class CodingConfig(BaseModel):
     # Coding-Modus (Arbeitsweise nach OpenCode 2)
     snapshots: bool = True          # vor/nach jeder Antwort Schnappschuss des Projekts → „Rückgängig“
     subagent_steps: int = 15        # höchstens so viele Schritte je Unteragent (explore/general)
-    max_steps: int = 60             # Werkzeug-Schritte je Antwort im Coding-Modus (Tools-Modus: tools.max_steps)
+    max_steps: int = 60             # Werkzeug-Schritte je Antwort im Coding-Modus (Tools-Modus: tools.max_steps), 0 = unbegrenzt
     max_jobs: int = 4               # gleichzeitig laufende Hintergrund-Befehle (shell mit background=true)
     # Projektanweisungen aus dem Projektordner (die erste vorhandene Datei kommt in den Systemprompt)
     instructions: list[str] = Field(default_factory=lambda: ["AGENTS.md", "CLAUDE.md"])
@@ -464,7 +478,7 @@ class CodingConfig(BaseModel):
     @field_validator("max_steps")
     @classmethod
     def _steps(cls, v: int) -> int:
-        return max(1, min(int(v), 500))
+        return clamp_steps(v)
 
 
 class SandboxConfig(BaseModel):

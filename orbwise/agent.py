@@ -417,8 +417,9 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
         return bool(think)
 
     def max_steps(self) -> int:
-        """Werkzeug-Schritte je Antwort, danach Zwischenbilanz + „mach weiter“ – im Coding-Modus großzügiger."""
-        return max(1, self.cfg.coding.max_steps if self.mode == "coding" else self.cfg.tools.max_steps)
+        """Werkzeug-Schritte je Antwort, danach Zwischenbilanz + „mach weiter“ – im Coding-Modus großzügiger.
+        0 = unbegrenzt (dann bremsen nur die Schleifenerkennung und der Stopp-Knopf)."""
+        return max(0, self.cfg.coding.max_steps if self.mode == "coding" else self.cfg.tools.max_steps)
 
     def answer_reserve(self) -> int:
         """Platz für Antwort bzw. Denkkette (ein Viertel des Fensters, höchstens 16k – siehe context_plan)."""
@@ -646,7 +647,8 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
             while True:
                 if goal is not None and self.goal_state() is None:  # „/goal stop“ während der Arbeit
                     goal, steps = None, 0
-                if goal is None and steps >= self.max_steps():
+                limit = self.max_steps()
+                if goal is None and limit and steps >= limit:
                     break
                 if goal is not None and self._goal_exhausted(goal):
                     await self._goal_event(emit, "limit", goal)

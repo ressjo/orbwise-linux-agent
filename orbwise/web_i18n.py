@@ -195,6 +195,8 @@ HTML_EN = [
      'id="btn-sudo-forget">Vergessen<',
      '<b>Root password</b><em>not remembered</em><button type="button" class="btn-link hidden" '
      'id="btn-sudo-forget">Forget<'),
+    ('<b>Schritt-Limit</b><small>Werkzeug-Schritte je Antwort – danach fasst Orbwise zusammen und bietet „mach weiter“ an.</small>',
+     '<b>Step limit</b><small>Tool steps per answer – then Orbwise sums up and offers to continue.</small>'),
     ('<b>Denkmodus</b><small>Gründlicher, dafür langsamer.</small>',
      '<b>Thinking mode</b><small>More thorough, but slower.</small>'),
     ('data-mirror="btn-tts">Aus<', 'data-mirror="btn-tts">Off<'),

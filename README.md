@@ -1383,7 +1383,7 @@ Plan mode always asks. If Orbwise runs as **root**, the upper two levels approve
 | `tools.privilege_cmd` | `dashboard` (password field, default), `pkexec` or `sudo` (NOPASSWD) |
 | `tools.sudo_remember_minutes` | How long the dashboard password is remembered (default 15, RAM only, never for Telegram/routines; 0 = always ask) |
 | `tools.package_manager` | `auto`, `pacman` or `apt` |
-| `tools.max_steps` | Max. tool rounds per request (default 25), then Orbwise summarises and offers to continue |
+| `tools.max_steps` | Max. tool rounds per request (default 25), then Orbwise summarises and offers to continue; `0` = unlimited. Also in **Settings → General → Step limit** (takes precedence) |
 | `coding.max_steps` | The same in coding mode (default 60) |
 | `tools.disabled` | Tools or groups to switch off, e.g. `[routine_tools, weather]` |
 | `tools.extra` | Switch thin wrapper tools back on that are off by default (process list, services, logs, network, ports, disk usage, `ls`, `rg`, `ssh_connect` …) – the model does these with `run_shell` and the usual commands, which run without asking when read-only. E.g. `[sysadmin]` |

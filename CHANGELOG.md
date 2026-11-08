@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Step limit** in Settings → General: how many tool steps an answer may take before Orbwise sums up and offers to
+  continue – separately for tools and coding mode (10 … 500), or unlimited; then only loop detection and the stop
+  button end an answer. The choice survives restarts and takes precedence over `tools.max_steps` / `coding.max_steps`,
+  which now also accept `0` for unlimited.
 - **Disk space** in Settings → General: what Orbwise takes up on disk, in total and by group (language and image
   models, programs such as llama.cpp, voices and Chromium, cache, artifacts, restore points, your data). Downloaded
   models can be deleted right there; the cache, artifacts, restore points, older llama.cpp builds and the Chromium

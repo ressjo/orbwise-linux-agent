@@ -91,7 +91,8 @@ tools:
   shell_timeout: 120
   # update_timeout: 3600   # seconds for a full system update
   # max_output_chars: 6000 # command output passed to the model is cut to this length
-  max_steps: 25            # max. model steps (tool rounds) per request; then a summary + "continue"
+  max_steps: 25            # max. model steps (tool rounds) per request; then a summary + "continue" (0 = unlimited;
+                           # Settings → General → Step limit overrides it)
   # jail_writable: []      # "Read + edit files" runs builds/tests isolated (bubblewrap, no network): only the project
                            # folder (coding) and a private /tmp are writable – extra folders that may be written to
   disabled: []             # switch off tools or whole groups, e.g. [routine_tools, weather] – saves context

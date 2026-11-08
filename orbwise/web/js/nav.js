@@ -44,7 +44,35 @@ export function showSection(section) {
   if (section === "voice") openVoiceMenu();
   if (section === "status") loadStatus();
   if (section === "skills") loadSkills();
-  if (section === "general") { renderHfToken(); renderStorage(); }
+  if (section === "general") { renderHfToken(); renderSteps(); renderStorage(); }
+}
+
+// Schritt-Limit je Antwort (Tools-/Coding-Modus), 0 = unbegrenzt
+const STEP_CHOICES = [10, 25, 50, 100, 200, 500, 0];
+async function renderSteps() {
+  let st;
+  try { st = await getJSON("/api/steps"); } catch { return; }
+  for (const mode of ["tools", "coding"]) {
+    const sel = $("steps-" + mode);
+    const values = STEP_CHOICES.includes(st[mode]) ? STEP_CHOICES
+      : [...STEP_CHOICES.slice(0, -1), st[mode]].sort((a, b) => a - b).concat(0);
+    sel.replaceChildren(...values.map((v) => {
+      const o = document.createElement("option");
+      o.value = String(v);
+      o.textContent = v ? String(v) : L("Unbegrenzt", "Unlimited");
+      o.selected = v === st[mode];
+      return o;
+    }));
+    sel.onchange = async () => {
+      const n = Number(sel.value);
+      try {
+        await api("POST", "/api/steps", { [mode]: n });
+        toast(n ? L(`Schritt-Limit (${mode === "coding" ? "Coding" : "Tools"}): ${n}`, `Step limit (${mode === "coding" ? "coding" : "tools"}): ${n}`)
+                : L("Ohne Schritt-Limit – der Stopp-Knopf hält eine Antwort jederzeit an.",
+                    "No step limit – the stop button halts an answer at any time."));
+      } catch { renderSteps(); }
+    };
+  }
 }
 
 // Speicherplatz: was Orbwise belegt (Modelle, Programme, Zwischenspeicher …) – anzeigen, einzeln löschen bzw. leeren

@@ -1418,6 +1418,11 @@ details.card[open] > summary .caret { transform: rotate(180deg); }
 .hf-vram-bar i.fit-tight { background: var(--warn); } .hf-vram-bar i.fit-big { background: var(--danger); }
 .artifacts-ctl { display: flex; align-items: center; gap: 10px; }
 .artifacts-size { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Schritt-Limit (Einstellungen → Allgemein) */
+.steps-ctl { display: flex; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
+.steps-ctl label { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: var(--fs-md); white-space: nowrap; }
+.steps-ctl select { height: 28px; padding: 0 6px; border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+  background: var(--field); color: var(--text); font: inherit; font-size: var(--fs-md); }
 /* Speicherplatz (Einstellungen → Allgemein) */
 .storage-list { padding: 4px 0 8px; border-bottom: 1px solid var(--border); }
 .storage-group { padding: 10px 0; }

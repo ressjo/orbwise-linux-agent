@@ -50,6 +50,8 @@ def create_app(cfg: Config) -> FastAPI:
     memory.start_fresh()  # nach dem Start immer ein leerer Chat im Tools-Modus – vorgeladen werden nur Modell + Werkzeuge
     boot_id = uuid.uuid4().hex[:8]  # je Serverstart: die Oberfläche stellt den Bildmodus nur innerhalb eines Laufs wieder her
     agent = Agent(cfg, llm, memory)
+    from . import step_limit
+    step_limit.apply_saved(cfg, cfg.memory.dir.parent / "state.json")  # Schritt-Limit aus den Einstellungen
     # Auto-Knopf überlebt einen Neustart – sonst liefen Telegram/Routinen bis zum Öffnen des Dashboards mit „Nur lesen“
     auto_file = cfg.memory.dir.parent / "auto_mode"
     with contextlib.suppress(OSError):
