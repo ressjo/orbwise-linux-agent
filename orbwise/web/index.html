@@ -430,6 +430,9 @@
         <div class="set-section" id="set-general">
           <div class="set-row"><div><b>Darstellung</b><small>Hell, dunkel oder wie das System.</small></div>
             <div class="seg" id="set-theme"><button type="button" data-theme-pick="light">Hell</button><button type="button" data-theme-pick="dark">Dunkel</button><button type="button" data-theme-pick="system">System</button></div></div>
+          <div class="set-row"><div><b>Orb im Chat</b><small>Größe und Platz der Statuskugel während eines Gesprächs.</small></div>
+            <div class="orb-ctl"><div class="seg" id="set-orb-size"><button type="button" data-orb-size="off">Aus</button><button type="button" data-orb-size="s">Klein</button><button type="button" data-orb-size="m">Mittel</button><button type="button" data-orb-size="l">Groß</button></div>
+            <div class="seg" id="set-orb-pos"><button type="button" data-orb-pos="bl">Links</button><button type="button" data-orb-pos="br">Rechts</button><button type="button" data-orb-pos="tr">Oben rechts</button></div></div></div>
           <div class="set-row"><div><b>Sprachausgabe</b><small>Antworten werden vorgelesen.</small></div>
             <button class="switch" data-mirror="btn-tts">Aus</button></div>
           <div class="set-row"><div><b>Wake-Word</b><small>Das Wake-Word startet die Spracheingabe.</small></div>
@@ -440,9 +443,14 @@
             <div class="seg" id="set-auto"><button type="button" data-auto="off">Aus</button><button type="button" data-auto="read">Nur lesen</button><button type="button" data-auto="files">+ Dateien</button><button type="button" data-auto="auto">Auto</button></div></div>
           <div class="set-row"><div><b>Denkmodus</b><small>Gründlicher, dafür langsamer.</small></div>
             <div class="seg" id="set-think"><button type="button" data-think="off">Aus</button><button type="button" data-think="on" class="hidden">An</button></div></div>
+          <div class="set-row" id="set-steps"><div><b>Schritt-Limit</b><small>Werkzeug-Schritte je Antwort – danach fasst Orbwise zusammen und bietet „mach weiter“ an.</small></div>
+            <div class="steps-ctl"><label>Tools <select id="steps-tools"></select></label><label>Coding <select id="steps-coding"></select></label></div></div>
+          <div class="set-row"><div><b>Beim Anmelden starten</b><small>Sonst startet Orbwise über den Eintrag im Anwendungsmenü. Routinen und Telegram laufen nur, solange Orbwise läuft.</small></div>
+            <button class="switch" id="btn-autostart">Aus</button></div>
           <div class="set-row" id="set-hf"></div>
-          <div class="set-row" id="set-artifacts"><div><b>Artefakte</b><small>Diagramme, Exporte und Hilfsdateien, die Orbwise nebenbei erzeugt.</small></div>
-            <div class="artifacts-ctl"><span class="artifacts-size" id="artifacts-size">–</span><button type="button" class="btn small" id="btn-artifacts-clear">Leeren</button></div></div>
+          <div class="set-row" id="set-storage"><div><b>Speicherplatz</b><small>Modelle, Programme und Zwischenspeicher – was Orbwise auf der Platte belegt.</small></div>
+            <div class="artifacts-ctl"><span class="artifacts-size" id="storage-total">–</span><button type="button" class="btn small" id="btn-storage-details" aria-expanded="false" aria-controls="storage-list">Details</button></div></div>
+          <div class="storage-list hidden" id="storage-list"></div>
           <p class="set-hint">Mail, Paperless, Telegram und andere Verbindungen richtest du unter <b>Skills</b> ein. Alles Weitere steht in <code>~/.config/orbwise/config.yaml</code> – <code>orbwise doctor</code> prüft es.</p>
         </div>
         <div class="set-section hidden" id="set-status">

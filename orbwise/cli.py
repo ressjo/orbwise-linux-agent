@@ -782,6 +782,15 @@ def cmd_skills(args) -> None:
     skills_cli.overview(cfg)
 
 
+def cmd_autostart(args) -> None:
+    from . import autostart
+    if args.state in ("on", "off"):
+        autostart.set_enabled(args.state == "on")
+    on = autostart.enabled()
+    print(T(f"Autostart beim Anmelden: {'an' if on else 'aus'} ({autostart.path()})",
+            f"Start at login: {'on' if on else 'off'} ({autostart.path()})"))
+
+
 def main(argv: list[str] | None = None) -> None:
     try:
         set_lang(load_config().language)
@@ -822,6 +831,9 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("stop", help=T("Laufenden Orbwise-Server beenden (auch einen im Hintergrund)",
                                   "stop the running Orbwise server (also one in the background)"))
     sub.add_parser("version", help=T("Installierte Version anzeigen", "show the installed version"))
+    p = sub.add_parser("autostart", help=T("Beim Anmelden starten: on, off oder anzeigen (Standard: aus)",
+                                           "start at login: on, off or show (default: off)"))
+    p.add_argument("state", nargs="?", choices=["on", "off", "status"], default="status")
     sub.add_parser("reindex", help=T("Gedächtnis-Suchindex aus den Markdown-Dateien neu aufbauen",
                                      "rebuild the memory search index from the Markdown files"))
     p = sub.add_parser("summarize", help=T("Tageszusammenfassungen erzeugen", "create daily summaries"))
@@ -841,7 +853,7 @@ def main(argv: list[str] | None = None) -> None:
         args = parser.parse_args(["serve", *(argv or sys.argv[1:])])
     {"serve": cmd_serve, "open": cmd_open, "stop": cmd_stop, "doctor": cmd_doctor, "update": cmd_update, "model": cmd_model, "version": cmd_version,
      "reindex": cmd_reindex, "summarize": cmd_summarize, "init-config": cmd_init_config,
-     "context-test": cmd_context_test, "voice": cmd_voice, "skills": cmd_skills}[args.cmd](args)
+     "context-test": cmd_context_test, "voice": cmd_voice, "skills": cmd_skills, "autostart": cmd_autostart}[args.cmd](args)
 
 
 if __name__ == "__main__":

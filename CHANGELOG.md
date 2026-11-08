@@ -5,7 +5,25 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.5] – 2026-11-08
+
+### Changed
+- **No autostart by default:** the installer only adds the *Orbwise* entry to the application menu (it starts the
+  server when needed). Starting at login is opt-in: `install.sh --autostart`, **Settings → General → Start at login**
+  or `orbwise autostart on|off`. An existing autostart entry from an earlier install stays until you turn it off.
+
 ### Added
+- **Orb in the chat:** a bit smaller and, when the window is wide enough, right next to the input bar instead of in the
+  corner. Settings → General sets its size (off, small, medium, large) and place (left or right of the input bar, top
+  right) – remembered per device like the theme. On phones only the size applies.
+- **Step limit** in Settings → General: how many tool steps an answer may take before Orbwise sums up and offers to
+  continue – separately for tools and coding mode (10 … 500), or unlimited; then only loop detection and the stop
+  button end an answer. The choice survives restarts and takes precedence over `tools.max_steps` / `coding.max_steps`,
+  which now also accept `0` for unlimited.
+- **Disk space** in Settings → General: what Orbwise takes up on disk, in total and by group (language and image
+  models, programs such as llama.cpp, voices and Chromium, cache, artifacts, restore points, your data). Downloaded
+  models can be deleted right there; the cache, artifacts, restore points, older llama.cpp builds and the Chromium
+  download can be emptied. Files in use stay. Replaces the separate *Artifacts* row.
 - **MoE experts in RAM:** for mixture-of-experts models that don't fit in video memory, llama.cpp keeps only the
   expert weights of the first N layers in system memory (`--n-cpu-moe`) – attention and KV cache stay on the GPU.
   Models → *Experts in RAM (MoE)*: automatic (recalculated when context or KV cache change), off or a custom number.

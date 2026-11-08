@@ -142,6 +142,37 @@ def register(app, ctx) -> None:
                         model_progress=model_progress, idle_if_free=idle_if_free)
 
     # ---------- Angehängte Bilder und PDFs im Chat ----------
+    # ---------- Autostart beim Anmelden (Einstellungen → Allgemein), standardmäßig aus ----------
+    @app.get("/api/autostart")
+    async def autostart_get():
+        from ... import autostart
+        return {"enabled": autostart.enabled(), "path": str(autostart.path())}
+
+    @app.post("/api/autostart")
+    async def autostart_set(request: Request):
+        from ... import autostart
+        body = await request.json()
+        try:
+            on = await asyncio.to_thread(autostart.set_enabled, isinstance(body, dict) and body.get("enabled") is True)
+        except OSError as e:
+            raise HTTPException(500, str(e)) from e
+        return {"enabled": on, "path": str(autostart.path())}
+
+    # ---------- Schritt-Limit je Antwort (Einstellungen → Allgemein), 0 = unbegrenzt ----------
+    @app.get("/api/steps")
+    async def steps_get():
+        from ... import step_limit
+        return step_limit.info(cfg)
+
+    @app.post("/api/steps")
+    async def steps_set(request: Request):
+        from ... import step_limit
+        body = await request.json()
+        try:
+            return await asyncio.to_thread(step_limit.set_limits, cfg, state_file, body if isinstance(body, dict) else {})
+        except ValueError as e:
+            raise HTTPException(400, T("Ungültiges Schritt-Limit.", "Invalid step limit.")) from e
+
     # ---------- Artefakte: Temp-Ordner für Diagramme, Exporte & Co. (siehe artifacts.py) ----------
     @app.get("/api/artifacts")
     async def artifacts_usage():

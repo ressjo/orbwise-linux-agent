@@ -6,7 +6,7 @@
 #   ./scripts/install.sh --model qwen3:8b  # choose the Ollama model yourself
 #   ./scripts/install.sh --gpu vulkan      # force the Ollama backend: auto | cuda | rocm | vulkan | cpu (Arch)
 #   ./scripts/install.sh --yes             # no questions, use the detected/recommended defaults
-#   ./scripts/install.sh --no-autostart
+#   ./scripts/install.sh --autostart       # also start Orbwise at login (default: only the app-menu entry)
 # Change or add models later with:  orbwise model add
 set -euo pipefail
 
@@ -16,7 +16,7 @@ CONF="${XDG_CONFIG_HOME:-$HOME/.config}/orbwise"
 MODEL=""
 GPU="auto"
 LANG_CHOICE=""
-AUTOSTART=1
+AUTOSTART=0
 ASK=1
 REPO="${ORBWISE_REPO:-https://github.com/ressjo/orbwise-linux-agent.git}"
 BRANCH="${ORBWISE_BRANCH:-main}"
@@ -28,7 +28,8 @@ while [[ $# -gt 0 ]]; do
     --gpu) GPU="$2"; shift 2 ;;
     --vulkan) GPU="vulkan"; shift ;;   # kept for compatibility
     --cpu) GPU="cpu"; shift ;;
-    --no-autostart) AUTOSTART=0; shift ;;
+    --autostart) AUTOSTART=1; shift ;;
+    --no-autostart) AUTOSTART=0; shift ;;   # default now, kept for compatibility
     -y|--yes) ASK=0; shift ;;
     -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
     *) echo "Unknown option: $1"; exit 1 ;;
@@ -247,10 +248,13 @@ install -m 755 "$ROOT/scripts/orbwise-open" "$HOME/.local/bin/orbwise-open"
 sed "s|@HOME@|$HOME|g" "$ROOT/scripts/orbwise.desktop" > "$HOME/.local/share/applications/orbwise.desktop"
 
 if (( AUTOSTART )); then
-  # Autostart inside the desktop session (needed to open files/apps on your desktop)
+  # Only on request (--autostart): start at login inside the desktop session (needed to open files/apps on your desktop)
   mkdir -p "$HOME/.config/autostart"
   sed "s|@HOME@|$HOME|g" "$ROOT/scripts/orbwise-autostart.desktop" > "$HOME/.config/autostart/orbwise.desktop"
   echo "Autostart configured (~/.config/autostart/orbwise.desktop)."
+elif [[ -f "$HOME/.config/autostart/orbwise.desktop" ]]; then
+  echo "Note: Orbwise still starts at login (from an earlier install). Turn it off with: orbwise autostart off"
+  echo "      (or Settings → General → Start at login)."
 fi
 
 say "Done!"

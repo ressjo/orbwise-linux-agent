@@ -100,7 +100,8 @@ pre-selected), the **language model** from a list of presets that shows what fit
 (RX 6600/6650/6700, RX 7600) it offers to set the needed `HSA_OVERRIDE_GFX_VERSION` for Ollama.
 
 Options: `--model qwen3:8b` (skip the model question), `--gpu auto|cuda|rocm|vulkan|cpu`, `--lang de|en`,
-`--yes` (no questions, use the detected/recommended defaults), `--no-autostart`.
+`--yes` (no questions, use the detected/recommended defaults), `--autostart` (also start Orbwise at login – off by
+default).
 
 > Please install with **git**, not as a ZIP – then updates are a single command (`orbwise update`).
 > If you start `install.sh` from a ZIP folder it offers to move to `~/orbwise`.
@@ -111,7 +112,9 @@ The installer
 2. sets up the Python environment (`uv sync --extra voice`),
 3. pulls the chosen model (recommendation: ≥ 22 GB → `qwen3:30b`, ≥ 12 GB → `qwen3:14b`, ≥ 6 GB → `qwen3:8b`, otherwise `qwen3:4b`) together with `bge-m3` (embeddings) – if a download fails you can pick another model,
 4. installs the speech output Piper with the voice of your language (`orbwise voice install`), the wake word model and Whisper,
-5. creates `~/.config/orbwise/config.yaml`, an **Orbwise** entry in the application menu and an autostart entry.
+5. creates `~/.config/orbwise/config.yaml` and an **Orbwise** entry in the application menu – it starts the server
+   when needed and opens the UI in its own window. Orbwise does **not** start at login unless you ask for it
+   (`--autostart`, **Settings → General → Start at login** or `orbwise autostart on|off`); *Quit* in the sidebar stops it.
 
 Then:
 
@@ -157,7 +160,7 @@ orbwise update
 ```
 
 pulls the latest version (`git pull`), updates the Python dependencies and restarts a running Orbwise server –
-then just reload the browser page. `orbwise version` shows what is installed (`0.3.0 · commit title (date)`).
+then just reload the browser page. `orbwise version` shows what is installed (`0.3.5 · commit title (date)`).
 Updates follow the repository's main branch: if the branch your installation sits on is gone on GitHub or holds
 nothing the main branch lacks, Orbwise switches to the main branch by itself; a branch with your own unmerged commits
 stays. Your **configuration**
@@ -989,7 +992,8 @@ can ask follow-up questions right there. When a run finishes you get a short not
 notification. If a routine wants to do something that needs confirmation, the normal confirmation card appears when the
 dashboard is open; otherwise the action is declined and the routine says what would still be needed.
 
-Routines run while Orbwise is running (autostart). A run that was missed because the PC was off is caught up only
+Routines run while Orbwise is running (turn on **Settings → General → Start at login** if they should run without
+opening Orbwise first). A run that was missed because the PC was off is caught up only
 if it is at most an hour late. The Planner also lists your reminders and holds the briefing settings.
 
 ### Telegram (phone)
@@ -1212,9 +1216,20 @@ the question keeps the PDF.
 and the image appears right in the chat under the answer – also after reloading – instead of opening in an image
 viewer; images generated with `generate_image` show up there too. Files Orbwise creates without a location you named
 (charts, exports, helper scripts) go to a temp folder, `~/.local/share/orbwise/artifacts`; in auto mode "Read + edit"
-it stays writable inside the cage. **Settings → General → Artifacts** shows how much space it takes and empties it.
+it stays writable inside the cage. **Settings → General → Disk space** shows how much space it takes and empties it.
 Images already shown in the chat keep a copy with the attachments and stay visible. Asking to open an older picture
 still opens it in your viewer; naming a program ("open it in GIMP") always does.
+
+**Disk space.** **Settings → General → Disk space** shows what Orbwise takes up on disk, in total and by group:
+language models (each downloaded GGUF, Ollama models of your profiles, other files in the model folder), image
+models, programs (llama.cpp, image generation, Piper/Pocket TTS voices, its own Chromium), cache
+(`~/.cache/orbwise`: command output, logs, Paperless downloads), artifacts, restore points (project states before the
+agent changed them) and your own data (chats, memory, attachments, project working copies). *Delete* removes a
+downloaded model (same as on the model page – files you put into `~/models` yourself stay), an image model, older
+llama.cpp builds (previous version and other variants; an update fetches them again) or the Chromium download (comes
+back when next needed); *Empty* clears the cache, artifacts or restore points. Files in use right now – logs of
+background jobs, anything changed in the last ten minutes – and your own text for *Measure quality* stay. Chats and
+memory are only shown here; delete chats in the sidebar.
 
 ### Morning briefing
 
@@ -1372,7 +1387,7 @@ Plan mode always asks. If Orbwise runs as **root**, the upper two levels approve
 | `tools.privilege_cmd` | `dashboard` (password field, default), `pkexec` or `sudo` (NOPASSWD) |
 | `tools.sudo_remember_minutes` | How long the dashboard password is remembered (default 15, RAM only, never for Telegram/routines; 0 = always ask) |
 | `tools.package_manager` | `auto`, `pacman` or `apt` |
-| `tools.max_steps` | Max. tool rounds per request (default 25), then Orbwise summarises and offers to continue |
+| `tools.max_steps` | Max. tool rounds per request (default 25), then Orbwise summarises and offers to continue; `0` = unlimited. Also in **Settings → General → Step limit** (takes precedence) |
 | `coding.max_steps` | The same in coding mode (default 60) |
 | `tools.disabled` | Tools or groups to switch off, e.g. `[routine_tools, weather]` |
 | `tools.extra` | Switch thin wrapper tools back on that are off by default (process list, services, logs, network, ports, disk usage, `ls`, `rg`, `ssh_connect` …) – the model does these with `run_shell` and the usual commands, which run without asking when read-only. E.g. `[sysadmin]` |
