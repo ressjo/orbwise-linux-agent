@@ -20,9 +20,9 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from . import state
-from .lang import T
-from .llm import LLMError
+from ... import state
+from ...lang import T
+from ...llm import LLMError
 
 log = logging.getLogger(__name__)
 STATE_KEY = "api_server"
@@ -72,7 +72,7 @@ def upstream(router, name: str) -> tuple[str, dict]:
 
 # ---------------------------------------------------------------- Routen
 def register(app: FastAPI, *, cfg, llm, agent, hub, state_file: Path, model_progress, idle_if_free) -> None:
-    from .llm_router import LLMRouter
+    from ...llm_router import LLMRouter
 
     stats = {"requests": 0, "running": 0, "last": None, "last_client": "", "last_model": "", "last_error": ""}
 

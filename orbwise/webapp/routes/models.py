@@ -2,7 +2,7 @@
 Downloads als Hintergrund-Aufgaben, llama.cpp-Build, Laden/Entladen/Löschen und die Einstellungen je Modell
 (Kontextfenster, Sampling, KV-Cache, Batch-Größe, spekulatives Decoding, Messen der schnellsten Einstellung).
 
-Aus server.create_app ausgelagert – `register` hängt die Endpunkte an die App, wie api_server.register."""
+`register` hängt die Endpunkte an die App (wie die übrigen Module in webapp/routes/)."""
 
 from __future__ import annotations
 
@@ -21,17 +21,17 @@ from types import SimpleNamespace
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 
-from . import metrics
-from .lang import T
-from .llm import LLMError
-from .llm_router import LLMRouter
+from ... import metrics
+from ...lang import T
+from ...llm import LLMError
+from ...llm_router import LLMRouter
 
 log = logging.getLogger(__name__)
 
 
 def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, background: list, model_progress,
              idle_if_free, mode_info, mode_models, remember_mode_model) -> SimpleNamespace:
-    """Endpunkte /api/models*, /api/llamacpp*, /api/llm/memory und /api/context/test anlegen → was server.py weiter
+    """Endpunkte /api/models*, /api/llamacpp*, /api/llm/memory und /api/context/test anlegen → was die App weiter
     braucht (activate_model für den Moduswechsel)."""
 
     def router_profile(name: str):
@@ -48,9 +48,9 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
             return {"active": "demo", "switching": None,
                     "profiles": [{"name": "demo", "label": "Demo (Fake-LLM)", "backend": "fake", "model": "fake",
                                   "base_url": "", "managed": False, "active": True}]}
-        from . import llamacpp as llamacpp_mod
-        from . import llamacpp_tune
-        from . import models as mdl
+        from ... import llamacpp as llamacpp_mod
+        from ... import llamacpp_tune
+        from ... import models as mdl
         profiles = llm.describe()
         sizes: dict[str, int] = {}
         # Größen nur von Ollama-Servern holen, die ein Profil wirklich nutzt (llama-server kennt /api/tags nicht)
@@ -100,14 +100,14 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
     async def gpu_info() -> dict:
         """Grafikkarte einmal erkennen (nvidia-smi/sysfs) – ändert sich nicht, solange Orbwise läuft."""
         if not gpu_cache:
-            from . import models as mdl
+            from ... import models as mdl
             gpu_cache.update(await asyncio.to_thread(mdl.detect_gpu))
         return gpu_cache
 
     @app.get("/api/models/log")
     async def model_server_log(lines: int = 200):
         """Ausgabe des letzten Modell-Server-Starts (llama-server) – zum Nachsehen, warum etwas nicht lädt."""
-        from .llm_router import _log_path
+        from ...llm_router import _log_path
         try:
             text = (await asyncio.to_thread(_log_path().read_text, errors="replace"))[-200_000:]
         except OSError:
@@ -123,7 +123,7 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
 
     @app.get("/api/models/presets")
     async def model_presets():
-        from . import models as mdl
+        from ... import models as mdl
         gpu = await asyncio.to_thread(mdl.detect_gpu)
         installed = await asyncio.to_thread(mdl.installed_models, cfg.llm.base_url)
         return {"gpu": gpu, "presets": mdl.preset_list(gpu["vram_gb"], installed),
@@ -131,8 +131,8 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
 
     def with_fit(item: dict, gpu: dict) -> dict:
         """Passt das Modell (bei Q4_K_M) in den Speicher, und kennt das installierte llama.cpp seine Architektur?"""
-        from . import llamacpp
-        from . import models as mdl
+        from ... import llamacpp
+        from ... import models as mdl
         out = dict(item)
         if out.get("est_gb"):
             out["fit"] = mdl.fit_need(mdl.need_gb(out["est_gb"]), gpu["vram_gb"])
@@ -141,7 +141,7 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
 
     @app.get("/api/models/hf/search")
     async def hf_search(q: str = "", sort: str = "downloads"):
-        from . import models as mdl
+        from ... import models as mdl
         if not q.strip():
             return {"results": []}
         tag = mdl.normalize_tag(q)
@@ -159,7 +159,7 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
     @app.get("/api/models/hf/suggest")
     async def hf_suggest(refresh: bool = False):
         """Beliebte GGUF-Modelle von Hugging Face, die in den Speicher passen (statt einer festen Liste)."""
-        from . import models as mdl
+        from ... import models as mdl
         gpu = await asyncio.to_thread(mdl.detect_gpu)
         key = gpu["vram_gb"]
         hit = suggest_cache.get(key)
@@ -174,8 +174,8 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
 
     @app.get("/api/models/hf/quants")
     async def hf_quants(repo: str):
-        from . import llamacpp
-        from . import models as mdl
+        from ... import llamacpp
+        from ... import models as mdl
         gpu = await asyncio.to_thread(mdl.detect_gpu)
         try:
             items, info = await asyncio.gather(
@@ -209,14 +209,14 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
         import os
         if os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN"):
             return {"set": True, "source": "env"}
-        from . import keystore
+        from ... import keystore
         return {"set": bool(await asyncio.to_thread(keystore.get, "hf_token")), "source": "saved"}
 
     @app.post("/api/hf/token")
     async def hf_token_save(request: Request):
         """Token speichern (Schlüsselbund) – vorher bei Hugging Face prüfen, ob es gilt."""
-        from . import keystore
-        from . import models as mdl
+        from ... import keystore
+        from ... import models as mdl
         token = str((await request.json()).get("token") or "").strip()
         if not token:
             await asyncio.to_thread(keystore.delete, "hf_token")
@@ -242,7 +242,7 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
     add_lock = asyncio.Lock()  # Profile nacheinander anlegen – sonst bekämen zwei fertige Downloads denselben Port
 
     def hf_base() -> str:
-        from . import models as mdl
+        from ... import models as mdl
         return mdl.HF_API[:-4] if mdl.HF_API.endswith("/api") else "https://huggingface.co"
 
     async def pull_event(tag: str, **data) -> None:
@@ -251,7 +251,7 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
 
     async def ensure_llamacpp(tag: str, gpu: dict, update: bool = False) -> dict:
         """llama.cpp einrichten (einmalig) bzw. aktualisieren – Statuszeilen gehen als model_pull-Fortschritt raus."""
-        from . import llamacpp
+        from ... import llamacpp
         async with llamacpp_lock:
             if llamacpp.installed(cfg) and not update:
                 return llamacpp.manifest(cfg)
@@ -295,8 +295,8 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
 
     async def pull_gguf(tag: str) -> dict:
         """hf.co/<repo>:<quant> → Dateien nach ~/models laden, llama.cpp bereitstellen, Profil anlegen."""
-        from . import llamacpp
-        from . import models as mdl
+        from ... import llamacpp
+        from ... import models as mdl
         repo, _, quant = tag[6:].partition(":")
         gpu = await asyncio.to_thread(mdl.detect_gpu)
         items = await asyncio.to_thread(mdl.hf_quants, repo, gpu["vram_gb"], llamacpp.models_dir(cfg))
@@ -321,8 +321,8 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
         return {"profile": name}
 
     async def add_local(tag: str, path: Path) -> dict:
-        from . import llamacpp
-        from . import models as mdl
+        from ... import llamacpp
+        from ... import models as mdl
         gpu = await asyncio.to_thread(mdl.detect_gpu)
         await ensure_llamacpp(tag, gpu)
         async with add_lock:
@@ -340,8 +340,8 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
     @app.get("/api/models/local")
     async def models_local():
         """GGUF-Dateien in ~/models (llm.models_dir) – mit dem Profil, das sie schon nutzt."""
-        from . import llamacpp
-        from . import models as mdl
+        from ... import llamacpp
+        from ... import models as mdl
         gpu = await asyncio.to_thread(mdl.detect_gpu)
         profiles = llm.profiles if isinstance(llm, LLMRouter) else {}
         items = await asyncio.to_thread(llamacpp.scan, cfg, profiles, gpu["vram_gb"])
@@ -349,8 +349,8 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
 
     @app.post("/api/models/local")
     async def models_local_add(request: Request):
-        from . import llamacpp
-        from . import models as mdl
+        from ... import llamacpp
+        from ... import models as mdl
         if not isinstance(llm, LLMRouter):
             raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
         raw = str((await request.json()).get("path", "")).strip()
@@ -364,8 +364,8 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
     async def llamacpp_status(check: bool = False, force: bool = False):
         """Installierter Build; mit check: auch die neueste Version (llama.cpp und ROCm, je 3 h gemerkt).
         ROCm wird nur angezeigt – es ist ein Systempaket mit Treibern, das aktualisiert der Nutzer selbst."""
-        from . import llamacpp
-        from . import models as mdl
+        from ... import llamacpp
+        from ... import models as mdl
         m = llamacpp.manifest(cfg)
         gpu = await asyncio.to_thread(mdl.detect_gpu)
         flavors = [f for f in llamacpp.flavors_for(gpu) if f != "cpu"]
@@ -390,8 +390,8 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
     @app.post("/api/llamacpp/update")
     async def llamacpp_update():
         """Neuesten llama.cpp-Build laden; ein geladenes eigenes Modell startet danach gleich mit ihm neu."""
-        from . import llamacpp
-        from . import models as mdl
+        from ... import llamacpp
+        from ... import models as mdl
 
         async def job() -> dict:
             before = llamacpp.manifest(cfg).get("dir")
@@ -405,7 +405,7 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
         return {"ok": True}
 
     async def pull_model(tag: str) -> None:
-        from . import models as mdl
+        from ... import models as mdl
         last = 0.0
         try:
             async with httpx.AsyncClient(base_url=cfg.llm.base_url, timeout=None) as client:
@@ -441,7 +441,7 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
 
     @app.post("/api/models/pull")
     async def model_pull(request: Request):
-        from . import models as mdl
+        from ... import models as mdl
         if not isinstance(llm, LLMRouter):
             raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
         body = await request.json()
@@ -501,8 +501,8 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
         """Eigenes Backend als Modell anlegen. Orbwise startet dort nichts – Kontext, KV-Cache usw. legt der Server
         fest; die Angabe „Kontextfenster“ sagt Orbwise nur, wie viel hineinpasst. Der Schlüssel liegt im
         Schlüsselbund."""
-        from . import keystore
-        from . import models as mdl
+        from ... import keystore
+        from ... import models as mdl
         if not isinstance(llm, LLMRouter):
             raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
         data = await request.json()
@@ -537,8 +537,8 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
     @app.delete("/api/models/{name}")
     async def model_delete(name: str):
         """Per Oberfläche/CLI hinzugefügtes Modell entfernen und seine Dateien löschen (gibt Speicher frei)."""
-        from . import llamacpp as llamacpp_mod
-        from . import models as mdl
+        from ... import llamacpp as llamacpp_mod
+        from ... import models as mdl
         if not isinstance(llm, LLMRouter):
             raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
         if name not in llm.profiles:
@@ -565,7 +565,7 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
         await llm.remove_profile(name)
         mdl.unregister_model(state_file, name)
         if name.startswith("api-"):  # Schlüssel eines eigenen Backends mit entfernen
-            from . import keystore
+            from ... import keystore
             with contextlib.suppress(Exception):
                 await asyncio.to_thread(keystore.delete, "llm_api_key:" + name)
         freed = 0
@@ -625,7 +625,7 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
     @app.get("/api/llm/memory")
     async def llm_memory():
         """Wo liegt der Kontext (VRAM/RAM), und wie groß darf das Kontextfenster werden?"""
-        from . import llm_memory
+        from ... import llm_memory
         gpu = (await asyncio.to_thread(metrics.collect)).get("gpu")
         if not isinstance(llm, LLMRouter):
             return {"available": False}
@@ -640,8 +640,8 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
 
     def prompt_cache() -> dict | None:
         """Prompt-Cache des laufenden llama-server im RAM – aus dessen Log (die API meldet ihn nicht)."""
-        from . import llm_memory
-        from .llm_router import _log_path
+        from ... import llm_memory
+        from ...llm_router import _log_path
         try:
             with open(_log_path(), "rb") as f:
                 f.seek(0, 2)
@@ -654,7 +654,7 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
     @app.post("/api/context/test")
     async def context_test(quick: bool = False):
         """Kontext-Selbsttest gegen das aktive Modell (siehe context_test.py) – der offene Chat bleibt unverändert."""
-        from .context_test import run_context_test
+        from ...context_test import run_context_test
         if not isinstance(llm, LLMRouter):
             raise HTTPException(400, "Im Demo-Modus nicht verfügbar")
         if agent.busy() or llm.switching:
@@ -719,7 +719,7 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
 
     @app.get("/api/models/{name}/sampling")
     async def get_model_sampling(name: str):
-        from .llm import SAMPLING_LIMITS, SAMPLING_PRESETS
+        from ...llm import SAMPLING_LIMITS, SAMPLING_PRESETS
         router_profile(name)
         p = llm.profiles[name]
         return {"think": p.sampling.get("think") or {}, "fast": p.sampling.get("fast") or {},
@@ -741,7 +741,7 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
     @app.post("/api/models/{name}/kv")
     async def set_model_kv(name: str, request: Request):
         """KV-Cache-Stufe (f16/q8_0/q4_0) eines eigenen llama-server – kleinerer Cache = mehr Kontext im VRAM."""
-        from .llm_router import KV_TYPES
+        from ...llm_router import KV_TYPES
         router_profile(name)
         kv = str((await request.json()).get("kv", ""))
         if kv not in KV_TYPES:
@@ -757,7 +757,7 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
     @app.post("/api/models/{name}/ubatch")
     async def set_model_ubatch(name: str, request: Request):
         """Batch-Größe (-ub) eines eigenen llama-server – größer = langer Text wird schneller eingelesen, mehr VRAM."""
-        from .llm_router import UBATCH_SIZES
+        from ...llm_router import UBATCH_SIZES
         router_profile(name)
         try:
             size = int((await request.json()).get("size", 0))
@@ -797,8 +797,8 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
     @app.post("/api/models/{name}/tune")
     async def tune_model(name: str):
         """Schnellste verlustfreie llama.cpp-Einstellung messen (Build, Batch-Größe) – siehe llamacpp_tune.py."""
-        from . import llamacpp_tune
-        from . import models as mdl
+        from ... import llamacpp_tune
+        from ... import models as mdl
         router_profile(name)
         server = llm.profiles[name].server
         if not server or not llamacpp_tune.uses_own_build(cfg, server.command):
@@ -825,15 +825,15 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
 
     @app.get("/api/models/{name}/tune")
     async def tune_result(name: str):
-        from . import llamacpp_tune
+        from ... import llamacpp_tune
         return {"result": llamacpp_tune.saved(state_file, name)}
 
     @app.post("/api/llamacpp/flavor")
     async def llamacpp_flavor(request: Request):
         """Anderen Build (z. B. Vulkan statt ROCm) für alle llama.cpp-Modelle übernehmen – fehlt er noch, wird er
         derselben Version zuerst geladen (Hintergrund-Aufgabe „llama.cpp“); ein geladenes Modell startet neu."""
-        from . import llamacpp
-        from . import models as mdl
+        from ... import llamacpp
+        from ... import models as mdl
         flavor = str((await request.json()).get("flavor") or "")
         if flavor not in llamacpp.FLAVORS:
             raise HTTPException(400, T("Unbekannte Variante", "Unknown variant"))
@@ -889,14 +889,14 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
         return True
 
     def own_llamacpp(name: str) -> bool:
-        from . import llamacpp_tune
+        from ... import llamacpp_tune
         server = llm.profiles[name].server
         return bool(server) and llamacpp_tune.uses_own_build(cfg, server.command)
 
     @app.post("/api/models/{name}/spec")
     async def set_model_spec(name: str, request: Request):
         """Spekulatives Decoding: off / mtp (eigene Vorhersage-Schichten des Modells) / ngram – schneller antworten."""
-        from .llm_router import SPEC_MODES, spec_options
+        from ...llm_router import SPEC_MODES, spec_options
         router_profile(name)
         mode = str((await request.json()).get("mode", ""))
         if mode not in SPEC_MODES:
@@ -910,7 +910,7 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
     @app.get("/api/models/spec/stats")
     async def model_spec_stats():
         """Trefferquote der Vorschläge (laut Log des laufenden llama-server) – zeigt, ob es etwas bringt."""
-        from .llm_router import _log_path, spec_stats
+        from ...llm_router import _log_path, spec_stats
         try:
             text = (await asyncio.to_thread(_log_path().read_text, errors="replace"))[-400_000:]
         except OSError:

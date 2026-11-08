@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from orbwise import llm_router, server
 from orbwise.agent import Agent
+from orbwise.webapp import static
 
 WS = "ws://localhost:8765/ws"
 ORIGIN = {"Origin": "http://localhost:8765"}
@@ -136,7 +137,9 @@ def test_page_loads_ui_files_with_content_version(cfg):
         refs = dict(re.findall(r'/static/([\w.-]+)\?v=([0-9a-f]{10})"', html))
         assert {"orb.js", "app.js", "voicefx.js", "style.css"} <= set(refs)
         for name, digest in refs.items():
-            assert hashlib.sha1((server.WEB_DIR / name).read_bytes()).hexdigest()[:10] == digest
+            if name != "app.js":
+                assert hashlib.sha1((server.WEB_DIR / name).read_bytes()).hexdigest()[:10] == digest
+        assert refs["app.js"] == static.content_digest(server.WEB_DIR / "app.js")
         assert client.get(f"/static/orb.js?v={refs['orb.js']}").status_code == 200
 
 
@@ -179,3 +182,39 @@ def test_model_preload_explains_missing_model():
         assert "ollama pull qwen3:14b" in str(e)
     else:
         raise AssertionError("kein Fehler")
+
+
+def test_app_js_version_follows_its_modules(tmp_path, monkeypatch):
+    """Ändert sich nur ein Modul unter js/, muss sich trotzdem der Verweis auf app.js ändern."""
+    web = tmp_path / "web"
+    (web / "js").mkdir(parents=True)
+    (web / "app.js").write_text('import { init } from "./js/a.js";\n')
+    (web / "js" / "a.js").write_text("export function init() {}\n")
+    monkeypatch.setattr(static, "WEB_DIR", web)
+    monkeypatch.setattr(static, "MODULES_DIR", web / "js")
+    before = static.content_digest(web / "app.js")
+    (web / "js" / "a.js").write_text("export function init() { console.log(1); }\n")
+    assert static.content_digest(web / "app.js") != before
+
+
+def test_every_module_is_loaded_and_revalidated(cfg):
+    """app.js erreicht jedes Modul unter js/ (direkt oder über andere Module), und die Module werden wie app.js bei
+    jedem Laden neu geprüft – sonst liefe nach einem Update ein altes Modul aus dem Cache mit dem neuen app.js."""
+    import re
+
+    present = {p.name for p in (server.WEB_DIR / "js").glob("*.js")}
+    imports = {name: set(re.findall(r'from "\./([\w-]+\.js)"', (server.WEB_DIR / "js" / name).read_text()))
+               for name in present}
+    for module, targets in imports.items():  # Importe zwischen den Modulen zeigen auf vorhandene Dateien
+        assert targets <= present, (module, targets - present)
+    entry = (server.WEB_DIR / "app.js").read_text(encoding="utf-8")
+    reached, todo = set(), set(re.findall(r'from "\./js/([\w-]+\.js)"', entry))
+    while todo:
+        name = todo.pop()
+        reached.add(name)
+        todo |= imports.get(name, set()) - reached
+    assert reached == present and "core.js" in present
+    with TestClient(server.create_app(cfg), base_url="http://localhost:8765") as client:
+        resp = client.get("/static/js/core.js")
+        assert resp.status_code == 200 and resp.headers["cache-control"] == "no-cache"
+        assert "javascript" in resp.headers["content-type"]

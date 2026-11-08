@@ -8,8 +8,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import pytest
 from fastapi.testclient import TestClient
 
-from orbwise.api_server import resolve_model
 from orbwise.config import ProfileConfig
+from orbwise.webapp.routes.apiserver import resolve_model
 
 
 class FakeLlamaServer(BaseHTTPRequestHandler):

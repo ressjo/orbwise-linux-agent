@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from orbwise import prompts
 from orbwise.agent import Agent
 from orbwise.config import Config
-from orbwise.server import CALL_TEXTS, describe_call, parse_yes_no
+from orbwise.hub import CALL_TEXTS, describe_call, parse_yes_no
 from orbwise.web_i18n import HTML_EN, translate_index
 
 
