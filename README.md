@@ -534,7 +534,9 @@ MoE models when the installed llama.cpp knows the option.
 
 **Models → Measure quality** compares the model with KV cache f16, q8 and q4, and other quants of the same model in the
 same folder, against the most precise version available (e.g. the Q8 next to your Q4) – on a fixed German and English
-text (Wikipedia articles, downloaded once). For each variant it shows how often it picks the same most likely next
+text (Wikipedia articles, downloaded once; if Wikipedia can't be reached, the English *wikitext-2* test set from
+Hugging Face – the result says which text was used, and your own text at `~/.cache/orbwise/quality/eigener-text.txt`
+takes precedence). For each variant it shows how often it picks the same most likely next
 token (above ~98 % is hard to notice), the mean KL divergence and the perplexity. It takes a few minutes per variant,
 the model is unloaded meanwhile, and the reference logits need a few GB in the cache folder for a moment. This measures
 closeness to the original – to compare different models on tasks, use `scripts/llm_bench.py`.

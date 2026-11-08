@@ -126,8 +126,9 @@ export function renderQuality(sec, p) {
       const err = tr.querySelector("td.err");
       if (err) err.textContent = v.error;
     });
-    const notes = [L(`Verglichen mit ${q.reference} auf ${num(q.tokens)} Token, gemessen am ${new Date(q.at * 1000).toLocaleDateString()}.`,
-                     `Compared with ${q.reference} on ${num(q.tokens)} tokens, measured on ${new Date(q.at * 1000).toLocaleDateString()}.`)];
+    const text = q.source ? L(` (Text: ${q.source})`, ` (text: ${q.source})`) : "";
+    const notes = [L(`Verglichen mit ${q.reference} auf ${num(q.tokens)} Token${text}, gemessen am ${new Date(q.at * 1000).toLocaleDateString()}.`,
+                     `Compared with ${q.reference} on ${num(q.tokens)} tokens${text}, measured on ${new Date(q.at * 1000).toLocaleDateString()}.`)];
     const kv8 = (q.variants || []).find((v) => v.kind === "kv" && v.kv === "q8_0" && v.same_top != null);
     if (kv8) notes.push(kv8.same_top >= 98.5 ? L(`KV-Cache q8 wählt in ${fmt(kv8.same_top, 1)} % dasselbe Token – kostet praktisch nichts und spart rund die Hälfte des Cache-Speichers.`,
                                                 `KV cache q8 picks the same token ${fmt(kv8.same_top, 1)} % of the time – costs practically nothing and saves about half of the cache memory.`)

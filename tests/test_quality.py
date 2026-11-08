@@ -117,10 +117,11 @@ def test_measure_job_with_fake_binary(tmp_path, cfg, monkeypatch):
         said.append(t)
 
     async def corpus():
-        return text
+        return text, "Wikipedia de/en"
 
     result = asyncio.run(q.measure(cfg, router, "m", say, corpus=corpus))
     assert result["reference"] == "Q8_0 · KV f16" and result["reference_ppl"] == 4.321
+    assert result["source"] == "Wikipedia de/en"
     rows = {r["label"]: r for r in result["variants"]}
     assert rows["Q8_0 · KV f16"]["same_top"] == 100.0 and rows["Q8_0 · KV f16"]["kind"] == "ref"
     assert rows["Q4_K_M · KV f16"]["same_top"] == 98.765 and rows["Q4_K_M · KV f16"]["current"]
@@ -143,6 +144,7 @@ def test_missing_binary_and_no_llamacpp(tmp_path, cfg):
 
 def test_corpus_is_loaded_once(tmp_path, cfg, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.setattr(q, "PAUSE_S", 0)
     calls = []
 
     def handler(request):
@@ -152,13 +154,67 @@ def test_corpus_is_loaded_once(tmp_path, cfg, monkeypatch):
     async def run():
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
             first = await q.ensure_corpus(cfg, c)
-            again = await q.ensure_corpus(cfg, c)
+            again = await q.ensure_corpus(cfg, c)  # aus dem Cache – kein Netz
         return first, again
 
-    first, again = asyncio.run(run())
-    assert first == again and len(calls) == sum(len(v) for v in q.ARTICLES.values())
+    (first, source), again = asyncio.run(run())
+    assert (first, source) == again and source == "Wikipedia de/en"
+    assert len(calls) == sum(len(v) for v in q.ARTICLES.values())
     body = first.read_text()
     assert "== Abschnitt ==" not in body and len(body) > 20000
+
+
+def test_user_agent_follows_wikimedia_policy():
+    """Wikimedia lehnt namenlose Bots ab (403 „Please respect our robot policy“): Programm, Version, Kontakt."""
+    from orbwise import __version__
+    ua = q.user_agent()
+    assert ua.startswith(f"Orbwise/{__version__} (") and "https://github.com/ressjo/orbwise-linux-agent" in ua
+    assert "httpx/" in ua and "@" not in ua  # keine persönlichen Daten
+
+
+def _wikitext_rows(offset):
+    lines = [" = Titel = \n"] + [f"Satz {offset + i} in einem englischen Wikipedia-Artikel über irgendwas .\n" for i in range(99)]
+    return {"rows": [{"row_idx": offset + i, "row": {"text": t}} for i, t in enumerate(lines)]}
+
+
+def test_wikipedia_blocked_falls_back_to_wikitext(tmp_path, cfg, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.setattr(q, "PAUSE_S", 0)
+    seen = []
+
+    def handler(request):
+        seen.append(request.url.host)
+        if request.url.host.endswith("wikipedia.org"):
+            return httpx.Response(403, text="Please respect our robot policy https://w.wiki/4wJS")
+        return httpx.Response(200, json=_wikitext_rows(int(request.url.params["offset"])))
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+            return await q.ensure_corpus(cfg, c)
+
+    path, source = asyncio.run(run())
+    assert source == "wikitext-2 (en)" and "datasets-server.huggingface.co" in seen
+    body = path.read_text()
+    assert len(body) >= q.MIN_CHARS and "= Titel =" not in body
+    assert json.loads(path.with_suffix(".json").read_text())["source"] == "wikitext-2 (en)"
+
+
+def test_no_source_gives_a_clear_message_and_own_text_works(tmp_path, cfg, monkeypatch):
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
+    monkeypatch.setattr(q, "PAUSE_S", 0)
+
+    async def run():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(403, text="nein"))) as c:
+            return await q.ensure_corpus(cfg, c)
+
+    with pytest.raises(RuntimeError) as err:
+        asyncio.run(run())
+    msg = str(err.value)
+    assert "Wikipedia de/en" in msg and "wikitext-2" in msg and str(q.own_text()) in msg
+    q.own_text().parent.mkdir(parents=True, exist_ok=True)
+    q.own_text().write_text("Mein eigener Text. " * 2000)
+    path, source = asyncio.run(run())  # ohne Netz: der eigene Text
+    assert path == q.own_text() and source == "eigener Text"
 
 
 def test_quality_routes(cfg, monkeypatch):

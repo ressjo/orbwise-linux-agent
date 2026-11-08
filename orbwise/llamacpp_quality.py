@@ -12,6 +12,7 @@ Das misst die Nähe zum Original, nicht wie gut das Modell Aufgaben löst – da
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -40,42 +41,106 @@ _KEEP = {"-ngl": 1, "--n-gpu-layers": 1, "--n-cpu-moe": 1, "-ncmoe": 1, "-ts": 1
          "--split-mode": 1, "-mg": 1, "--main-gpu": 1, "-fa": 1, "--flash-attn": 1, "-ub": 1, "--ubatch-size": 1}
 
 
-def corpus_path(cfg) -> Path:
+DATASETS_API = "https://datasets-server.huggingface.co/rows"
+MIN_CHARS = 20000
+
+
+def user_agent() -> str:
+    """Wikimedia verlangt bei automatischen Zugriffen Programm, Version und Kontakt – sonst 403 („robot policy“)."""
+    from . import __version__
+    return (f"Orbwise/{__version__} (https://github.com/ressjo/orbwise-linux-agent; local assistant) "
+            f"httpx/{httpx.__version__}")
+
+
+def corpus_dir() -> Path:
     """Der Messtext liegt im Cache (lässt sich jederzeit neu laden), nicht bei den Daten."""
-    base = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "orbwise" / "quality"
-    return base / "wikipedia-de-en.txt"
+    return Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "orbwise" / "quality"
 
 
-async def ensure_corpus(cfg, client: httpx.AsyncClient | None = None) -> Path:
-    """Den Messtext einmal laden (Wikipedia-API, Klartext) und speichern – danach immer derselbe."""
-    path = corpus_path(cfg)
-    if path.exists() and path.stat().st_size > 20000:
-        return path
-    own = client is None
-    client = client or httpx.AsyncClient(timeout=30, headers={"User-Agent": "Orbwise (local assistant)"})
+def corpus_path(cfg) -> Path:
+    return corpus_dir() / "text.txt"
+
+
+def own_text() -> Path:
+    """Eigener Messtext, falls Wikipedia und Hugging Face beide nicht gehen."""
+    return corpus_dir() / "eigener-text.txt"
+
+
+async def _wikipedia(client: httpx.AsyncClient) -> str:
     parts = []
+    for lang, titles in ARTICLES.items():
+        for title in titles:
+            r = await client.get(f"https://{lang}.wikipedia.org/w/api.php", params={
+                "action": "query", "prop": "extracts", "explaintext": 1, "format": "json", "redirects": 1,
+                "titles": title})
+            r.raise_for_status()
+            pages = (r.json().get("query") or {}).get("pages") or {}
+            text = next((p.get("extract") or "" for p in pages.values()), "")
+            text = re.sub(r"\n={2,}[^\n]*={2,}\n", "\n\n", text)  # Überschriften raus
+            if text:
+                parts.append(text[:ARTICLE_CHARS])
+            await asyncio.sleep(PAUSE_S)  # Wikimedia bittet um Pausen zwischen automatischen Anfragen
+    return "\n\n".join(parts)
+
+
+async def _wikitext(client: httpx.AsyncClient) -> str:
+    """wikitext-2 (Testteil) – der übliche englische Text für Perplexitätsmessungen."""
+    lines: list[str] = []
+    for offset in range(0, 3000, 100):
+        r = await client.get(DATASETS_API, params={"dataset": "Salesforce/wikitext", "config": "wikitext-2-raw-v1",
+                                                   "split": "test", "offset": offset, "length": 100})
+        r.raise_for_status()
+        rows = r.json().get("rows") or []
+        lines += [row["row"].get("text", "") for row in rows]
+        if not rows or sum(map(len, lines)) >= ARTICLE_CHARS * 6:
+            break
+    return "".join(x for x in lines if not x.strip().startswith("="))  # Überschriften raus
+
+
+SOURCES = (("Wikipedia de/en", _wikipedia), ("wikitext-2 (en)", _wikitext))
+PAUSE_S = 0.5
+
+
+async def ensure_corpus(cfg, client: httpx.AsyncClient | None = None) -> tuple[Path, str]:
+    """Den Messtext einmal laden und speichern – danach immer derselbe (vergleichbare Messungen). Reihenfolge: eigener
+    Text, gespeicherter Text, Wikipedia (deutsch und englisch), wikitext-2 von Hugging Face. → (Datei, Quelle)."""
+    own = own_text()
+    if own.exists() and own.stat().st_size >= MIN_CHARS:
+        return own, T("eigener Text", "own text")
+    path = corpus_path(cfg)
+    meta = path.with_suffix(".json")
+    if path.exists() and path.stat().st_size >= MIN_CHARS:
+        try:
+            return path, json.loads(meta.read_text(encoding="utf-8")).get("source", "")
+        except (OSError, ValueError):
+            return path, ""
+    mine = client is None
+    client = client or httpx.AsyncClient(timeout=30, follow_redirects=True,
+                                         headers={"User-Agent": user_agent(), "Accept-Encoding": "gzip"})
+    tried = []
     try:
-        for lang, titles in ARTICLES.items():
-            for title in titles:
-                r = await client.get(f"https://{lang}.wikipedia.org/w/api.php", params={
-                    "action": "query", "prop": "extracts", "explaintext": 1, "format": "json", "redirects": 1,
-                    "titles": title})
-                r.raise_for_status()
-                pages = (r.json().get("query") or {}).get("pages") or {}
-                text = next((p.get("extract") or "" for p in pages.values()), "")
-                text = re.sub(r"\n={2,}[^\n]*={2,}\n", "\n\n", text)  # Überschriften raus
-                if text:
-                    parts.append(text[:ARTICLE_CHARS])
-    except (httpx.HTTPError, ValueError) as e:
-        raise RuntimeError(T(f"Messtext nicht ladbar (Wikipedia): {e}", f"Could not load the test text (Wikipedia): {e}")) from e
+        for source, fetch in SOURCES:
+            try:
+                text = await fetch(client)
+            except (httpx.HTTPError, ValueError, KeyError) as e:
+                tried.append(f"{source}: {str(e).splitlines()[0][:160]}")
+                log.warning("Messtext von %s nicht ladbar: %s", source, e)
+                continue
+            if len(text) < MIN_CHARS:
+                tried.append(f"{source}: " + T("zu wenig Text", "too little text"))
+                continue
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+            meta.write_text(json.dumps({"source": source}), encoding="utf-8")
+            return path, source
     finally:
-        if own:
+        if mine:
             await client.aclose()
-    if sum(map(len, parts)) < 20000:
-        raise RuntimeError(T("Messtext zu kurz – Wikipedia lieferte zu wenig.", "Test text too short – Wikipedia returned too little."))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n\n".join(parts), encoding="utf-8")
-    return path
+    raise RuntimeError(T(
+        "Kein Messtext ladbar (" + "; ".join(tried) + f"). Eigenen Text (mindestens {MIN_CHARS} Zeichen) als {own} "
+        "ablegen und erneut messen.",
+        "No test text could be loaded (" + "; ".join(tried) + f"). Put your own text (at least {MIN_CHARS} "
+        f"characters) at {own} and measure again."))
 
 
 def quant_of(gguf: Path) -> str:
@@ -196,7 +261,7 @@ async def measure(cfg, router, name: str, progress: Progress | None = None, run:
         raise ValueError(T("llama-perplexity fehlt im llama.cpp-Build – bitte llama.cpp aktualisieren.",
                            "llama-perplexity is missing from the llama.cpp build – please update llama.cpp."))
     await say(T("Lade den Messtext …", "Loading the test text …"))
-    text = await (corpus() if corpus else ensure_corpus(cfg))
+    text, source = await (corpus() if corpus else ensure_corpus(cfg))
     reference, todo = variants(gguf, cache_type(p.server.command, {}), kv_types(p.server.command, p.server.env or {}))
     flags = keep_flags(p.server.command)
     env = llamacpp._env(folder)
@@ -233,7 +298,7 @@ async def measure(cfg, router, name: str, progress: Progress | None = None, run:
                 await router.ensure_loaded()
             except Exception as e:  # noqa: BLE001 – Ergebnis trotzdem melden
                 notes.append(T(f"Neu laden fehlgeschlagen: {e}", f"Reloading failed: {e}"))
-    result = {"at": time.time(), "reference": reference["label"], "reference_ppl": base.get("ppl"),
+    result = {"at": time.time(), "reference": reference["label"], "reference_ppl": base.get("ppl"), "source": source,
               "tokens": CHUNKS * CHUNK, "variants": results, "notes": notes}
     if router.state_path:
         def remember(data: dict) -> None:

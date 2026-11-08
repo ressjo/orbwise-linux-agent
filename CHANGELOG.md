@@ -16,6 +16,10 @@ All notable changes to this project are documented here. The format follows
   English text.
 
 ### Fixed
+- **Measure quality** stopped right away with "403 Please respect our robot policy": Wikipedia rejects requests
+  without a proper User-Agent. Orbwise now sends one with program, version and project URL, pauses between articles,
+  falls back to the English wikitext-2 test set from Hugging Face, and names the text used under the results. If no
+  source works, the message says where to put your own text instead of a traceback.
 - **sudo inside scripts, Makefiles and other programs** (`./install.sh`, `make install`) now gets the password
   dialog instead of failing for lack of a terminal: shell commands the model runs get a small `sudo` wrapper in front
   of the `PATH` that adds `-A`. The dialog shows what really gets root (`./install.sh → sudo pacman -S …`), and a
