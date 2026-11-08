@@ -20,7 +20,8 @@ All notable changes to this project are documented here. The format follows
 - **Code structure (no behaviour change):** the shell-command check is a package with a rule table per program
   instead of long if-chains (`tools/safety/`, highest function complexity 144 → 23); `server.py` (2,600 lines, 92
   routes in one function) is split into `hub.py` and `webapp/` with one route module per area; the web client
-  (`app.js`, 6,700 lines in one block) is split into 24 ES modules under `web/js/`, still without a build step.
+  (`app.js`, 6,700 lines in one block) is split into ES modules under `web/js/`, still without a build step – the
+  model page (1,470 lines) in turn into list, details, tuning, "Add" and "API server" modules.
   Checked against the previous version: identical answers of the safety check for over 43,000 commands, the same
   route for every path, and the same views in a browser walk-through of the UI.
 - **One place for the version:** `orbwise/__init__.py`; `pyproject.toml` reads it (hatch). CI checks that the
