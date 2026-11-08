@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.5] – 2026-11-08
+
 ### Changed
 - **No autostart by default:** the installer only adds the *Orbwise* entry to the application menu (it starts the
   server when needed). Starting at login is opt-in: `install.sh --autostart`, **Settings → General → Start at login**
