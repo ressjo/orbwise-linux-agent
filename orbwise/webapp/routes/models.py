@@ -49,7 +49,7 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
                     "profiles": [{"name": "demo", "label": "Demo (Fake-LLM)", "backend": "fake", "model": "fake",
                                   "base_url": "", "managed": False, "active": True}]}
         from ... import llamacpp as llamacpp_mod
-        from ... import llamacpp_tune
+        from ... import llamacpp_quality, llamacpp_tune
         from ... import models as mdl
         profiles = llm.describe()
         sizes: dict[str, int] = {}
@@ -87,15 +87,70 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
             if size:
                 p["vram_gb"] = mdl.need_gb(round(size / 1e9, 1))
                 p["fit"] = mdl.fit_need(p["vram_gb"], gpu["vram_gb"]) if gpu["vram_gb"] else None
+            if server_of(p["name"]) and files:
+                p["moe"] = moe_info(p["name"], weights)
             p["prefill_tps"] = agent.prefill_speed(p["name"])
             server = llm.profiles[p["name"]].server
             if server and llamacpp_tune.uses_own_build(cfg, server.command):  # „Schnellste Einstellung messen“
                 p["tunable"] = True
                 p["tuning"] = llamacpp_tune.saved(state_file, p["name"])
+                p["quality"] = llamacpp_quality.saved(state_file, p["name"])
         return {"active": llm.active, "switching": llm.switching, "unloaded": llm.unloaded, "profiles": profiles, "gpu": gpu,
                 "pulls": [{"tag": t, **pull_state.get(t, {})} for t in sorted(pulls)]}
 
     gpu_cache: dict = {}
+
+    def server_of(name: str):
+        p = llm.profiles.get(name) if isinstance(llm, LLMRouter) else None
+        return p.server if p else None
+
+    layout_cache: dict = {}
+
+    def moe_layout_of(gguf: Path) -> dict | None:
+        """Aufbau des MoE-Modells (Tensor-Tabelle) – je Datei und Änderungszeit nur einmal gelesen."""
+        from ... import llamacpp as llamacpp_mod
+        try:
+            key = (str(gguf), gguf.stat().st_mtime)
+        except OSError:
+            return None
+        if key not in layout_cache:
+            layout_cache[key] = llamacpp_mod.moe_layout(gguf)
+        return layout_cache[key]
+
+    def model_gguf(name: str) -> Path | None:
+        from ... import llamacpp as llamacpp_mod
+        from ... import models as mdl
+        files = [f for f in llamacpp_mod.profile_paths(llm.profiles[name]) if f.is_file() and not mdl.is_sidecar(f.name)]
+        return files[0] if files else None
+
+    def auto_moe_layers(name: str, ctx: int | None = None, command: str | None = None) -> int:
+        """Wie viele Schichten ihre Experten in den RAM legen sollten, damit der Rest in den Grafikspeicher passt
+        (0 = alles passt; passt selbst dann nichts: alle Schichten)."""
+        from ... import llamacpp as llamacpp_mod
+        p, gguf, gpu = llm.profiles[name], model_gguf(name), gpu_cache or {}
+        if not gguf:
+            return 0
+        mmproj = re.findall(r"--mmproj\s+(\S+)", p.server.command)
+        extra = sum(Path(os.path.expanduser(m)).stat().st_size for m in mmproj if Path(os.path.expanduser(m)).is_file())
+        n = llamacpp_mod.pick_moe(gguf, ctx or p.num_ctx or 8192, float(gpu.get("vram_gb") or 0),
+                                  len(gpu.get("gpus") or []) or 1, extra, command or p.server.command)
+        layout = moe_layout_of(gguf)
+        return n if n is not None else (layout["layers"] if layout else 0)
+
+    def moe_info(name: str, weights: list[str]) -> dict | None:
+        """MoE-Angaben für die Modellseite – None bei anderen Modellen."""
+        from ...llm_memory import moe_layers_of
+        from ...llm_router import moe_supported
+        layout = moe_layout_of(Path(weights[0])) if weights else None
+        if not layout:
+            return None
+        server = server_of(name)
+        n = moe_layers_of(server.command)
+        return {"layers": layout["layers"], "experts": layout["experts"], "n": n, "auto": llm.moe_auto(name),
+                "auto_n": auto_moe_layers(name) if gpu_cache.get("vram_gb") else None,
+                "ram_gb": round(sum(layout["expert_bytes"][:n]) / 1e9, 1),
+                "all_gb": round(sum(layout["expert_bytes"]) / 1e9, 1),
+                "supported": moe_supported(server.command, server.env or {})}
 
     async def gpu_info() -> dict:
         """Grafikkarte einmal erkennen (nvidia-smi/sysfs) – ändert sich nicht, solange Orbwise läuft."""
@@ -710,6 +765,8 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
         live = name == llm.active and mode == llm.mode and not llm.unloaded
 
         async def change() -> None:
+            if llm.profiles[name].server and llm.moe_auto(name) and mode == llm.mode:
+                llm.follow_moe(name, auto_moe_layers(name, ctx=ctx))  # mehr Kontext = mehr Experten in den RAM
             await llm.set_context(name, ctx, model_progress, mode=mode)
             if live:
                 await llm.warm()  # Ollama: gleich mit der neuen Größe laden
@@ -751,8 +808,47 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
                 await llm.set_kv(name, kv)
             except LLMError as e:
                 raise HTTPException(400, str(e)) from e
-        await restart_with(name, lambda: llm.set_kv(name, kv, model_progress), show_context=True)
+        async def change() -> None:
+            if llm.moe_auto(name):  # kleinerer KV-Cache = weniger Experten müssen in den RAM
+                command = re.sub(r"\s+(?:-ctk|-ctv|--cache-type-k|--cache-type-v)\s+\S+", "",
+                                 llm.profiles[name].server.command) + (f" -ctk {kv} -ctv {kv}" if kv != "f16" else "")
+                llm.follow_moe(name, auto_moe_layers(name, command=command))
+            await llm.set_kv(name, kv, model_progress)
+        await restart_with(name, change, show_context=True)
         return {"ok": True, "kv": kv}
+
+    @app.post("/api/models/{name}/moe")
+    async def set_model_moe(name: str, request: Request):
+        """Experten-Gewichte eines MoE-Modells in den RAM legen (--n-cpu-moe): {"mode": "auto"|"off"|"manual", "n"}."""
+        router_profile(name)
+        body = await request.json()
+        mode = str(body.get("mode") or "")
+        if mode not in ("auto", "off", "manual"):
+            raise HTTPException(400, "mode bitte auto, off oder manual")
+        server, gguf = server_of(name), model_gguf(name)
+        layout = moe_layout_of(gguf) if server and gguf else None
+        if not layout:
+            raise HTTPException(400, T("Das geht nur bei MoE-Modellen mit llama.cpp.",
+                                       "This only works for MoE models with llama.cpp."))
+        if mode == "auto":
+            if not (await gpu_info()).get("vram_gb"):
+                raise HTTPException(400, T("Grafikspeicher nicht erkannt – bitte die Zahl der Schichten selbst wählen.",
+                                           "Video memory not detected – please choose the number of layers yourself."))
+            n = auto_moe_layers(name)
+        elif mode == "off":
+            n = 0
+        else:
+            try:
+                n = int(body.get("n"))
+            except (TypeError, ValueError):
+                raise HTTPException(400, "n fehlt") from None
+            if not 0 <= n <= layout["layers"]:
+                raise HTTPException(400, T(f"Schichten bitte zwischen 0 und {layout['layers']}",
+                                           f"Layers please between 0 and {layout['layers']}"))
+        await restart_with(name, lambda: llm.set_moe(name, n, auto=mode == "auto", progress=model_progress),
+                           show_context=True)
+        agent.forget_prefill(name)  # Tempo ändert sich – die nächste Antwort misst neu
+        return {"ok": True, "n": n, "auto": mode == "auto"}
 
     @app.post("/api/models/{name}/ubatch")
     async def set_model_ubatch(name: str, request: Request):
@@ -822,6 +918,35 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
             return {"kind": "tuning", "profile": name, "applied_ubatch": result.get("applied_ubatch"),
                     "gain_pct": other.get("gain_pct"), "other_flavor": other.get("flavor")}
         return {"ok": True, "tag": start_job("Tuning", job)}
+
+    @app.post("/api/models/{name}/quality")
+    async def quality_model(name: str):
+        """Genauigkeit der Varianten messen (KV-Cache, andere Quants) – siehe llamacpp_quality.py."""
+        from ... import llamacpp_quality, llamacpp_tune
+        router_profile(name)
+        server = llm.profiles[name].server
+        if not server or not llamacpp_tune.uses_own_build(cfg, server.command):
+            raise HTTPException(400, T("Messen geht nur bei Modellen mit Orbwises llama.cpp.",
+                                       "Measuring only works for models running on Orbwise's llama.cpp."))
+        if llm.switching:
+            raise HTTPException(409, T("Gerade wird ein Modell geladen – bitte kurz warten.",
+                                       "A model is loading right now – please wait a moment."))
+
+        async def job() -> dict:
+            async def step(text: str) -> None:
+                pull_state["Quality"] = {"status": text}
+                await hub.broadcast({"type": "model_pull", "tag": "Quality", "status": text})
+            async with agent.lock:  # keine Antwort gleichzeitig – das Modell ist währenddessen entladen
+                result = await llamacpp_quality.measure(cfg, llm, name, step)
+            agent._cache_owner = None
+            await hub.broadcast({"type": "models_changed"})
+            return {"kind": "quality", "profile": name, "variants": len(result["variants"])}
+        return {"ok": True, "tag": start_job("Quality", job)}
+
+    @app.get("/api/models/{name}/quality")
+    async def quality_result(name: str):
+        from ... import llamacpp_quality
+        return {"result": llamacpp_quality.saved(state_file, name)}
 
     @app.get("/api/models/{name}/tune")
     async def tune_result(name: str):

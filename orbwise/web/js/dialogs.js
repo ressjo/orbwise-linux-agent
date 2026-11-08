@@ -64,7 +64,7 @@ export function ask(text, opts = {}) {
   const danger = opts.danger ?? /löschen|entfernen|verwerfen|beenden|überschreiben|delete|remove|discard|overwrite/i.test(text.split("\n")[0]);
   return dialog({ text, ok: opts.ok, danger });
 }
-function askText(text, value = "", opts = {}) {
+export function askText(text, value = "", opts = {}) {
   return dialog({ text, input: value, multiline: !!opts.multiline, ok: opts.ok });
 }
 // Projektordner: Pfad eintippen oder durch die Ordner klicken (der Server listet nur Ordnernamen)

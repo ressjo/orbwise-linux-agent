@@ -5,6 +5,16 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **MoE experts in RAM:** for mixture-of-experts models that don't fit in video memory, llama.cpp keeps only the
+  expert weights of the first N layers in system memory (`--n-cpu-moe`) – attention and KV cache stay on the GPU.
+  Models → *Experts in RAM (MoE)*: automatic (recalculated when context or KV cache change), off or a custom number.
+  New MoE models that would only fit with a small context get 32k context and the right number right away; the memory
+  display counts the experts in RAM.
+- **Measure quality** on the model page: llama-perplexity compares KV cache f16/q8/q4 and other quants of the same
+  model with the most precise version available (same top token %, KL divergence, perplexity) on a fixed German and
+  English text.
+
 ### Fixed
 - **sudo inside scripts, Makefiles and other programs** (`./install.sh`, `make install`) now gets the password
   dialog instead of failing for lack of a terminal: shell commands the model runs get a small `sudo` wrapper in front

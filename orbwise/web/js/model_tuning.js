@@ -4,7 +4,7 @@ import { num } from "./activity.js";
 import { L, api, getJSON } from "./core.js";
 import { ask, toast } from "./dialogs.js";
 import { MP, hint, refreshModelViews, restartNote } from "./models.js";
-import { ctxLabel, gbs, lastMem } from "./telemetry.js";
+import { ctxLabel, fmt, gbs, lastMem } from "./telemetry.js";
 
 export let FLAVOR_LABEL;
 let SAMPLING_FIELDS;
@@ -88,6 +88,62 @@ function renderTuning(slot, p) {
     box.querySelector(".md-btns").appendChild(sw);
   }
 }
+// Qualität messen: wie nah sind KV-Cache-Stufen und andere Quants am genauesten vorhandenen Stand (llama-perplexity)
+export function renderQuality(sec, p) {
+  sec.querySelector("h4").textContent = L("Qualität messen", "Measure quality");
+  const slot = sec.querySelector(".quality-slot");
+  const box = document.createElement("div");
+  box.className = "tune-box";
+  box.innerHTML = `<div class="md-btns"><button type="button" class="btn small q-btn"></button></div><div class="q-res"></div>`;
+  slot.appendChild(box);
+  const btn = box.querySelector(".q-btn");
+  const running = (MP.data.pulls || []).some((x) => x.tag === "Quality");
+  btn.textContent = running ? L("Misst gerade …", "Measuring …") : p.quality ? L("Erneut messen", "Measure again") : L("Qualität messen", "Measure quality");
+  btn.disabled = running || !!MP.data.switching;
+  btn.onclick = async () => {
+    if (!await ask(L("Vergleicht dieses Modell mit KV-Cache f16/q8/q4 und andere Quants desselben Modells im selben Ordner mit der genauesten vorhandenen Fassung – auf einem festen deutschen und englischen Text (beim ersten Mal von Wikipedia geladen). "
+                   + "Dauert meist ein paar Minuten je Variante; das Modell wird dafür entladen und danach wieder geladen, Chats warten so lange. Kurzzeitig braucht die Messung einige GB Platz im Cache-Ordner. Starten?",
+                   "Compares this model with KV cache f16/q8/q4 and other quants of the same model in the same folder against the most precise version available – on a fixed German and English text (downloaded from Wikipedia the first time). "
+                   + "Usually takes a few minutes per variant; the model is unloaded for it and loaded again afterwards, chats wait meanwhile. The measurement briefly needs a few GB in the cache folder. Start?"))) return;
+    btn.disabled = true;
+    try { await api("POST", `/api/models/${encodeURIComponent(p.name)}/quality`); btn.textContent = L("Misst gerade …", "Measuring …"); }
+    catch { btn.disabled = false; }
+    refreshModelViews();
+  };
+  const q = p.quality;
+  const res = box.querySelector(".q-res");
+  if (q) {
+    const pct = (v) => (v == null ? "–" : `${fmt(v, 1)} %`);
+    const dec = (v, d = 3) => (v == null ? "–" : fmt(v, d));
+    const rows = (q.variants || []).map((v) => `<tr class="${v.current ? "best" : ""}"><td></td>`
+      + (v.error ? `<td colspan="3" class="err"></td>` : `<td>${pct(v.same_top)}</td><td>${dec(v.kld, 4)}</td><td>${dec(v.ppl, 2)}</td>`)
+      + `<td>${v.size_gb ? `${fmt(v.size_gb, 1)} GB` : ""}</td><td>${v.current ? L("aktiv", "active") : ""}</td></tr>`).join("");
+    res.innerHTML = `<table class="tune-table"><thead><tr><th>${L("Variante", "Variant")}</th><th>${L("gleiches Top-Token", "same top token")}</th>`
+      + `<th>KL</th><th>${L("Perplexität", "Perplexity")}</th><th>${L("Datei", "File")}</th><th></th></tr></thead><tbody>${rows}</tbody></table><p class="set-hint q-note"></p>`;
+    res.querySelectorAll("tbody tr").forEach((tr, i) => {
+      const v = q.variants[i];
+      tr.firstElementChild.textContent = v.label;
+      const err = tr.querySelector("td.err");
+      if (err) err.textContent = v.error;
+    });
+    const notes = [L(`Verglichen mit ${q.reference} auf ${num(q.tokens)} Token, gemessen am ${new Date(q.at * 1000).toLocaleDateString()}.`,
+                     `Compared with ${q.reference} on ${num(q.tokens)} tokens, measured on ${new Date(q.at * 1000).toLocaleDateString()}.`)];
+    const kv8 = (q.variants || []).find((v) => v.kind === "kv" && v.kv === "q8_0" && v.same_top != null);
+    if (kv8) notes.push(kv8.same_top >= 98.5 ? L(`KV-Cache q8 wählt in ${fmt(kv8.same_top, 1)} % dasselbe Token – kostet praktisch nichts und spart rund die Hälfte des Cache-Speichers.`,
+                                                `KV cache q8 picks the same token ${fmt(kv8.same_top, 1)} % of the time – costs practically nothing and saves about half of the cache memory.`)
+                                             : L(`KV-Cache q8 weicht hier spürbar ab (${fmt(kv8.same_top, 1)} % gleich) – f16 lassen, wenn der Platz reicht.`,
+                                                `KV cache q8 differs noticeably here (${fmt(kv8.same_top, 1)} % same) – keep f16 if there is room.`));
+    (q.notes || []).forEach((n) => notes.push(n));
+    res.querySelector(".q-note").textContent = notes.join(" ");
+  }
+  hint(sec.querySelector(".set-hint"),
+    L("Zeigt, wie nah KV-Cache-Stufen und andere Quants am Original sind – gemessen statt geraten.", "Shows how close KV cache levels and other quants are to the original – measured, not guessed."),
+    L("„Gleiches Top-Token“: wie oft die Variante dasselbe wahrscheinlichste nächste Wort wählt wie die Referenz (über 98 % ist kaum zu merken). KL: wie stark die Wahrscheinlichkeiten im Mittel abweichen (unter 0,01 sehr klein). "
+      + "Perplexität: wie gut der Text vorhergesagt wird (kleiner ist besser). Das misst die Nähe zum Original, nicht wie gut das Modell Aufgaben löst. Weitere Quants zum Vergleich: im Reiter „Hinzufügen“ in denselben Ordner laden.",
+      "“Same top token”: how often the variant picks the same most likely next word as the reference (above 98 % is hard to notice). KL: how much the probabilities differ on average (below 0.01 is very small). "
+      + "Perplexity: how well the text is predicted (lower is better). This measures closeness to the original, not how well the model solves tasks. More quants to compare: download them into the same folder in the “Add” tab."));
+}
+
 // Spekulatives Decoding: das Modell schlägt mehrere Token vor, der Server prüft sie auf einmal – schneller antworten
 export function renderSpec(sec, p) {
   sec.querySelector("h4").textContent = L("Schneller antworten (spekulatives Decoding)", "Faster answers (speculative decoding)");

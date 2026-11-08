@@ -191,6 +191,79 @@ def gguf_metadata(path: str, wanted: tuple[str, ...] = (".block_count", ".attent
     return out
 
 
+_EXPERT_TENSOR = re.compile(r"^blk\.(\d+)\.ffn_\w*_exps\.")  # MoE-Experten (nicht die geteilten *_shexp)
+
+
+def gguf_layout(paths: list[str]) -> dict:
+    """Aufbau eines Modells aus der Tensor-Tabelle seiner GGUF-Datei(en): Schichten, Zahl der Experten, Bytes der
+    Experten-Gewichte je Schicht und Gesamtgröße. Für MoE-Modelle: was --n-cpu-moe N in den RAM legt.
+    → {"layers", "experts", "expert_bytes": [je Schicht], "total"} (experts 0 = kein MoE)."""
+    import os
+    import struct
+
+    layers = experts = total = 0
+    per_layer: dict[int, int] = {}
+    for path in paths:
+        size = os.path.getsize(path)
+        total += size
+        with open(path, "rb") as f:
+            if f.read(4) != b"GGUF":
+                raise ValueError(f"keine GGUF-Datei: {path}")
+            _version, n_tensors, n_kv = struct.unpack("<IQQ", f.read(20))
+
+            def string() -> str:
+                (n,) = struct.unpack("<Q", f.read(8))
+                return f.read(n).decode("utf-8", "replace")
+
+            def value(kind: int):
+                if kind == 8:
+                    return string()
+                if kind == 9:
+                    elem, count = struct.unpack("<IQ", f.read(12))
+                    if elem in _GGUF_SCALARS:
+                        f.seek(struct.calcsize(_GGUF_SCALARS[elem]) * count, 1)
+                    else:
+                        for _ in range(count):
+                            value(elem)
+                    return None
+                fmt = _GGUF_SCALARS[kind]
+                return struct.unpack(fmt, f.read(struct.calcsize(fmt)))[0]
+
+            alignment = 32
+            for _ in range(n_kv):
+                key = string()
+                (kind,) = struct.unpack("<I", f.read(4))
+                v = value(kind)
+                if key == "general.alignment" and isinstance(v, int) and v > 0:
+                    alignment = v
+                elif key.endswith(".block_count") and isinstance(v, int):
+                    layers = max(layers, v)
+                elif key.endswith(".expert_count") and isinstance(v, int):
+                    experts = max(experts, v)
+            tensors = []
+            for _ in range(n_tensors):
+                name = string()
+                (n_dims,) = struct.unpack("<I", f.read(4))
+                f.seek(8 * n_dims, 1)
+                _kind, offset = struct.unpack("<IQ", f.read(12))
+                tensors.append((offset, name))
+            data_start = -(-f.tell() // alignment) * alignment
+        tensors.sort()
+        ends = [o for o, _ in tensors[1:]] + [size - data_start]
+        for (offset, name), end in zip(tensors, ends):
+            m = _EXPERT_TENSOR.match(name)
+            if m:
+                per_layer[int(m.group(1))] = per_layer.get(int(m.group(1)), 0) + max(0, end - offset)
+    return {"layers": layers, "experts": experts if per_layer else 0, "total": total,
+            "expert_bytes": [per_layer.get(i, 0) for i in range(layers)] if per_layer else []}
+
+
+def moe_layers_of(command: str) -> int:
+    """--n-cpu-moe N aus dem Startbefehl (0 = alle Experten auf der GPU)."""
+    found = re.findall(r"(?:^|\s)(?:--n-cpu-moe|-ncmoe)\s+(\d+)", command or "")
+    return int(found[-1]) if found else 0
+
+
 def type_bytes(kind: str) -> float:
     """Bytes je KV-Element; unbekannte Typen (z. B. 2-/3-Bit aus Forks) aus der Bit-Zahl im Namen geschätzt."""
     kind = kind.lower()
@@ -232,10 +305,26 @@ def estimate_from_gguf(path: str, ctx: int, command: str = "", env: dict | None 
     layers = next((v for k, v in meta.items() if k.endswith(".block_count")), 0)
     share = 1.0 if not ngl or not layers else min(1.0, int(ngl[-1]) / layers)
     train = next((v for k, v in meta.items() if k.endswith(".context_length")), None)
+    model_vram, model_ram = int(size * share), int(size * (1 - share))
+    moved = experts_in_ram(path, moe_layers_of(command))  # --n-cpu-moe: Experten der ersten N Schichten im RAM
+    model_vram, model_ram = max(0, model_vram - moved), model_ram + min(moved, model_vram)
     return {"ctx": ctx, "ctx_train": train, "kv_per_token": per_token, "source": "estimate",
             "kv_vram": 0 if kv_in_ram else int(kv * share), "kv_ram": kv if kv_in_ram else int(kv * (1 - share)),
-            "model_vram": int(size * share), "model_ram": int(size * (1 - share)),
-            "model_ram_offload": int(size * (1 - share))}
+            "model_vram": model_vram, "model_ram": model_ram, "model_ram_offload": model_ram}
+
+
+def experts_in_ram(path: str, n: int) -> int:
+    """Bytes der Experten-Gewichte, die --n-cpu-moe n in den RAM legt (Schichten 0 … n-1)."""
+    if n <= 0:
+        return 0
+    from pathlib import Path
+
+    from .llamacpp import shards
+    try:
+        layout = gguf_layout([str(p) for p in shards(Path(path)) if p.exists()] or [path])
+    except (OSError, ValueError, KeyError, Exception):  # noqa: BLE001 – ungewöhnliche Datei: nichts abziehen
+        return 0
+    return sum(layout["expert_bytes"][:n])
 
 
 # ---------------------------------------------------------------- Prompt-Cache im RAM (llama-server --cache-ram)
