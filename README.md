@@ -512,6 +512,35 @@ when the model fits on it. The setting is kept per model and restarts its server
 context of existing models on the model page. Two NVIDIA cards use the CUDA build; mixing AMD and NVIDIA needs the
 Vulkan build. Ollama models split by themselves.
 
+### MoE models bigger than the GPU: experts in RAM
+
+<details>
+<summary>Mixture-of-experts models stay fast when only their expert weights move to system memory</summary>
+
+MoE models (Qwen3-30B-A3B, gpt-oss, GLM-Air …) use only a few experts per token. **Models → Experts in RAM (MoE)**
+keeps the expert weights of the first N layers in system memory (llama.cpp's `--n-cpu-moe`); attention and the KV
+cache stay on the GPU, so prompt processing stays nearly as fast and generation slows down only somewhat – much
+better than moving whole layers. **Automatic** moves just as many layers as the context window needs and recalculates
+when you change the context or KV cache; **Custom** takes a number. A newly added MoE model that would only fit with a
+small context gets 32k context and the right number automatically. llama.cpp models only; the section appears for
+MoE models when the installed llama.cpp knows the option.
+
+</details>
+
+### Measuring quality: KV cache and quants
+
+<details>
+<summary>How close are KV cache q8/q4 or a smaller quant to the original? Measured with llama-perplexity</summary>
+
+**Models → Measure quality** compares the model with KV cache f16, q8 and q4, and other quants of the same model in the
+same folder, against the most precise version available (e.g. the Q8 next to your Q4) – on a fixed German and English
+text (Wikipedia articles, downloaded once). For each variant it shows how often it picks the same most likely next
+token (above ~98 % is hard to notice), the mean KL divergence and the perplexity. It takes a few minutes per variant,
+the model is unloaded meanwhile, and the reference logits need a few GB in the cache folder for a moment. This measures
+closeness to the original – to compare different models on tasks, use `scripts/llm_bench.py`.
+
+</details>
+
 ### Faster prompt processing: batch size
 
 <details>

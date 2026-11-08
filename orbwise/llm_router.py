@@ -19,7 +19,7 @@ from . import state
 from .config import LLMConfig, ProfileConfig, ServerConfig
 from .lang import T
 from .llm import ContextOverflow, LLMError, OllamaLLM, OpenAICompatLLM, clean_sampling
-from .llm_memory import cache_type
+from .llm_memory import cache_type, moe_layers_of
 
 log = logging.getLogger(__name__)
 
@@ -263,6 +263,18 @@ UBATCH_SIZES = (512, 1024, 2048)
 _BATCH_FLAGS = re.compile(r"\s+(?:-ub|--ubatch-size|-b|--batch-size)\s+\d+")
 
 
+# ---------------------------------------------------------------- MoE: Experten-Gewichte im RAM (--n-cpu-moe N)
+# Bei Mixture-of-Experts-Modellen (Qwen3-30B-A3B, gpt-oss …) rechnet je Token nur ein kleiner Teil der Experten. Legt
+# llama.cpp die Experten der ersten N Schichten in den RAM, bleiben Attention und KV-Cache auf der GPU – ein Modell, das
+# sonst nicht passt, bleibt schnell. "auto": Orbwise wählt N passend zum Grafikspeicher (siehe llamacpp.pick_moe).
+_MOE_FLAGS = re.compile(r"\s+(?:--n-cpu-moe|-ncmoe)\s+\d+")
+
+
+def moe_supported(command: str, env: dict) -> bool:
+    """Kennt dieser llama-server --n-cpu-moe? Ohne Hilfetext (unbekanntes Programm): nein."""
+    return "--n-cpu-moe" in _help_text(command, env)
+
+
 # ---------------------------------------------------------------- Mehrere Grafikkarten
 # Ohne Angabe verteilt llama.cpp das Modell nach freiem Grafikspeicher auf alle Karten. Eigene Anteile (in %, 0 = Karte
 # nicht nutzen) gehen per --tensor-split; die Reihenfolge der Karten ist die von nvidia-smi (CUDA_DEVICE_ORDER).
@@ -442,6 +454,10 @@ class LLMRouter:
         for name, n in (saved.get("ubatch") or {}).items():
             if name in self.profiles and n in UBATCH_SIZES and self.profiles[name].server:
                 self._apply_ubatch(name, n)
+        for name, value in (saved.get("moe") or {}).items():
+            n = value.get("auto") if isinstance(value, dict) else value
+            if name in self.profiles and self.profiles[name].server and isinstance(n, int) and n >= 0:
+                self._apply_moe(name, n)
         for name, split in (saved.get("gpu_split") or {}).items():
             if name in self.profiles and self.profiles[name].server and (split is None or isinstance(split, list)):
                 self._apply_gpus(name, split)
@@ -823,6 +839,40 @@ class LLMRouter:
             self._apply_ubatch(name, n)  # meldet den Grund
         await self._reconfigure(name, lambda: self._apply_ubatch(name, n), "ubatch", n, progress)
 
+    def _apply_moe(self, name: str, n: int) -> None:
+        """Experten der ersten n Schichten in den RAM legen (wirkt beim nächsten Start); 0 = alle auf der GPU."""
+        p = self.profiles[name]
+        if not p.server:
+            raise LLMError(T("Experten in den RAM legen geht nur mit llama.cpp, nicht mit Ollama.",
+                             "Moving experts to RAM only works with llama.cpp, not with Ollama."))
+        command = _MOE_FLAGS.sub("", p.server.command)
+        if n > 0:
+            command += f" --n-cpu-moe {int(n)}"
+        p.server = p.server.model_copy(update={"command": command})
+        self.servers.pop(name, None)  # neuer Startbefehl
+
+    async def set_moe(self, name: str, n: int, auto: bool = False, progress: Progress | None = None) -> None:
+        """Experten im RAM ändern und merken (state.json["moe"][name] = Zahl oder {"auto": n}); beim aktiven Profil
+        startet der Server neu."""
+        if name not in self.profiles:
+            raise LLMError(f"Unbekanntes Profil '{name}'")
+        if not isinstance(n, int) or n < 0 or n > 1000:
+            raise LLMError(T("Anzahl der Schichten bitte als Zahl ab 0", "Number of layers please as a number from 0"))
+        if not self.profiles[name].server:
+            self._apply_moe(name, n)  # meldet den Grund
+        await self._reconfigure(name, lambda: self._apply_moe(name, n), "moe", {"auto": n} if auto else n, progress)
+
+    def follow_moe(self, name: str, n: int) -> None:
+        """„Automatisch“: neue Zahl übernehmen, ohne eigenen Neustart – für Änderungen, die den Server ohnehin neu
+        starten (Kontextfenster, KV-Cache)."""
+        if self.moe_auto(name) and self.profiles[name].server:
+            self._apply_moe(name, n)
+            self._remember("moe", name, {"auto": n})
+
+    def moe_auto(self, name: str) -> bool:
+        """Wählt Orbwise die Zahl selbst (neu, wenn sich Kontext oder KV-Cache ändern)?"""
+        return isinstance((self._read_state().get("moe") or {}).get(name), dict)
+
     def _apply_gpus(self, name: str, split: list[int] | None) -> None:
         """Aufteilung auf die Grafikkarten setzen (wirkt beim nächsten Start); None = automatisch."""
         p = self.profiles[name]
@@ -1030,12 +1080,14 @@ class LLMRouter:
         """Startoptionen für die Modellseite (nur bei einem eigenen llama-server einstellbar)."""
         if not p.server:
             return {"kv": None, "kv_settable": False, "kv_options": [], "ubatch": None, "ubatch_settable": False,
-                    "spec": "off", "spec_options": spec_options(None), "gpu_split": None, "gpu_split_settable": False}
+                    "spec": "off", "spec_options": spec_options(None), "gpu_split": None, "gpu_split_settable": False,
+                    "moe_layers": 0}
         return {"kv": cache_type(p.server.command, p.server.env), "kv_settable": True,
                 "kv_options": kv_types(p.server.command, p.server.env),
                 "ubatch": ubatch_of(p.server.command), "ubatch_settable": True,
                 "spec": spec_mode(p.server.command), "spec_options": spec_options(p.server),
-                "gpu_split": gpu_split_of(p.server.command), "gpu_split_settable": True}
+                "gpu_split": gpu_split_of(p.server.command), "gpu_split_settable": True,
+                "moe_layers": moe_layers_of(p.server.command)}
 
     async def close(self) -> None:
         for server in self.servers.values():

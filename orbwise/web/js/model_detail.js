@@ -2,9 +2,9 @@
 
 import { num } from "./activity.js";
 import { $, L, S, api } from "./core.js";
-import { ask, toast } from "./dialogs.js";
+import { ask, askText, toast } from "./dialogs.js";
 import { popMenu } from "./history.js";
-import { deleteModel, renderDiag, renderPerf, renderSampling, renderSpec } from "./model_tuning.js";
+import { deleteModel, renderDiag, renderPerf, renderQuality, renderSampling, renderSpec } from "./model_tuning.js";
 import { FIT_MARKS, MP, activateModel, fitText, hint, isLive, modelCtx, refreshModelViews, restartNote, unloadModel } from "./models.js";
 import { ctxLabel, fmt, gbs, lastMem, loadCtxMemory, memText, recText } from "./telemetry.js";
 
@@ -29,8 +29,10 @@ export function renderModelDetail() {
       <section class="md-sec md-ctx"><div class="md-sec-head"><h4></h4>
         <div class="seg md-mode"><button type="button" data-m="tools">Tools</button><button type="button" data-m="coding">Coding</button></div></div>
         <div class="ctx-now"></div><div class="ctx-opts"></div><p class="set-hint"></p></section>
+      <section class="md-sec md-moe"><div class="md-sec-head"><h4></h4></div><div class="moe-now"></div><div class="ctx-opts moe-opts"></div><p class="set-hint"></p></section>
       <section class="md-sec md-gpus"><div class="md-sec-head"><h4></h4></div><div class="ctx-opts gpu-mode"></div><div class="gpu-rows"></div><p class="set-hint"></p></section>
       <section class="md-sec md-perf"><div class="md-sec-head"><h4></h4></div><div class="batch-stats"></div><div class="tune-slot"></div><p class="set-hint"></p></section>
+      <section class="md-sec md-quality"><div class="md-sec-head"><h4></h4></div><div class="quality-slot"></div><p class="set-hint"></p></section>
       <section class="md-sec md-smp"><div class="md-sec-head"><h4></h4></div><div class="smp"></div></section>
       <details class="md-adv"><summary></summary>
         <section class="md-sec md-kv"><div class="md-sec-head"><h4></h4></div><div class="ctx-opts kv-opts"></div><p class="set-hint kv-hint"></p></section>
@@ -100,8 +102,12 @@ export function renderModelDetail() {
   if (demo) { box.querySelectorAll(".md-sec, .md-adv").forEach((s) => s.remove()); load.hidden = true; return; }
   updateDetailMemory();
   renderCtxSection(box.querySelector(".md-ctx"), p);
+  if (p.managed && p.moe && p.moe.supported) renderMoe(box.querySelector(".md-moe"), p);
+  else box.querySelector(".md-moe").remove();  // nur MoE-Modelle mit einem llama-server, der --n-cpu-moe kennt
   if (p.managed) renderPerf(box.querySelector(".md-perf"), p);
   else box.querySelector(".md-perf").remove();  // Ollama/fremder Server: Tempo regelt der Dienst selbst
+  if (p.tunable) renderQuality(box.querySelector(".md-quality"), p);
+  else box.querySelector(".md-quality").remove();  // nur mit Orbwises llama.cpp (llama-perplexity)
   renderSampling(box.querySelector(".md-smp"), p);
   // Erweitert (eingeklappt): KV-Cache, Batch-Größe von Hand, spekulatives Decoding
   const adv = box.querySelector(".md-adv");
@@ -359,6 +365,64 @@ function renderBatch(sec, p) {
       + "kaum bei kurzen Fragen. Der größere Rechenpuffer im Grafikspeicher kann das Kontextfenster verkleinern. Einfacher: oben „Schnellste Einstellung messen“.",
       "How many tokens the server processes at once. Noticeable with long inputs (tool results, files, PDFs, the first message of a chat), "
       + "hardly with short questions. The larger compute buffer can shrink the context window. Easier: “Find the fastest setting” above."));
+}
+
+// MoE-Modelle: Experten-Gewichte der ersten N Schichten im RAM (--n-cpu-moe) – der Rest bleibt auf der GPU
+function renderMoe(sec, p) {
+  const m = p.moe;
+  sec.querySelector("h4").textContent = L("Experten im RAM (MoE)", "Experts in RAM (MoE)");
+  sec.querySelector(".moe-now").textContent = m.n
+    ? L(`${m.n} von ${m.layers} Schichten · ~${fmt(m.ram_gb, 1)} GB der Experten im RAM`,
+        `${m.n} of ${m.layers} layers · ~${fmt(m.ram_gb, 1)} GB of experts in RAM`)
+    : L(`Alle ${m.experts} Experten auf der Grafikkarte`, `All ${m.experts} experts on the GPU`);
+  const opts = sec.querySelector(".moe-opts");
+  const mode = m.auto ? "auto" : m.n ? "manual" : "off";
+  const autoNote = m.auto_n == null ? L("passend zum Grafikspeicher", "to fit the video memory")
+    : m.auto_n ? L(`jetzt ${m.auto_n} Schichten`, `now ${m.auto_n} layers`) : L("passt ganz – nichts auslagern", "fits – nothing moved");
+  const send = async (body, msg) => {
+    opts.querySelectorAll(".ctx-opt").forEach((x) => { x.disabled = true; });
+    if (p.active) toast(L("Modell-Server startet neu …", "Restarting the model server …"));
+    try {
+      const r = await api("POST", `/api/models/${encodeURIComponent(p.name)}/moe`, body);
+      toast(msg(r));
+    } catch { /* Meldung kommt von api() */ }
+    await loadCtxMemory();
+    refreshModelViews();
+  };
+  const choices = [
+    ["auto", L("Automatisch", "Automatic"), autoNote],
+    ["off", L("Aus", "Off"), L("alles auf der GPU – schnellstes Generieren", "all on the GPU – fastest generation")],
+    ["manual", L("Eigene Zahl", "Custom"), L("Schichten selbst wählen", "choose the layers yourself")],
+  ];
+  for (const [key, label, note] of choices) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "ctx-opt" + (key === mode ? " on" : "");
+    b.innerHTML = "<span></span><small></small>";
+    b.querySelector("span").textContent = label;
+    b.querySelector("small").textContent = note;
+    b.disabled = !!MP.data.switching;
+    b.onclick = async () => {
+      if (key === "auto") {
+        await send({ mode: "auto" }, (r) => r.n ? L(`Experten von ${r.n} Schichten im RAM – der Rest passt in den Grafikspeicher.`, `Experts of ${r.n} layers in RAM – the rest fits in video memory.`)
+                                                : L("Das Modell passt ganz in den Grafikspeicher – nichts ausgelagert.", "The model fits in video memory – nothing moved."));
+      } else if (key === "off") {
+        if (mode !== "off") await send({ mode: "off" }, () => L("Alle Experten wieder auf der Grafikkarte.", "All experts back on the GPU."));
+      } else {
+        const v = await askText(L(`Wie viele Schichten (0–${m.layers}) sollen ihre Experten in den RAM legen?`, `How many layers (0–${m.layers}) should keep their experts in RAM?`),
+                                String(m.n || m.auto_n || Math.ceil(m.layers / 4)), { ok: L("Übernehmen", "Apply") });
+        if (v === null) return;
+        const n = parseInt(String(v), 10);
+        if (!(n >= 0 && n <= m.layers)) { toast(L(`Bitte eine Zahl von 0 bis ${m.layers}.`, `Please a number from 0 to ${m.layers}.`)); return; }
+        await send({ mode: "manual", n }, (r) => L(`Experten von ${r.n} Schichten im RAM.`, `Experts of ${r.n} layers in RAM.`));
+      }
+    };
+    opts.appendChild(b);
+  }
+  hint(sec.querySelector(".set-hint"),
+    L("Bei MoE-Modellen rechnet je Token nur ein kleiner Teil der Experten. Liegen sie im RAM, bleibt das Modell schnell und es passt mehr Kontext oder ein genaueres Quant. ", "MoE models only use a few experts per token. Keeping them in RAM keeps the model fast and leaves room for more context or a more precise quant. ") + restartNote(p),
+    L(`Attention und KV-Cache bleiben auf der Grafikkarte; nur die Experten-Gewichte der ersten Schichten (insgesamt ~${fmt(m.all_gb, 1)} GB) wandern in den Arbeitsspeicher. Das Einlesen bleibt fast so schnell, das Generieren wird etwas langsamer – je mehr Schichten, desto mehr. „Automatisch“ lagert nur so viel aus, wie für das eingestellte Kontextfenster nötig ist, und rechnet neu, wenn du Kontext oder KV-Cache änderst.`,
+      `Attention and KV cache stay on the GPU; only the expert weights of the first layers (~${fmt(m.all_gb, 1)} GB in total) move to system memory. Prompt processing stays almost as fast, generation gets somewhat slower – the more layers, the more. “Automatic” moves only as much as the context window needs and recalculates when you change the context or KV cache.`));
 }
 
 // Beim Start (von app.js in der ursprünglichen Reihenfolge aufgerufen)

@@ -721,6 +721,43 @@ def pick_context(gguf: Path, extra_bytes: int, vram_gb: float, gpus: int = 1) ->
     return 8192, True
 
 
+MOE_CTX = 32768  # so viel Kontext bekommt ein MoE-Modell, dessen Experten teils im RAM liegen
+
+
+def moe_layout(gguf: Path) -> dict | None:
+    """Aufbau eines MoE-Modells (Experten je Schicht) – None bei anderen Modellen oder unlesbarer Datei."""
+    from .llm_memory import gguf_layout
+    try:
+        layout = gguf_layout([str(p) for p in shards(gguf) if p.exists()] or [str(gguf)])
+    except Exception:  # noqa: BLE001 – unbekannte Datei: kein MoE-Auslagern
+        return None
+    return layout if layout["experts"] and any(layout["expert_bytes"]) else None
+
+
+def pick_moe(gguf: Path, ctx: int, vram_gb: float, gpus: int = 1, extra_bytes: int = 0,
+             command: str = "") -> int | None:
+    """Wie viele Schichten ihre Experten in den RAM legen müssen (--n-cpu-moe), damit der Rest des Modells, der
+    KV-Cache für ctx Token, ein Bildmodul und ~1 GB Puffer je Grafikkarte in den Grafikspeicher passen (wie
+    pick_context). 0: alles passt; None: kein MoE-Modell oder passt selbst mit allen Experten im RAM nicht."""
+    from .llm_memory import estimate_from_gguf
+    layout = moe_layout(gguf)
+    if not layout or vram_gb <= 0:
+        return None
+    budget = vram_gb * 1024 ** 3 * 0.95 - max(1, gpus) * 1024 ** 3 - extra_bytes
+    base = re.sub(r"\s+(?:--n-cpu-moe|-ncmoe)\s+\d+", "", command)  # KV-Stufe aus dem Befehl, ohne alte Auslagerung
+    est = estimate_from_gguf(str(gguf), ctx, base)
+    kv = est["kv_vram"] if est else ctx * 160 * 1024
+    need = layout["total"] + kv - budget
+    if need <= 0:
+        return 0
+    moved = 0
+    for i, size in enumerate(layout["expert_bytes"]):
+        moved += size
+        if moved >= need:
+            return i + 1
+    return None
+
+
 def profile_paths(profile) -> list[Path]:
     """Modelldateien, die ein Profil startet (-m …), aus dem Startbefehl gelesen."""
     server = getattr(profile, "server", None)
@@ -765,14 +802,38 @@ def unique_name(base: str, taken) -> str:
     return out
 
 
+def moe_for_new_profile(gguf: Path, ctx: int, vram_gb: float, gpus: int, extra: int) -> tuple[int, int] | None:
+    """Ein MoE-Modell, das nur mit kleinem Kontext ganz in den Grafikspeicher passt: lieber Experten in den RAM
+    legen und bis zu MOE_CTX Token Kontext geben → (Kontext, --n-cpu-moe) oder None (so lassen)."""
+    if ctx >= MOE_CTX or vram_gb <= 0:
+        return None
+    from .llm_memory import gguf_metadata
+    try:
+        train = next((int(v) for k, v in gguf_metadata(str(gguf)).items() if k.endswith(".context_length")), 0)
+    except Exception:  # noqa: BLE001
+        train = 0
+    want = min(MOE_CTX, train) if train else MOE_CTX
+    if want <= ctx:
+        return None
+    n = pick_moe(gguf, want, vram_gb, gpus, extra)
+    return (want, n) if n else None
+
+
 def make_profile(cfg, name: str, gguf: Path, mmproj: Path | None, gpu: dict, port: int) -> dict:
-    ctx, cpu_embed = pick_context(gguf, mmproj.stat().st_size if mmproj and mmproj.exists() else 0,
-                                  float(gpu.get("vram_gb") or 0), len(gpu.get("gpus") or []) or 1)
+    extra = mmproj.stat().st_size if mmproj and mmproj.exists() else 0
+    vram, gpus = float(gpu.get("vram_gb") or 0), len(gpu.get("gpus") or []) or 1
+    ctx, cpu_embed = pick_context(gguf, extra, vram, gpus)
+    moe = moe_for_new_profile(gguf, ctx, vram, gpus, extra)
+    if moe:
+        ctx, moe_layers = moe
+        cpu_embed = True  # der Grafikspeicher ist knapp – Embeddings des Gedächtnisses auf der CPU
     key = secrets.token_hex(16)  # llama-server erlaubt Anfragen von jeder Webseite (CORS *) – nur mit Schlüssel
     command = f"{_tilde(binary(cfg))} -m {_tilde(gguf)}"
     if mmproj:
         command += f" --mmproj {_tilde(mmproj)}"
     command += (f" -ngl 99 -c {ctx} -np 1 --jinja --host 127.0.0.1 --port {port} --alias {name} --api-key {key}")
+    if moe:
+        command += f" --n-cpu-moe {moe_layers}"
     return {
         "label": label_for(gguf),
         "backend": "openai",

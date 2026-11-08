@@ -385,7 +385,7 @@ export function pullRow(d) {
 }
 function updatePullRow(row, d) {
   const pct = pullPct(d);
-  row.querySelector(".mp-text").textContent = (d.tag === "Tuning" ? L("Messen", "Measuring") : d.tag)
+  row.querySelector(".mp-text").textContent = (d.tag === "Tuning" ? L("Messen", "Measuring") : d.tag === "Quality" ? L("Qualität messen", "Measuring quality") : d.tag)
     + (pct !== null ? ` · ${pct} %` : d.status ? ` · ${d.status}` : " …");
   row.querySelector(".mp-bar i").style.width = (pct || 0) + "%";
 }
