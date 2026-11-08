@@ -1418,6 +1418,22 @@ details.card[open] > summary .caret { transform: rotate(180deg); }
 .hf-vram-bar i.fit-tight { background: var(--warn); } .hf-vram-bar i.fit-big { background: var(--danger); }
 .artifacts-ctl { display: flex; align-items: center; gap: 10px; }
 .artifacts-size { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Speicherplatz (Einstellungen → Allgemein) */
+.storage-list { padding: 4px 0 8px; border-bottom: 1px solid var(--border); }
+.storage-group { padding: 10px 0; }
+.storage-group + .storage-group { border-top: 1px dashed var(--border); }
+.storage-head { display: flex; align-items: center; gap: 10px; }
+.storage-head b { flex: 1; font-weight: 550; font-size: var(--fs-base); }
+.storage-bar { height: 4px; margin: 6px 0 4px; border-radius: 2px; background: var(--track); overflow: hidden; }
+.storage-bar i { display: block; height: 100%; background: var(--accent); }
+.storage-note { display: block; color: var(--muted); font-size: var(--fs-md); }
+.storage-item { display: flex; align-items: center; gap: 10px; padding: 6px 0 6px 12px; }
+.storage-item > div { flex: 1; min-width: 0; }
+.storage-item > div > span { overflow-wrap: anywhere; }
+.storage-item small { display: block; color: var(--muted); font-size: var(--fs-sm); }
+.storage-item .btn-link { margin-left: 0; }
+.storage-tag { margin-left: 6px; padding: 0 6px; border-radius: 999px; background: var(--accent-soft); color: var(--accent);
+  font-size: var(--fs-xs); font-style: normal; }
 .hf-token { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .hf-token input { width: 220px; max-width: 100%; }
 @media (max-width: 520px) { .hf-vram-bar { flex-basis: 70px; } .hf-token input { width: 100%; } }

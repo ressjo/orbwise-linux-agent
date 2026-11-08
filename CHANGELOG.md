@@ -6,6 +6,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Disk space** in Settings → General: what Orbwise takes up on disk, in total and by group (language and image
+  models, programs such as llama.cpp, voices and Chromium, cache, artifacts, restore points, your data). Downloaded
+  models can be deleted right there; the cache, artifacts, restore points, older llama.cpp builds and the Chromium
+  download can be emptied. Files in use stay. Replaces the separate *Artifacts* row.
 - **MoE experts in RAM:** for mixture-of-experts models that don't fit in video memory, llama.cpp keeps only the
   expert weights of the first N layers in system memory (`--n-cpu-moe`) – attention and KV cache stay on the GPU.
   Models → *Experts in RAM (MoE)*: automatic (recalculated when context or KV cache change), off or a custom number.

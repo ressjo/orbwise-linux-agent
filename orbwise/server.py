@@ -25,7 +25,7 @@ from .voice.tts import TTS
 from .webapp import background as background_tasks
 from .webapp import lifecycle, telegram_link
 from .webapp.context import AppContext
-from .webapp.routes import chats, github, models, modes, sandbox, skills, system, voices, web, websocket
+from .webapp.routes import chats, github, models, modes, sandbox, skills, storage, system, voices, web, websocket
 from .webapp.routes import images as images_routes
 from .webapp.routes import memory as memory_routes
 from .webapp.routes import routines as routines_routes
@@ -138,6 +138,7 @@ def create_app(cfg: Config) -> FastAPI:
     routines_routes.register(app, ctx)
     skills.register(app, ctx)
     voices.register(app, ctx)
+    storage.register(app, ctx)
     websocket.register(app, ctx)
 
     app.mount("/static", FreshStaticFiles(directory=WEB_DIR), name="static")

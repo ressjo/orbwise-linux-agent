@@ -44,36 +44,109 @@ export function showSection(section) {
   if (section === "voice") openVoiceMenu();
   if (section === "status") loadStatus();
   if (section === "skills") loadSkills();
-  if (section === "general") { renderHfToken(); renderArtifacts(); }
+  if (section === "general") { renderHfToken(); renderStorage(); }
 }
 
-// Artefakte: Temp-Ordner für Diagramme, Exporte & Co. – Platz anzeigen, leeren
+// Speicherplatz: was Orbwise belegt (Modelle, Programme, Zwischenspeicher …) – anzeigen, einzeln löschen bzw. leeren
 function bytesText(n) {
   if (!n) return L("leer", "empty");
-  const units = ["B", "KB", "MB", "GB"];
+  const units = ["B", "KB", "MB", "GB", "TB"];
   let i = 0;
   while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
   return (i ? n.toFixed(n < 10 ? 1 : 0) : n) + " " + units[i];
 }
-async function renderArtifacts() {
-  const size = $("artifacts-size"), btn = $("btn-artifacts-clear");
-  let st;
-  try { st = await getJSON("/api/artifacts"); } catch { size.textContent = "–"; return; }
-  size.textContent = st.files ? `${bytesText(st.bytes)} · ${st.files} ${st.files === 1 ? L("Datei", "file") : L("Dateien", "files")}`
-                              : bytesText(0);
-  size.title = st.path;
-  btn.disabled = !st.files;
-  btn.onclick = async () => {
-    if (!await ask(L(`Alle Artefakte löschen (${bytesText(st.bytes)})?\n\nDiagramme und Exporte im Ordner ${st.path} werden gelöscht. Bilder im Chat bleiben sichtbar.`,
-                     `Delete all artifacts (${bytesText(st.bytes)})?\n\nCharts and exports in ${st.path} are deleted. Images in the chat stay visible.`),
-                   { ok: L("Leeren", "Empty"), danger: true })) return;
-    btn.disabled = true;
-    try {
-      const r = await api("DELETE", "/api/artifacts");
-      toast(L(`${bytesText(r.freed)} freigegeben.`, `${bytesText(r.freed)} freed.`));
-    } catch { /* api meldet selbst */ }
-    renderArtifacts();
+function freedOf(r) {
+  return r?.freed ?? Math.round((r?.freed_gb || 0) * 1e9);
+}
+const label = (o) => L(o.label, o.label_en || o.label);
+const note = (o) => L(o.note || "", o.note_en || o.note || "");
+
+async function renderStorage() {
+  const total = $("storage-total"), btn = $("btn-storage-details"), list = $("storage-list");
+  btn.onclick = () => {
+    const open = list.classList.toggle("hidden") === false;
+    btn.setAttribute("aria-expanded", String(open));
+    btn.textContent = open ? L("Schließen", "Close") : "Details";
   };
+  let st;
+  try { st = await getJSON("/api/storage"); } catch { total.textContent = "–"; return; }
+  total.textContent = st.total ? bytesText(st.total) : bytesText(0);
+  list.replaceChildren(...st.groups.map((g) => storageGroup(g, st.total)));
+}
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+function storageGroup(g, total) {
+  const box = el("div", "storage-group");
+  const head = el("div", "storage-head");
+  const name = el("b", "", label(g));
+  if (g.path) name.title = g.path;
+  head.append(name, el("span", "artifacts-size", bytesText(g.bytes)));
+  if (g.clear) {
+    const b = el("button", "btn small", L("Leeren", "Empty"));
+    b.type = "button";
+    b.disabled = !g.bytes;
+    b.onclick = () => removeStorage(b, g.clear, L(
+      `${label(g)} leeren (${bytesText(g.bytes)})?\n\n${note(g)}`,
+      `Empty ${label(g).toLowerCase()} (${bytesText(g.bytes)})?\n\n${note(g)}`), L("Leeren", "Empty"));
+    head.append(b);
+  }
+  const bar = el("div", "storage-bar");
+  const fill = el("i");
+  fill.style.width = (total ? Math.max(g.bytes ? 1 : 0, Math.round(100 * g.bytes / total)) : 0) + "%";
+  bar.append(fill);
+  box.append(head, bar);
+  if (g.note) box.append(el("small", "storage-note", note(g)));
+  if (!g.clear) {  // Gruppen mit „Leeren“ haben nur einen Eintrag (sich selbst)
+    if (!g.items.length) box.append(el("small", "storage-note", L("Nichts gespeichert.", "Nothing stored.")));
+    for (const it of g.items) box.append(storageItem(it));
+  }
+  return box;
+}
+
+function storageItem(it) {
+  const row = el("div", "storage-item");
+  const text = el("div");
+  const name = el("span", "", label(it));
+  if (it.path) name.title = it.path;
+  text.append(name);
+  if (it.active) text.append(el("em", "storage-tag", L("aktiv", "active")));
+  if (it.note) text.append(el("small", "", note(it)));
+  row.append(text, el("span", "artifacts-size", bytesText(it.bytes)));
+  if (it.delete) {
+    const b = el("button", "btn small", L("Löschen", "Delete"));
+    b.type = "button";
+    const active = it.active ? L("\n\nEs ist gerade aktiv – Orbwise wechselt dafür auf ein anderes.",
+                                 "\n\nIt is active right now – Orbwise switches to another one.") : "";
+    b.onclick = () => removeStorage(b, it.delete, L(
+      `„${label(it)}“ löschen (${bytesText(it.bytes)})?${active}\n\nDie Dateien werden gelöscht. Modelle lassen sich später neu laden.`,
+      `Delete “${label(it)}” (${bytesText(it.bytes)})?${active}\n\nThe files are deleted. Models can be downloaded again later.`),
+      L("Löschen", "Delete"));
+    row.append(b);
+  } else if (it.open) {
+    const b = el("button", "btn-link", L("Verwalten", "Manage"));
+    b.type = "button";
+    b.onclick = () => showSection(it.open);
+    row.append(b);
+  }
+  return row;
+}
+
+async function removeStorage(btn, url, question, ok) {
+  if (!await ask(question, { ok, danger: true })) return;
+  btn.disabled = true;
+  try {
+    const r = await api("DELETE", url);
+    const freed = freedOf(r);
+    toast(freed ? L(`${bytesText(freed)} freigegeben.`, `${bytesText(freed)} freed.`)
+                : L("Erledigt.", "Done."));
+  } catch { /* api meldet selbst */ }
+  renderStorage();
 }
 
 // Hugging-Face-Token (für zugangsbeschränkte Modelle wie Llama oder Gemma) – liegt im Schlüsselbund

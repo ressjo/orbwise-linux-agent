@@ -1042,4 +1042,4 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
             return {"stats": None}
         return {"stats": spec_stats(text.rsplit("===== Starte:", 1)[-1])}
 
-    return SimpleNamespace(activate_model=activate_model)
+    return SimpleNamespace(activate_model=activate_model, llamacpp_busy=llamacpp_lock.locked)

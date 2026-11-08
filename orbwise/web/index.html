@@ -441,8 +441,9 @@
           <div class="set-row"><div><b>Denkmodus</b><small>Gründlicher, dafür langsamer.</small></div>
             <div class="seg" id="set-think"><button type="button" data-think="off">Aus</button><button type="button" data-think="on" class="hidden">An</button></div></div>
           <div class="set-row" id="set-hf"></div>
-          <div class="set-row" id="set-artifacts"><div><b>Artefakte</b><small>Diagramme, Exporte und Hilfsdateien, die Orbwise nebenbei erzeugt.</small></div>
-            <div class="artifacts-ctl"><span class="artifacts-size" id="artifacts-size">–</span><button type="button" class="btn small" id="btn-artifacts-clear">Leeren</button></div></div>
+          <div class="set-row" id="set-storage"><div><b>Speicherplatz</b><small>Modelle, Programme und Zwischenspeicher – was Orbwise auf der Platte belegt.</small></div>
+            <div class="artifacts-ctl"><span class="artifacts-size" id="storage-total">–</span><button type="button" class="btn small" id="btn-storage-details" aria-expanded="false" aria-controls="storage-list">Details</button></div></div>
+          <div class="storage-list hidden" id="storage-list"></div>
           <p class="set-hint">Mail, Paperless, Telegram und andere Verbindungen richtest du unter <b>Skills</b> ein. Alles Weitere steht in <code>~/.config/orbwise/config.yaml</code> – <code>orbwise doctor</code> prüft es.</p>
         </div>
         <div class="set-section hidden" id="set-status">

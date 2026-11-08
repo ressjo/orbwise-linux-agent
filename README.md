@@ -1212,9 +1212,20 @@ the question keeps the PDF.
 and the image appears right in the chat under the answer – also after reloading – instead of opening in an image
 viewer; images generated with `generate_image` show up there too. Files Orbwise creates without a location you named
 (charts, exports, helper scripts) go to a temp folder, `~/.local/share/orbwise/artifacts`; in auto mode "Read + edit"
-it stays writable inside the cage. **Settings → General → Artifacts** shows how much space it takes and empties it.
+it stays writable inside the cage. **Settings → General → Disk space** shows how much space it takes and empties it.
 Images already shown in the chat keep a copy with the attachments and stay visible. Asking to open an older picture
 still opens it in your viewer; naming a program ("open it in GIMP") always does.
+
+**Disk space.** **Settings → General → Disk space** shows what Orbwise takes up on disk, in total and by group:
+language models (each downloaded GGUF, Ollama models of your profiles, other files in the model folder), image
+models, programs (llama.cpp, image generation, Piper/Pocket TTS voices, its own Chromium), cache
+(`~/.cache/orbwise`: command output, logs, Paperless downloads), artifacts, restore points (project states before the
+agent changed them) and your own data (chats, memory, attachments, project working copies). *Delete* removes a
+downloaded model (same as on the model page – files you put into `~/models` yourself stay), an image model, older
+llama.cpp builds (previous version and other variants; an update fetches them again) or the Chromium download (comes
+back when next needed); *Empty* clears the cache, artifacts or restore points. Files in use right now – logs of
+background jobs, anything changed in the last ten minutes – and your own text for *Measure quality* stay. Chats and
+memory are only shown here; delete chats in the sidebar.
 
 ### Morning briefing
 
