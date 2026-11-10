@@ -106,6 +106,38 @@ def test_checks_use_the_projects_virtual_environment(tmp_path):
     assert [r["status"] for r in verify.parse(out)] == ["skip"]
 
 
+def test_tests_of_the_changed_files_run_first(tmp_path):
+    p = _proj(tmp_path)  # m.py + tests/test_m.py (rot)
+    (p / "pkg").mkdir()
+    (p / "pkg" / "__init__.py").write_text("")
+    (p / "pkg" / "store.py").write_text("def get():\n    return 1\n")
+    (p / "pkg" / "speed_test.py").write_text("def measure():\n    return 1\n")  # heißt nur so – kein Test
+    (p / "other.py").write_text("y = 1\n")
+    (p / "tests" / "test_store_roundtrip.py").write_text("def test_a():\n    assert True\n")
+    (p / "tests" / "test_api.py").write_text("import sys, pathlib\nsys.path.insert(0, str(pathlib.Path(__file__).parent.parent))\n"
+                                        "from pkg import store\n\n\ndef test_b():\n    assert store.get() == 1\n")
+    (p / "tests" / "test_slow.py").write_text(
+        "import pathlib\n\n\ndef test_slow():\n    pathlib.Path('ran-all').write_text('x')\n")
+    assert verify.targeted_tests(p, ["m.py"]) == ["tests/test_m.py"]
+    # Name mit allen Teilen vor Import; geänderte Tests selbst zuerst; Dateien ohne Tests nicht
+    assert verify.targeted_tests(p, ["pkg/store.py", "tests/test_slow.py", "pkg/speed_test.py"]) == [
+        "tests/test_slow.py", "tests/test_store_roundtrip.py", "tests/test_api.py"]
+    assert verify.targeted_tests(p, ["pkg/__init__.py"]) == ["tests/test_api.py"]  # Paket: wer es importiert
+    assert verify.targeted_tests(p, ["other.py"]) == [] and verify.targeted_tests(p, ["README.md"]) == []
+    assert verify.targeted_tests(p, ["m.py", "tests/conftest.py"]) == []  # conftest betrifft alle
+    cmd = dict(verify.detect(p, ["m.py"]))["pytest"]
+    assert cmd.endswith("-m pytest -q --maxfail=5 -p no:cacheprovider tests/test_m.py && "
+                        "python3 -m pytest -q --maxfail=5 -p no:cacheprovider")
+    assert " && python3 -m pytest" not in dict(verify.detect(p, ["other.py"]))["pytest"].split("2>/dev/null && ", 1)[1]
+    # rot im gezielten Lauf: die ganze Suite startet gar nicht erst; grün: danach läuft alles
+    checks = [("pytest", cmd.replace("python3", sys.executable))]
+    out = subprocess.run(["bash", "-c", verify.script(checks, 60)], cwd=p, capture_output=True, text=True).stdout
+    assert verify.parse(out)[0]["status"] == "fail" and not (p / "ran-all").exists()
+    (p / "m.py").write_text("def f():\n    return 1 + 1\n")  # andere Länge – sonst gilt der .pyc-Cache noch
+    out = subprocess.run(["bash", "-c", verify.script(checks, 60)], cwd=p, capture_output=True, text=True).stdout
+    assert verify.parse(out)[0]["status"] == "ok" and (p / "ran-all").exists()
+
+
 def test_summary_says_when_nothing_could_be_checked():
     skipped = [{"name": "ruff", "status": "skip", "output": "fehlt"}, {"name": "pytest", "status": "skip", "output": ""}]
     assert verify.summary(skipped) == "○ Nicht geprüft – hier nicht installiert: ruff, pytest"

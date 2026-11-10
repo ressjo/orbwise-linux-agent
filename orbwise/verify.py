@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import re
 import shlex
 import shutil
@@ -23,6 +24,7 @@ from pathlib import Path
 import yaml
 
 from . import review_checks
+from .tools.files import SKIP_DIRS
 
 TAIL = 1500  # Zeichen Ausgabe je Prüfung (das Ende ist meist das Wichtige)
 
@@ -62,6 +64,67 @@ def _venv_tool(root: Path, name: str) -> str:
     return ""
 
 
+TARGETED_MAX = 10      # höchstens so viele Testdateien laufen vorab
+TEST_FILES_MAX = 400   # in größeren Projekten nur nach Dateinamen zuordnen (Inhalte lesen wäre zu langsam)
+
+
+def _is_test(name: str) -> bool:
+    return name.endswith(".py") and (name.startswith("test_") or name.endswith("_test.py"))
+
+
+def targeted_tests(project: str | Path, changed: list[str]) -> list[str]:
+    """Testdateien, die zu den geänderten Python-Dateien gehören (relativ zum Projekt, beste zuerst): geänderte Tests
+    selbst, Tests mit passendem Namen (test_<modul>.py, <modul>_test.py, alle Namensteile enthalten) und Tests, die
+    das Modul importieren. Leer, wenn nichts passt oder eine conftest.py geändert wurde (betrifft alle Tests)."""
+    root = Path(project)
+    py = [f for f in changed if f.endswith(".py")]
+    if not py or any(Path(f).name == "conftest.py" for f in py):
+        return []
+    scores: dict[str, int] = {f: 4 for f in py if _is_test(Path(f).name) and (root / f).is_file()}
+    stems = set()
+    for f in py:
+        path = Path(f)
+        if not _is_test(path.name):
+            stems.add(path.parent.name if path.stem == "__init__" else path.stem)
+    stems.discard("")
+    if stems:
+        tests: list[str] = []
+        for dirpath, dirnames, names in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
+            tests += [os.path.relpath(os.path.join(dirpath, n), root) for n in names if _is_test(n)]
+            if len(tests) > 5000:
+                break
+        imports = re.compile(r"^\s*(?:from|import)\s[^\n#]*\b(?:" + "|".join(re.escape(s) for s in sorted(stems))
+                             + r")\b", re.M)
+        for rel in tests:
+            name = Path(rel).stem
+            core = name.removeprefix("test_").removesuffix("_test")
+            parts = set(core.split("_"))
+            score = 0
+            if core in stems:
+                score = 3
+            elif any(set(s.split("_")) <= parts for s in stems):
+                score = 2
+            elif len(tests) <= TEST_FILES_MAX:
+                try:
+                    if imports.search((root / rel).read_text(encoding="utf-8", errors="replace")[:200_000]):
+                        score = 1
+                except OSError:
+                    pass
+            if score:
+                scores[rel] = max(score, scores.get(rel, 0))
+    out = []
+    for rel in sorted(scores, key=lambda f: (-scores[f], f)):
+        try:  # nur echte Testdateien (ein Modul namens context_test.py ist keine)
+            if re.search(r"^\s*(?:async\s+)?def test_|^class Test", (root / rel).read_text(encoding="utf-8", errors="replace"), re.M):
+                out.append(rel)
+        except OSError:
+            continue
+        if len(out) >= TARGETED_MAX:
+            break
+    return out
+
+
 def detect(project: str | Path, changed: list[str]) -> list[tuple[str, str]]:
     """Schnelle Prüfungen nach den Dateien im Projekt. Werkzeuge, die dort fehlen, überspringt das Skript selbst."""
     root = Path(project)
@@ -73,8 +136,12 @@ def detect(project: str | Path, changed: list[str]) -> list[tuple[str, str]]:
                             + " ".join(shlex.quote(f) for f in py[:200])))
     if (root / "tests").is_dir() or (root / "test").is_dir() or any(root.glob("test_*.py")) or any(root.glob("*/test_*.py")):
         if any(root.rglob("*.py")):
-            out.append(("pytest", f"{python} -c 'import pytest' 2>/dev/null && {python} -m pytest -q --maxfail=5 "
-                                  "-p no:cacheprovider"))
+            run = f"{python} -m pytest -q --maxfail=5 -p no:cacheprovider"
+            near = targeted_tests(root, changed)
+            # erst die Tests zu den geänderten Dateien (Sekunden), die ganze Suite nur, wenn die grün sind – in
+            # einer Korrekturrunde wartet das Modell so nicht jedes Mal auf alles
+            first = f"{run} {' '.join(shlex.quote(f) for f in near)} && " if near else ""
+            out.append(("pytest", f"{python} -c 'import pytest' 2>/dev/null && {first}{run}"))
     scripts = _scripts(root)
     if scripts and (root / "node_modules").is_dir():
         for key, name in (("lint", "npm-lint"), ("typecheck", "npm-typecheck")):

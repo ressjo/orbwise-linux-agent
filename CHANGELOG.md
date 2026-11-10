@@ -30,6 +30,11 @@ All notable changes to this project are documented here. The format follows
   success.
 
 ### Changed
+- **Coding mode – the tests of the changed files run first:** the automatic check used to start the whole pytest
+  suite after every answer and every fix round. It now runs the test files that belong to the changed Python files
+  first – changed tests themselves, tests named after the module (`test_<module>.py`) and tests that import it, at
+  most ten – and the whole suite only once those are green. A fix round with a failing test costs seconds instead of
+  the full run. Without matching tests, or when a `conftest.py` changed, the whole suite runs as before.
 - **Internal – the answer loop is split up:** `Agent._run` kept nine loose variables in one 200-line loop. The state
   of an answer now lives in a small `Turn` object and the loop consists of separately readable steps (may it go on,
   one model step, answer without calls, run the calls, pause); `run` and `run_in_chat` share one frame. No change in

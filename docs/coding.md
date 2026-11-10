@@ -33,7 +33,7 @@ Also: `todo_write` (task list in the answer), `remember`/`recall`/`forget` (the 
 - **Automatic checks before "done":** when an answer changed files, Orbwise runs the project's checks before the
   answer ends – the command from `check:` in the project's `.orbwise.yaml` (one command, a list, or `name: command`
   pairs), otherwise `coding.verify_command`, otherwise detected: `ruff` on changed Python files, `pytest` when there are
-  tests (both from the project's `.venv`/`venv` if there is one), `npm run lint/typecheck/test` (with `node_modules`), `go vet`/`go test`, `cargo check`, `make check`/`test`.
+  tests (both from the project's `.venv`/`venv` if there is one) – first the test files that belong to the changed files, the whole suite only when those are green – `npm run lint/typecheck/test` (with `node_modules`), `go vet`/`go test`, `cargo check`, `make check`/`test`.
   They run like any shell command (sandbox, cage without network, confirmation per auto level). Failures go back to
   the model with the output ("fix the cause, don't weaken tests"), up to `coding.verify_rounds` (3) times; the answer
   then ends with a line from Orbwise itself – **✓ Checked: ruff, pytest** or **⚠ Checks still failing: pytest (2
