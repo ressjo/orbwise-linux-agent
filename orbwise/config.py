@@ -81,12 +81,22 @@ class LLMConfig(BaseModel):
     num_ctx: int = 16384
     # Qwen3 "Thinking" abschalten – deutlich schnellere Antworten
     think: bool = False
+    # Mit Denken: "all" = vor jedem Schritt denken; "lean" = nur im ersten Schritt einer Antwort und nach einem
+    # Fehlschlag (schneller bei langen Aufgaben – kann je nach Modell Qualität kosten, darum nicht der Standard)
+    think_steps: str = "all"
     keep_alive: str = "30m"
     request_timeout: float = 300.0
     # Modell-Profile; leer = ein Profil "standard" aus den Werten oben
     profiles: dict[str, ProfileConfig] = Field(default_factory=dict)
     # Profil beim Start (eine Auswahl in der Oberfläche wird gemerkt und hat Vorrang)
     active: str = ""
+
+    @field_validator("think_steps")
+    @classmethod
+    def _think_steps(cls, v: str) -> str:
+        if v not in ("all", "lean"):
+            raise ValueError("llm.think_steps muss 'all' oder 'lean' sein")
+        return v
     # GGUF-Modelle für llama.cpp: Downloads von Hugging Face landen hier, vorhandene Dateien erscheinen im
     # Modell-Menü unter „Auf der Festplatte“
     models_dir: str = "~/models"

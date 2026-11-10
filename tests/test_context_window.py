@@ -443,6 +443,7 @@ def test_model_level_is_sent_without_own_limits(cfg, llm, memory, stamps):
     assert "Denke nur kurz" not in note
     agent._set_think("low")
     quarter = agent.plan().window // 4  # ein Viertel bleibt für die Ausgabe frei (mit und ohne Denken)
-    assert agent.answer_reserve() == max(3000, quarter) and agent.think_budget() == 0
+    assert agent.answer_reserve() == max(3000, quarter)
+    assert agent.think_budget() > 8000  # nur das Fenster selbst begrenzt: was neben Prompt und Antwort frei ist
     agent._set_think(False)
     assert agent.answer_reserve() == max(1500, quarter)

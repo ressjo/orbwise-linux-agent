@@ -6,6 +6,18 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Models that write tool calls as text now work:** when a model's chat template and the server don't match, the
+  call arrives as plain text – Orbwise took it for the answer and showed raw JSON. The common spellings are now
+  recognised and run as calls: `<tool_call>{…}</tool_call>` (Hermes/Qwen), `<function=name>…</function>` with JSON or
+  `<parameter=…>` (Qwen-Coder, Llama), `[TOOL_CALLS] …` (Mistral) and bare `{"name": …, "arguments": …}`. Such text
+  is held back while streaming, so it never shows up in the chat. Only names of existing tools count – a JSON example
+  in an answer stays text. Sub-agents do the same.
+- **Thinking that goes in circles is stopped:** when the end of a reasoning chain repeats for the third time, Orbwise
+  cuts it and lets the model act with what it had worked out before the loop – in every window size (the activity
+  shows "thoughts repeating"). Long reasoning that keeps moving is not touched.
+- **`llm.think_steps: lean`** (optional): with thinking on, think only in the first step of an answer and after a
+  failed step instead of before every tool call. Faster on long tasks; off by default because it may cost quality
+  with some models and can change what the prompt cache holds.
 - **Coding mode – `grep` with context lines:** `context: N` shows up to ten lines before and after every match
   (`12: ` for the match, `13- ` for the lines around it, `…` between separate places) – often saves the `read` that
   used to follow a search. `limit` still counts matches, not context lines.
@@ -47,6 +59,9 @@ All notable changes to this project are documented here. The format follows
   success.
 
 ### Changed
+- **Thinking in large windows ends when the window is full:** from 16k on there was no limit at all, so a runaway
+  reasoning chain ended in a context overflow. It is now cut when no room would be left for the answer; below that
+  the model still decides how long it thinks.
 - **Coding mode – the tests of the changed files run first:** the automatic check used to start the whole pytest
   suite after every answer and every fix round. It now runs the test files that belong to the changed Python files
   first – changed tests themselves, tests named after the module (`test_<module>.py`) and tests that import it, at

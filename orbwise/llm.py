@@ -833,7 +833,9 @@ class FakeLLM:
             yield {"type": "tool_delta", "name": name, "chars": 24}
         if think:
             thought = "Der Nutzer möchte etwas wissen. Ich überlege kurz, welche Werkzeuge passen, und antworte dann knapp. "
-            for word in re.findall(r"\S+\s*", thought * self.thought_repeat):
+            # jede Wiederholung leicht anders – eine lange Denkkette, keine Schleife (die würde abgebrochen)
+            long = "".join(thought.replace("etwas", f"etwas ({i})") if i else thought for i in range(self.thought_repeat))
+            for word in re.findall(r"\S+\s*", long):
                 if self.delay:
                     await asyncio.sleep(self.delay)
                 yield {"type": "reasoning", "text": word}

@@ -138,7 +138,9 @@ function phaseText(ev) {
                                          `context ${ev.percent} % – summarising now so the next question doesn't wait`);
       return L(`Kontext ${ev.percent} % voll – fasst den Chat zusammen, dann geht es weiter`,
                `context ${ev.percent} % full – summarising the chat, then carrying on`);
-    case "think_cut": return L(`genug überlegt (${num(ev.tokens)} Token) – handelt jetzt`,
+    case "think_cut": if (ev.loop) return L(`Gedanken wiederholen sich (${num(ev.tokens)} Token) – handelt jetzt`,
+      `thoughts repeating (${num(ev.tokens)} tokens) – acting now`);
+      return L(`genug überlegt (${num(ev.tokens)} Token) – handelt jetzt`,
                                `enough thinking (${num(ev.tokens)} tokens) – acting now`);
     case "tools_added": return toolsChanged(ev.groups, ev.dropped) + L(" – einmal neu einlesen", " – one-off re-read");
     case "clear": return L(`blendet ${oldResults(ev.results)} aus – spart das Zusammenfassen`,

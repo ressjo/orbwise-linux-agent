@@ -26,7 +26,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
 
-from . import prompts
+from . import prompts, textcalls
 from .agent_code import CodingMixin
 from .agent_compact import CompactMixin
 from .agent_review import ReviewMixin
@@ -34,7 +34,7 @@ from .agent_safety import TAINT_SOURCES, SafetyMixin, is_taint_source  # noqa: F
 from .agent_speed import SpeedMixin
 from .agent_tools import CODING_GROUPS, CODING_ONLY, ToolSelectionMixin  # noqa: F401
 from .config import Config
-from .context_plan import SUMMARY_MIN, ContextPlan, plan_for
+from .context_plan import ANSWER_RESERVE, SUMMARY_MIN, ContextPlan, plan_for
 from .llm import ContextOverflow, LLMError, ToolCallBroken, salvage_write, strip_think
 from .memory import Memory, est_tokens
 from .memory.context import PROMPT_KEYS, TRIM_NOTE, msg_tokens
@@ -71,6 +71,39 @@ def goal_marker(content: str) -> tuple[str, str]:
 def changed_code(name: str, result: str) -> bool:
     """Hat dieser Aufruf (edit/write) eine Datei wirklich geändert?"""
     return name in ("edit", "write") and result.startswith(("Geändert", "Angelegt"))
+
+
+LOOP_MIN, LOOP_TAIL, LOOP_TIMES = 1500, 120, 3
+
+
+def thought_loop(text: str) -> int:
+    """Dreht sich die Denkkette im Kreis? Steht ihr Ende (LOOP_TAIL Zeichen, Leerraum vereinheitlicht) schon zum
+    dritten Mal da, ja → Länge des Anfangs bis einschließlich des ersten Vorkommens (das Brauchbare); sonst 0."""
+    if len(text) < LOOP_MIN:
+        return 0
+    norm = " ".join(text.split())
+    piece = norm[-LOOP_TAIL:]
+    if len(piece) < LOOP_TAIL or norm.count(piece) < LOOP_TIMES:
+        return 0
+    return norm.find(piece) + LOOP_TAIL
+
+
+_FAILED = re.compile(r"nicht gefunden|gibt es nicht|fehlgeschlagen|keine (lese)?berechtigung|nicht verfügbar|"
+                     r"ungültig|fehler|abgelehnt|blockiert|unbekanntes tool|fehlende parameter|zeitüberschreitung|"
+                     r"nicht installiert|nicht geschrieben|keine treffer|keine dateien|kommt .* nicht vor|"
+                     r"noch nicht gelesen|⚠", re.I)
+
+
+def looks_failed(name: str, result: str) -> bool:
+    """Ist dieses Werkzeug-Ergebnis ein Fehlschlag oder eine Sackgasse, über die das Modell nachdenken sollte
+    (think_steps: lean)? Im Zweifel ja – einmal zu oft denken kostet nur Zeit."""
+    head = result.lstrip()[:300]
+    if name in ("edit", "write"):
+        return not changed_code(name, result) or "⚠" in result
+    m = re.match(r"Exit-Code (\d+)", head)
+    if m:
+        return m.group(1) != "0"
+    return bool(_FAILED.search(head.splitlines()[0] if head else ""))
 
 
 def plan_steps(text: str) -> int:
@@ -139,6 +172,7 @@ class Turn:
     goal: dict | None = None            # Ziel-Modus (/goal): das aktive Ziel
     steps: int = 0                      # Modellschritte dieser Antwort (Schritt-Limit)
     nudges: int = 0                     # „mach weiter“ in Folge im Ziel-Modus
+    rethink: bool = True                # think_steps „lean“: dieser Schritt darf denken (erster, nach Fehlschlag)
     retried: bool = False               # nach „Kontext zu groß“ schon einmal Platz geschaffen
     broken: bool = False                # ein abgeschnittener Aufruf wurde schon einmal wiederholt
     finished: bool = False              # das Modell hat von sich aus geendet (nicht Limit/Schleife)
@@ -450,8 +484,16 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
         return self.plan().reserve(self._thinking())
 
     def think_budget(self) -> int:
-        """Höchstlänge der Denkkette in Token für diese Anfrage (0 = unbegrenzt bzw. kein Denken)."""
-        return self.plan().think_budget() if self._think else 0
+        """Höchstlänge der Denkkette in (geschätzten) Token für diesen Schritt; 0 = kein Denken. Kleines Fenster: der
+        feste Anteil der Stufe. Großes Fenster: wie lange gedacht wird, bestimmt das Modell – Schluss ist erst, wenn
+        sonst kein Platz mehr für die Antwort bliebe (der Schritt bräche dann ohnehin mit vollem Fenster ab)."""
+        if not self._think:
+            return 0
+        cap = self.plan().think_budget()
+        if cap:
+            return cap
+        free = self.model_window() - int(getattr(self, "_full_prompt", 0) or 0) - ANSWER_RESERVE
+        return max(2000, int(free / self.token_ratio()))
 
     def _set_think(self, think) -> None:
         """think: None (Profil), False/"off", True/"on" (an, Stufe nach Modell) oder eine Stufe des Modells."""
@@ -768,6 +810,8 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
 
     async def _turn_step(self, turn: Turn, emit: Emit) -> tuple[str, list, dict[int, str]] | None:
         """Ein Modellschritt → (Text, Aufrufe, Hinweise zu geretteten Aufrufen) oder None: noch einmal versuchen."""
+        # think_steps „lean“: gedacht wird im ersten Schritt und nach einem Fehlschlag – nicht vor jedem Aufruf
+        self._skip_think = bool(self._think) and self.cfg.llm.think_steps == "lean" and not turn.rethink
         try:
             content, calls = await self._step(emit, turn.msg_id)
             calls, cut_notes = self._salvage_calls(calls or [])
@@ -788,6 +832,9 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
             return None
         self._step_hint = None
         turn.retried = False
+        if self._skip_think:
+            self._cache_owner = None  # ohne Denken kann die Vorlage anders rendern als die nächste Frage
+        self._skip_think, turn.rethink = False, False
         return content, calls, cut_notes
 
     async def _turn_answer(self, turn: Turn, entry: dict, emit: Emit, confirm: Confirm) -> bool:
@@ -800,6 +847,7 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
             turn.spoken.append(entry["content"])
         if goal is None or marker == "done":
             if hint := await self.verify_gate(emit, confirm, turn.vstate):  # Änderungen geprüft: rot → weiter
+                turn.rethink = True
                 conv.add({"role": "user", "content": hint, "verify_nudge": True})
                 await emit({"type": "segment_end", "id": turn.msg_id})
                 return False
@@ -811,6 +859,7 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
             await self._goal_event(emit, marker or "stopped", goal)
         else:
             turn.nudges += 1
+            turn.rethink = True
             conv.add({"role": "user", "content": prompts.text(self.cfg, "goal_nudge").format(goal=goal["text"]),
                       "goal_nudge": True})
             await emit({"type": "segment_end", "id": turn.msg_id})  # nächste Runde als eigener Absatz
@@ -840,6 +889,7 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
                 turn.vstate["edited"] = True
                 turn.vstate.setdefault("paths", set()).add(str((fn.get("arguments") or {}).get("path", "")))
             name, result, note = done[i] if i in done else await self._execute(call, emit, confirm)
+            turn.rethink = turn.rethink or looks_failed(name, result)
             if changed_code(fn.get("name", ""), result):
                 seen.clear()  # der Code ist jetzt ein anderer: derselbe Test-/Lesebefehl danach ist keine Schleife
             result += cut_notes.get(i, "")
@@ -948,7 +998,7 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
         """Ein Modellschritt: streamt Tokens an die UI, liefert (Text, Tool-Aufrufe).
         Nebenbei meldet llm_phase, was das Modell gerade tut (Einlesen, Denken, Aufruf schreiben, Antworten) –
         für die Aktivität, damit lange Pausen nicht wie Stillstand aussehen."""
-        filt = ThinkFilter()
+        filt, gate = ThinkFilter(), textcalls.Gate()
         result: dict = {}
         step_id, started = uuid.uuid4().hex[:8], time.monotonic()
         current, last_sent, thought_n = "", 0.0, 0
@@ -965,9 +1015,20 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
         budget = 0 if final else self.think_budget()
         thoughts: list[str] = []
         cut: str | None = None  # Denk-Budget voll: Gedanken, mit denen der Schritt ohne Denken weitergeht
+        thought_len = checked = loop_at = 0
 
         def over_budget() -> bool:
-            return bool(budget) and cut is None and est_tokens("".join(thoughts)) > budget
+            """Genug gedacht: Budget voll – oder die Denkkette wiederholt sich (geprüft alle 200 Zeichen)."""
+            nonlocal thought_len, checked, loop_at
+            if cut is not None or not thoughts:
+                return False
+            thought_len += len(thoughts[-1])
+            if budget and thought_len > budget * 3:  # est_tokens: 3 Zeichen je Token
+                return True
+            if thought_len - checked >= 200:
+                checked = thought_len
+                loop_at = thought_loop("".join(thoughts))
+            return bool(loop_at)
 
         for _attempt in range(2):
             try:
@@ -998,6 +1059,7 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
                             await emit({"type": "reasoning", "id": msg_id, "text": thought})
                             if over_budget():
                                 break
+                        text = gate.feed(text) if text else ""  # Werkzeug-Aufruf als Text: nicht anzeigen
                         if text:
                             await phase("writing")
                             await emit({"type": "token", "id": msg_id, "text": text})
@@ -1038,18 +1100,31 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
                 await phase("done", error=True, seconds=round(time.monotonic() - started, 1))
                 raise
             await stream.aclose()  # bricht die laufende Anfrage ab, falls das Denk-Budget voll ist
-            if cut is not None or not over_budget():
+            stopped = cut is None and bool(thoughts) and (bool(loop_at) or bool(budget) and thought_len > budget * 3)
+            if not stopped:
                 break
-            # genug überlegt: denselben Schritt ohne Denken fortsetzen – die Gedanken gehen als Notiz mit
-            cut = prompts.text(self.cfg, "think_cut").format(thoughts=clip("".join(thoughts).strip(), budget * 4))
-            filt = ThinkFilter()
+            # genug überlegt: denselben Schritt ohne Denken fortsetzen – die Gedanken gehen als Notiz mit (bei einer
+            # Schleife nur bis zur ersten Wiederholung)
+            said = "".join(thoughts).strip()
+            if loop_at:
+                said = " ".join(said.split())[:loop_at]
+            cut = prompts.text(self.cfg, "think_cut").format(thoughts=clip(said, (budget or 1500) * 4))
+            filt, gate = ThinkFilter(), textcalls.Gate()
             current = ""
-            await phase("think_cut", tokens=est_tokens("".join(thoughts)), budget=budget)
+            await phase("think_cut", tokens=est_tokens("".join(thoughts)), budget=budget, loop=bool(loop_at))
         tail = filt.flush()
+        tail = gate.feed(tail) if tail else ""
         if tail:
             await emit({"type": "token", "id": msg_id, "text": tail})
         content = strip_think(result.get("content", ""))
-        return content, ([] if final else result.get("tool_calls") or [])
+        calls = [] if final else result.get("tool_calls") or []
+        if not calls and not final:
+            # das Modell hat den Aufruf als Text geschrieben (Vorlage und Server passen nicht zusammen): übernehmen
+            content, calls = textcalls.parse(content, set(self.tools))
+        held = gate.held()
+        if held and not calls:  # doch kein Aufruf – dann gehört der zurückgehaltene Text zur Antwort
+            await emit({"type": "token", "id": msg_id, "text": held})
+        return content, calls
 
     async def _stream_fitting(self, final: bool = False, no_think: bool = False, tail: str | None = None):
         """Stream eines Schritts. Meldet der Server „zu groß“, entscheidet der Aufrufer: Lässt sich komprimieren,
@@ -1067,7 +1142,7 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
                     messages.append({"role": "user", "content": tail})
                 if getattr(self, "_step_hint", None):
                     messages.append({"role": "user", "content": self._step_hint})
-                kwargs = self._think_kwargs(no_think)
+                kwargs = self._think_kwargs(no_think or getattr(self, "_skip_think", False))
                 # auch die Zwischenbilanz mit derselben Werkzeugliste – ohne sie stünde vorn im Prompt etwas anderes
                 # und der ganze Chat müsste neu eingelesen werden (und bei der nächsten Frage gleich noch einmal)
                 async for ev in self._call_llm(messages, self.schemas, **kwargs):

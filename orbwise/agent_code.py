@@ -382,6 +382,11 @@ class CodingMixin:
         async for ev in self._call_llm(messages, tools, **kwargs):
             if ev.get("type") == "done":
                 result = ev.get("message") or {}
+        if tools and not result.get("tool_calls"):  # Aufruf als Text geschrieben (siehe textcalls.py)
+            from . import textcalls
+            rest, calls = textcalls.parse(strip_think(result.get("content") or ""), set(self.tools))
+            if calls:
+                result = {**result, "content": rest, "tool_calls": calls}
         return result
 
     async def _sub_execute(self, call: dict, kind: str, allowed: set[str], emit, confirm) -> tuple[str, str]:
