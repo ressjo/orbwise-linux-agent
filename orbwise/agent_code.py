@@ -14,7 +14,7 @@ from pathlib import Path
 
 from . import prompts, snapshot, workspace
 from . import sandbox as sbx
-from .llm import LLMError, strip_think
+from .llm import ContextOverflow, LLMError, strip_think
 from .memory import est_tokens
 from .tools import jobs
 from .tools.proc import clip_saved
@@ -25,6 +25,24 @@ log = logging.getLogger(__name__)
 EXPLORE_TOOLS = {"read", "grep", "glob", "map", "shell", "job_output", "websearch", "webfetch", "recall"}
 GENERAL_EXCLUDED = {"subagent", "question"}
 SNAPSHOTS_KEEP = 60
+SUB_STUB = 300  # so viele Zeichen bleiben von einem älteren Werkzeug-Ergebnis des Unteragenten, wenn Platz fehlt
+
+
+def _sub_tokens(messages: list[dict]) -> int:
+    return est_tokens(json.dumps(messages, ensure_ascii=False))
+
+
+def _sub_fit(messages: list[dict], room: int) -> None:
+    """Passt der Prompt des Unteragenten nicht in room (geschätzte Token), ältere Werkzeug-Ergebnisse auf ihren Anfang
+    kürzen – das älteste zuerst, das letzte nur im Notfall. Auftrag und Antworten des Modells bleiben."""
+    tools = [m for m in messages if m["role"] == "tool"]
+    for m in tools:
+        if _sub_tokens(messages) <= room:
+            return
+        text = m["content"]
+        if len(text) > SUB_STUB * 2:
+            m["content"] = (text[:SUB_STUB] + f"\n[… gekürzt, um Platz zu schaffen ({len(text)} Zeichen) – bei Bedarf "
+                                              "erneut abrufen]")
 
 
 class CodingMixin:
@@ -304,15 +322,32 @@ class CodingMixin:
             # Zustände und Tokens des Unteragenten nicht als Antwort des Hauptagenten zeigen
 
         steps = self.cfg.coding.subagent_steps
-        budget = self.context_budget()
+        # Platz: das Budget des Fensters abzüglich der Werkzeugbeschreibungen, die mit jedem Schritt mitgehen
+        room = max(1500, self.context_budget() - est_tokens(json.dumps(schemas, ensure_ascii=False)))
         prev, self._prompt_prev = self._prompt_prev, None  # eigener Prompt – nicht als „neu eingelesen“ verbuchen
-        answer = ""
+        from .agent import changed_code
+        answer, notes = "", []
+        seen: dict[str, int] = {}
+        final = squeezed = False
         try:
             for step in range(steps + 1):
-                final = step == steps or est_tokens(json.dumps(messages, ensure_ascii=False)) > 0.75 * budget
+                final = final or step == steps or _sub_tokens(messages) > 0.75 * room
                 if final:
                     messages.append({"role": "user", "content": prompts.subagent_text(self.cfg, "final")})
-                message = await self._sub_step(messages, None if final else schemas)
+                _sub_fit(messages, room)  # mehrere große Ergebnisse in einem Schritt: ältere kürzen statt überlaufen
+                try:
+                    message = await self._sub_step(messages, None if final else schemas)
+                except ContextOverflow:
+                    if squeezed:
+                        raise
+                    # der Server zählt mehr als geschätzt: auf die Hälfte des jetzigen Prompts kürzen und ohne
+                    # Werkzeuge zusammenfassen lassen
+                    squeezed = True
+                    _sub_fit(messages, min(room, _sub_tokens(messages)) // 2)
+                    if not final:
+                        final = True
+                        messages.append({"role": "user", "content": prompts.subagent_text(self.cfg, "final")})
+                    message = await self._sub_step(messages, None)
                 content = strip_think(message.get("content") or "")
                 calls = [] if final else message.get("tool_calls") or []
                 entry = {"role": "assistant", "content": content}
@@ -322,11 +357,19 @@ class CodingMixin:
                 if not calls:
                     answer = content
                     break
-                for call in calls:
-                    name, result = await self._sub_execute(call, kind, allowed, sub_emit, confirm)
+                if content.strip():
+                    notes.append(content.strip())
+                done, looping = self._repeats(seen, calls)
+                for i, call in enumerate(calls):
+                    name, result = done[i][:2] if i in done else \
+                        await self._sub_execute(call, kind, allowed, sub_emit, confirm)
+                    if changed_code(name, result):
+                        seen.clear()
                     messages.append({"role": "tool", "content": result, "tool_name": name})
+                final = final or looping  # dreht sich im Kreis: nächster Schritt ohne Werkzeuge
         except LLMError as e:
-            answer = (answer or "") + f"\n(Unteragent abgebrochen: {e})"
+            # nicht alles verlieren: was der Unteragent unterwegs festgehalten hat, geht mit zurück
+            answer = "\n".join(notes[-3:]) + f"\n(Unteragent abgebrochen: {e})"
         finally:
             self._prompt_prev = prev
             self._cache_owner = None  # der Server hat jetzt den Prompt des Unteragenten im Cache

@@ -20,6 +20,12 @@ All notable changes to this project are documented here. The format follows
   detection or with a `/goal` the model gave up on skipped the checks, so changed files went unverified without a
   word. They now run once and the answer ends with the usual **✓ Checked** / **⚠ Checks still failing** line (reported
   only – the answer is over, nothing is sent back to the model).
+- **Coding mode – sub-agents no longer lose their work:** several large results in one step (four files read at once)
+  could overflow the context window, and the sub-agent then returned nothing but "aborted". Older tool results are now
+  shortened to their beginning when room runs out, the tool descriptions count towards the budget, and if the model
+  server still reports an overflow the sub-agent halves its prompt and summarises without tools. A sub-agent that
+  repeats the same call is stopped like the main agent (skipped from the third time, summary after the fourth) instead
+  of running to its step limit; if it does fail, the notes it made on the way come back with the error.
 - **Coding mode – more than 50 `edits` in one call are refused** instead of applying the first 50 and reporting
   success.
 

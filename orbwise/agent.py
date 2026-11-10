@@ -68,6 +68,11 @@ def goal_marker(content: str) -> tuple[str, str]:
     return kind, (content or "")[:m.start()].rstrip()
 
 
+def changed_code(name: str, result: str) -> bool:
+    """Hat dieser Aufruf (edit/write) eine Datei wirklich geändert?"""
+    return name in ("edit", "write") and result.startswith(("Geändert", "Angelegt"))
+
+
 def plan_steps(text: str) -> int:
     """Anzahl nummerierter Schritte in einem Plan (für „Mein Plan hat n Schritte“)."""
     return len(re.findall(r"^\s*\d+[.)]\s", text, re.M))
@@ -819,18 +824,8 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
         """Die Werkzeug-Aufrufe eines Schritts ausführen, Ergebnisse in den Verlauf. → True, wenn das Modell
         denselben Aufruf immer wieder stellt (Schleife) – dann endet die Antwort."""
         conv, seen = self.memory.conversation, turn.seen
-        looping = False
-        done: dict[int, tuple[str, str, str]] = {}
-        for i, call in enumerate(calls):
-            fn = call.get("function", {})
-            turn.used_tools.add(fn.get("name", ""))
-            key = fn.get("name", "") + json.dumps(fn.get("arguments"), sort_keys=True, ensure_ascii=False)
-            seen[key] = seen.get(key, 0) + 1
-            if seen[key] >= 3:
-                # Nicht noch einmal ausführen – das Modell dreht sich im Kreis
-                name = fn.get("name", "")
-                done[i] = (name, prompts.text(self.cfg, "repeat_skipped"), f"{name}: Wiederholung übersprungen")
-                looping = looping or seen[key] >= 4
+        turn.used_tools.update(c.get("function", {}).get("name", "") for c in calls)
+        done, looping = self._repeats(seen, calls)
         # Mehrere Aufrufe ohne Rückfrage (lesend) gleichzeitig – das Modell hat sie ohnehin unabhängig
         # voneinander geplant. Bringt einer fremde Inhalte (Mail, Bildschirm), bleibt es bei der Reihenfolge.
         todo = [i for i in range(len(calls)) if i not in done]
@@ -845,13 +840,28 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
                 turn.vstate["edited"] = True
                 turn.vstate.setdefault("paths", set()).add(str((fn.get("arguments") or {}).get("path", "")))
             name, result, note = done[i] if i in done else await self._execute(call, emit, confirm)
-            if fn.get("name") in ("edit", "write") and result.startswith(("Geändert", "Angelegt")):
-                # der Code ist jetzt ein anderer: derselbe Test-/Lesebefehl danach ist keine Schleife
-                seen.clear()
+            if changed_code(fn.get("name", ""), result):
+                seen.clear()  # der Code ist jetzt ein anderer: derselbe Test-/Lesebefehl danach ist keine Schleife
             result += cut_notes.get(i, "")
             conv.add({"role": "tool", "content": result, "tool_name": name})
             turn.tool_notes.append(note)
         return looping
+
+    def _repeats(self, seen: dict[str, int], calls: list[dict]) -> tuple[dict[int, tuple[str, str, str]], bool]:
+        """Schleifenerkennung: gleiche Aufrufe (Name + Argumente) zählen. Ab dem dritten Mal wird nicht mehr
+        ausgeführt – der Aufruf bekommt stattdessen einen Hinweis als Ergebnis (→ {Index: (Name, Ergebnis, Notiz)});
+        ab dem vierten dreht sich das Modell im Kreis (→ True). Ein erfolgreiches edit/write leert seen (changed_code)."""
+        done: dict[int, tuple[str, str, str]] = {}
+        looping = False
+        for i, call in enumerate(calls):
+            fn = call.get("function", {})
+            name = fn.get("name", "")
+            key = name + json.dumps(fn.get("arguments"), sort_keys=True, ensure_ascii=False)
+            seen[key] = seen.get(key, 0) + 1
+            if seen[key] >= 3:
+                done[i] = (name, prompts.text(self.cfg, "repeat_skipped"), f"{name}: Wiederholung übersprungen")
+                looping = looping or seen[key] >= 4
+        return done, looping
 
     async def _turn_pause(self, turn: Turn, emit: Emit, confirm: Confirm) -> None:
         """Schritt-Limit oder Schleife: ohne Tools zusammenfassen lassen, statt hart abzubrechen. Was bis hierher
