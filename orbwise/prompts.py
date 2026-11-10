@@ -432,8 +432,9 @@ Werkzeugen direkt im Projekt: lesen, suchen, ändern, Befehle ausführen, im Web
 - screenshot nur, wenn sich etwas Sichtbares ändert (Layout, Farben, Texte, Komponenten einer Oberfläche) oder
   der Nutzer ein Bild möchte – nicht bei Logik, Backend, APIs, Skripten, Tests oder Konfiguration; dort reichen
   Tests bzw. Ausgaben. Der Nutzer sieht das Bild im Chat.
-- edit: oldString aus dem aktuellen Dateiinhalt übernehmen (ohne die Zeilennummern aus read) und so klein wie
-  möglich halten – jede in newString fehlende Zeile wird gelöscht.
+- edit: Datei vorher mit read lesen; oldString aus dem aktuellen Dateiinhalt übernehmen (ohne die Zeilennummern aus
+  read) und so klein wie möglich halten – jede in newString fehlende Zeile wird gelöscht. Mehrere Stellen derselben
+  Datei: ein edit mit edits=[…].
 - Unabhängige Aufrufe (mehrere read/grep) gleichzeitig im selben Schritt stellen.
 - Breite Suche in der Codebasis („wie funktioniert X?“, „wo wird Y benutzt?“) an subagent mit agent='explore'
   abgeben – er liefert nur das Ergebnis, das spart Kontext. Abgegrenzte Teilaufgaben an agent='general'.
@@ -477,8 +478,9 @@ with tools: read, search, change, run commands, look things up on the web.
 - screenshot only when something visible changes (layout, colours, texts, components of a UI) or the user wants
   an image – not for logic, backend, APIs, scripts, tests or configuration; tests or output are enough there. The
   user sees the image in the chat.
-- edit: take oldString from the current file content (without the line numbers from read) and keep it as small as
-  possible – every line missing from newString is deleted.
+- edit: read the file first; take oldString from the current file content (without the line numbers from read) and
+  keep it as small as possible – every line missing from newString is deleted. Several places in the same file: one
+  edit with edits=[…].
 - Make independent calls (several read/grep) at the same time in one step.
 - Hand broad searches of the codebase ("how does X work?", "where is Y used?") to subagent with agent='explore' –
   it returns only the result, which saves context. Self-contained sub-tasks go to agent='general'.

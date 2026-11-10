@@ -61,6 +61,7 @@ def test_agents_md_and_environment_in_the_system_prompt(coding, project):
 @pytest.mark.skipif(not shutil.which("git"), reason="git fehlt")
 def test_each_answer_can_be_undone_and_redone(cfg, coding, project, monkeypatch):
     coding.auto_mode = "files"
+    collect(coding, tool("read", path="app.py"))  # erst lesen, dann ändern
     events = collect(coding, tool("edit", path="app.py", oldString="x = 1", newString="x = 2"))
     change = next(e for e in events if e["type"] == "changes")
     assert change["files"] == [{"path": "app.py", "add": 1, "del": 1, "status": "modified"}]

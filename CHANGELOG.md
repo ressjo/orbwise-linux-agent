@@ -5,6 +5,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Coding mode – sturdier edits:** `edit` takes several changes to one file in one call (`edits`, applied in order,
+  all or nothing – the message names the change that failed). An existing file must be read in the chat before it is
+  edited (new files and files the agent wrote itself are fine). After three failed edits in a row on the same file
+  the error tells the model to re-read the section or rewrite it with `write` instead of guessing variations until
+  the step limit.
+
 ### Changed
 - **Model page tidied up:** the details of a model are split into tabs (Overview, Performance, Quality, Diagnostics)
   instead of one long page; the context window is a slider; options such as experts in RAM, KV cache, batch size and
