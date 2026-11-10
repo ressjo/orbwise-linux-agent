@@ -146,6 +146,51 @@ def test_summary_says_when_nothing_could_be_checked():
     assert verify.summary([*skipped, {"name": "make", "status": "ok", "output": ""}]) == "✓ Geprüft: make"
 
 
+needs_node = pytest.mark.skipif(not shutil.which("node"), reason="node fehlt")
+TS_OK = "enum E { A, B }\nclass K { constructor(private x: number) {} }\nexport const a: number = E.A;\n"
+TS_BAD = "export const a: number = 1;\nfunction f(x: string { return x }\n"
+
+
+@needs_node
+def test_typescript_is_parsed_with_node(tmp_path, monkeypatch):
+    monkeypatch.setattr(verify, "_typescript_lib", lambda p: "")  # kein tsc auf dem Rechner
+    probe = subprocess.run(["node", "-p", "typeof require('node:module').stripTypeScriptTypes"], capture_output=True,
+                           text=True).stdout.strip()
+    if probe != "function":
+        assert verify.check_syntax(tmp_path / "a.ts", TS_BAD) == ""  # älteres Node: still, kein Fehlalarm
+        return
+    assert verify.check_syntax(tmp_path / "a.ts", TS_OK) == ""  # enum & Co. sind kein Syntaxfehler
+    assert verify.check_syntax(tmp_path / "a.ts", TS_BAD).startswith("Syntaxfehler: ")
+    assert verify.check_syntax(tmp_path / "a.mts", TS_BAD).startswith("Syntaxfehler: ")
+    assert verify.check_syntax(tmp_path / "a.tsx", "export const C = () => <div>x</span>;\n") == ""  # JSX nur mit tsc
+
+
+@pytest.mark.skipif(not shutil.which("node") or not shutil.which("tsc"), reason="node oder tsc fehlt")
+def test_typescript_and_tsx_are_parsed_with_the_machines_tsc(tmp_path):
+    assert verify.check_syntax(tmp_path / "a.ts", TS_OK) == ""
+    assert verify.check_syntax(tmp_path / "a.ts", TS_BAD).startswith("Syntaxfehler: Zeile 2: ")
+    assert verify.check_syntax(tmp_path / "c.tsx", "export const C = () => <div>x</div>;\n") == ""
+    assert "Zeile 1" in verify.check_syntax(tmp_path / "c.tsx", "export const C = () => <div>x</span>;\n")
+    # Typfehler sind kein Syntaxfehler – dafür ist die Prüf-Schranke da
+    assert verify.check_syntax(tmp_path / "t.ts", "const n: number = 'text';\n") == ""
+
+
+def test_typescript_from_the_project_is_never_run(tmp_path, monkeypatch):
+    """Ein tsc im Projektordner (node_modules) kann der Agent geschrieben haben – es läuft nicht auf dem Rechner."""
+    lib = tmp_path / "proj" / "node_modules" / "typescript" / "lib"
+    (lib.parent / "bin").mkdir(parents=True)
+    lib.mkdir()
+    (lib / "typescript.js").write_text("require('fs').writeFileSync(%r, 'x')" % str(tmp_path / "ran"))
+    (lib.parent / "bin" / "tsc").write_text("#!/bin/sh\n")
+    which = shutil.which
+    monkeypatch.setattr(verify.shutil, "which", lambda name: str(lib.parent / "bin" / "tsc") if name == "tsc"
+                        else which(name))
+    assert verify._typescript_lib(tmp_path / "proj" / "src" / "a.ts") == ""
+    verify.check_syntax(tmp_path / "proj" / "src" / "a.tsx", "export const a = 1;\n")
+    assert not (tmp_path / "ran").exists()
+    assert verify._typescript_lib(tmp_path / "anderswo" / "a.ts") == str(lib / "typescript.js")  # sonst gefunden
+
+
 # ---------------------------------------------------------------- im Agenten
 class Scripted:
     """Schreibt zuerst falschen Code, meldet „fertig“; bekommt die rote Prüfung zurück und korrigiert."""

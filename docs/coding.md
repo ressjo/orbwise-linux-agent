@@ -18,7 +18,7 @@ the **Brave Search API** when a key is set (see [Web search](integrations.md#web
 | `edit` | Replaces exact text (`oldString` → `newString`, `replaceAll` for renames). Forgives curly quotes/dashes and wrong indentation as long as the spot is unique, strips line numbers copied from `read`, keeps CRLF; refuses when the file changed on disk since it was read, and an existing file that was never read in this chat. Several spots in one file in one call with `edits: [{oldString, newString}, …]` (at most 50) – applied in order, all or nothing. After three failed edits on the same file it tells the model to re-read the section or rewrite it with `write` instead of guessing. Result: a short diff |
 | `write` | Creates or overwrites a file (folders are created); an existing file must have been read in this chat before it is replaced |
 | `map` | Repo map: classes, functions and methods per file with line and signature – the whole project (large ones as folders with counts), a folder (`path`) or the definitions of a name (`query`). Uses universal-ctags if installed, otherwise Python's `ast` and patterns for JS/TS, Go, Rust, Java/Kotlin/C#, C/C++, Ruby, PHP; cached per project |
-| `grep` / `glob` | ripgrep with regex or literal text, matching lines with numbers / file paths by pattern, newest first – both respect `.gitignore` |
+| `grep` / `glob` | ripgrep with regex or literal text, matching lines with numbers – with `context: N` also the N lines before and after each match / file paths by pattern, newest first – both respect `.gitignore` |
 | `shell` | Bash in the project (or `workdir`); `background: true` for dev servers and long builds – the agent is told when the job ends (no polling), the activity panel shows its live output with **Stop** |
 | `websearch` / `webfetch` | Brave API (then SearXNG/DuckDuckGo as configured) / page as Markdown |
 | `subagent` | `explore`: searches the code read-only in its **own context** and returns only the result – saves context on small windows. `general`: a self-contained sub-task, same confirmations. Its steps appear indented in the activity panel; when its context fills up, older results are shortened and it summarises instead of failing |
@@ -38,8 +38,8 @@ Also: `todo_write` (task list in the answer), `remember`/`recall`/`forget` (the 
   the model with the output ("fix the cause, don't weaken tests"), up to `coding.verify_rounds` (3) times; the answer
   then ends with a line from Orbwise itself – **✓ Checked: ruff, pytest** or **⚠ Checks still failing: pytest (2
   failed)** – or **○ Not checked – not installed here: pytest** when the tools are missing. Declining the check skips it for that answer; `coding.verify: off` turns it off.
-- **Syntax check after every change:** `edit`/`write` parse Python, JSON, YAML, TOML, shell (`bash -n`) and JS
-  (`node --check`) right away – nothing is executed – and add "⚠ SyntaxError line 42 …" to the result.
+- **Syntax check after every change:** `edit`/`write` parse Python, JSON, YAML, TOML, shell (`bash -n`), JS
+  (`node --check`) and TypeScript (the machine's `tsc`, otherwise Node's type stripping – no type check) right away – nothing is executed – and add "⚠ SyntaxError line 42 …" to the result.
 - **AGENTS.md:** the project's `AGENTS.md` (or `CLAUDE.md`, see `coding.instructions`) goes into the system prompt,
   together with the project folder, whether it is a git repository and the shell.
 - **Diffs:** confirmations for `edit`/`write` show the change as a coloured diff instead of JSON.

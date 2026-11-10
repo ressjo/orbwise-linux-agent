@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Coding mode – `grep` with context lines:** `context: N` shows up to ten lines before and after every match
+  (`12: ` for the match, `13- ` for the lines around it, `…` between separate places) – often saves the `read` that
+  used to follow a search. `limit` still counts matches, not context lines.
+- **Coding mode – syntax check for TypeScript:** `edit`/`write` now also parse `.ts`, `.tsx`, `.mts` and `.cts`
+  right away and report the first syntax error with its line. Uses the TypeScript installed on the machine (`tsc`
+  in `PATH`, also reads JSX), otherwise Node's built-in type stripping (Node 22.13+, no `.tsx`). Parse only – no type
+  check, and never a TypeScript from the project's own `node_modules`, which the agent could have written.
+
 ### Fixed
 - **Coding mode – running the same test after every fix no longer counts as a loop:** the loop detection counted
   identical calls over the whole answer, so the third `pytest -q` was skipped with "the result is above" although the

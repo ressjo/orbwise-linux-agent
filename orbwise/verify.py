@@ -250,6 +250,8 @@ def check_syntax(path: Path, text: str) -> str:
             return _external(["bash", "-n", str(path)], "bash")
         elif suffix in (".js", ".mjs", ".cjs"):
             return _external(["node", "--check", str(path)], "node")
+        elif suffix in TS_SUFFIXES:
+            return _typescript(path, text)
     except SyntaxError as e:
         return f"SyntaxError Zeile {e.lineno}: {e.msg}"
     except json.JSONDecodeError as e:
@@ -260,6 +262,66 @@ def check_syntax(path: Path, text: str) -> str:
     except tomllib.TOMLDecodeError as e:
         return f"TOML-Fehler: {e}"
     return ""
+
+
+TS_SUFFIXES = (".ts", ".tsx", ".mts", ".cts")
+# Liest die Quelle von stdin und parst sie nur: mit dem TypeScript des Rechners (transpileModule – ohne Typprüfung,
+# ohne andere Dateien zu laden), sonst mit Nodes eingebautem Entfernen der Typen. Meldet den ersten Syntaxfehler.
+_TS_CHECK = r"""
+const src = require('fs').readFileSync(0, 'utf8');
+const [name, lib] = process.argv.slice(1);
+if (lib) {
+  const ts = require(lib);
+  const out = ts.transpileModule(src, {fileName: name, reportDiagnostics: true,
+    compilerOptions: {jsx: ts.JsxEmit.Preserve, target: ts.ScriptTarget.ESNext}});
+  const d = (out.diagnostics || []).find(x => x.category === ts.DiagnosticCategory.Error);
+  if (d) {
+    const at = d.file && d.start !== undefined ? d.file.getLineAndCharacterOfPosition(d.start) : null;
+    console.log((at ? 'Zeile ' + (at.line + 1) + ': ' : '') + ts.flattenDiagnosticMessageText(d.messageText, ' '));
+    process.exit(1);
+  }
+} else {
+  const strip = require('node:module').stripTypeScriptTypes;
+  if (!strip) process.exit(0);
+  try { strip(src, {mode: 'transform'}); } catch (e) {
+    if (e.code !== 'ERR_INVALID_TYPESCRIPT_SYNTAX') process.exit(0);
+    console.log(String(e.message).trim().split('\n')[0]);
+    process.exit(1);
+  }
+}
+"""
+
+
+def _typescript_lib(path: Path) -> str:
+    """typescript.js des auf dem Rechner installierten tsc – nie eines aus dem Projekt: was im Projektordner liegt,
+    kann der Agent (auch aus der Sandbox heraus) geschrieben haben und liefe hier sonst auf dem Rechner."""
+    tsc = shutil.which("tsc")
+    if not tsc:
+        return ""
+    lib = Path(tsc).resolve().parent.parent / "lib" / "typescript.js"
+    try:
+        target = path.resolve()
+    except OSError:
+        return ""
+    # der Ordner, in dem das node_modules mit diesem TypeScript liegt: enthält er die Datei, gehört es zum Projekt
+    parts = lib.parts
+    owner = Path(*parts[:parts.index("node_modules")]) if "node_modules" in parts else lib.parent.parent
+    return str(lib) if lib.is_file() and owner != target and owner not in target.parents else ""
+
+
+def _typescript(path: Path, text: str) -> str:
+    if not shutil.which("node"):
+        return ""
+    lib = _typescript_lib(path)
+    if not lib and path.suffix.lower() == ".tsx":
+        return ""  # JSX kann nur der TypeScript-Compiler lesen
+    try:
+        r = subprocess.run(["node", "--no-warnings", "-e", _TS_CHECK, path.name, *([lib] if lib else [])], input=text,
+                           capture_output=True, text=True, timeout=15, cwd="/")
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    msg = r.stdout.strip()
+    return f"Syntaxfehler: {msg[:300]}" if r.returncode == 1 and msg else ""
 
 
 def _external(argv: list[str], tool: str) -> str:
