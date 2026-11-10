@@ -391,8 +391,9 @@ def _peak(cfg, memory, project, llm):
     agent = Agent(cfg, llm, memory)
     memory.switch_mode("coding")
     memory.set_project(str(project))
+    before = len(memory.conversation.history)
     collect(agent, "Teile die Suche auf")
-    results = [m for m in memory.conversation.history if m.get("tool_name") == "subagent"]
+    results = [m for m in memory.conversation.history[before:] if m.get("tool_name") == "subagent"]
     assert len(results) == 4 and all("Ergebnis." in m["content"] for m in results)
     assert agent._sub_running == 0  # der Prompt-Vergleich des Hauptlaufs ist wieder zurückgestellt
     return llm.peak
