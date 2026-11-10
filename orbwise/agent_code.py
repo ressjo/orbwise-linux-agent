@@ -9,8 +9,10 @@ import asyncio
 import json
 import logging
 import os
+import time
 import uuid
 from pathlib import Path
+from urllib.parse import urlparse
 
 from . import prompts, snapshot, workspace
 from . import sandbox as sbx
@@ -25,6 +27,8 @@ log = logging.getLogger(__name__)
 EXPLORE_TOOLS = {"read", "grep", "glob", "map", "shell", "job_output", "websearch", "webfetch", "recall"}
 GENERAL_EXCLUDED = {"subagent", "question"}
 SNAPSHOTS_KEEP = 60
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+SUB_REMOTE_SLOTS = 8  # entfernter Server ohne Angabe: so viele Anfragen nebeneinander höchstens
 SUB_STUB = 300  # so viele Zeichen bleiben von einem älteren Werkzeug-Ergebnis des Unteragenten, wenn Platz fehlt
 
 
@@ -302,9 +306,72 @@ class CodingMixin:
         return None
 
     # ---------- Unteragenten ----------
+    async def subagent_slots(self) -> int:
+        """So viele Unteragenten fragen gleichzeitig beim Modell an: coding.subagent_parallel, aber nie mehr, als der
+        Server nebeneinander bedienen kann. Ein llama-server mit einem Slot (so startet Orbwise ihn) müsste zwischen
+        den Prompts hin- und herwechseln und jedes Mal alles neu einlesen – dort also einer nach dem anderen."""
+        want = int(self.cfg.coding.subagent_parallel)
+        if want <= 1:
+            return 1
+        cache = self.__dict__.setdefault("_sub_slots", {})
+        key = self._profile_key()
+        hit = cache.get(key)
+        if not hit or time.monotonic() - hit[0] > 120:
+            hit = cache[key] = (time.monotonic(), await self._server_slots())
+        return max(1, min(want, hit[1]))
+
+    async def _server_slots(self) -> int:
+        client = getattr(self.llm, "client", self.llm)
+        props = getattr(client, "server_props", None)
+        if props:
+            try:
+                n = (await props()).get("total_slots")
+            except Exception:  # noqa: BLE001 – dann gilt die vorsichtige Annahme unten
+                n = None
+            if isinstance(n, int) and not isinstance(n, bool) and n > 0:
+                return n
+        profile = getattr(self.llm, "profile", None)
+        host = (urlparse(str(getattr(profile, "base_url", "") or "")).hostname or "").lower()
+        if getattr(profile, "backend", "") == "openai" and host and host not in LOCAL_HOSTS:
+            return SUB_REMOTE_SLOTS  # entfernter Server bzw. API: bedient mehrere Anfragen nebeneinander
+        return 1
+
+    def _sub_gates(self, slots: int) -> tuple[asyncio.Semaphore, asyncio.Lock]:
+        """Schranken je Ereignisschleife: wie viele Unteragenten zugleich, und general (darf ändern) immer einzeln."""
+        key = (id(asyncio.get_running_loop()), slots)
+        gates = self.__dict__.get("_sub_gate")
+        if not gates or gates[0] != key:
+            gates = self.__dict__["_sub_gate"] = (key, asyncio.Semaphore(slots), asyncio.Lock())
+        return gates[1], gates[2]
+
     async def run_subagent(self, ctx, kind: str, description: str, task: str) -> str:
         """Eigene Nachrichtenliste, eigener Systemprompt, eingeschränkte Werkzeuge; nur die Antwort geht zurück.
-        Läuft innerhalb des Werkzeug-Aufrufs (die Sperre des Agenten hält schon der Hauptlauf)."""
+        Läuft innerhalb des Werkzeug-Aufrufs (die Sperre des Agenten hält schon der Hauptlauf). Stellt das Modell
+        mehrere in einem Schritt, laufen so viele nebeneinander, wie der Server verträgt (subagent_slots) –
+        general, der Dateien ändern darf, immer nur einer."""
+        semaphore, single = self._sub_gates(await self.subagent_slots())
+        async with semaphore:
+            if kind != "explore":
+                async with single:
+                    return await self._sub_guarded(ctx, kind, description, task)
+            return await self._sub_guarded(ctx, kind, description, task)
+
+    async def _sub_guarded(self, ctx, kind: str, description: str, task: str) -> str:
+        """Der Prompt-Vergleich des Hauptlaufs (self._prompt_prev) gilt für Unteragenten nicht: beim ersten merken,
+        nach dem letzten zurückstellen – auch wenn mehrere nebeneinander laufen."""
+        running = self.__dict__.get("_sub_running", 0)
+        if not running:
+            self._sub_prev, self._prompt_prev = self._prompt_prev, None
+        self._sub_running = running + 1
+        try:
+            return await self._sub_work(ctx, kind, description, task)
+        finally:
+            self._sub_running -= 1
+            if not self._sub_running:
+                self._prompt_prev = self._sub_prev
+            self._cache_owner = None  # der Server hat jetzt den Prompt eines Unteragenten im Cache
+
+    async def _sub_work(self, ctx, kind: str, description: str, task: str) -> str:
         parent, emit, confirm = ctx.call_id, ctx.emit, ctx.confirm
         allowed = EXPLORE_TOOLS if kind == "explore" else \
             {s["function"]["name"] for s in self._mode_schemas()[0]} - GENERAL_EXCLUDED
@@ -324,7 +391,6 @@ class CodingMixin:
         steps = self.cfg.coding.subagent_steps
         # Platz: das Budget des Fensters abzüglich der Werkzeugbeschreibungen, die mit jedem Schritt mitgehen
         room = max(1500, self.context_budget() - est_tokens(json.dumps(schemas, ensure_ascii=False)))
-        prev, self._prompt_prev = self._prompt_prev, None  # eigener Prompt – nicht als „neu eingelesen“ verbuchen
         from .agent import changed_code
         answer, notes = "", []
         seen: dict[str, int] = {}
@@ -370,9 +436,6 @@ class CodingMixin:
         except LLMError as e:
             # nicht alles verlieren: was der Unteragent unterwegs festgehalten hat, geht mit zurück
             answer = "\n".join(notes[-3:]) + f"\n(Unteragent abgebrochen: {e})"
-        finally:
-            self._prompt_prev = prev
-            self._cache_owner = None  # der Server hat jetzt den Prompt des Unteragenten im Cache
         answer = answer.strip() or "(Der Unteragent hat kein Ergebnis geliefert.)"
         return clip_saved(f"[{kind}: {description}]\n{answer}", ctx.limit(), "subagent")
 

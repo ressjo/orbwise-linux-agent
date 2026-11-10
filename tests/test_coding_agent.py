@@ -357,3 +357,64 @@ def test_subagent_failure_keeps_what_it_found(cfg, memory, project):
                      [{"name": "glob", "arguments": {"pattern": "*.py"}}]], fail_after=2)
     result, _ = _sub_run(cfg, memory, project, llm)
     assert "Notiz 1: x steht in app.py." in result and "Unteragent abgebrochen: Server weg" in result
+
+
+class ManySubs:
+    """Hauptagent startet vier Unteragenten in einem Schritt; zählt, wie viele gleichzeitig beim Modell anfragen.
+    slots: was der Server über sich meldet (None = nichts, wie Ollama oder ein fremder Server)."""
+
+    def __init__(self, kind="explore", slots=None, profile=None):
+        self.kind, self.slots, self.now, self.peak = kind, slots, 0, 0
+        if profile:
+            self.profile = profile
+
+    async def server_props(self):
+        return {"total_slots": self.slots} if self.slots else {}
+
+    async def chat_stream(self, messages, tools=None, **_):
+        if "Unteragent" not in messages[0]["content"]:
+            if messages[-1]["role"] == "tool":
+                yield {"type": "done", "message": {"role": "assistant", "content": "Fertig."}, "stats": {}}
+                return
+            calls = [{"function": {"name": "subagent", "arguments": {
+                "agent": self.kind, "description": f"Teil {i}", "prompt": f"Aufgabe {i}"}}} for i in range(4)]
+            yield {"type": "done", "message": {"role": "assistant", "content": "", "tool_calls": calls}, "stats": {}}
+            return
+        self.now += 1
+        self.peak = max(self.peak, self.now)
+        await asyncio.sleep(0.03)
+        self.now -= 1
+        yield {"type": "done", "message": {"role": "assistant", "content": "Ergebnis."}, "stats": {}}
+
+
+def _peak(cfg, memory, project, llm):
+    agent = Agent(cfg, llm, memory)
+    memory.switch_mode("coding")
+    memory.set_project(str(project))
+    collect(agent, "Teile die Suche auf")
+    results = [m for m in memory.conversation.history if m.get("tool_name") == "subagent"]
+    assert len(results) == 4 and all("Ergebnis." in m["content"] for m in results)
+    assert agent._sub_running == 0  # der Prompt-Vergleich des Hauptlaufs ist wieder zurückgestellt
+    return llm.peak
+
+
+def test_subagents_run_one_by_one_on_a_single_slot_server(cfg, memory, project):
+    assert _peak(cfg, memory, project, ManySubs(slots=1)) == 1  # llama-server -np 1: sonst wechselt er ständig den Prompt
+    assert _peak(cfg, memory, project, ManySubs()) == 1         # Server sagt nichts über sich: vorsichtig
+
+
+def test_subagents_run_side_by_side_as_far_as_the_server_can(cfg, memory, project):
+    assert _peak(cfg, memory, project, ManySubs(slots=2)) == 2
+    assert _peak(cfg, memory, project, ManySubs(slots=8)) == 3  # coding.subagent_parallel (3) begrenzt
+    cfg.coding.subagent_parallel = 1
+    assert _peak(cfg, memory, project, ManySubs(slots=8)) == 1
+
+
+def test_remote_server_counts_as_parallel_and_general_stays_single(cfg, memory, project):
+    from types import SimpleNamespace
+    remote = SimpleNamespace(backend="openai", base_url="https://api.example.com/v1", think=False)
+    assert _peak(cfg, memory, project, ManySubs(profile=remote)) == 3
+    local = SimpleNamespace(backend="openai", base_url="http://127.0.0.1:8080/v1", think=False)
+    assert _peak(cfg, memory, project, ManySubs(profile=local)) == 1
+    # general darf Dateien ändern – nie zwei zugleich, auch wenn der Server es könnte
+    assert _peak(cfg, memory, project, ManySubs(kind="general", slots=8)) == 1

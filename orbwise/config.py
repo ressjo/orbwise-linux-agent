@@ -470,6 +470,8 @@ class CodingConfig(BaseModel):
     # Coding-Modus (Arbeitsweise nach OpenCode 2)
     snapshots: bool = True          # vor/nach jeder Antwort Schnappschuss des Projekts → „Rückgängig“
     subagent_steps: int = 15        # höchstens so viele Schritte je Unteragent (explore/general)
+    # so viele explore-Unteragenten nebeneinander – nie mehr, als der Modell-Server zugleich bedient (1 = nacheinander)
+    subagent_parallel: int = 3
     max_steps: int = 60             # Werkzeug-Schritte je Antwort im Coding-Modus (Tools-Modus: tools.max_steps), 0 = unbegrenzt
     max_jobs: int = 4               # gleichzeitig laufende Hintergrund-Befehle (shell mit background=true)
     # Projektanweisungen aus dem Projektordner (die erste vorhandene Datei kommt in den Systemprompt)
@@ -485,7 +487,7 @@ class CodingConfig(BaseModel):
     verify_command: str = ""        # eigener Prüfbefehl (sonst `check:` in .orbwise.yaml oder automatisch erkannt)
     verify_timeout: int = 300       # Sekunden je Prüfung
 
-    @field_validator("subagent_steps", "max_jobs")
+    @field_validator("subagent_steps", "max_jobs", "subagent_parallel")
     @classmethod
     def _small(cls, v: int) -> int:
         return max(1, min(int(v), 50))

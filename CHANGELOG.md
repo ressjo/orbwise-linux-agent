@@ -60,6 +60,11 @@ All notable changes to this project are documented here. The format follows
   success.
 
 ### Changed
+- **Coding mode – sub-agents in parallel, as far as the model server allows:** several sub-agents started in one step
+  already ran at the same time, but unchecked: on a llama-server with one slot they kept swapping prompts, so each step
+  re-read everything. Now as many `explore` sub-agents run side by side as the server serves at once (its slot count;
+  remote/API servers up to `coding.subagent_parallel`, default 3) – with one slot they run one after the other.
+  `general` sub-agents, which may change files, never overlap.
 - **Coding mode – related tests first, also for npm and Go:** with vitest or jest as the project's test runner the
   check runs the tests related to the changed files first (`vitest related` / `jest --findRelatedTests`), with Go the
   packages of the changed files – the whole suite only once those are green, as with pytest.
