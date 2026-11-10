@@ -64,6 +64,35 @@ def _venv_tool(root: Path, name: str) -> str:
     return ""
 
 
+def _poetry_python(root: Path) -> str:
+    """Poetry legt die Umgebung meist außerhalb des Projekts an – dann führt `poetry run` hinein (installiert nichts)."""
+    return "poetry run python" if (root / "poetry.lock").is_file() and shutil.which("poetry") else ""
+
+
+JS_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".vue", ".svelte")
+
+
+def _js_related(root: Path, scripts: dict, changed: list[str]) -> str:
+    """Befehl, der nur die Tests zu den geänderten Dateien laufen lässt – vitest und jest können das selbst
+    (sie folgen den Importen). Leer, wenn keiner von beiden der Test-Runner des Projekts ist."""
+    files = [f for f in changed if f.endswith(JS_SUFFIXES) and (root / f).is_file()][:50]
+    test = str(scripts.get("test") or "")
+    if not files:
+        return ""
+    names = " ".join(shlex.quote(f) for f in files)
+    if "vitest" in test and (root / "node_modules/.bin/vitest").exists():
+        return f"node_modules/.bin/vitest related --run --passWithNoTests {names}"
+    if "jest" in test and (root / "node_modules/.bin/jest").exists():
+        return f"node_modules/.bin/jest --findRelatedTests --passWithNoTests {names}"
+    return ""
+
+
+def _go_packages(root: Path, changed: list[str]) -> list[str]:
+    """Go-Pakete (Ordner) der geänderten .go-Dateien – deren Tests laufen zuerst."""
+    dirs = sorted({str(Path(f).parent) for f in changed if f.endswith(".go") and (root / f).is_file()})
+    return ["./" + ("" if d == "." else d) for d in dirs][:20]
+
+
 TARGETED_MAX = 10      # höchstens so viele Testdateien laufen vorab
 TEST_FILES_MAX = 400   # in größeren Projekten nur nach Dateinamen zuordnen (Inhalte lesen wäre zu langsam)
 
@@ -130,7 +159,7 @@ def detect(project: str | Path, changed: list[str]) -> list[tuple[str, str]]:
     root = Path(project)
     out: list[tuple[str, str]] = []
     py = [f for f in changed if f.endswith(".py")]
-    python, ruff = _venv_tool(root, "python") or "python3", _venv_tool(root, "ruff") or "ruff"
+    python, ruff = _venv_tool(root, "python") or _poetry_python(root) or "python3", _venv_tool(root, "ruff") or "ruff"
     if py:
         out.append(("ruff", f"command -v {ruff} >/dev/null && {ruff} check --no-cache --output-format concise "
                             + " ".join(shlex.quote(f) for f in py[:200])))
@@ -151,9 +180,12 @@ def detect(project: str | Path, changed: list[str]) -> list[tuple[str, str]]:
             out.append(("tsc", "node_modules/.bin/tsc --noEmit"))
         test = str(scripts.get("test") or "")
         if test and "no test specified" not in test:
-            out.append(("npm-test", "npm test --silent"))
+            first = _js_related(root, scripts, changed)  # erst die Tests zu den geänderten Dateien, dann alle
+            out.append(("npm-test", (first + " && " if first else "") + "npm test --silent"))
     if (root / "go.mod").is_file():
-        out.append(("go-test", "command -v go >/dev/null && go vet ./... && go test ./..."))
+        pkgs = _go_packages(root, changed)
+        first = f"go test {' '.join(shlex.quote(p) for p in pkgs)} && " if pkgs else ""
+        out.append(("go-test", f"command -v go >/dev/null && {first}go vet ./... && go test ./..."))
     if (root / "Cargo.toml").is_file():
         out.append(("cargo-check", "command -v cargo >/dev/null && cargo check --quiet"))
     makefile = root / "Makefile"
@@ -181,7 +213,7 @@ def script(checks: list[tuple[str, str]], timeout: int) -> str:
     parts = [f"c(){{ n=$1; shift; echo \"@@CHECK $n\"; echo \"@@CMD $*\"; timeout {int(timeout)} bash -c \"$*\" 2>&1 "
              f"| tail -c {TAIL}; rc=${{PIPESTATUS[0]}}; echo; echo \"@@RC $rc\"; }}"]
     for name, cmd in checks:
-        guard = re.match(r"^(command -v \S+ >/dev/null|[\w./-]+ -c 'import \w+' 2>/dev/null) && ", cmd)
+        guard = re.match(r"^(command -v \S+ >/dev/null|(?:poetry run )?[\w./-]+ -c 'import \w+' 2>/dev/null) && ", cmd)
         if guard:  # Werkzeug fehlt → Abschnitt als übersprungen
             parts.append(f"if {guard.group(1)}; then c {shlex.quote(name)} {shlex.quote(cmd[guard.end():])}; "
                          f"else echo '@@CHECK {name}'; echo '@@SKIP fehlt'; fi")

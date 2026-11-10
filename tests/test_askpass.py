@@ -458,3 +458,30 @@ def test_caller_check_finds_the_helper_under_sudo(tmp_path):
     finally:
         srv.shutdown()
     assert verdicts == [False, os.geteuid() == 0]
+
+
+def test_background_jobs_get_the_password_dialog_too(cfg, tmp_path, monkeypatch, fake_sudo):
+    """shell mit background=true: sudo fragt wie im Vordergrund über den Dialog; das Token gilt, bis der Job endet."""
+    from orbwise.tools import code, jobs
+    helper = askpass.write_helper(tmp_path / "rt" / "orbwise" / "askpass")
+    broker = askpass.AskpassBroker(8765, helper=helper)
+    monkeypatch.setattr(askpass, "BROKER", broker)
+    monkeypatch.setattr(jobs, "jobs_dir", lambda: str(tmp_path))
+    script = tmp_path / "serve.sh"
+    script.write_text("#!/bin/sh\nsudo systemctl start demo\n")
+    script.chmod(0o755)
+
+    async def go(command):
+        c = ctx(cfg)
+        c.cwd = str(tmp_path)
+        out = await code.code_shell(c, command=command, background=True)
+        job = next(j for j in jobs.JOBS.values() if j.id in out)
+        during = dict(broker.tokens)
+        await job.task
+        return "".join(job.tail), during
+    out, during = run(go(str(script)))  # sudo aus dem Skript: Wrapper hängt -A an, nie das gemerkte Passwort
+    assert "FAKE-SUDO -A systemctl start demo token=ja" in out
+    assert len(during) == 1 and next(iter(during.values()))["implicit"] and broker.tokens == {}
+    out, during = run(go("sudo systemctl start demo"))  # sichtbares sudo: wird zu sudo -A, mit Token
+    assert "FAKE-SUDO -A systemctl start demo token=ja" in out and broker.tokens == {}
+    assert not next(iter(during.values()))["implicit"]

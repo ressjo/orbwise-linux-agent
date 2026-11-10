@@ -138,6 +138,58 @@ def test_tests_of_the_changed_files_run_first(tmp_path):
     assert verify.parse(out)[0]["status"] == "ok" and (p / "ran-all").exists()
 
 
+def test_poetry_projects_run_their_checks_through_poetry(tmp_path, monkeypatch):
+    p = _proj(tmp_path)
+    (p / "poetry.lock").write_text("")
+    which = shutil.which
+    monkeypatch.setattr(verify.shutil, "which", lambda name: "/usr/bin/poetry" if name == "poetry" else which(name))
+    cmd = dict(verify.detect(p, []))["pytest"]
+    assert cmd.startswith("poetry run python -c 'import pytest' 2>/dev/null && poetry run python -m pytest")
+    # fehlt poetry bzw. pytest darin: übersprungen statt rot
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "poetry").write_text("#!/bin/sh\nexit 1\n")
+    (fake / "poetry").chmod(0o755)
+    out = subprocess.run(["bash", "-c", verify.script([("pytest", cmd)], 30)], cwd=p, capture_output=True, text=True,
+                         env={"PATH": f"{fake}:/usr/bin:/bin"}).stdout
+    assert [r["status"] for r in verify.parse(out)] == ["skip"]
+    _venv(p, "exit 0")  # eine .venv im Projekt geht vor
+    assert dict(verify.detect(p, []))["pytest"].startswith(".venv/bin/python")
+    monkeypatch.setattr(verify.shutil, "which", lambda name: None if name == "poetry" else which(name))
+    (p / ".venv" / "bin" / "python").unlink()
+    assert "python3 -m pytest" in dict(verify.detect(p, []))["pytest"]  # ohne poetry im PATH: System-Python
+
+
+def test_npm_and_go_run_the_related_tests_first(tmp_path):
+    p = tmp_path / "web"
+    (p / "node_modules" / ".bin").mkdir(parents=True)
+    (p / "src").mkdir()
+    (p / "src" / "math.ts").write_text("export const a = 1;\n")
+    (p / "src" / "gone.ts").touch()
+    (p / "package.json").write_text('{"scripts": {"test": "vitest run"}}')
+    all_ = "npm test --silent"
+    assert dict(verify.detect(p, ["src/math.ts"]))["npm-test"] == all_  # vitest nicht installiert: nur alles
+    (p / "node_modules" / ".bin" / "vitest").touch()
+    assert dict(verify.detect(p, ["src/math.ts", "README.md", "src/fehlt.ts"]))["npm-test"] == \
+        "node_modules/.bin/vitest related --run --passWithNoTests src/math.ts && " + all_
+    assert dict(verify.detect(p, ["README.md"]))["npm-test"] == all_  # nichts Passendes geändert
+    (p / "package.json").write_text('{"scripts": {"test": "jest --ci"}}')
+    assert dict(verify.detect(p, ["src/math.ts"]))["npm-test"] == all_
+    (p / "node_modules" / ".bin" / "jest").touch()
+    assert dict(verify.detect(p, ["src/math.ts"]))["npm-test"] == \
+        "node_modules/.bin/jest --findRelatedTests --passWithNoTests src/math.ts && " + all_
+    (p / "package.json").write_text('{"scripts": {"test": "mocha"}}')  # anderer Runner: wie bisher
+    assert dict(verify.detect(p, ["src/math.ts"]))["npm-test"] == all_
+    g = tmp_path / "svc"
+    (g / "pkg" / "store").mkdir(parents=True)
+    (g / "go.mod").write_text("module x\n")
+    (g / "main.go").touch()
+    (g / "pkg" / "store" / "store.go").touch()
+    assert dict(verify.detect(g, ["pkg/store/store.go", "main.go", "README.md"]))["go-test"] == \
+        "command -v go >/dev/null && go test ./ ./pkg/store && go vet ./... && go test ./..."
+    assert dict(verify.detect(g, ["README.md"]))["go-test"] == "command -v go >/dev/null && go vet ./... && go test ./..."
+
+
 def test_summary_says_when_nothing_could_be_checked():
     skipped = [{"name": "ruff", "status": "skip", "output": "fehlt"}, {"name": "pytest", "status": "skip", "output": ""}]
     assert verify.summary(skipped) == "○ Nicht geprüft – hier nicht installiert: ruff, pytest"

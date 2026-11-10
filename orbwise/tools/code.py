@@ -774,13 +774,16 @@ async def code_shell(
         if prefix and ctx.sandbox:
             from .. import sandbox
             prefix, stop_argv = sandbox.job_argv(prefix[0], ctx.sandbox["name"], cwd, command, jid)
+        # auf dem Rechner (nicht Sandbox/Käfig): sudo fragt auch im Hintergrund über den Passwortdialog
+        extra, close = ({}, lambda: None) if prefix else proc.background_env(ctx, command)
         try:
             job = await jobs.start(command, cwd, limit=getattr(coding, "max_jobs", 4), emit=ctx.emit, argv=prefix,
-                                   jid=jid, stop_argv=stop_argv)
+                                   jid=jid, stop_argv=stop_argv, env=extra, on_end=close)
             if ctx.jail and job.proc:
                 from .. import jail
                 jail.register(job.proc.pid)
         except RuntimeError as e:
+            close()
             return str(e)
         if ctx.emit:
             await ctx.emit({"type": "job", "phase": "link", "id": job.id, "call": ctx.call_id})

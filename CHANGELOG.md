@@ -60,6 +60,14 @@ All notable changes to this project are documented here. The format follows
   success.
 
 ### Changed
+- **Coding mode – related tests first, also for npm and Go:** with vitest or jest as the project's test runner the
+  check runs the tests related to the changed files first (`vitest related` / `jest --findRelatedTests`), with Go the
+  packages of the changed files – the whole suite only once those are green, as with pytest.
+- **Coding mode – checks in Poetry projects:** with a `poetry.lock` and no `.venv` in the project, pytest runs through
+  `poetry run` instead of the system Python, where it was usually missing.
+- **Background commands can ask for the sudo password:** `shell` with `background: true` got no password dialog, so
+  a `sudo` in it (or in a script it started) simply failed. It now asks like a foreground command; the one-time token
+  lives until the job ends.
 - **Interface tidied up – calmer and less wordy:**
   - The start page shows the orb and a line that changes with every new chat (by time of day and mode) instead of
     one fixed greeting; the suggestion pills are gone.
