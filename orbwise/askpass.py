@@ -17,6 +17,8 @@ import contextvars
 import hmac
 import os
 import secrets
+import shutil
+import subprocess
 import sys
 import time
 import uuid
@@ -69,6 +71,40 @@ Notify = Callable[[dict], Awaitable[None]]
 
 # True während Aufträgen, die nicht am Rechner gegeben wurden (Telegram, Routinen): dann kein gemerktes Passwort
 REMOTE: contextvars.ContextVar[bool] = contextvars.ContextVar("orbwise_remote", default=False)
+
+
+_passwordless: tuple[float, bool] | None = None  # (geprüft um, Ergebnis)
+PASSWORDLESS_TTL = 600
+
+
+def _sudo(*args: str) -> int | None:
+    """Das echte sudo kurz aufrufen (ohne Eingabe, ohne Terminal) → Rückgabewert, None: fehlt oder hängt."""
+    binary = shutil.which("sudo")
+    if not binary:
+        return None
+    try:
+        return subprocess.run([binary, *args], stdin=subprocess.DEVNULL, capture_output=True, timeout=3,
+                              start_new_session=True).returncode
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def sudo_needs_no_password() -> bool:
+    """Lässt sudo diesen Benutzer ohne Passwort zu (NOPASSWD in sudoers)? Dann erscheint nie ein Passwortdialog – er
+    kann also nicht die Rückfrage sein. `-k` lässt ein noch gültiges sudo-Ticket außer Acht, `-n` fragt nicht.
+    Das Ergebnis gilt zehn Minuten."""
+    global _passwordless
+    if _passwordless is None or time.time() - _passwordless[0] > PASSWORDLESS_TTL:
+        _passwordless = (time.time(), _sudo("-n", "-k", "true") == 0)
+    return _passwordless[1]
+
+
+def drop_sudo_ticket() -> None:
+    """sudos eigenes Ticket verwerfen (`sudo -k`). Üblich ist ein Ticket je Terminal bzw. Elternprozess – jeder Befehl
+    von Orbwise ist eine eigene Sitzung und erbt keins. Mit `timestamp_type=global` oder `!tty_tickets` gälte ein
+    Ticket aber für alle Prozesse des Benutzers: sudo liefe dann minutenlang ohne Passwortdialog, auch aus einem
+    Skript heraus. Darum vor Befehlen, bei denen der Dialog die Rückfrage ist, und nach jeder Passworteingabe."""
+    _sudo("-k")
 
 
 def helper_path() -> Path:
@@ -209,10 +245,14 @@ class AskpassBroker:
         info = {"uses": 0, "command": command, "local": not REMOTE.get(), "from_cache": False, "candidate": None,
                 "no_cache": not use_cache or implicit, "implicit": implicit}
         self.tokens[token] = info
+        if info["no_cache"]:  # der Dialog ist hier die Rückfrage – ein altes sudo-Ticket darf ihn nicht ersparen
+            drop_sudo_ticket()
         try:
             yield {"SUDO_ASKPASS": str(self.helper), "ORBWISE_ASKPASS_URL": self.url, "ORBWISE_ASKPASS_TOKEN": token}
         finally:
             self.tokens.pop(token, None)
+            if info["uses"]:  # sudo hat ein Passwort bekommen: sein Ticket nicht für spätere Befehle stehen lassen
+                drop_sudo_ticket()
             # Kam nach der letzten Eingabe keine weitere Nachfrage, hat sudo sie akzeptiert → merken
             if info["candidate"] and info["uses"] < MAX_USES and self.remember_seconds:
                 self._remember(info["candidate"])

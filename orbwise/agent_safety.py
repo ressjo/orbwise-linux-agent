@@ -180,6 +180,9 @@ class SafetyMixin:
             return CONFIRM, why
         if kind == "root":
             if name in LOCAL_SHELLS and self._password_dialog():
+                from . import askpass
+                if askpass.sudo_needs_no_password():  # kein Passwort nötig → kein Dialog: dann fragt die Karte
+                    return CONFIRM, prompts.text(self.cfg, "auto_sudo_nopasswd")
                 ctx.fresh_sudo = True
                 return SAFE, prompts.text(self.cfg, "auto_sudo")
             return CONFIRM, why

@@ -26,6 +26,14 @@ All notable changes to this project are documented here. The format follows
   server still reports an overflow the sub-agent halves its prompt and summarises without tools. A sub-agent that
   repeats the same call is stopped like the main agent (skipped from the third time, summary after the fourth) instead
   of running to its step limit; if it does fail, the notes it made on the way come back with the error.
+- **Auto mode – root always asks, also with passwordless sudo:** in **Auto** the password dialog is the only question
+  before a `sudo` command. On a machine where sudo asks for no password (`NOPASSWD`) no dialog ever appeared, so such
+  commands ran as root without any question. Orbwise now detects this and shows a normal confirmation card instead;
+  `orbwise doctor` warns about it.
+- **Auto mode – an old sudo ticket no longer skips the password dialog:** with `timestamp_type=global` or
+  `!tty_tickets` in sudoers, one accepted password let every later `sudo` – also from a script – run for minutes
+  without the dialog. Orbwise now drops sudo's ticket before commands where the dialog is the question and after every
+  password entry.
 - **Coding mode – more than 50 `edits` in one call are refused** instead of applying the first 50 and reporting
   success.
 

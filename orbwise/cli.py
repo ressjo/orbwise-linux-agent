@@ -193,6 +193,14 @@ def cmd_doctor(args) -> None:
             write_helper()
             line(True, T("Root-Rechte: Passwortfeld in der Oberfläche", "Root privileges: password field in the web UI")
                  + f" (sudo -A, {helper_path()})")
+            from .askpass import sudo_needs_no_password
+            if os.geteuid() != 0 and sudo_needs_no_password():
+                print("  ⚠ " + T("sudo verlangt für diesen Benutzer kein Passwort (NOPASSWD). Der Passwortdialog "
+                                 "erscheint dann nie: Im Auto-Modus „Auto“ fragt Orbwise bei sudo mit einer Karte – "
+                                 "ruft aber ein Skript sudo auf, läuft es ohne Rückfrage als root.",
+                                 "sudo asks this user for no password (NOPASSWD). The password dialog never appears "
+                                 "then: in auto mode \"Auto\" Orbwise asks for sudo with a card – but when a script "
+                                 "calls sudo it runs as root without asking."))
         except OSError as e:
             line(False, T("Askpass-Helfer anlegen", "Create askpass helper"), str(e))
     else:
