@@ -60,6 +60,20 @@ All notable changes to this project are documented here. The format follows
   success.
 
 ### Changed
+- **Interface tidied up – calmer and less wordy:**
+  - The start page shows the orb and a line that changes with every new chat (by time of day and mode) instead of
+    one fixed greeting; the suggestion pills are gone.
+  - Controls look like what they are: the toggles in the input bar (Plan, Auto, Think) are plain text buttons, the
+    header buttons (project folder, sandbox, check) and the model picker are rectangular – no more pills everywhere.
+    The sparkle and lightning icons are replaced by neutral ones.
+  - Settings use real toggle switches instead of buttons reading "On"/"Off".
+  - Clearer labels: the auto button reads "Auto: Read" instead of just "Read"; the icon buttons at the top right
+    carry their names (Voice, Wake word, Activity) when there is room; the state under the orb is written normally
+    instead of in spaced capitals.
+  - Less text: short or no descriptions in settings and menus, a shorter hint under the input, no explanatory
+    message when switching modes.
+  - The orb next to the input during a chat is off by default (still available under *Settings → Orb in the chat*);
+    it stays on the start page.
 - **Thinking in large windows ends when the window is full:** from 16k on there was no limit at all, so a runaway
   reasoning chain ended in a context overflow. It is now cut when no room would be left for the answer; below that
   the model still decides how long it thinks.

@@ -3,7 +3,6 @@
 import { A, stopSpeech } from "./audio.js";
 import { renderGoal } from "./chat.js";
 import { $, L, S, api } from "./core.js";
-import { toast } from "./dialogs.js";
 import { IV, closeImageView, openImageView } from "./images.js";
 import { app, openSheetName } from "./nav.js";
 import { confirmLeaveSandbox, loadProjectInfo, renderSandboxChip } from "./project.js";
@@ -57,12 +56,10 @@ export function init() {
   MODE_TEXT = {
     get tools() {
       return { placeholder: L(`Frag ${S.name} oder sag „${S.wakePhrase}“ …`, `Ask ${S.name} or say “${S.wakePhrase}” …`),
-               hint: L(`Leertaste halten zum Sprechen · Esc bricht ab · Änderungen am System fragt ${S.name} vorher`,
-                       `Hold the space bar to talk · Esc cancels · ${S.name} asks before changing your system`) };
+               hint: L("Leertaste: sprechen · Esc: abbrechen", "Space: talk · Esc: stop") };
     },
     coding: { placeholder: L("Beschreib die Aufgabe – Code, Fehler, Idee …", "Describe the task – code, bug, idea …"),
-              hint: L("Coding: Dateien, Shell, Web und Gedächtnis · Esc bricht ab · Auto-Modus regelt, was ohne Rückfrage läuft",
-                      "Coding: files, shell, web and memory · Esc cancels · the auto mode decides what runs without asking") },
+              hint: L("Esc: abbrechen", "Esc: stop") },
   };
   document.querySelectorAll(".mode-switch [data-mode]").forEach((b) => {
     b.onclick = async () => {
@@ -74,9 +71,6 @@ export function init() {
       if (IV.open) closeImageView();
       if (b.dataset.mode === S.mode || !await confirmLeaveSandbox()) return;
       api("POST", "/api/mode", { mode: b.dataset.mode })
-        .then(() => toast(b.dataset.mode === "coding"
-          ? L("Coding-Modus – nur Dateien, Shell, Web und Gedächtnis, ohne Sprache. Eigene Chats.", "Coding mode – only files, shell, web and memory, no voice. Separate chats.")
-          : L("Tools-Modus – alle Werkzeuge und Sprache.", "Tools mode – all tools and voice.")))
         .catch(() => {});  // Fehler zeigt api() schon an
     };
   });

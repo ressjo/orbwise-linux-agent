@@ -120,22 +120,49 @@ async function openDay(day) {
 }
 
 // ---------------------------------------------------------------- Begrüßung (leerer Chat)
-export function greet() {
+// Ein Spruch je Besuch der Startseite – nach Tageszeit und Modus, sonst aus dem allgemeinen Vorrat. Er bleibt stehen,
+// bis ein neuer Chat beginnt oder der Modus wechselt (kein Wechsel im Minutentakt).
+const LINES = {
+  night: [["Noch wach? Dann los.", "Still up? Let's go."], ["Nachtschicht. Was brauchst du?", "Night shift. What do you need?"],
+          ["Leise Stunde, klare Gedanken.", "Quiet hour, clear thoughts."]],
+  morning: [["Guten Morgen. Was liegt an?", "Good morning. What's up?"], ["Früh dran. Womit starten wir?", "Early start. Where do we begin?"],
+            ["Erst Kaffee, dann Kernel?", "Coffee first, kernel second?"]],
+  day: [["Was steht an?", "What's on?"], ["Womit kann ich dienen?", "What can I do for you?"],
+        ["Halbzeit. Was ist noch offen?", "Half-time. What's still open?"]],
+  evening: [["Guten Abend. Noch etwas zu erledigen?", "Good evening. Anything left to do?"],
+            ["Feierabend – oder noch ein Projekt?", "Done for the day – or one more project?"],
+            ["Der Tag war lang. Ich übernehme.", "Long day. I'll take it from here."]],
+  any: [["Bereit, wenn du es bist.", "Ready when you are."], ["Dein Rechner, deine Regeln.", "Your machine, your rules."],
+        ["Sag an.", "Go ahead."], ["Ich höre.", "I'm listening."], ["Alles lokal. Alles deins.", "All local. All yours."],
+        ["Was soll heute erledigt werden?", "What should get done today?"],
+        ["Fragen kostet nichts.", "Asking costs nothing."], ["Lass uns etwas erledigen.", "Let's get something done."]],
+  coding: [["Woran arbeiten wir?", "What are we working on?"], ["Was bauen wir heute?", "What are we building today?"],
+           ["Welcher Bug ist dran?", "Which bug is next?"], ["Zeig mir den Code.", "Show me the code."],
+           ["Erst lesen, dann ändern.", "Read first, then change."], ["Tests grün? Finden wir es heraus.", "Tests green? Let's find out."],
+           ["Kleine Schritte, saubere Diffs.", "Small steps, clean diffs."]],
+};
+let greeting = { key: "", text: "" };
+
+function pickLine() {
+  if (S.mode === "coding") return LINES.coding;
   const h = new Date().getHours();
-  const part = h < 5 ? L("Gute Nacht", "Good night") : h < 11 ? L("Guten Morgen", "Good morning")
-    : h < 18 ? L("Guten Tag", "Good afternoon") : L("Guten Abend", "Good evening");
-  const user = S.status && S.status.user ? ", " + S.status.user : "";
-  $("greeting").textContent = S.mode === "coding" ? L("Woran arbeiten wir?", "What are we working on?")
-    : `${part}${user} – ${L("wie kann ich helfen?", "how can I help?")}`;
+  const part = h < 5 ? "night" : h < 11 ? "morning" : h < 18 ? "day" : "evening";
+  return [...LINES[part], ...LINES.any];
+}
+
+// fresh: einen neuen Spruch wählen (neuer Chat); sonst bleibt der gewählte, solange der Modus derselbe ist
+export function greet(fresh = false) {
+  const key = S.mode === "coding" ? "coding" : "tools";
+  if (fresh || greeting.key !== key) {
+    const pool = pickLine().map(([de, en]) => L(de, en)).filter((line) => line !== greeting.text);
+    greeting = { key, text: pool[Math.floor(Math.random() * pool.length)] };
+  }
+  $("greeting").textContent = greeting.text;
 }
 
 // Beim Start (von app.js in der ursprünglichen Reihenfolge aufgerufen)
 export function init() {
   $("reminder-ok").onclick = () => $("reminder-banner").classList.add("hidden");
   $("day-close").onclick = () => $("day-modal").classList.add("hidden");
-  setInterval(greet, 60000);
   greet();
-  document.querySelectorAll(".suggestion").forEach((b) => {
-    b.onclick = () => { $("input").value = b.dataset.text; $("form").requestSubmit(); };
-  });
 }

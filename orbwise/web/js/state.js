@@ -20,8 +20,8 @@ export function refresh() {
   if (warming) s = "thinking";
   orb.setState(s);
   const label = $("state-label");
-  label.textContent = loadingModel && S.connected ? L("LADE MODELL", "LOADING MODEL")
-    : warming ? L("LESE CHAT EIN", "READING CHAT") : (LABELS[s] || s.toUpperCase());
+  label.textContent = loadingModel && S.connected ? L("Lade Modell", "Loading model")
+    : warming ? L("Lese Chat ein", "Reading chat") : (LABELS[s] || s);
   label.style.color = { listening: "var(--success)", executing: "var(--warn)", confirm: "var(--warn)", error: "var(--danger)",
                         offline: "var(--muted)", thinking: "var(--reason)" }[s] || "";
   let sub = S.substate || (S.startupModel && !S.modelSwitching ? S.startupModel : "");

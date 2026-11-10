@@ -5,7 +5,7 @@ import { ask, toast } from "./dialogs.js";
 import { IMS } from "./images.js";
 import { renderModelsPage } from "./models.js";
 import { loadPlanner, loadStatus } from "./planner.js";
-import { loadMemory } from "./reminders.js";
+import { greet, loadMemory } from "./reminders.js";
 import { loadSkills } from "./skills.js";
 import { openVoiceMenu } from "./voice.js";
 
@@ -227,8 +227,8 @@ async function renderHfToken() {
   small.textContent = st.source === "env" ? L("Token kommt aus der Umgebung (HF_TOKEN).", "Token comes from the environment (HF_TOKEN).")
     : st.set ? L("Token gespeichert – zugangsbeschränkte Modelle lassen sich laden (Lizenz auf der Modellseite akzeptieren).",
                  "Token saved – gated models can be downloaded (accept the license on the model page).")
-    : L("Nur für zugangsbeschränkte Modelle (z. B. Llama, Gemma): Token mit Leserecht von huggingface.co/settings/tokens.",
-        "Only for gated models (e.g. Llama, Gemma): a read token from huggingface.co/settings/tokens.");
+    : L("Token für zugangsbeschränkte Modelle.",
+        "Token for gated models.");
   const form = row.querySelector("form");
   const input = form.querySelector("input");
   const btn = form.querySelector("button");
@@ -262,6 +262,7 @@ export function init() {
     const has = !!$("chat").querySelector(".msg.user, .msg.assistant");
     if (has !== isCompact()) {
       main.classList.toggle("has-messages", has);
+      if (!has) greet(true);  // zurück auf der Startseite (neuer Chat): ein neuer Spruch
     }
   };
   new MutationObserver(updateStage).observe($("chat"), { childList: true });

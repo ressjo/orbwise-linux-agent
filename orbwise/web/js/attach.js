@@ -179,7 +179,7 @@ function renderTheme() {
 // Orb im Chat: Größe (aus/klein/mittel/groß) und Platz (links, rechts, oben rechts) – je Gerät gemerkt wie die Darstellung
 const ORB_SIZES = ["off", "s", "m", "l"], ORB_POS = ["bl", "br", "tr"];
 function renderOrb() {
-  const size = ORB_SIZES.includes(store.get("orb_size", "m")) ? store.get("orb_size", "m") : "m";
+  const size = ORB_SIZES.includes(store.get("orb_size", "off")) ? store.get("orb_size", "off") : "off";
   const pos = ORB_POS.includes(store.get("orb_pos", "br")) ? store.get("orb_pos", "br") : "br";
   document.documentElement.dataset.orbSize = size;
   document.documentElement.dataset.orbPos = pos;
