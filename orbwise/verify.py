@@ -53,17 +53,27 @@ def _scripts(project: Path) -> dict:
         return {}
 
 
+def _venv_tool(root: Path, name: str) -> str:
+    """Programm aus der virtuellen Umgebung des Projekts (.venv/venv – uv, python -m venv) als relativer Pfad, sonst
+    leer. pytest und ruff sind oft nur dort installiert; mit dem System-Python fiele die Prüfung dann still aus."""
+    for folder in (".venv", "venv"):
+        if (root / folder / "bin" / name).is_file() and (root / folder / "pyvenv.cfg").is_file():
+            return f"{folder}/bin/{name}"
+    return ""
+
+
 def detect(project: str | Path, changed: list[str]) -> list[tuple[str, str]]:
     """Schnelle Prüfungen nach den Dateien im Projekt. Werkzeuge, die dort fehlen, überspringt das Skript selbst."""
     root = Path(project)
     out: list[tuple[str, str]] = []
     py = [f for f in changed if f.endswith(".py")]
+    python, ruff = _venv_tool(root, "python") or "python3", _venv_tool(root, "ruff") or "ruff"
     if py:
-        out.append(("ruff", "command -v ruff >/dev/null && ruff check --no-cache --output-format concise "
+        out.append(("ruff", f"command -v {ruff} >/dev/null && {ruff} check --no-cache --output-format concise "
                             + " ".join(shlex.quote(f) for f in py[:200])))
     if (root / "tests").is_dir() or (root / "test").is_dir() or any(root.glob("test_*.py")) or any(root.glob("*/test_*.py")):
         if any(root.rglob("*.py")):
-            out.append(("pytest", "python3 -c 'import pytest' 2>/dev/null && python3 -m pytest -q -x --maxfail=5 "
+            out.append(("pytest", f"{python} -c 'import pytest' 2>/dev/null && {python} -m pytest -q --maxfail=5 "
                                   "-p no:cacheprovider"))
     scripts = _scripts(root)
     if scripts and (root / "node_modules").is_dir():
@@ -104,7 +114,7 @@ def script(checks: list[tuple[str, str]], timeout: int) -> str:
     parts = [f"c(){{ n=$1; shift; echo \"@@CHECK $n\"; echo \"@@CMD $*\"; timeout {int(timeout)} bash -c \"$*\" 2>&1 "
              f"| tail -c {TAIL}; rc=${{PIPESTATUS[0]}}; echo; echo \"@@RC $rc\"; }}"]
     for name, cmd in checks:
-        guard = re.match(r"^(command -v \S+ >/dev/null|python3 -c 'import \w+' 2>/dev/null) && ", cmd)
+        guard = re.match(r"^(command -v \S+ >/dev/null|[\w./-]+ -c 'import \w+' 2>/dev/null) && ", cmd)
         if guard:  # Werkzeug fehlt → Abschnitt als übersprungen
             parts.append(f"if {guard.group(1)}; then c {shlex.quote(name)} {shlex.quote(cmd[guard.end():])}; "
                          f"else echo '@@CHECK {name}'; echo '@@SKIP fehlt'; fi")
@@ -122,8 +132,12 @@ def summary(results: list[dict], en: bool = False) -> str:
     """Einzeiler für unter die Antwort."""
     ran = [r for r in results if r["status"] != "skip"]
     bad = [r for r in ran if r["status"] == "fail"]
-    if not ran:
-        return ""
+    if not ran:  # alles übersprungen (Werkzeug fehlt): das sagen, statt den Eindruck „geprüft“ zu lassen
+        names = ", ".join(r["name"] for r in results)
+        if not names:
+            return ""
+        return (f"○ Not checked – not installed here: {names}" if en
+                else f"○ Nicht geprüft – hier nicht installiert: {names}")
     if not bad:
         return ("✓ Checked: " if en else "✓ Geprüft: ") + ", ".join(r["name"] for r in ran)
     names = ", ".join(r["name"] + (f" ({_short(r['output'])})" if _short(r["output"]) else "") for r in bad)

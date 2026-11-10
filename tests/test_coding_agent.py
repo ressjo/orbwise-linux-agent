@@ -103,6 +103,7 @@ def test_project_files_are_free_from_files_mode_outside_asks(coding, project, tm
     coding.auto_mode = "files"
     hidden = project / ".github"
     hidden.mkdir()
+    collect(coding, tool("read", path="app.py"))  # eine bestehende Datei ersetzt write erst nach dem Lesen
     for path in ("app.py", ".github/ci.yml", "neu/datei.txt"):
         ev = collect(coding, tool("write", path=path, content="x"), approve=False)
         assert next(e for e in ev if e["type"] == "tool_call")["risk"] == "safe", path
@@ -214,3 +215,54 @@ def test_question_round_trip_over_the_websocket(cfg, monkeypatch):
             if ev["type"] == "tool_result":
                 break
         assert "Sprache? → Python" in ev["text"]
+
+
+class EditAndTest:
+    """Ändert die Datei und lässt danach jedes Mal denselben Testbefehl laufen – wie ein Modell, das sich an eine
+    Lösung herantastet. loop=True: ruft stattdessen nur immer wieder denselben Befehl auf."""
+
+    def __init__(self, rounds: int, loop: bool = False):
+        self.rounds, self.loop = rounds, loop
+
+    async def chat_stream(self, messages, tools=None):
+        n = sum(1 for m in messages if m["role"] == "tool")
+        test = {"name": "shell", "arguments": {"command": "cat app.py"}}
+        if self.loop:
+            call = test
+        elif n == 0:
+            call = {"name": "read", "arguments": {"path": "app.py"}}
+        elif n <= 2 * self.rounds:
+            k = (n + 1) // 2
+            call = test if n % 2 == 0 else {"name": "edit", "arguments": {
+                "path": "app.py", "oldString": f"x = {k}", "newString": f"x = {k + 1}"}}
+        else:
+            call = None
+        if call and tools is not None and messages[-1]["role"] != "user" or call and n == 0:
+            yield {"type": "done", "message": {"role": "assistant", "content": "",
+                                                "tool_calls": [{"function": call}]}, "stats": {}}
+        else:
+            yield {"type": "token", "text": "Fertig."}
+            yield {"type": "done", "message": {"role": "assistant", "content": "Fertig."}, "stats": {}}
+
+
+def test_same_command_after_each_edit_is_not_a_loop(cfg, memory, project):
+    cfg.coding.verify = "off"
+    agent = Agent(cfg, EditAndTest(rounds=5), memory)
+    memory.switch_mode("coding")
+    memory.set_project(str(project))
+    agent.auto_mode = "auto"
+    collect(agent, "Zähl x hoch")
+    results = [m["content"] for m in memory.conversation.history if m.get("tool_name") == "shell"]
+    assert len(results) == 5 and not any("bereits ausgeführt" in r for r in results)
+    assert "x = 6" in results[-1] and (project / "app.py").read_text() == "x = 6\n"
+
+
+def test_same_command_without_changes_is_still_stopped(cfg, memory, project):
+    cfg.coding.verify = "off"
+    agent = Agent(cfg, EditAndTest(rounds=0, loop=True), memory)
+    memory.switch_mode("coding")
+    memory.set_project(str(project))
+    agent.auto_mode = "auto"
+    collect(agent, "Zeig die Datei")
+    results = [m["content"] for m in memory.conversation.history if m.get("tool_name") == "shell"]
+    assert len(results) == 4 and ["bereits ausgeführt" in r for r in results] == [False, False, True, True]

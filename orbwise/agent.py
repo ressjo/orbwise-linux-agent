@@ -746,6 +746,9 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
                         vstate["edited"] = True
                         vstate.setdefault("paths", set()).add(str((fn.get("arguments") or {}).get("path", "")))
                     name, result, note = done[i] if i in done else await self._execute(call, emit, confirm)
+                    if fn.get("name") in ("edit", "write") and result.startswith(("Geändert", "Angelegt")):
+                        # der Code ist jetzt ein anderer: derselbe Test-/Lesebefehl danach ist keine Schleife
+                        seen.clear()
                     result += cut_notes.get(i, "")
                     conv.add({"role": "tool", "content": result, "tool_name": name})
                     tool_notes.append(note)

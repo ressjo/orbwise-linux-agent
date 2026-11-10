@@ -5,6 +5,20 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+- **Coding mode – running the same test after every fix no longer counts as a loop:** the loop detection counted
+  identical calls over the whole answer, so the third `pytest -q` was skipped with "the result is above" although the
+  code had changed in between, and the fourth ended the answer (or the `/goal`). A successful `edit`/`write` now
+  resets the count; the same call repeated without any change is still stopped.
+- **Coding mode – `write` no longer replaces a file it never read:** like `edit`, it refuses an existing, non-empty
+  file that was not read in this chat. New and empty files, files the agent wrote itself and `append` work as before.
+- **Coding mode – checks use the project's virtual environment:** with `.venv` or `venv` in the project, pytest and
+  ruff are taken from there instead of the system Python, where they are often missing – the check was then skipped
+  without a word. When every check had to be skipped, the answer now ends with **○ Not checked – not installed here:
+  …** instead of nothing.
+- **Coding mode – more than 50 `edits` in one call are refused** instead of applying the first 50 and reporting
+  success.
+
 ## [0.4.0] – 2026-11-10
 
 ### Added

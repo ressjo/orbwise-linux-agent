@@ -74,6 +74,46 @@ def test_syntax_check_parses_only(tmp_path):
     assert not marker.exists()
 
 
+def _venv(project, body):
+    bin_ = project / ".venv" / "bin"
+    bin_.mkdir(parents=True)
+    (project / ".venv" / "pyvenv.cfg").write_text("home = /usr/bin\n")
+    (bin_ / "python").write_text(f"#!/bin/sh\n{body}\n")
+    (bin_ / "python").chmod(0o755)
+
+
+def test_checks_use_the_projects_virtual_environment(tmp_path):
+    p = _proj(tmp_path, ok=True)
+    assert "python3 -m pytest" in dict(verify.detect(p, []))["pytest"]  # ohne .venv: System-Python
+    _venv(p, f'exec {sys.executable} "$@"')  # „venv“ mit pytest: reicht an das Python der Tests weiter
+    (p / ".venv" / "bin" / "ruff").write_text("#!/bin/sh\necho ruff aus der venv\n")
+    (p / ".venv" / "bin" / "ruff").chmod(0o755)
+    checks = verify.detect(p, ["m.py"])
+    cmds = dict(checks)
+    assert cmds["pytest"].startswith(".venv/bin/python -c 'import pytest' 2>/dev/null && .venv/bin/python -m pytest")
+    assert cmds["ruff"].startswith("command -v .venv/bin/ruff >/dev/null && .venv/bin/ruff check")
+    out = subprocess.run(["bash", "-c", verify.script(checks, 60)], cwd=p, capture_output=True, text=True).stdout
+    res = {r["name"]: r for r in verify.parse(out)}
+    assert res["pytest"]["status"] == "ok" and "1 passed" in res["pytest"]["output"]
+    assert res["ruff"]["status"] == "ok" and "ruff aus der venv" in res["ruff"]["output"]
+    # eine venv ohne pytest: übersprungen statt rot
+    q = tmp_path / "q"
+    (q / "tests").mkdir(parents=True)
+    (q / "tests" / "test_a.py").write_text("def test_a():\n    pass\n")
+    _venv(q, "exit 1")  # venv ohne pytest
+    out = subprocess.run(["bash", "-c", verify.script(verify.detect(q, []), 60)], cwd=q, capture_output=True,
+                         text=True).stdout
+    assert [r["status"] for r in verify.parse(out)] == ["skip"]
+
+
+def test_summary_says_when_nothing_could_be_checked():
+    skipped = [{"name": "ruff", "status": "skip", "output": "fehlt"}, {"name": "pytest", "status": "skip", "output": ""}]
+    assert verify.summary(skipped) == "○ Nicht geprüft – hier nicht installiert: ruff, pytest"
+    assert verify.summary(skipped, en=True) == "○ Not checked – not installed here: ruff, pytest"
+    assert verify.summary([]) == ""
+    assert verify.summary([*skipped, {"name": "make", "status": "ok", "output": ""}]) == "✓ Geprüft: make"
+
+
 # ---------------------------------------------------------------- im Agenten
 class Scripted:
     """Schreibt zuerst falschen Code, meldet „fertig“; bekommt die rote Prüfung zurück und korrigiert."""

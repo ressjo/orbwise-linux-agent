@@ -204,3 +204,32 @@ def test_repeated_failed_edits_get_a_way_out(ctx, project):
     assert "gescheitert" not in call(ctx, "edit", path="src/app.py", oldString="return 99", newString="x")
     call(ctx, "edit", path="src/app.py", oldString="return 1", newString="return 5")  # Erfolg setzt zurück
     assert "gescheitert" not in call(ctx, "edit", path="src/app.py", oldString="return 98", newString="x")
+
+
+def test_write_needs_a_read_before_replacing_a_file(ctx, project):
+    f = project / "src" / "app.py"
+    before = f.read_text()
+    out = call(ctx, "write", path="src/app.py", content="x = 1\n")
+    assert "noch nicht gelesen" in out and f.read_text() == before
+    call(ctx, "read", path="src/app.py")
+    assert "Geändert" in call(ctx, "write", path="src/app.py", content="x = 1\n")
+    # neue, leere und selbst geschriebene Dateien sowie Anhängen: ohne read
+    (project / "leer.py").write_text("")
+    assert "Geändert" in call(ctx, "write", path="leer.py", content="a = 1\n")
+    assert "Angelegt" in call(ctx, "write", path="neu.py", content="a = 1\n")
+    assert "Geändert" in call(ctx, "write", path="neu.py", content="a = 2\n")
+    (project / "log.txt").write_text("eins\n")
+    call(ctx, "write", path="log.txt", content="zwei\n", append=True)
+    assert (project / "log.txt").read_text() == "eins\nzwei\n"
+
+
+def test_too_many_edits_are_refused_not_cut(ctx, project):
+    f = project / "viele.py"
+    f.write_text("".join(f"v{i} = 0\n" for i in range(60)))
+    call(ctx, "read", path="viele.py")
+    out = call(ctx, "edit", path="viele.py", edits=[{"oldString": f"v{i} = 0", "newString": f"v{i} = 1"}
+                                                     for i in range(59, -1, -1)])
+    assert "Zu viele Änderungen" in out and "höchstens 50" in out and "= 1" not in f.read_text()
+    out = call(ctx, "edit", path="viele.py", edits=[{"oldString": f"v{i} = 0", "newString": f"v{i} = 1"}
+                                                     for i in range(49, -1, -1)])
+    assert "+50 −50" in out and f.read_text().count("= 1") == 50

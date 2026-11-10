@@ -15,8 +15,8 @@ the **Brave Search API** when a key is set (see [Web search](integrations.md#web
 | Tool | What it does |
 |---|---|
 | `read` | File with line numbers (`12: …`), in sections with `offset`/`limit`; folders (one entry per line, `/` for folders); PDFs. An `AGENTS.md` in a sub-folder comes along once |
-| `edit` | Replaces exact text (`oldString` → `newString`, `replaceAll` for renames). Forgives curly quotes/dashes and wrong indentation as long as the spot is unique, strips line numbers copied from `read`, keeps CRLF; refuses when the file changed on disk since it was read, and an existing file that was never read in this chat. Several spots in one file in one call with `edits: [{oldString, newString}, …]` – applied in order, all or nothing. After three failed edits on the same file it tells the model to re-read the section or rewrite it with `write` instead of guessing. Result: a short diff |
-| `write` | Creates or overwrites a file (folders are created) |
+| `edit` | Replaces exact text (`oldString` → `newString`, `replaceAll` for renames). Forgives curly quotes/dashes and wrong indentation as long as the spot is unique, strips line numbers copied from `read`, keeps CRLF; refuses when the file changed on disk since it was read, and an existing file that was never read in this chat. Several spots in one file in one call with `edits: [{oldString, newString}, …]` (at most 50) – applied in order, all or nothing. After three failed edits on the same file it tells the model to re-read the section or rewrite it with `write` instead of guessing. Result: a short diff |
+| `write` | Creates or overwrites a file (folders are created); an existing file must have been read in this chat before it is replaced |
 | `map` | Repo map: classes, functions and methods per file with line and signature – the whole project (large ones as folders with counts), a folder (`path`) or the definitions of a name (`query`). Uses universal-ctags if installed, otherwise Python's `ast` and patterns for JS/TS, Go, Rust, Java/Kotlin/C#, C/C++, Ruby, PHP; cached per project |
 | `grep` / `glob` | ripgrep with regex or literal text, matching lines with numbers / file paths by pattern, newest first – both respect `.gitignore` |
 | `shell` | Bash in the project (or `workdir`); `background: true` for dev servers and long builds – the agent is told when the job ends (no polling), the activity panel shows its live output with **Stop** |
@@ -33,11 +33,11 @@ Also: `todo_write` (task list in the answer), `remember`/`recall`/`forget` (the 
 - **Automatic checks before "done":** when an answer changed files, Orbwise runs the project's checks before the
   answer ends – the command from `check:` in the project's `.orbwise.yaml` (one command, a list, or `name: command`
   pairs), otherwise `coding.verify_command`, otherwise detected: `ruff` on changed Python files, `pytest` when there are
-  tests, `npm run lint/typecheck/test` (with `node_modules`), `go vet`/`go test`, `cargo check`, `make check`/`test`.
+  tests (both from the project's `.venv`/`venv` if there is one), `npm run lint/typecheck/test` (with `node_modules`), `go vet`/`go test`, `cargo check`, `make check`/`test`.
   They run like any shell command (sandbox, cage without network, confirmation per auto level). Failures go back to
   the model with the output ("fix the cause, don't weaken tests"), up to `coding.verify_rounds` (3) times; the answer
   then ends with a line from Orbwise itself – **✓ Checked: ruff, pytest** or **⚠ Checks still failing: pytest (2
-  failed)**. Declining the check skips it for that answer; `coding.verify: off` turns it off.
+  failed)** – or **○ Not checked – not installed here: pytest** when the tools are missing. Declining the check skips it for that answer; `coding.verify: off` turns it off.
 - **Syntax check after every change:** `edit`/`write` parse Python, JSON, YAML, TOML, shell (`bash -n`) and JS
   (`node --check`) right away – nothing is executed – and add "⚠ SyntaxError line 42 …" to the result.
 - **AGENTS.md:** the project's `AGENTS.md` (or `CLAUDE.md`, see `coding.instructions`) goes into the system prompt,

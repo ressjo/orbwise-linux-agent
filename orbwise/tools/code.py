@@ -62,6 +62,7 @@ def _was_read(ctx: ToolContext, p: Path) -> bool:
 
 
 EDIT_FAIL_HINT = 3   # ab so vielen Fehlschlägen in Folge an derselben Datei: Hinweis, wie es anders geht
+EDITS_MAX = 50       # so viele Änderungen höchstens in einem edit-Aufruf (edits=[…])
 EDIT_FAIL_STOP = 5   # … und ab hier deutlicher
 
 
@@ -363,8 +364,11 @@ def _edit_list(args: dict) -> tuple[list[tuple[str, str, bool]], str]:
             return [], "Entweder oldString/newString oder edits angeben, nicht beides."
         if not isinstance(many, list) or not all(isinstance(e, dict) for e in many):
             return [], "edits muss eine Liste von {oldString, newString} sein."
+        if len(many) > EDITS_MAX:
+            return [], (f"Zu viele Änderungen in einem Aufruf ({len(many)}, höchstens {EDITS_MAX}) – auf mehrere "
+                        "edit-Aufrufe verteilen. Nichts geschrieben.")
         return [(str(e.get("oldString", "")).replace("\r\n", "\n"), str(e.get("newString", "")).replace("\r\n", "\n"),
-                 bool(e.get("replaceAll"))) for e in many[:50]], ""
+                 bool(e.get("replaceAll"))) for e in many], ""
     return [(str(args.get("oldString", "")).replace("\r\n", "\n"), str(args.get("newString", "")).replace("\r\n", "\n"),
              bool(args.get("replaceAll")))], ""
 
@@ -516,7 +520,8 @@ def write_preview(ctx: ToolContext, args: dict) -> str:
 
 
 @tool("Schreibt eine Datei (legt sie an oder überschreibt sie komplett; append=true hängt an); fehlende Ordner werden "
-      "angelegt. Für Teiländerungen an bestehenden Dateien edit nutzen.", risk=_write_risk, name="write",
+      "angelegt. Für Teiländerungen an bestehenden Dateien edit nutzen; eine bestehende Datei vor dem Überschreiben mit "
+      "read lesen.", risk=_write_risk, name="write",
       preview=lambda c, a: write_preview(c, a))
 async def code_write(
     ctx: ToolContext,
@@ -530,6 +535,9 @@ async def code_write(
     if p.is_file() and _stale(ctx, p):
         return f"{_rel(ctx, p)} wurde seit dem letzten read geändert – erst mit read neu lesen."
     before = _read_text(p) if p.exists() else None
+    if not append and before is not None and before.strip() and not _was_read(ctx, p):
+        return (f"{_rel(ctx, p)} gibt es schon und wurde in diesem Chat noch nicht gelesen – erst mit read lesen, dann "
+                "mit edit ändern (oder nach dem Lesen mit write ersetzen).")
     return _write_file(ctx, p, before, (before or "") + content if append else content, in_parts=True)
 
 
