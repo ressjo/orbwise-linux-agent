@@ -59,6 +59,7 @@ def test_read_brings_nested_agents_md_once(ctx, project):
 
 def test_edit_exact_normalised_and_reindented(ctx, project):
     f = project / "src" / "app.py"
+    call(ctx, "read", path="src/app.py")
     out = call(ctx, "edit", path="src/app.py", oldString="    return 2", newString="    return 3")
     assert "return 3" in f.read_text() and "+1 −1" in out and "-    return 2" in out and "+    return 3" in out
     # typografische Anführungszeichen im oldString
@@ -79,6 +80,7 @@ def test_edit_exact_normalised_and_reindented(ctx, project):
 def test_edit_errors_and_stale_files(ctx, project):
     f = project / "src" / "app.py"
     f.write_text("x = 1\nx = 1\n", encoding="utf-8")
+    call(ctx, "read", path="src/app.py")
     assert "2-mal" in call(ctx, "edit", path="src/app.py", oldString="x = 1", newString="x = 2")
     assert "Zeilen 1, 2" in call(ctx, "edit", path="src/app.py", oldString="x = 1", newString="x = 2")
     call(ctx, "edit", path="src/app.py", oldString="x = 1", newString="x = 2", replaceAll=True)
@@ -97,6 +99,7 @@ def test_edit_errors_and_stale_files(ctx, project):
     call(ctx, "edit", path="neu.txt", oldString="", newString="a\n")
     assert (project / "neu.txt").read_text() == "a\n"
     (project / "win.txt").write_bytes(b"a\r\nb\r\n")
+    call(ctx, "read", path="win.txt")
     call(ctx, "edit", path="win.txt", oldString="b", newString="c")
     assert (project / "win.txt").read_bytes() == b"a\r\nc\r\n"
 
@@ -109,6 +112,7 @@ def test_write_and_preview_show_a_diff(ctx, project):
     assert "+Neu" in preview
     out = call(ctx, "write", path="src/new.py", content="print(1)\n")
     assert (project / "src" / "new.py").read_text() == "print(1)\n" and "Angelegt" in out
+    call(ctx, "read", path="src/app.py")
     edit_preview = get_tool("edit").preview(ctx, {"path": "src/app.py", "oldString": "return 1",
                                                   "newString": "return 9"})
     assert "-    return 1" in edit_preview and "+    return 9" in edit_preview
@@ -147,3 +151,56 @@ def test_websearch_uses_brave_first(ctx, monkeypatch):
     ctx.cfg.tools.brave_api_key = "k"
     out = call(ctx, "websearch", query="fastapi lifespan")
     assert seen == [("k", "fastapi lifespan")] and "https://example.org" in out
+
+
+def test_edit_needs_a_read_first(ctx, project):
+    f = project / "src" / "app.py"
+    out = call(ctx, "edit", path="src/app.py", oldString="    return 2", newString="    return 3")
+    assert "noch nicht gelesen" in out and "return 2" in f.read_text()
+    call(ctx, "read", path="src/app.py", offset=5, limit=2)  # ein Abschnitt genügt
+    call(ctx, "edit", path="src/app.py", oldString="    return 2", newString="    return 3")
+    assert "return 3" in f.read_text()
+    # neue Datei und selbst geschriebene Datei: ohne read
+    call(ctx, "edit", path="neu.py", oldString="", newString="a = 1\n")
+    call(ctx, "edit", path="neu.py", oldString="a = 1", newString="a = 2")
+    assert (project / "neu.py").read_text() == "a = 2\n"
+    call(ctx, "write", path="w.py", content="b = 1\n")
+    call(ctx, "edit", path="w.py", oldString="b = 1", newString="b = 2")
+    assert (project / "w.py").read_text() == "b = 2\n"
+
+
+def test_multi_edit_applies_all_or_nothing(ctx, project):
+    f = project / "src" / "app.py"
+    call(ctx, "read", path="src/app.py")
+    out = call(ctx, "edit", path="src/app.py", edits=[
+        {"oldString": "def a():", "newString": "def first():"},
+        {"oldString": "    return 2", "newString": "    return 20"},
+        {"oldString": "def first():\n    return 1", "newString": "def first():\n    return 10"},  # auf dem Zwischenstand
+    ])
+    assert f.read_text() == "def first():\n    return 10\n\n\ndef b():\n    return 20\n" and "+3 −3" in out
+    before = f.read_text()
+    out = call(ctx, "edit", path="src/app.py", edits=[
+        {"oldString": "def b():", "newString": "def second():"},
+        {"oldString": "gibt es nicht", "newString": "x"},
+    ])
+    assert out.startswith("Änderung 2 von 2:") and "Nichts geschrieben" in out and f.read_text() == before
+    # als JSON-Text geschickt, und beides zugleich ist ein Fehler
+    call(ctx, "edit", path="src/app.py", edits='[{"oldString": "def b():", "newString": "def second():"}]')
+    assert "def second():" in f.read_text()
+    assert "nicht beides" in call(ctx, "edit", path="src/app.py", oldString="x", newString="y",
+                                  edits=[{"oldString": "a", "newString": "b"}])
+    # Vorschau zeigt alle Änderungen und schreibt nichts
+    preview = get_tool("edit").preview(ctx, {"path": "src/app.py", "edits": [
+        {"oldString": "return 10", "newString": "return 11"}, {"oldString": "return 20", "newString": "return 21"}]})
+    assert "+    return 11" in preview and "+    return 21" in preview and "return 10" in f.read_text()
+
+
+def test_repeated_failed_edits_get_a_way_out(ctx, project):
+    call(ctx, "read", path="src/app.py")
+    outs = [call(ctx, "edit", path="src/app.py", oldString=f"return {9 + i}", newString="x") for i in range(5)]
+    assert "neu lesen" not in outs[1] and "Schon 3× gescheitert" in outs[2] and "write" in outs[2]
+    assert "Hör auf" in outs[4]
+    call(ctx, "read", path="src/app.py")  # neu gelesen: zählt von vorn
+    assert "gescheitert" not in call(ctx, "edit", path="src/app.py", oldString="return 99", newString="x")
+    call(ctx, "edit", path="src/app.py", oldString="return 1", newString="return 5")  # Erfolg setzt zurück
+    assert "gescheitert" not in call(ctx, "edit", path="src/app.py", oldString="return 98", newString="x")

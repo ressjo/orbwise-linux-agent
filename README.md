@@ -1061,7 +1061,7 @@ the **Brave Search API** when a key is set (see [Web search](#web-search)).
 | Tool | What it does |
 |---|---|
 | `read` | File with line numbers (`12: …`), in sections with `offset`/`limit`; folders (one entry per line, `/` for folders); PDFs. An `AGENTS.md` in a sub-folder comes along once |
-| `edit` | Replaces exact text (`oldString` → `newString`, `replaceAll` for renames). Forgives curly quotes/dashes and wrong indentation as long as the spot is unique, strips line numbers copied from `read`, keeps CRLF; refuses when the file changed on disk since it was read. Result: a short diff |
+| `edit` | Replaces exact text (`oldString` → `newString`, `replaceAll` for renames). Forgives curly quotes/dashes and wrong indentation as long as the spot is unique, strips line numbers copied from `read`, keeps CRLF; refuses when the file changed on disk since it was read, and an existing file that was never read in this chat. Several spots in one file in one call with `edits: [{oldString, newString}, …]` – applied in order, all or nothing. After three failed edits on the same file it tells the model to re-read the section or rewrite it with `write` instead of guessing. Result: a short diff |
 | `write` | Creates or overwrites a file (folders are created) |
 | `grep` / `glob` | ripgrep with regex or literal text, matching lines with numbers / file paths by pattern, newest first – both respect `.gitignore` |
 | `shell` | Bash in the project (or `workdir`); `background: true` for dev servers and long builds – the agent is told when the job ends (no polling), the activity panel shows its live output with **Stop** |

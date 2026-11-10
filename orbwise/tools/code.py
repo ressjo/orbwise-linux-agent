@@ -54,6 +54,33 @@ def _remember_read(ctx: ToolContext, p: Path) -> None:
         return
     while len(times) > 200:
         times.pop(next(iter(times)))
+    _meta(ctx).get("edit_fails", {}).pop(str(p.resolve()), None)  # neu gelesen: Fehlschläge zählen von vorn
+
+
+def _was_read(ctx: ToolContext, p: Path) -> bool:
+    return str(p.resolve()) in _meta(ctx).get("read_times", {})
+
+
+EDIT_FAIL_HINT = 3   # ab so vielen Fehlschlägen in Folge an derselben Datei: Hinweis, wie es anders geht
+EDIT_FAIL_STOP = 5   # … und ab hier deutlicher
+
+
+def _edit_failed(ctx: ToolContext, p: Path, error: str) -> str:
+    """Fehlschlag zählen; ab dem dritten in Folge einen Ausweg nennen (die Schleifenerkennung fängt nur identische
+    Aufrufe – ein Modell, das oldString leicht abwandelt, würde sonst bis zum Schritt-Limit raten)."""
+    fails = _meta(ctx).setdefault("edit_fails", {})
+    key = str(p.resolve())
+    n = fails[key] = fails.get(key, 0) + 1
+    while len(fails) > 50:
+        fails.pop(next(iter(fails)))
+    if n >= EDIT_FAIL_STOP:
+        return error + (f" [{n}. Fehlschlag in Folge an {_rel(ctx, p)}: Hör auf, dieselbe Stelle zu raten – lies den "
+                        "Abschnitt mit read neu und kopiere oldString daraus, oder schreibe die Datei mit write neu.]")
+    if n >= EDIT_FAIL_HINT:
+        return error + (f" [Schon {n}× gescheitert: den Abschnitt mit read (offset/limit) neu lesen und oldString "
+                        "Zeichen für Zeichen daraus kopieren – oder den Abschnitt bzw. eine kleine Datei mit write neu "
+                        "schreiben.]")
+    return error
 
 
 def _stale(ctx: ToolContext, p: Path) -> bool:
@@ -284,20 +311,80 @@ def _reindent(new: str, have: str, want: str) -> str:
     return "\n".join(out)
 
 
+def _apply_one(ctx: ToolContext, p: Path, text: str, old: str, new: str, replace_all: bool) -> tuple[str, str]:
+    """Eine Ersetzung auf text anwenden → (neuer Text, Fehler). Exakt, dann mit vereinheitlichten Zeichen, dann
+    zeilenweise ohne Einrückung (newString wird passend eingerückt)."""
+    if old == new:
+        return text, "oldString und newString sind gleich – nichts zu ändern."
+    if not old:
+        if text.strip():
+            return text, "oldString ist leer, die Datei aber nicht – die zu ersetzende Stelle angeben."
+        return new, ""
+    old2 = _strip_prefixes(old)
+    if old2 != old:
+        old, new = old2, _strip_prefixes(new)
+    spans = [(a, b, None) for a, b in _find_all(text, old)]
+    if not spans:
+        spans = [(a, b, None) for a, b in _find_all(_normalize(text), _normalize(old))]
+    if not spans:
+        spans = _line_matches(text, old)
+    if not spans:
+        first = old.strip().splitlines()[0].strip() if old.strip() else old
+        lines = text.split("\n")
+        close = difflib.get_close_matches(first, [ln.strip() for ln in lines], n=1, cutoff=0.6)
+        hint = ""
+        if close:
+            n = next(i for i, ln in enumerate(lines, 1) if ln.strip() == close[0])
+            hint = f" Ähnlichste Zeile {n}: {lines[n - 1]!r}"
+        return text, (f"oldString kommt in {_rel(ctx, p)} nicht vor – mit read nachsehen und den Ausschnitt "
+                      f"exakt übernehmen (ohne Zeilennummern).{hint}")
+    if len(spans) > 1 and not replace_all:
+        where = ", ".join(str(text.count("\n", 0, a) + 1) for a, _b, _i in spans[:8])
+        return text, (f"oldString kommt {len(spans)}-mal vor (Zeilen {where}) – mehr umgebenden Text "
+                      "mitgeben, damit die Stelle eindeutig ist, oder replaceAll=true.")
+    result = text
+    for a, b, actual in sorted(spans, reverse=True):
+        piece = new if actual is None else _reindent(new, _indent(old.split("\n")[0]), actual)
+        result = result[:a] + piece + result[b:]
+    return result, ""
+
+
+def _edit_list(args: dict) -> tuple[list[tuple[str, str, bool]], str]:
+    """Einzelne Änderung (oldString/newString) oder mehrere (edits) → [(alt, neu, replaceAll)], Fehler."""
+    many = args.get("edits")
+    if isinstance(many, str) and many.strip().startswith("["):
+        try:
+            many = json.loads(many)  # manche Modelle schicken die Liste als JSON-Text
+        except ValueError:
+            pass
+    single = bool(args.get("oldString")) or bool(args.get("newString"))
+    if many:
+        if single:
+            return [], "Entweder oldString/newString oder edits angeben, nicht beides."
+        if not isinstance(many, list) or not all(isinstance(e, dict) for e in many):
+            return [], "edits muss eine Liste von {oldString, newString} sein."
+        return [(str(e.get("oldString", "")).replace("\r\n", "\n"), str(e.get("newString", "")).replace("\r\n", "\n"),
+                 bool(e.get("replaceAll"))) for e in many[:50]], ""
+    return [(str(args.get("oldString", "")).replace("\r\n", "\n"), str(args.get("newString", "")).replace("\r\n", "\n"),
+             bool(args.get("replaceAll")))], ""
+
+
 def plan_edit(ctx: ToolContext, args: dict) -> tuple[Path, str | None, str, str]:
-    """Rechnet die Änderung aus, ohne zu schreiben: (Pfad, alter Inhalt oder None, neuer Inhalt, Fehler)."""
+    """Rechnet die Änderung aus, ohne zu schreiben: (Pfad, alter Inhalt oder None, neuer Inhalt, Fehler).
+    Mehrere Änderungen (edits) gelten nacheinander auf dem Zwischenstand – alles oder nichts."""
     p = ctx.path(args.get("path", ""))
-    old = str(args.get("oldString", "")).replace("\r\n", "\n")
-    new = str(args.get("newString", "")).replace("\r\n", "\n")
     if is_secret_path(str(p)):
         return p, None, "", secret_reason()
-    if old == new:
-        return p, None, "", "oldString und newString sind gleich – nichts zu ändern."
+    changes, error = _edit_list(args)
+    if error:
+        return p, None, "", error
     if not p.exists():
-        if old:
-            return p, None, "", (f"{_rel(ctx, p)} gibt es nicht. Neue Dateien mit write anlegen (oder edit mit leerem "
-                                 "oldString).")
-        return p, None, new, ""
+        if len(changes) == 1 and not changes[0][0]:
+            if not changes[0][1]:
+                return p, None, "", "oldString und newString sind gleich – nichts zu ändern."
+            return p, None, changes[0][1], ""
+        return p, None, "", (f"{_rel(ctx, p)} gibt es nicht. Neue Dateien mit write anlegen (oder edit mit leerem "
+                             "oldString).")
     if not p.is_file():
         return p, None, "", f"{_rel(ctx, p)} ist keine Datei."
     try:
@@ -306,42 +393,20 @@ def plan_edit(ctx: ToolContext, args: dict) -> tuple[Path, str | None, str, str]
         return p, None, "", f"{_rel(ctx, p)} ist keine UTF-8-Textdatei."
     except OSError as e:
         return p, None, "", f"{_rel(ctx, p)} lässt sich nicht lesen: {e}"
+    if raw.strip() and not _was_read(ctx, p):
+        return p, None, "", (f"{_rel(ctx, p)} wurde in diesem Chat noch nicht gelesen – erst mit read lesen (mindestens "
+                             "den betroffenen Abschnitt), dann ändern.")
     if _stale(ctx, p):
         return p, None, "", (f"{_rel(ctx, p)} wurde seit dem letzten read geändert (Editor, git …) – erst mit read neu "
                              "lesen, dann ändern.")
     crlf = "\r\n" in raw
-    text = raw.replace("\r\n", "\n")
-    if not old:
-        if text.strip():
-            return p, None, "", "oldString ist leer, die Datei aber nicht – die zu ersetzende Stelle angeben."
-        result = new
-    else:
-        old2 = _strip_prefixes(old)
-        if old2 != old:
-            old, new = old2, _strip_prefixes(new)
-        spans = [(a, b, None) for a, b in _find_all(text, old)]
-        if not spans:
-            spans = [(a, b, None) for a, b in _find_all(_normalize(text), _normalize(old))]
-        if not spans:
-            spans = _line_matches(text, old)
-        if not spans:
-            first = old.strip().splitlines()[0].strip() if old.strip() else old
-            lines = text.split("\n")
-            close = difflib.get_close_matches(first, [ln.strip() for ln in lines], n=1, cutoff=0.6)
-            hint = ""
-            if close:
-                n = next(i for i, ln in enumerate(lines, 1) if ln.strip() == close[0])
-                hint = f" Ähnlichste Zeile {n}: {lines[n - 1]!r}"
-            return p, None, "", (f"oldString kommt in {_rel(ctx, p)} nicht vor – mit read nachsehen und den Ausschnitt "
-                                 f"exakt übernehmen (ohne Zeilennummern).{hint}")
-        if len(spans) > 1 and not args.get("replaceAll"):
-            where = ", ".join(str(text.count("\n", 0, a) + 1) for a, _b, _i in spans[:8])
-            return p, None, "", (f"oldString kommt {len(spans)}-mal vor (Zeilen {where}) – mehr umgebenden Text "
-                                 "mitgeben, damit die Stelle eindeutig ist, oder replaceAll=true.")
-        result = text
-        for a, b, actual in sorted(spans, reverse=True):
-            piece = new if actual is None else _reindent(new, _indent(old.split("\n")[0]), actual)
-            result = result[:a] + piece + result[b:]
+    result = raw.replace("\r\n", "\n")
+    for i, (old, new, replace_all) in enumerate(changes, 1):
+        result, error = _apply_one(ctx, p, result, old, new, replace_all)
+        if error:
+            if len(changes) > 1:
+                error = f"Änderung {i} von {len(changes)}: {error} Nichts geschrieben."
+            return p, None, "", error
     if crlf:
         result = result.replace("\n", "\r\n")
     return p, raw, result, ""
@@ -400,21 +465,25 @@ def _write_in_copy(ws: str, p: Path, data: bytes) -> str | None:
     return None
 
 
-@tool("Ändert eine Datei durch Ersetzen von exaktem Text. Ausschnitte aus read ohne das Zeilen-Präfix „12: “ und "
-      "mit genau derselben Einrückung übernehmen. Schlägt fehl, wenn oldString nicht vorkommt; kommt er mehrfach vor, "
-      "mehr Kontext mitgeben oder replaceAll=true (z. B. zum Umbenennen). Nur die nötige Stelle ersetzen – jede in "
-      "newString fehlende Zeile wird gelöscht.", risk=_edit_risk, name="edit", preview=lambda c, a: edit_preview(c, a))
+@tool("Ändert eine Datei durch Ersetzen von exaktem Text (die Datei vorher mit read lesen). Ausschnitte aus read ohne "
+      "das Zeilen-Präfix „12: “ und mit genau derselben Einrückung übernehmen. Schlägt fehl, wenn oldString nicht "
+      "vorkommt; kommt er mehrfach vor, mehr Kontext mitgeben oder replaceAll=true (z. B. zum Umbenennen). Nur die "
+      "nötige Stelle ersetzen – jede in newString fehlende Zeile wird gelöscht. Mehrere Stellen derselben Datei: ein "
+      "Aufruf mit edits statt oldString/newString (alle oder keine).", risk=_edit_risk, name="edit",
+      preview=lambda c, a: edit_preview(c, a))
 async def code_edit(
     ctx: ToolContext,
     path: Annotated[str, "Datei"],
-    oldString: Annotated[str, "Exakter Text, der ersetzt wird (leer nur für eine neue/leere Datei)"],
-    newString: Annotated[str, "Neuer Text an seiner Stelle (muss sich von oldString unterscheiden)"],
+    oldString: Annotated[str, "Exakter Text, der ersetzt wird (leer nur für eine neue/leere Datei)"] = "",
+    newString: Annotated[str, "Neuer Text an seiner Stelle (muss sich von oldString unterscheiden)"] = "",
     replaceAll: Annotated[bool, "Optional: jedes Vorkommen ersetzen (Standard false: muss eindeutig sein)"] = False,
+    edits: Annotated[list[dict], "Optional statt oldString/newString: mehrere Änderungen derselben Datei, je "
+                                 "{oldString, newString, replaceAll?}; nacheinander angewendet, alle oder keine"] = None,  # noqa: RUF013
 ) -> str:
     p, before, after, error = plan_edit(ctx, {"path": path, "oldString": oldString, "newString": newString,
-                                              "replaceAll": replaceAll})
+                                              "replaceAll": replaceAll, "edits": edits})
     if error:
-        return error
+        return _edit_failed(ctx, p, error)
     return _write_file(ctx, p, before, after)
 
 
