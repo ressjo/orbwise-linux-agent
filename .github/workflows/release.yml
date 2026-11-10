@@ -23,7 +23,7 @@ jobs:
       - name: Test
         run: |
           uv sync --extra dev --extra voice
-          uv run pytest -q
+          uv run pytest -q -n auto
       - name: Build wheel and source archive
         run: uv build
       - name: Release notes from CHANGELOG.md
