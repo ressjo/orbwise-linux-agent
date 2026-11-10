@@ -362,8 +362,8 @@ yet, Orbwise says so before the download (update llama.cpp at the top of the pag
 
 Pick it in the model list like any other model; the context size can be changed there too. GGUF files you already
 have show up under **On disk · ~/models** – one click turns them into a model without downloading (pasting a path to a
-`.gguf` into the search field works too). New model types often need a newer llama.cpp: the llama.cpp line at the
-top of the model page shows when a newer build exists (**Update to b…**, checked at most every 3 hours); the button
+`.gguf` into the search field works too). New model types often need a newer llama.cpp: the llama.cpp line next to the
+tabs of the model page shows when a newer build exists (**Update to b…**, checked at most every 3 hours); the button
 (or `orbwise model llamacpp --update`) fetches it, and a loaded model restarts with it right away. If a release has
 ROCm builds for several ROCm versions, Orbwise picks the one matching your installed ROCm (`/opt/rocm/.info/version`).
 The **ROCm | Vulkan** switch next to it (CUDA | Vulkan on NVIDIA) moves all llama.cpp models to the other build of
@@ -378,8 +378,16 @@ read token under **Settings → General → Hugging Face** (kept in the keyring;
 `HF_ENDPOINT` points Orbwise at a mirror instead of huggingface.co. Ollama is still used for the memory embeddings and the
 Ollama presets above.
 
+**The model page** lists your models grouped into *Local* and *API* (the loaded one first, a filter field from seven
+models on) with a pill that says whether each fits your video memory. The details of a model are split into tabs:
+**Overview** (context window), **Performance** (experts in RAM, GPUs, batch size, finding the fastest setting,
+speculative decoding), **Quality** (measuring quality, KV cache, sampling) and **Diagnostics** (context test, server
+log); the last tab you used stays selected. Options are switches with a one-line explanation of the selected one, the
+longer explanation sits behind the **i** next to each heading. The *Add* tab hides presets and search results that
+don't fit your memory (one click shows them), and the *On disk* column only appears when there are new GGUF files.
+
 **Context window, KV cache and sampling per model** (Models page, for any model – changes to a model that is not
-loaded apply the next time it is loaded): the context window (4k–256k, up to what the model was trained for, separately for Tools and Coding), the KV cache level (f16 / q8 ≈ half / q4 ≈ a quarter of the memory – own llama-server only; with Ollama it
+loaded apply the next time it is loaded): the context window (a slider from 4k to 256k, up to what the model was trained for, separately for Tools and Coding – applied shortly after you let go), the KV cache level (f16 / q8 ≈ half / q4 ≈ a quarter of the memory – own llama-server only; with Ollama it
 is service-wide via `OLLAMA_KV_CACHE_TYPE`) and the sampling values for **thinking** and **non-thinking** answers
 (temperature, top_p, top_k, min_p, presence and repeat penalty; a **Qwen** preset fills in the vendor recommendation).
 Context and KV cache restart the model server; sampling applies from the next answer. Empty sampling fields keep the
@@ -551,7 +559,7 @@ closeness to the original – to compare different models on tasks, use `scripts
 <details>
 <summary>A bigger micro-batch reads long inputs faster, at the cost of some VRAM</summary>
 
-**Models → Advanced → Prompt processing (batch size)** sets llama-server's micro-batch (`-ub`, default 512) per model to 1024 or
+**Models → Performance → Prompt processing (batch size)** sets llama-server's micro-batch (`-ub`, default 512) per model to 1024 or
 2048 (`-b` grows with it). Bigger batches keep the GPU busier while reading long inputs – tool results, files, PDFs,
 the first message of a chat – at the cost of a larger compute buffer in VRAM (shown next to the setting, together
 with the measured prompt speed; the measurement restarts after a change). Short questions hardly change. Compare
@@ -564,7 +572,7 @@ with **Test context**, which reads a full window and reports tokens/s. llama.cpp
 <details>
 <summary>Several tokens per step – same answer, sooner</summary>
 
-**Models → Advanced → Faster answers** lets llama.cpp models propose several tokens at once, which the server then verifies in a
+**Models → Performance → Faster answers** lets llama.cpp models propose several tokens at once, which the server then verifies in a
 single pass – the answer stays the same, it just arrives sooner. **MTP** uses the model's own multi-token-prediction
 layers (GLM-4.5, DeepSeek-V3, Qwen3.5/3.6 and others – either inside the GGUF as `nextn_predict_layers` or as an
 `mtp-*.gguf` file next to it, which Orbwise downloads together with the model) and costs a little VRAM; **n-gram**

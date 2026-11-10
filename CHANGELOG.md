@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **Model page tidied up:** the details of a model are split into tabs (Overview, Performance, Quality, Diagnostics)
+  instead of one long page; the context window is a slider; options such as experts in RAM, KV cache, batch size and
+  speculative decoding are switches with a one-line explanation, longer explanations sit behind an **i**. The list
+  groups models into Local and API with a fit pill and a filter field; GPU and llama.cpp status moved into a slim line
+  next to the tabs ("Check for update" only looks; installing needs a newer build). *Add* hides presets and search
+  results that don't fit (one click shows them) and drops the empty *On disk* column.
+
 ### Fixed
 - **Orb next to the input bar:** a long status line under the orb ("40,658 tokens · at most ~56 s") ran into the input
   bar. It now stays in the orb's column and wraps to at most two lines.

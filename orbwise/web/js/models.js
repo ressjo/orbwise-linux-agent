@@ -97,12 +97,13 @@ function drawRuntime(box, st, checked) {
   btn.textContent = st.updating ? L("Wird geladen …", "Downloading …")
     : !st.installed ? L("Installieren", "Install")
     : st.update ? L(`Update auf ${st.latest}`, `Update to ${st.latest}`)
-    : upToDate ? L("✓ aktuell", "✓ up to date") : L("Aktualisieren", "Update");
+    : upToDate ? L("✓ aktuell", "✓ up to date") : L("Nach Update suchen", "Check for update");
   btn.classList.toggle("rt-new", !!st.update);
   btn.disabled = !!st.updating;
-  btn.title = upToDate ? L("Neueste Version – klicken, um erneut nachzusehen.", "Latest version – click to check again.") : "";
+  btn.title = upToDate ? L("Neueste Version – klicken, um erneut nachzusehen.", "Latest version – click to check again.")
+    : st.installed && !st.update ? L("Auf GitHub nach einem neueren llama.cpp-Build sehen.", "Look on GitHub for a newer llama.cpp build.") : "";
   btn.onclick = async () => {
-    if (upToDate) { btn.disabled = true; await renderLlamacppChip(true); return; }
+    if (st.installed && !st.update) { btn.disabled = true; await renderLlamacppChip(true); return; }  // nur nachsehen
     btn.disabled = true;
     btn.textContent = L("Wird geladen …", "Downloading …");
     try { await api("POST", "/api/llamacpp/update"); renderPulls(); } catch { btn.disabled = false; }
@@ -148,33 +149,44 @@ async function renderPulls() {
   for (const d of pulls) box.appendChild(pullRow(d));
   box.classList.toggle("hidden", !pulls.length);
 }
-// ---- Reiter „Meine Modelle“: Liste
+// ---- Reiter „Meine Modelle“: Liste – gruppiert (Lokal / API), aktives Modell oben, ab 7 Modellen mit Suche
+const isLocal = (p) => !!(p.managed || p.path || p.backend === "ollama");
 function renderModelList() {
   const d = MP.data;
   const list = $("mp-list");
   list.innerHTML = "";
   if (!MP.sel || !d.profiles.some((p) => p.name === MP.sel)) MP.sel = (d.profiles.find((p) => p.active) || d.profiles[0] || {}).name;
-  for (const p of d.profiles) {
-    const row = document.createElement("button");
-    row.type = "button";
-    row.className = "mp-row" + (p.name === MP.sel ? " sel" : "") + (p.active ? " active" : "") + (p.loaded === false && p.active ? " unloaded" : "");
-    row.innerHTML = `<i class="mp-dot"></i><span class="mp-main"><span class="mp-name"></span><span class="mp-meta"></span></span><span class="mp-tag"></span>`;
-    row.querySelector(".mp-name").textContent = p.label;
-    row.querySelector(".mp-meta").textContent = [p.engine, p.quant, p.size_gb ? `${fmt(p.size_gb, 1)} GB` : "",
-                                                 p.num_ctx ? ctxLabel(modelCtx(p, "tools")) : ""].filter(Boolean).join(" · ");
-    const tag = row.querySelector(".mp-tag");
-    if (p.name === d.switching) { tag.textContent = L("Lädt …", "Loading …"); row.classList.add("loading"); }
-    else if (p.active) tag.textContent = p.loaded === false ? L("Entladen", "Unloaded") : L("Geladen", "Loaded");
-    else if (p.fit) { tag.textContent = FIT_MARKS[p.fit]; tag.className = "mp-tag fit-" + p.fit; tag.title = fitText(p.fit); }
-    row.onclick = () => {
-      MP.sel = p.name;
-      list.querySelectorAll(".mp-row").forEach((r) => r.classList.toggle("sel", r === row));
-      $("mp-detail").scrollTop = 0;
-      renderModelDetail();
+  if (d.profiles.length > 6) {
+    const search = document.createElement("input");
+    search.type = "search";
+    search.className = "mp-filter";
+    search.placeholder = L("Modelle filtern …", "Filter models …");
+    search.setAttribute("aria-label", search.placeholder);
+    search.value = MP.filter || "";
+    search.oninput = () => {
+      MP.filter = search.value;
+      const q = search.value.trim().toLowerCase();
+      list.querySelectorAll(".mp-row").forEach((r) => r.classList.toggle("hidden", !!q && !r.dataset.search.includes(q)));
+      list.querySelectorAll(".mp-group").forEach((g) => {
+        let n = g.nextElementSibling, any = false;
+        while (n && n.classList.contains("mp-row")) { any = any || !n.classList.contains("hidden"); n = n.nextElementSibling; }
+        g.classList.toggle("hidden", !any);
+      });
     };
-    row.ondblclick = () => activateModel(p);
-    list.appendChild(row);
+    list.appendChild(search);
   }
+  const groups = [[L("Lokal", "Local"), d.profiles.filter(isLocal)], [L("API", "API"), d.profiles.filter((p) => !isLocal(p))]]
+    .filter(([, items]) => items.length);
+  for (const [title, items] of groups) {
+    if (groups.length > 1) {
+      const h = document.createElement("div");
+      h.className = "mp-group";
+      h.textContent = title;
+      list.appendChild(h);
+    }
+    for (const p of items.slice().sort((a, b) => Number(!!b.active) - Number(!!a.active))) list.appendChild(modelRow(p, d, list));
+  }
+  if (MP.filter) list.querySelector(".mp-filter").oninput();
   if (d.active !== "demo") {
     const add = document.createElement("button");
     add.type = "button";
@@ -185,16 +197,99 @@ function renderModelList() {
     list.appendChild(add);
   }
 }
-// Erklärtext: das Wichtigste sichtbar, der Rest hinter „Mehr“
+function modelRow(p, d, list) {
+  const row = document.createElement("button");
+  row.type = "button";
+  row.className = "mp-row" + (p.name === MP.sel ? " sel" : "") + (p.active ? " active" : "") + (p.loaded === false && p.active ? " unloaded" : "");
+  row.dataset.search = `${p.label} ${p.name} ${p.engine || ""} ${p.quant || ""}`.toLowerCase();
+  row.innerHTML = `<i class="mp-dot"></i><span class="mp-main"><span class="mp-name"></span><span class="mp-chips"></span></span><span class="mp-tag"></span>`;
+  row.querySelector(".mp-name").textContent = p.label;
+  const chips = row.querySelector(".mp-chips");
+  for (const c of [p.engine, p.quant, p.size_gb ? `${fmt(p.size_gb, 1)} GB` : "", p.num_ctx ? ctxLabel(modelCtx(p, "tools")) : ""].filter(Boolean)) {
+    const x = document.createElement("span");
+    x.textContent = c;
+    chips.appendChild(x);
+  }
+  const tag = row.querySelector(".mp-tag");
+  if (p.name === d.switching) { tag.textContent = L("Lädt …", "Loading …"); tag.classList.add("busy"); row.classList.add("loading"); }
+  else if (p.active) { tag.textContent = p.loaded === false ? L("Entladen", "Unloaded") : L("Geladen", "Loaded"); tag.classList.add(p.loaded === false ? "off" : "live"); }
+  else if (p.fit) {
+    tag.textContent = `${FIT_MARKS[p.fit]} ${({ ok: L("passt", "fits"), tight: L("knapp", "tight"), big: L("zu groß", "too big") })[p.fit]}`;
+    tag.classList.add("fit-" + p.fit);
+    tag.title = fitText(p.fit);
+  } else tag.remove();
+  row.onclick = () => {
+    MP.sel = p.name;
+    list.querySelectorAll(".mp-row").forEach((r) => r.classList.toggle("sel", r === row));
+    $("mp-detail").scrollTop = 0;
+    renderModelDetail();
+  };
+  row.ondblclick = () => activateModel(p);
+  return row;
+}
+// Erklärtext: das Wichtigste sichtbar, der Rest hinter „ⓘ“ am Abschnittstitel (sonst hinter „Mehr“)
 export function hint(el, short, more) {
   el.textContent = short;
   if (!more) return;
+  const h4 = el.closest(".md-sec") && el.closest(".md-sec").querySelector(".md-sec-head h4");
+  if (h4) {
+    const old = el.nextElementSibling;
+    if (old && old.classList.contains("md-more-text")) old.remove();  // Abschnitt neu gezeichnet
+    h4.querySelectorAll(".md-info").forEach((x) => x.remove());
+    const text = document.createElement("p");
+    text.className = "set-hint md-more-text hidden";
+    text.textContent = more;
+    el.after(text);
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "md-info";
+    b.textContent = "i";
+    b.title = L("Mehr dazu", "More about this");
+    b.setAttribute("aria-label", b.title);
+    b.setAttribute("aria-expanded", "false");
+    b.onclick = () => {
+      const open = text.classList.toggle("hidden") === false;
+      b.classList.toggle("on", open);
+      b.setAttribute("aria-expanded", String(open));
+    };
+    h4.appendChild(b);
+    return;
+  }
   const b = document.createElement("button");
   b.type = "button";
   b.className = "btn-link hint-more";
   b.textContent = L("Mehr", "More");
   b.onclick = () => b.replaceWith(document.createTextNode(more));
   el.append(" ", b);
+}
+// Wenige Optionen als Segmented Control; darunter eine graue Zeile mit der Erklärung der gewählten (bzw. gezeigten) Option
+export function choose(box, options) {
+  box.classList.add("md-choice");
+  box.innerHTML = `<div class="seg md-seg"></div><div class="md-seg-note"></div>`;
+  const seg = box.querySelector(".md-seg"), note = box.querySelector(".md-seg-note");
+  const show = (o) => {
+    const x = o || options.find((y) => y.on) || {};
+    note.textContent = x.note || "";
+    note.classList.toggle("warn", !!x.warn);
+  };
+  for (const o of options) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = o.label;
+    b.classList.toggle("on", !!o.on);
+    b.classList.toggle("na", !!o.na);
+    b.disabled = !!o.disabled;
+    b.title = o.title || o.note || "";
+    b.onmouseenter = b.onfocus = () => show(o);
+    b.onmouseleave = b.onblur = () => show(null);
+    b.onclick = () => { if (o.click) o.click(); };
+    seg.appendChild(b);
+  }
+  show(null);
+  return seg;
+}
+export function lock(box) {
+  box.querySelectorAll("button, input").forEach((x) => { x.disabled = true; });
 }
 export async function unloadModel() {
   try { await api("POST", "/api/models/unload"); } catch { /* Meldung kommt von api() */ }

@@ -1,11 +1,11 @@
 /* Orbwise – Modellseite: Details zum gewählten Modell – Speicher, Kontextfenster, KV-Cache, mehrere GPUs, Batch-Größe */
 
 import { num } from "./activity.js";
-import { $, L, S, api } from "./core.js";
+import { $, L, S, api, store } from "./core.js";
 import { ask, askText, toast } from "./dialogs.js";
 import { popMenu } from "./history.js";
 import { deleteModel, renderDiag, renderPerf, renderQuality, renderSampling, renderSpec } from "./model_tuning.js";
-import { FIT_MARKS, MP, activateModel, fitText, hint, isLive, modelCtx, refreshModelViews, restartNote, unloadModel } from "./models.js";
+import { FIT_MARKS, MP, activateModel, choose, fitText, hint, isLive, lock, modelCtx, refreshModelViews, restartNote, unloadModel } from "./models.js";
 import { ctxLabel, fmt, gbs, lastMem, loadCtxMemory, memText, recText } from "./telemetry.js";
 
 let KV_KNOWN;
@@ -26,22 +26,29 @@ export function renderModelDetail() {
       <div class="md-sub"></div>
       <dl class="md-facts"></dl>
       <div class="md-mem hidden"><div class="md-mem-head"><b></b><span></span></div><div class="tm-bar"><i class="vram"></i><i class="ram"></i></div></div>
-      <section class="md-sec md-ctx"><div class="md-sec-head"><h4></h4>
-        <div class="seg md-mode"><button type="button" data-m="tools">Tools</button><button type="button" data-m="coding">Coding</button></div></div>
-        <div class="ctx-now"></div><div class="ctx-opts"></div><p class="set-hint"></p></section>
-      <section class="md-sec md-moe"><div class="md-sec-head"><h4></h4></div><div class="moe-now"></div><div class="ctx-opts moe-opts"></div><p class="set-hint"></p></section>
-      <section class="md-sec md-gpus"><div class="md-sec-head"><h4></h4></div><div class="ctx-opts gpu-mode"></div><div class="gpu-rows"></div><p class="set-hint"></p></section>
-      <section class="md-sec md-perf"><div class="md-sec-head"><h4></h4></div><div class="batch-stats"></div><div class="tune-slot"></div><p class="set-hint"></p></section>
-      <section class="md-sec md-quality"><div class="md-sec-head"><h4></h4></div><div class="quality-slot"></div><p class="set-hint"></p></section>
-      <section class="md-sec md-smp"><div class="md-sec-head"><h4></h4></div><div class="smp"></div></section>
-      <details class="md-adv"><summary></summary>
-        <section class="md-sec md-kv"><div class="md-sec-head"><h4></h4></div><div class="ctx-opts kv-opts"></div><p class="set-hint kv-hint"></p></section>
-        <section class="md-sec md-batch"><div class="md-sec-head"><h4></h4></div><div class="ctx-opts batch-opts"></div><p class="set-hint"></p></section>
-        <section class="md-sec md-spec"><div class="md-sec-head"><h4></h4></div><div class="ctx-opts spec-opts"></div><div class="spec-stats"></div><p class="set-hint"></p></section>
-      </details>
-      <section class="md-sec md-diag"><div class="md-sec-head"><h4></h4></div>
-        <div class="md-btns"><button type="button" class="btn small ctx-test-btn"></button><button type="button" class="btn small md-log-btn"></button></div>
-        <div class="ctx-test"></div><pre class="md-log hidden"></pre></section>`;
+      <div class="seg md-tabs" role="tablist"></div>
+      <div class="md-pane" data-pane="overview">
+        <section class="md-sec md-ctx"><div class="md-sec-head"><h4></h4>
+          <div class="seg md-mode"><button type="button" data-m="tools">Tools</button><button type="button" data-m="coding">Coding</button></div></div>
+          <div class="ctx-now"></div><div class="ctx-pick"></div><p class="set-hint"></p></section>
+      </div>
+      <div class="md-pane" data-pane="perf">
+        <section class="md-sec md-moe"><div class="md-sec-head"><h4></h4></div><div class="moe-now"></div><div class="moe-opts"></div><p class="set-hint"></p></section>
+        <section class="md-sec md-gpus"><div class="md-sec-head"><h4></h4></div><div class="gpu-mode"></div><div class="gpu-rows"></div><p class="set-hint"></p></section>
+        <section class="md-sec md-perf"><div class="md-sec-head"><h4></h4></div><div class="batch-stats"></div><div class="tune-slot"></div><p class="set-hint"></p></section>
+        <section class="md-sec md-batch"><div class="md-sec-head"><h4></h4></div><div class="batch-opts"></div><p class="set-hint"></p></section>
+        <section class="md-sec md-spec"><div class="md-sec-head"><h4></h4></div><div class="spec-opts"></div><div class="spec-stats"></div><p class="set-hint"></p></section>
+      </div>
+      <div class="md-pane" data-pane="quality">
+        <section class="md-sec md-quality"><div class="md-sec-head"><h4></h4></div><div class="quality-slot"></div><p class="set-hint"></p></section>
+        <section class="md-sec md-kv"><div class="md-sec-head"><h4></h4></div><div class="kv-opts"></div><p class="set-hint kv-hint"></p></section>
+        <section class="md-sec md-smp"><div class="md-sec-head"><h4></h4></div><div class="smp"></div></section>
+      </div>
+      <div class="md-pane" data-pane="diag">
+        <section class="md-sec md-diag"><div class="md-sec-head"><h4></h4></div>
+          <div class="md-btns"><button type="button" class="btn small ctx-test-btn"></button><button type="button" class="btn small md-log-btn"></button></div>
+          <div class="ctx-test"></div><pre class="md-log hidden"></pre></section>
+      </div>`;
   box.querySelector("h3").textContent = p.label;
   const badge = box.querySelector(".md-badge");
   const loaded = p.active && p.loaded !== false;
@@ -99,7 +106,7 @@ export function renderModelDetail() {
     dl.appendChild(wrap);
   }
   if (!dl.childElementCount) dl.remove();
-  if (demo) { box.querySelectorAll(".md-sec, .md-adv").forEach((s) => s.remove()); load.hidden = true; return; }
+  if (demo) { box.querySelectorAll(".md-pane, .md-tabs").forEach((s) => s.remove()); load.hidden = true; return; }
   updateDetailMemory();
   renderCtxSection(box.querySelector(".md-ctx"), p);
   if (p.managed && p.moe && p.moe.supported) renderMoe(box.querySelector(".md-moe"), p);
@@ -109,11 +116,6 @@ export function renderModelDetail() {
   if (p.tunable) renderQuality(box.querySelector(".md-quality"), p);
   else box.querySelector(".md-quality").remove();  // nur mit Orbwises llama.cpp (llama-perplexity)
   renderSampling(box.querySelector(".md-smp"), p);
-  // Erweitert (eingeklappt): KV-Cache, Batch-Größe von Hand, spekulatives Decoding
-  const adv = box.querySelector(".md-adv");
-  adv.querySelector("summary").textContent = L("Erweitert", "Advanced");
-  adv.open = !!MP.advOpen;
-  adv.ontoggle = () => { MP.advOpen = adv.open; };
   renderKvSettings(box.querySelector(".md-kv"), p);
   const gpus = ((MP.data && MP.data.gpu) || {}).gpus || [];
   if (p.managed && p.gpu_split_settable && gpus.length > 1) renderGpus(box.querySelector(".md-gpus"), p, gpus);
@@ -126,6 +128,32 @@ export function renderModelDetail() {
     box.querySelector(".md-spec").remove();
   }
   renderDiag(box.querySelector(".md-diag"), p);
+  renderDetailTabs(box);
+}
+// Reiter der Detailansicht: Übersicht · Leistung · Qualität · Diagnose – nur die mit Inhalt, der letzte bleibt gemerkt
+const PANES = [["overview", "Übersicht", "Overview"], ["perf", "Leistung", "Performance"],
+               ["quality", "Qualität", "Quality"], ["diag", "Diagnose", "Diagnostics"]];
+function renderDetailTabs(box) {
+  const tabs = box.querySelector(".md-tabs");
+  const panes = [...box.querySelectorAll(".md-pane")];
+  const filled = PANES.filter(([key]) => panes.some((x) => x.dataset.pane === key && x.querySelector(".md-sec")));
+  let cur = store.get("model_tab", "overview");
+  if (!filled.some(([key]) => key === cur)) cur = "overview";
+  const show = (key) => {
+    tabs.querySelectorAll("button").forEach((b) => { b.classList.toggle("on", b.dataset.pane === key); b.setAttribute("aria-selected", String(b.dataset.pane === key)); });
+    panes.forEach((x) => x.classList.toggle("hidden", x.dataset.pane !== key));
+  };
+  for (const [key, de, en] of filled) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.dataset.pane = key;
+    b.setAttribute("role", "tab");
+    b.textContent = L(de, en);
+    b.onclick = () => { store.set("model_tab", key); show(key); $("mp-detail").scrollTop = 0; };
+    tabs.appendChild(b);
+  }
+  tabs.classList.toggle("hidden", filled.length < 2);
+  show(cur);
 }
 // Speicher des geladenen Modells (alle 10 s frisch, ohne den Rest neu zu zeichnen)
 export function updateDetailMemory() {
@@ -160,11 +188,11 @@ function renderCtxSection(sec, p) {
     : L(`Aktuell ${num(cur)} Token`, `Currently ${num(cur)} tokens`))
     + (m && recText(m) ? ` · ${recText(m)}` : "")
     + (missing ? L(` · keine Speicherangaben: ${missing}`, ` · no memory data: ${missing}`) : "");
-  const box = sec.querySelector(".ctx-opts");
+  const box = sec.querySelector(".ctx-pick");
   box.innerHTML = "";
   const busy = !!MP.data.switching;
   const apply = async (ctx) => {
-    box.querySelectorAll("button").forEach((x) => { x.disabled = true; });
+    lock(box);
     const restart = isLive(p) && (mode === "coding") === (S.mode === "coding");
     if (restart) toast(p.managed ? L("Modell-Server startet mit neuem Kontextfenster neu …", "Restarting the model server with the new context window …")
                                  : L("Modell wird mit neuem Kontextfenster geladen …", "Reloading the model with the new context window …"));
@@ -176,36 +204,75 @@ function renderCtxSection(sec, p) {
     await loadCtxMemory();
     refreshModelViews();
   };
+  // Schieberegler über die Stufen (4k … 256k); übernommen wird kurz nach dem Loslassen bzw. der letzten Pfeiltaste
+  const list = opts.slice();
+  if (cur && !list.some((o) => o.ctx === cur)) list.push({ ctx: cur });
+  list.sort((a, b) => a.ctx - b.ctx);
+  const same = mode === "coding" && !p.ctx_coding;
   if (mode === "coding") {
-    const same = document.createElement("button");
-    same.type = "button";
-    same.className = "ctx-opt" + (p.ctx_coding ? "" : " on");
-    same.innerHTML = "<span></span><small></small>";
-    same.querySelector("span").textContent = L("wie Tools", "as Tools");
-    same.querySelector("small").textContent = ctxLabel(modelCtx(p, "tools"));
-    same.disabled = busy;
-    same.onclick = () => { if (p.ctx_coding) apply(0); };
-    box.appendChild(same);
-  }
-  for (const o of opts) {
-    const b = document.createElement("button");
-    b.type = "button";
-    const on = o.ctx === cur && (mode !== "coding" || p.ctx_coding);
-    b.className = "ctx-opt" + (on ? " on" : "") + (o.fits === false ? " big" : "");
-    b.innerHTML = "<span></span><small></small>";
-    b.querySelector("span").textContent = ctxLabel(o.ctx);
-    const lean = o.ctx < 16384 ? L("Sparmodus", "lean mode") : "";
-    b.querySelector("small").textContent = [o.kv_bytes ? `KV ${gbs(o.kv_bytes)}` + (o.fits === false ? L(" · zu groß", " · too big") : "") : "", lean]
-      .filter(Boolean).join(" · ");
-    b.disabled = busy;
-    b.onclick = async () => {
-      if (on) return;
-      if (o.fits === false && !await ask(L(`${ctxLabel(o.ctx)} passt voraussichtlich nicht in den Grafikspeicher – Teile landen im RAM und alles wird deutlich langsamer. Trotzdem?`,
-                                        `${ctxLabel(o.ctx)} probably doesn't fit in VRAM – parts move to RAM and everything gets much slower. Continue?`))) return;
-      apply(o.ctx);
+    const lbl = document.createElement("label");
+    lbl.className = "ctx-same";
+    lbl.innerHTML = `<input type="checkbox"> <span></span>`;
+    lbl.querySelector("span").textContent = L(`wie Tools (${ctxLabel(modelCtx(p, "tools"))})`, `same as Tools (${ctxLabel(modelCtx(p, "tools"))})`);
+    const cb = lbl.querySelector("input");
+    cb.checked = same;
+    cb.disabled = busy;
+    cb.onchange = () => {
+      if (cb.checked) { if (p.ctx_coding) apply(0); else range.disabled = true; }
+      else range.disabled = busy;
     };
-    box.appendChild(b);
+    box.appendChild(lbl);
   }
+  const wrap = document.createElement("div");
+  wrap.className = "ctx-slider";
+  wrap.innerHTML = `<input type="range" min="0" step="1"><div class="ctx-scale"></div><div class="ctx-readout"></div>`;
+  box.appendChild(wrap);
+  const range = wrap.querySelector("input"), readout = wrap.querySelector(".ctx-readout");
+  range.max = String(list.length - 1);
+  range.setAttribute("aria-label", L("Kontextfenster", "Context window"));
+  let committed = Math.max(0, list.findIndex((o) => o.ctx === cur));
+  range.value = String(committed);
+  range.disabled = busy || same;
+  const scale = wrap.querySelector(".ctx-scale");
+  list.forEach((o, i) => {
+    const t = document.createElement("span");
+    t.textContent = ctxLabel(o.ctx);
+    t.className = (o.fits === false ? "big" : "") + (o.ctx < 16384 ? " lean" : "");
+    t.onclick = () => { if (!range.disabled) { range.value = String(i); show(); commit(); } };
+    scale.appendChild(t);
+  });
+  const show = () => {
+    const o = list[Number(range.value)];
+    const moved = Number(range.value) !== committed;
+    const parts = [moved ? `→ ${num(o.ctx)} Token` : ""].filter(Boolean);
+    if (o.kv_bytes) parts.push(`KV ${gbs(o.kv_bytes)}`);
+    if (o.ctx < 16384) parts.push(L("Sparmodus", "lean mode"));
+    if (o.fits === false) parts.push(L("passt voraussichtlich nicht in den Grafikspeicher", "probably doesn't fit in VRAM"));
+    readout.textContent = parts.join(" · ");
+    readout.hidden = !parts.length;
+    readout.classList.toggle("warn", o.fits === false);
+    range.setAttribute("aria-valuetext", ctxLabel(o.ctx));
+    const pct = list.length > 1 ? (100 * Number(range.value)) / (list.length - 1) : 0;
+    range.style.setProperty("--pct", pct + "%");
+  };
+  let timer = null;
+  const commit = () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const i = Number(range.value);
+      if (i === committed) return;
+      const o = list[i];
+      if (o.fits === false && !await ask(L(`${ctxLabel(o.ctx)} passt voraussichtlich nicht in den Grafikspeicher – Teile landen im RAM und alles wird deutlich langsamer. Trotzdem?`,
+                                        `${ctxLabel(o.ctx)} probably doesn't fit in VRAM – parts move to RAM and everything gets much slower. Continue?`))) {
+        range.value = String(committed); show(); return;
+      }
+      committed = i;
+      apply(o.ctx);
+    }, 600);
+  };
+  range.oninput = show;
+  range.onchange = commit;
+  show();
   hint(sec.querySelector(".set-hint"),
     L("Größer = längere Chats bis zum Zusammenfassen, braucht aber mehr Grafikspeicher. ", "Bigger = longer chats before summarising, but needs more VRAM. ")
       + restartNote(p),
@@ -227,18 +294,12 @@ function renderKvSettings(sec, p) {
   const current = levels.find((x) => x.kv === p.kv) || kvLevel(p.kv || "f16");
   sec.querySelector("h4").textContent = L("KV-Cache", "KV cache");
   const opts = sec.querySelector(".kv-opts");
-  for (const lv of levels) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "ctx-opt" + (p.kv_settable && lv.kv === current.kv ? " on" : "");
-    b.innerHTML = "<span></span><small></small>";
-    b.querySelector("span").textContent = lv.label;
-    const size = m && m.kv_bytes ? `KV ${gbs(m.kv_bytes * lv.factor / current.factor)} · ` : "";
-    b.querySelector("small").textContent = size + lv.note();
-    b.disabled = !p.kv_settable || !!MP.data.switching;
-    b.onclick = async () => {
+  choose(opts, levels.map((lv) => ({
+    label: lv.label, on: p.kv_settable && lv.kv === current.kv, disabled: !p.kv_settable || !!MP.data.switching,
+    note: (m && m.kv_bytes ? `KV ${gbs(m.kv_bytes * lv.factor / current.factor)} · ` : "") + lv.note(),
+    click: async () => {
       if (lv.kv === current.kv) return;
-      opts.querySelectorAll(".ctx-opt").forEach((x) => { x.disabled = true; });
+      lock(opts);
       if (p.active) toast(L(`Modell-Server startet mit KV-Cache ${lv.label} neu …`, `Restarting the model server with KV cache ${lv.label} …`));
       const r = await fetch(`/api/models/${encodeURIComponent(p.name)}/kv`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ kv: lv.kv }) });
@@ -246,9 +307,8 @@ function renderKvSettings(sec, p) {
       else toast(L(`KV-Cache jetzt ${lv.label}.`, `KV cache now ${lv.label}.`));
       await loadCtxMemory();
       refreshModelViews();
-    };
-    opts.appendChild(b);
-  }
+    },
+  })));
   const low = levels.some((x) => /^(?:t|i)?q[23](?!\d)/.test(x.kv));
   if (p.kv_settable) {
     hint(sec.querySelector(".kv-hint"),
@@ -270,7 +330,7 @@ function renderGpus(sec, p, gpus) {
   const shares = (own || fair).slice();
   const mode = sec.querySelector(".gpu-mode"), rows = sec.querySelector(".gpu-rows");
   const send = async (split) => {
-    sec.querySelectorAll("button, input").forEach((x) => { x.disabled = true; });
+    lock(sec);
     if (p.active) toast(L("Modell-Server startet mit der neuen Aufteilung neu …", "Restarting the model server with the new split …"));
     try {
       await api("POST", `/api/models/${encodeURIComponent(p.name)}/gpus`, { split });
@@ -280,21 +340,12 @@ function renderGpus(sec, p, gpus) {
     await loadCtxMemory();
     refreshModelViews();
   };
-  const opt = (label, note, on, click) => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "ctx-opt" + (on ? " on" : "");
-    b.innerHTML = "<span></span><small></small>";
-    b.querySelector("span").textContent = label;
-    b.querySelector("small").textContent = note;
-    b.disabled = !!MP.data.switching;
-    b.onclick = click;
-    mode.appendChild(b);
-  };
-  opt(L("Automatisch", "Automatic"), L(`alle Karten · ${total.toFixed(0)} GB zusammen`, `all GPUs · ${total.toFixed(0)} GB together`),
-    !own, () => { if (own) send(null); });
-  opt(L("Eigene Aufteilung", "Custom split"), L("Anteil je Karte, 0 % = nicht nutzen", "share per GPU, 0 % = don't use"),
-    !!own, () => rows.classList.remove("hidden"));
+  choose(mode, [
+    { label: L("Automatisch", "Automatic"), on: !own, disabled: !!MP.data.switching,
+      note: L(`alle Karten · ${total.toFixed(0)} GB zusammen`, `all GPUs · ${total.toFixed(0)} GB together`), click: () => { if (own) send(null); } },
+    { label: L("Eigene Aufteilung", "Custom split"), on: !!own, disabled: !!MP.data.switching,
+      note: L("Anteil je Karte, 0 % = nicht nutzen", "share per GPU, 0 % = don't use"), click: () => rows.classList.remove("hidden") },
+  ]);
   rows.classList.toggle("hidden", !own);
   gpus.forEach((g, i) => {
     const row = document.createElement("label");
@@ -337,17 +388,13 @@ function renderBatch(sec, p) {
   };
   const opts = sec.querySelector(".batch-opts");
   const current = p.ubatch || 512;
-  for (const n of [512, 1024, 2048]) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "ctx-opt" + (p.ubatch_settable && n === current ? " on" : "") + (p.ubatch_settable ? "" : " na");
-    b.innerHTML = "<span></span><small></small>";
-    b.querySelector("span").textContent = String(n);
-    b.querySelector("small").textContent = p.ubatch_settable ? notes[n] : L("nur mit llama.cpp", "llama.cpp only");
-    b.disabled = !p.ubatch_settable || !!MP.data.switching;
-    b.onclick = async () => {
+  choose(opts, [512, 1024, 2048].map((n) => ({
+    label: String(n), on: p.ubatch_settable && n === current, na: !p.ubatch_settable,
+    disabled: !p.ubatch_settable || !!MP.data.switching,
+    note: p.ubatch_settable ? notes[n] : L("nur mit llama.cpp", "llama.cpp only"),
+    click: async () => {
       if (n === current) return;
-      opts.querySelectorAll(".ctx-opt").forEach((x) => { x.disabled = true; });
+      lock(opts);
       if (p.active) toast(L(`Modell-Server startet mit Batch-Größe ${n} neu …`, `Restarting the model server with batch size ${n} …`));
       try {
         await api("POST", `/api/models/${encodeURIComponent(p.name)}/ubatch`, { size: n });
@@ -356,9 +403,8 @@ function renderBatch(sec, p) {
       } catch { /* Meldung kommt von api() */ }
       await loadCtxMemory();
       refreshModelViews();
-    };
-    opts.appendChild(b);
-  }
+    },
+  })));
   hint(sec.querySelector(".set-hint"),
     L("Größer = lange Eingaben werden schneller eingelesen, kostet etwas Grafikspeicher. ", "Bigger = long inputs are read faster, costs a little VRAM. ") + restartNote(p),
     L("Wie viele Token der Server auf einmal verarbeitet. Spürbar bei langen Eingaben (Werkzeug-Ergebnisse, Dateien, PDFs, erster Start eines Chats), "
@@ -380,7 +426,7 @@ function renderMoe(sec, p) {
   const autoNote = m.auto_n == null ? L("passend zum Grafikspeicher", "to fit the video memory")
     : m.auto_n ? L(`jetzt ${m.auto_n} Schichten`, `now ${m.auto_n} layers`) : L("passt ganz – nichts auslagern", "fits – nothing moved");
   const send = async (body, msg) => {
-    opts.querySelectorAll(".ctx-opt").forEach((x) => { x.disabled = true; });
+    lock(opts);
     if (p.active) toast(L("Modell-Server startet neu …", "Restarting the model server …"));
     try {
       const r = await api("POST", `/api/models/${encodeURIComponent(p.name)}/moe`, body);
@@ -394,15 +440,9 @@ function renderMoe(sec, p) {
     ["off", L("Aus", "Off"), L("alles auf der GPU – schnellstes Generieren", "all on the GPU – fastest generation")],
     ["manual", L("Eigene Zahl", "Custom"), L("Schichten selbst wählen", "choose the layers yourself")],
   ];
-  for (const [key, label, note] of choices) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "ctx-opt" + (key === mode ? " on" : "");
-    b.innerHTML = "<span></span><small></small>";
-    b.querySelector("span").textContent = label;
-    b.querySelector("small").textContent = note;
-    b.disabled = !!MP.data.switching;
-    b.onclick = async () => {
+  choose(opts, choices.map(([key, label, note]) => ({
+    label, note, on: key === mode, disabled: !!MP.data.switching,
+    click: async () => {
       if (key === "auto") {
         await send({ mode: "auto" }, (r) => r.n ? L(`Experten von ${r.n} Schichten im RAM – der Rest passt in den Grafikspeicher.`, `Experts of ${r.n} layers in RAM – the rest fits in video memory.`)
                                                 : L("Das Modell passt ganz in den Grafikspeicher – nichts ausgelagert.", "The model fits in video memory – nothing moved."));
@@ -416,9 +456,8 @@ function renderMoe(sec, p) {
         if (!(n >= 0 && n <= m.layers)) { toast(L(`Bitte eine Zahl von 0 bis ${m.layers}.`, `Please a number from 0 to ${m.layers}.`)); return; }
         await send({ mode: "manual", n }, (r) => L(`Experten von ${r.n} Schichten im RAM.`, `Experts of ${r.n} layers in RAM.`));
       }
-    };
-    opts.appendChild(b);
-  }
+    },
+  })));
   hint(sec.querySelector(".set-hint"),
     L("Bei MoE-Modellen rechnet je Token nur ein kleiner Teil der Experten. Liegen sie im RAM, bleibt das Modell schnell und es passt mehr Kontext oder ein genaueres Quant. ", "MoE models only use a few experts per token. Keeping them in RAM keeps the model fast and leaves room for more context or a more precise quant. ") + restartNote(p),
     L(`Attention und KV-Cache bleiben auf der Grafikkarte; nur die Experten-Gewichte der ersten Schichten (insgesamt ~${fmt(m.all_gb, 1)} GB) wandern in den Arbeitsspeicher. Das Einlesen bleibt fast so schnell, das Generieren wird etwas langsamer – je mehr Schichten, desto mehr. „Automatisch“ lagert nur so viel aus, wie für das eingestellte Kontextfenster nötig ist, und rechnet neu, wenn du Kontext oder KV-Cache änderst.`,

@@ -3,7 +3,7 @@
 import { num } from "./activity.js";
 import { L, api, getJSON } from "./core.js";
 import { ask, toast } from "./dialogs.js";
-import { MP, hint, refreshModelViews, restartNote } from "./models.js";
+import { MP, choose, hint, lock, refreshModelViews, restartNote } from "./models.js";
 import { ctxLabel, fmt, gbs, lastMem } from "./telemetry.js";
 
 export let FLAVOR_LABEL;
@@ -150,22 +150,16 @@ export function renderSpec(sec, p) {
   sec.querySelector("h4").textContent = L("Schneller antworten (spekulatives Decoding)", "Faster answers (speculative decoding)");
   const opts = sec.querySelector(".spec-opts");
   const labels = { off: L("Aus", "Off"), mtp: "MTP", ngram: L("N-Gramm", "N-gram") };
-  for (const o of p.spec_options || []) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "ctx-opt" + (o.mode === (p.spec || "off") ? " on" : "") + (o.ok ? "" : " na");
-    b.innerHTML = "<span></span><small></small>";
-    b.querySelector("span").textContent = labels[o.mode] || o.mode;
-    b.querySelector("small").textContent = !o.ok ? o.why
+  choose(opts, (p.spec_options || []).map((o) => ({
+    label: labels[o.mode] || o.mode, on: o.mode === (p.spec || "off"), na: !o.ok, disabled: !o.ok || !!MP.data.switching,
+    note: !o.ok ? o.why
       : o.mode === "off" ? L("Standard", "default")
       : o.mode === "mtp" ? (o.layers ? L("im Modell eingebaut · ~1,5–3× schneller", "built into the model · ~1.5–3× faster")
                                      : L("MTP-Datei neben dem Modell · ~1,5–3× schneller", "MTP file next to the model · ~1.5–3× faster"))
-      : L("für Code und Wiederholungen · kein Extra-Speicher", "for code and repetition · no extra memory");
-    b.title = b.querySelector("small").textContent;
-    b.disabled = !o.ok || !!MP.data.switching;
-    b.onclick = async () => {
+      : L("für Code und Wiederholungen · kein Extra-Speicher", "for code and repetition · no extra memory"),
+    click: async () => {
       if (o.mode === (p.spec || "off")) return;
-      opts.querySelectorAll(".ctx-opt").forEach((x) => { x.disabled = true; });
+      lock(opts);
       if (p.active) toast(L("Modell-Server startet neu …", "Restarting the model server …"));
       try {
         await api("POST", `/api/models/${encodeURIComponent(p.name)}/spec`, { mode: o.mode });
@@ -174,9 +168,8 @@ export function renderSpec(sec, p) {
                                    `${labels[o.mode]} on – the hit rate shows up here after the next answers.`));
       } catch { /* Meldung kommt von api() */ }
       refreshModelViews();
-    };
-    opts.appendChild(b);
-  }
+    },
+  })));
   const stats = sec.querySelector(".spec-stats");
   if (p.active && p.spec && p.spec !== "off") {
     getJSON("/api/models/spec/stats").then((d) => {
