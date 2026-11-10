@@ -212,6 +212,12 @@ HTML_EN = [
     ('id="btn-autostart">Aus<', 'id="btn-autostart">Off<'),
     ('<b>Schritt-Limit</b><small>Werkzeug-Schritte je Antwort – danach fasst Orbwise zusammen und bietet „mach weiter“ an.</small>',
      '<b>Step limit</b><small>Tool steps per answer – then Orbwise sums up and offers to continue.</small>'),
+    ('<b>Denken bei Aufgaben</b><small>Mit Denkmodus: vor jedem Werkzeug-Schritt denken – oder nur zu Beginn und nach '
+     'einem Fehlschlag. Das ist bei langen Aufgaben schneller, kann je nach Modell aber Qualität kosten.</small>',
+     '<b>Thinking during tasks</b><small>With thinking mode on: think before every tool step – or only at the start '
+     'and after a failed step. That is faster on long tasks but may cost quality with some models.</small>'),
+    ('data-steps="all">Jeder Schritt<', 'data-steps="all">Every step<'),
+    ('data-steps="lean">Nur wo nötig<', 'data-steps="lean">Only where needed<'),
     ('<b>Denkmodus</b><small>Gründlicher, dafür langsamer.</small>',
      '<b>Thinking mode</b><small>More thorough, but slower.</small>'),
     ('data-mirror="btn-tts">Aus<', 'data-mirror="btn-tts">Off<'),

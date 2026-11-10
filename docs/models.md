@@ -305,8 +305,9 @@ a reasoning chain that goes in circles (its end repeats for the third time) is c
 continues without further thinking, with the thoughts so far (the activity shows "enough thinking – acting now" or
 "thoughts repeating – acting now").
 
-`llm.think_steps: lean` thinks only in the first step of an answer and after a failed step instead of before every
-tool call – faster on long tasks, off by default because it may cost quality with some models.
+**Thinking during tasks** (*Settings → General*, or `llm.think_steps` in the config): *Every step* (`all`, default)
+thinks before every tool call; *Only where needed* (`lean`) thinks in the first step of an answer and after a failed
+step – faster on long tasks, but it may cost quality with some models.
 
 **Tool calls written as text.** If a model's chat template and the server don't match, the model writes its tool
 call into the answer instead of calling the tool. Orbwise recognises the common spellings (`<tool_call>…`,

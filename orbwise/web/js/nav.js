@@ -74,6 +74,22 @@ const STEP_CHOICES = [10, 25, 50, 100, 200, 500, 0];
 async function renderSteps() {
   let st;
   try { st = await getJSON("/api/steps"); } catch { return; }
+  // Denken bei Aufgaben: vor jedem Schritt (all) oder nur zu Beginn und nach einem Fehlschlag (lean)
+  const seg = $("set-think-steps");
+  const mark = (value) => seg.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.steps === value));
+  mark(st.think_steps);
+  seg.querySelectorAll("button").forEach((b) => {
+    b.onclick = async () => {
+      if (b.classList.contains("on")) return;
+      try {
+        const r = await api("POST", "/api/steps", { think_steps: b.dataset.steps });
+        mark(r.think_steps);
+        toast(r.think_steps === "lean"
+          ? L("Denkt nur noch zu Beginn und nach einem Fehlschlag.", "Now thinks only at the start and after a failed step.")
+          : L("Denkt wieder vor jedem Schritt.", "Thinks before every step again."));
+      } catch { renderSteps(); }
+    };
+  });
   for (const mode of ["tools", "coding"]) {
     const sel = $("steps-" + mode);
     const values = STEP_CHOICES.includes(st[mode]) ? STEP_CHOICES
