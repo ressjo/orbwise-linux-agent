@@ -271,5 +271,5 @@ echo "Skills:   orbwise skills        (Mail, Paperless, Portainer … – also u
 cat <<EOF
 
 NVIDIA: speech recognition can run on the GPU – set voice.stt_device: cuda and voice.stt_compute_type: float16.
-AMD: if ROCm does not pick up your card (ollama ps shows 100% CPU), see the README section "AMD GPUs".
+AMD: if ROCm does not pick up your card (ollama ps shows 100% CPU), see docs/models.md, section "AMD GPUs".
 EOF
