@@ -5,10 +5,20 @@ import { $, L, LOCALE, api, getJSON } from "./core.js";
 import { ask, toast } from "./dialogs.js";
 import { IV, loadImageModels, openImageView } from "./images.js";
 import { FLAVOR_LABEL } from "./model_tuning.js";
-import { FIT_MARKS, MP, activateModel, kCtx, refreshModelViews } from "./models.js";
+import { FIT_MARKS, MP, activateModel, fitText, kCtx, refreshModelViews } from "./models.js";
 import { openSheetName } from "./nav.js";
 
 let HF;
+
+// „Passt“-Marke als farbige Pille: ✔ passt · ~ teils RAM · ✘ zu groß
+function fitPill(fit) {
+  const x = document.createElement("span");
+  if (!fit) return x;
+  x.className = "fit-pill fit-" + fit;
+  x.textContent = `${FIT_MARKS[fit]} ${({ ok: L("passt", "fits"), tight: L("teils RAM", "partly RAM"), big: L("zu groß", "too big") })[fit]}`;
+  x.title = fitText(fit);
+  return x;
+}
 
 // ---- Eigenes Backend (Experten): ein Server, den Orbwise nicht startet – Sprachmodell (OpenAI-kompatibel) oder Bild
 export function backendForm(image) {
@@ -103,8 +113,8 @@ export async function renderAddTab() {
   box.innerHTML = `
     <form class="mp-search" autocomplete="off"><svg class="i"><use href="#i-search"/></svg><input type="search" spellcheck="false">
         <button type="submit" class="btn primary small"></button></form>
-      <div class="hf-tools"><select class="hf-sort"></select><label class="hf-fit"><input type="checkbox"> <span></span></label></div>
-      <p class="set-hint mp-search-hint"></p>
+      <div class="hf-tools"><select class="hf-sort"></select><label class="hf-fit"><input type="checkbox"> <span></span></label><span class="fit-legend"></span></div>
+      <p class="set-hint mp-search-hint"></p><p class="set-hint mp-disk-note"></p>
       <div class="mm-hf mp-hf"></div>
       <div class="mp-add-cols"><section class="mp-col mp-disk"></section><section class="mp-col mp-presets"></section></div>`;
   const form = box.querySelector("form");
@@ -121,6 +131,7 @@ export async function renderAddTab() {
   const fitBox = box.querySelector(".hf-fit input");
   fitBox.checked = HF.fitOnly;
   box.querySelector(".hf-fit span").textContent = L("nur was in meinen Speicher passt", "only what fits my memory");
+  box.querySelector(".fit-legend").append(fitPill("ok"), fitPill("tight"), fitPill("big"));
   const hf = box.querySelector(".mp-hf");
   const run = (now) => {
     clearTimeout(HF.timer);
@@ -161,9 +172,7 @@ function hfBadges(r) {
   return wrap;
 }
 function hfResult(r) {
-  const mark = document.createElement("span");
-  mark.className = "fit-" + (r.fit || "tight");
-  mark.textContent = r.fit ? FIT_MARKS[r.fit] + " " : "";
+  const mark = fitPill(r.fit);
   const [owner, name] = r.repo.split("/");
   const stats = [r.downloads ? L(`${r.downloads.toLocaleString(LOCALE)} Downloads`, `${r.downloads.toLocaleString(LOCALE)} downloads`) : "",
                  r.likes ? `♥ ${r.likes.toLocaleString(LOCALE)}` : "", r.updated ? L(`aktualisiert ${r.updated}`, `updated ${r.updated}`) : ""]
@@ -183,6 +192,15 @@ function hfList(box, title, results, extra) {
   box.appendChild(head);
   const shown = HF.fitOnly ? results.filter((r) => r.fit !== "big") : results;
   for (const r of shown) box.appendChild(hfResult(r));
+  const hidden = results.length - shown.length;
+  if (hidden && shown.length) {
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "btn-link mp-more-big";
+    more.textContent = L(`${hidden} weitere passen nicht in deinen Speicher – zeigen`, `${hidden} more don't fit your memory – show`);
+    more.onclick = () => { HF.fitOnly = false; const cb = $("mp-add").querySelector(".hf-fit input"); if (cb) cb.checked = false; hfList(box, title, results, extra); };
+    box.appendChild(more);
+  }
   if (!shown.length) box.insertAdjacentHTML("beforeend", `<div class="mm-hint">${results.length
     ? L("Nichts davon passt in deinen Speicher – Filter ausschalten, um alles zu sehen.", "None of these fits your memory – turn the filter off to see all.")
     : L("Nichts gefunden – kürzeren Begriff versuchen (z. B. nur „qwen3.6“).", "Nothing found – try a shorter term (e.g. just “qwen3.6”).")}</div>`);
@@ -206,22 +224,30 @@ async function renderPresets(box) {
   const g = data.gpu;
   const gpuText = g.vendor === "none" ? L("keine GPU erkannt", "no GPU detected") : `${g.name || g.vendor} · ${g.vram_gb} GB`;
   $("mp-add").querySelector(".mp-search-hint").textContent = gpuText + " · "
-    + L("✔ passt · ~ teils im RAM (langsamer) · ✘ zu groß. Orbwise lädt die Datei nach ~/models und startet sie mit llama.cpp.",
-        "✔ fits · ~ partly in RAM (slower) · ✘ too big. Orbwise downloads the file to ~/models and runs it with llama.cpp.");
-  box.innerHTML = `<h4></h4><div class="mm-hf"></div>`;
+    + L("Orbwise lädt die Datei nach ~/models und startet sie mit llama.cpp.", "Orbwise downloads the file to ~/models and runs it with llama.cpp.");
+  box.innerHTML = `<h4></h4><div class="mm-hf mp-cards"></div>`;
   box.querySelector("h4").textContent = L("Vorauswahl", "Presets");
   const list = box.querySelector(".mm-hf");
-  for (const p of data.presets) {
+  const big = data.presets.filter((p) => p.fit === "big" && !p.installed);
+  const shown = HF.allPresets ? data.presets : data.presets.filter((p) => !big.includes(p));
+  for (const p of shown) {
     const pulling = data.pulling.includes(p.tag);
-    const mark = document.createElement("span");
-    mark.className = "fit-" + p.fit;
-    mark.textContent = FIT_MARKS[p.fit] + " ";
+    const mark = fitPill(p.fit);
     const b = hfItem([mark, document.createTextNode(p.label)],
                      pulling ? L("Lädt …", "Loading …") : p.installed ? L("Installiert", "Installed") : p.recommended ? L("Empfohlen", "Recommended") : "",
                      `${p.tag} · ~${p.download_gb} GB`, p.note);
     b.disabled = pulling;
     b.onclick = () => startPull(p.tag, p.label, p.fit);
     list.appendChild(b);
+  }
+  if (big.length) {
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "btn-link mp-more-big";
+    more.textContent = HF.allPresets ? L("Zu große ausblenden", "Hide too big ones")
+      : L(`${big.length} weitere passen nicht in deinen Speicher – zeigen`, `${big.length} more don't fit your memory – show`);
+    more.onclick = () => { HF.allPresets = !HF.allPresets; renderPresets(box); };
+    box.appendChild(more);
   }
 }
 async function startPull(tag, label, fit) {
@@ -239,7 +265,9 @@ export function hfItem(head, tag, sub, note) {
   b.className = "model-item";
   b.innerHTML = `<div class="mi-head"><span class="mi-name"></span><span class="mi-tag"></span></div>
       <div class="mi-sub"></div>` + (note ? `<div class="mi-note"></div>` : "");
-  b.querySelector(".mi-name").append(...head);
+  // Name zuerst, die „Passt“-Pille dahinter
+  b.querySelector(".mi-name").append(...head.filter((x) => !(x.classList && x.classList.contains("fit-pill"))),
+                                     ...head.filter((x) => x.classList && x.classList.contains("fit-pill")));
   b.querySelector(".mi-tag").textContent = tag;
   b.querySelector(".mi-sub").textContent = sub;
   if (note) b.querySelector(".mi-note").textContent = note;
@@ -298,9 +326,7 @@ async function hfQuants(repo, box, only) {
   }
   const vram = data.gpu && data.gpu.vram_gb;
   for (const x of items) {
-    const mark = document.createElement("span");
-    mark.className = "fit-" + x.fit;
-    mark.textContent = FIT_MARKS[x.fit] + " ";
+    const mark = fitPill(x.fit);
     const pulling = data.pulling.includes(x.tag);
     const b = hfItem([mark, document.createTextNode(x.quant)],
                      pulling ? L("Lädt …", "Loading …") : x.installed ? L("Heruntergeladen", "Downloaded")
@@ -333,22 +359,20 @@ async function localModels(box) {
   let data;
   try { data = await getJSON("/api/models/local"); } catch { return; }
   const free = data.items.filter((x) => !x.profile);
+  const cols = box.closest(".mp-add-cols");
+  if (!free.length) {  // nichts Neues dort: Spalte weg, ein Satz unter der Suche genügt
+    box.remove();
+    if (cols) cols.classList.add("single");
+    const note = $("mp-add").querySelector(".mp-disk-note");
+    if (note) note.textContent = L(`Eigene GGUF-Dateien in ${data.dir} erscheinen hier automatisch – oder einen Pfad oben einfügen.`,
+                                   `Your own GGUF files in ${data.dir} show up here automatically – or paste a path above.`);
+    return;
+  }
   box.innerHTML = `<h4></h4><div class="mm-hf"></div>`;
   box.querySelector("h4").textContent = L("Auf der Festplatte", "On disk") + ` · ${data.dir}`;
   const list = box.querySelector(".mm-hf");
-  if (!free.length) {
-    const hint = document.createElement("div");
-    hint.className = "mm-hint";
-    hint.textContent = data.items.length ? L("Alle GGUF-Dateien dort sind schon Modelle.", "All GGUF files there are models already.")
-      : L("Hier abgelegte GGUF-Dateien erscheinen automatisch – oder einen Pfad oben einfügen.",
-          "GGUF files placed there show up here – or paste a path above.");
-    list.appendChild(hint);
-    return;
-  }
   for (const x of free) {
-    const mark = document.createElement("span");
-    mark.className = "fit-" + x.fit;
-    mark.textContent = FIT_MARKS[x.fit] + " ";
+    const mark = fitPill(x.fit);
     const b = hfItem([mark, document.createTextNode(x.label)], data.pulling.includes(x.label) ? L("Lädt …", "Loading …") : "",
                      `${x.rel} · ~${x.size_gb} GB · ${L("braucht", "needs")} ~${x.vram_gb} GB VRAM`
                        + (x.parts > 1 ? ` · ${x.parts} ${L("Teile", "parts")}` : "")
@@ -436,5 +460,5 @@ export function modelPullEvent(ev) {
 export function init() {
 
   // ---- Reiter „Hinzufügen“: Hugging Face (Vorschläge, Live-Suche, Link, Pfad), Dateien in ~/models, Vorauswahl
-  HF = { q: "", sort: "downloads", fitOnly: false, timer: 0, seq: 0 };
+  HF = { q: "", sort: "downloads", fitOnly: true, allPresets: false, timer: 0, seq: 0 };
 }
