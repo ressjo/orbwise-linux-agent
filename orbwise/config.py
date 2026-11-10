@@ -469,6 +469,11 @@ class CodingConfig(BaseModel):
     # Code-Check (🛡): so viele Runden „beheben → erneut prüfen“ höchstens
     review_rounds: int = 2
     goal_max_minutes: int = 120
+    # Prüf-Schranke: nach Änderungen vor „fertig“ Tests/Linter des Projekts ausführen; rot geht zurück ans Modell
+    verify: str = "auto"            # auto | off
+    verify_rounds: int = 3          # so oft höchstens „beheben → erneut prüfen“, danach ehrlich melden, was rot ist
+    verify_command: str = ""        # eigener Prüfbefehl (sonst `check:` in .orbwise.yaml oder automatisch erkannt)
+    verify_timeout: int = 300       # Sekunden je Prüfung
 
     @field_validator("subagent_steps", "max_jobs")
     @classmethod

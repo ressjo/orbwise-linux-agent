@@ -190,6 +190,10 @@ coding:                    # Coding mode (works like OpenCode 2: read/edit/grep/
   # goal_max_steps: 300     # goal mode (/goal <goal>): works without "continue" – at most this many tool steps …
   # goal_max_minutes: 120   # … or minutes, then it pauses ("/goal continue" carries on)
   # review_rounds: 2        # code check (🛡 Check, /review): at most this many "fix → check again" rounds
+  # verify: auto            # after changes, run the project's tests/linters before "done"; failures go back to the model
+  # verify_rounds: 3        # at most this many "fix → check again" rounds, then the answer says what still fails
+  # verify_command: ""      # own check command (otherwise `check:` in the project's .orbwise.yaml, or detected)
+  # verify_timeout: 300     # seconds per check
 
 sandbox:                   # CODING: run the agent's commands in a container on a working copy (like Claude on the web)
   engine: auto             # auto (podman, else docker) | podman | docker – install: sudo apt install podman

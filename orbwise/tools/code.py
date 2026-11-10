@@ -428,7 +428,7 @@ def edit_preview(ctx: ToolContext, args: dict) -> str:
     return diff_text(before or "", after, _rel(ctx, p))[0]
 
 
-def _write_file(ctx: ToolContext, p: Path, before: str | None, after: str) -> str:
+def _write_file(ctx: ToolContext, p: Path, before: str | None, after: str, in_parts: bool = False) -> str:
     p.parent.mkdir(parents=True, exist_ok=True)
     if ctx.sandbox:
         error = _write_in_copy(ctx.sandbox["path"], p, after.encode("utf-8"))
@@ -439,7 +439,12 @@ def _write_file(ctx: ToolContext, p: Path, before: str | None, after: str) -> st
     _remember_read(ctx, p)
     diff, added, removed = diff_text((before or "").replace("\r\n", "\n"), after.replace("\r\n", "\n"), _rel(ctx, p))
     head = f"{'Geändert' if before is not None else 'Angelegt'}: {_rel(ctx, p)} (+{added} −{removed})"
-    return head + ("\n" + diff if diff else "")
+    from ..verify import check_syntax  # nur parsen, nichts ausführen
+    problem = check_syntax(p, after.replace("\r\n", "\n"))
+    warn = "" if not problem else (f"\n⚠ {problem} – erwartbar, solange die Datei noch mit append weitergeschrieben "
+                                    "wird; sonst beheben." if in_parts else f"\n⚠ {problem} – die Datei parst so "
+                                    "nicht, bitte beheben.")
+    return head + warn + ("\n" + diff if diff else "")
 
 
 def _write_in_copy(ws: str, p: Path, data: bytes) -> str | None:
@@ -477,8 +482,8 @@ async def code_edit(
     oldString: Annotated[str, "Exakter Text, der ersetzt wird (leer nur für eine neue/leere Datei)"] = "",
     newString: Annotated[str, "Neuer Text an seiner Stelle (muss sich von oldString unterscheiden)"] = "",
     replaceAll: Annotated[bool, "Optional: jedes Vorkommen ersetzen (Standard false: muss eindeutig sein)"] = False,
-    edits: Annotated[list[dict], "Optional statt oldString/newString: mehrere Änderungen derselben Datei, je "
-                                 "{oldString, newString, replaceAll?}; nacheinander angewendet, alle oder keine"] = None,  # noqa: RUF013
+    edits: Annotated[list[dict], "Optional statt oldString/newString: [{oldString, newString, replaceAll?}, …] – "
+                                 "alle oder keine"] = None,  # noqa: RUF013
 ) -> str:
     p, before, after, error = plan_edit(ctx, {"path": path, "oldString": oldString, "newString": newString,
                                               "replaceAll": replaceAll, "edits": edits})
@@ -525,7 +530,7 @@ async def code_write(
     if p.is_file() and _stale(ctx, p):
         return f"{_rel(ctx, p)} wurde seit dem letzten read geändert – erst mit read neu lesen."
     before = _read_text(p) if p.exists() else None
-    return _write_file(ctx, p, before, (before or "") + content if append else content)
+    return _write_file(ctx, p, before, (before or "") + content if append else content, in_parts=True)
 
 
 # ---------------------------------------------------------------- grep / glob
@@ -660,6 +665,30 @@ async def code_glob(
     paths.sort(key=mtime, reverse=True)
     more = f" (zeige {limit} – Muster genauer fassen)" if len(paths) > limit else ""
     return f"{len(paths)} Dateien{more}\n" + "\n".join(_rel(ctx, p) for p in paths[:limit])
+
+
+@tool("Repo-Map: Klassen, Funktionen, Methoden je Datei mit Zeile und Signatur – für Überblick und „wo ist X "
+      "definiert?“. Inhalte dann mit read.",
+      risk=_secret_risk, name="map")
+async def code_map(
+    ctx: ToolContext,
+    path: Annotated[str, "Optional: Ordner/Datei"] = "",
+    query: Annotated[str, "Optional: (Teil eines) Symbolnamens"] = "",
+) -> str:
+    from .. import repomap
+    if not ctx.cwd:
+        return "Kein Projektordner gewählt."
+    root = Path(ctx.cwd)
+    rel = ""
+    if path:
+        target = ctx.path(path)
+        try:
+            rel = str(target.resolve().relative_to(root.resolve()))
+        except ValueError:
+            return f"{path} liegt nicht im Projektordner."
+        rel = "" if rel == "." else rel
+    idx = await asyncio.to_thread(repomap.index, root)
+    return repomap.render(idx, rel, query.strip(), ctx.limit())
 
 
 # ---------------------------------------------------------------- shell
