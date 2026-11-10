@@ -11,6 +11,8 @@ neue Epoche mit dieser Zusammenfassung und den letzten Schritten – mitten in e
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import dataclasses
 import getpass
 import inspect
 import json
@@ -123,6 +125,23 @@ class ThinkFilter:
         rest = "" if self.inside else self.buf
         self.buf = ""
         return rest
+
+
+@dataclasses.dataclass
+class Turn:
+    """Zustand einer Antwort (ein Lauf von Agent._run): Zähler, Schleifenerkennung, Gesagtes, Prüf-Schranke."""
+    msg_id: str
+    goal: dict | None = None            # Ziel-Modus (/goal): das aktive Ziel
+    steps: int = 0                      # Modellschritte dieser Antwort (Schritt-Limit)
+    nudges: int = 0                     # „mach weiter“ in Folge im Ziel-Modus
+    retried: bool = False               # nach „Kontext zu groß“ schon einmal Platz geschaffen
+    broken: bool = False                # ein abgeschnittener Aufruf wurde schon einmal wiederholt
+    finished: bool = False              # das Modell hat von sich aus geendet (nicht Limit/Schleife)
+    seen: dict[str, int] = dataclasses.field(default_factory=dict)   # gleiche Aufrufe zählen (Schleifenerkennung)
+    used_tools: set[str] = dataclasses.field(default_factory=set)
+    spoken: list[str] = dataclasses.field(default_factory=list)      # Textabschnitte der Antwort
+    tool_notes: list[str] = dataclasses.field(default_factory=list)  # Kurzzeilen fürs Tagebuch
+    vstate: dict = dataclasses.field(default_factory=dict)           # Prüf-Schranke (verify_gate)
 
 
 class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMixin, SpeedMixin):
@@ -537,31 +556,30 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
         """think: Denkmodus für diese Anfrage (None = Einstellung des Modell-Profils).
         plan: Planmodus – nur lesend nachsehen und einen Plan zur Freigabe vorlegen (gedacht wird nur, wenn der
         Denkmodus an ist). approved_plan: freigegebener Plan, der beim Ausführen angeheftet bleibt."""
-        async with self.lock:
-            self._plan, self._approved_plan = plan, approved_plan
-            self._set_think(think)
-            await self._fit_think()
-            self._tainted = False
+        async with self._request(think, plan, approved_plan):
             self._prewarm_failed = None  # eine echte Frage darf es wieder versuchen
-            try:
-                return await self._run(user_text, emit, confirm, images)
-            finally:
-                self._think, self._think_level, self._plan, self._approved_plan = None, None, False, ""
+            return await self._run(user_text, emit, confirm, images)
 
     async def run_in_chat(self, chat_id: str, title: str, text: str, emit: Emit, confirm: Confirm,
                           plan: bool = False, think: bool | None = None,
                           approved_plan: str = "") -> tuple[str, str]:
         """Für Routinen und Telegram: Aufgabe in einem eigenen Chat erledigen – der aktive Chat des Nutzers bleibt
         unberührt. Liefert (Antwort, Chat-ID)."""
+        async with self._request(think, plan, approved_plan):
+            with self.memory.in_chat(chat_id, title) as conv:
+                answer = await self._run(text, emit, confirm)
+                return answer, conv.chat_id
+
+    @contextlib.asynccontextmanager
+    async def _request(self, think: bool | None, plan: bool, approved_plan: str):
+        """Rahmen einer Anfrage: Sperre des Agenten, Plan- und Denkmodus nur für diese Anfrage."""
         async with self.lock:
             self._plan, self._approved_plan = plan, approved_plan
             self._set_think(think)
             await self._fit_think()
             self._tainted = False
             try:
-                with self.memory.in_chat(chat_id, title) as conv:
-                    answer = await self._run(text, emit, confirm)
-                    return answer, conv.chat_id
+                yield
             finally:
                 self._think, self._think_level, self._plan, self._approved_plan = None, None, False, ""
 
@@ -631,142 +649,16 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
         self._turn_open = True
         self._shots: list[str] = []  # Screenshots dieser Antwort (screenshot-Werkzeug) – erscheinen unter ihr
         self._step_hint: str | None = None  # Hinweis nur für den nächsten Schritt (nicht im Verlauf)
-        broken = False
-        spoken: list[str] = []
-        tool_notes: list[str] = []
         msg_id = uuid.uuid4().hex[:8]
+        turn = Turn(msg_id=msg_id, vstate={"msg_id": msg_id})
+        spoken, tool_notes, vstate = turn.spoken, turn.tool_notes, turn.vstate
         await emit({"type": "assistant_start", "id": msg_id, "plan": self._plan})
         await self.snapshot_begin()
         try:
-            seen: dict[str, int] = {}  # gleiche Tool-Aufrufe zählen (Schleifenerkennung)
-            retried = False
-            finished = False
-            used_tools: set[str] = set()
-            goal = self.goal_state() if not self._plan else None  # Ziel-Modus: ohne „mach weiter“ bis zum Ende
-            steps = nudges = 0
-            vstate: dict = {"msg_id": msg_id}  # Prüf-Schranke dieser Antwort (verify_gate)
-            while True:
-                if goal is not None and self.goal_state() is None:  # „/goal stop“ während der Arbeit
-                    goal, steps = None, 0
-                limit = self.max_steps()
-                if goal is None and limit and steps >= limit:
-                    break
-                if goal is not None and self._goal_exhausted(goal):
-                    await self._goal_event(emit, "limit", goal)
-                    break
-                steps += 1
-                if goal is not None:
-                    goal["steps"] = int(goal.get("steps", 0)) + 1
-                added = self.choose_tools(used_tools)
-                if added or self._tools_dropped:
-                    await self._tools_added(emit, msg_id, added, self._tools_dropped)
-                if self._over_limit():  # kurz vor dem Limit: Platz schaffen (ausblenden oder zusammenfassen)
-                    await self._make_room(emit, msg_id)
-                try:
-                    content, calls = await self._step(emit, msg_id)
-                    calls, cut_notes = self._salvage_calls(calls or [])
-                except ContextOverflow as e:
-                    # Server meldet „zu groß“ (z. B. kleiner als eingestellt): Platz schaffen und weitermachen
-                    if retried or not await self._make_room(emit, msg_id, overflow=e):
-                        raise
-                    retried = True
-                    continue
-                except ToolCallBroken:
-                    # Aufruf wurde abgeschnitten (z. B. riesige Datei in einem write): einmal mit dem Hinweis, in Teilen
-                    # zu schreiben, wiederholen – der Hinweis gilt nur für diesen Schritt
-                    if broken:
-                        raise LLMError(prompts.text(self.cfg, "tool_call_broken")) from None
-                    broken = True
-                    self._step_hint = prompts.text(self.cfg, "tool_call_split")
-                    await self._make_room(emit, msg_id)  # immer: der Grund ist meist zu wenig Platz für die Ausgabe
-                    continue
-                self._step_hint = None
-                retried = False
-                entry = {"role": "assistant", "content": content}
-                if calls:
-                    entry["tool_calls"] = calls
-                conv.add(entry)
-                if not calls and goal is not None:
-                    marker, content = goal_marker(content)
-                    entry["content"] = content
-                    if marker == "done" and (hint := await self.verify_gate(emit, confirm, vstate)):
-                        if content:  # „erreicht“ – aber die Prüfung ist rot: weiterarbeiten
-                            spoken.append(content)
-                        conv.add({"role": "user", "content": hint, "verify_nudge": True})
-                        await emit({"type": "segment_end", "id": msg_id})
-                        continue
-                    if marker or nudges >= 3:  # erreicht, Rückfrage – oder das Modell hört trotz Nudges auf
-                        if content:
-                            spoken.append(content)
-                        await self._goal_event(emit, marker or "stopped", goal)
-                        finished = True
-                        break
-                    if content:
-                        spoken.append(content)
-                    nudges += 1
-                    conv.add({"role": "user", "content": prompts.text(self.cfg, "goal_nudge").format(goal=goal["text"]),
-                              "goal_nudge": True})
-                    await emit({"type": "segment_end", "id": msg_id})  # nächste Runde als eigener Absatz
-                    await emit({"type": "goal", "state": "progress", "text": goal["text"], "steps": goal["steps"]})
-                    continue
-                if content:
-                    spoken.append(content)
-                if not calls:
-                    if hint := await self.verify_gate(emit, confirm, vstate):  # Änderungen geprüft: rot → weiter
-                        conv.add({"role": "user", "content": hint, "verify_nudge": True})
-                        await emit({"type": "segment_end", "id": msg_id})
-                        continue
-                    finished = True
-                    break
-                nudges = 0
-                await emit({"type": "segment_end", "id": msg_id})
-                looping = False
-                done: dict[int, tuple[str, str, str]] = {}
-                for i, call in enumerate(calls):
-                    fn = call.get("function", {})
-                    used_tools.add(fn.get("name", ""))
-                    key = fn.get("name", "") + json.dumps(fn.get("arguments"), sort_keys=True, ensure_ascii=False)
-                    seen[key] = seen.get(key, 0) + 1
-                    if seen[key] >= 3:
-                        # Nicht noch einmal ausführen – das Modell dreht sich im Kreis
-                        name = fn.get("name", "")
-                        done[i] = (name, prompts.text(self.cfg, "repeat_skipped"), f"{name}: Wiederholung übersprungen")
-                        looping = looping or seen[key] >= 4
-                # Mehrere Aufrufe ohne Rückfrage (lesend) gleichzeitig – das Modell hat sie ohnehin unabhängig
-                # voneinander geplant. Bringt einer fremde Inhalte (Mail, Bildschirm), bleibt es bei der Reihenfolge.
-                todo = [i for i in range(len(calls)) if i not in done]
-                if len(todo) > 1 and not any(c.get("function", {}).get("name") in TAINT_SOURCES for c in calls):
-                    quick = [i for i in todo if self._runs_unasked(calls[i])]
-                    if len(quick) > 1:
-                        results = await asyncio.gather(*(self._execute(calls[i], emit, confirm) for i in quick))
-                        done.update(zip(quick, results))
-                for i, call in enumerate(calls):
-                    fn = call.get("function", {})
-                    if fn.get("name") in ("edit", "write"):  # für die Prüf-Schranke ohne Schnappschüsse
-                        vstate["edited"] = True
-                        vstate.setdefault("paths", set()).add(str((fn.get("arguments") or {}).get("path", "")))
-                    name, result, note = done[i] if i in done else await self._execute(call, emit, confirm)
-                    if fn.get("name") in ("edit", "write") and result.startswith(("Geändert", "Angelegt")):
-                        # der Code ist jetzt ein anderer: derselbe Test-/Lesebefehl danach ist keine Schleife
-                        seen.clear()
-                    result += cut_notes.get(i, "")
-                    conv.add({"role": "tool", "content": result, "tool_name": name})
-                    tool_notes.append(note)
-                if looping:
-                    if goal is not None:
-                        await self._goal_event(emit, "stopped", goal)
-                    break
-            if not finished:
-                # Limit erreicht oder Schleife: ohne Tools zusammenfassen lassen, statt hart abzubrechen
-                content, _ = await self._step(emit, msg_id, final=True)
-                if not content:
-                    content = prompts.text(self.cfg, "paused")
-                    await emit({"type": "token", "id": msg_id, "text": content})
-                hint = prompts.text(self.cfg, "goal_continue_hint" if goal is not None else "continue_hint")
-                await emit({"type": "token", "id": msg_id, "text": "\n\n" + hint})
-                content = f"{content}\n\n{hint}"
-                conv.add({"role": "assistant", "content": content})
-                spoken.append(content)
+            turn.goal = self.goal_state() if not self._plan else None  # Ziel-Modus: ohne „mach weiter“ bis zum Ende
+            await self._turn_loop(turn, emit, confirm)
+            if not turn.finished:  # Limit erreicht oder Schleife
+                await self._turn_pause(turn, emit, confirm)
         except LLMError as e:
             self._turn_open = False
             if len(conv.history) <= start_len + 1:
@@ -820,6 +712,160 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
             except Exception as e:  # noqa: BLE001
                 log.warning("Platz schaffen nach der Antwort fehlgeschlagen: %s", e)
         return answer
+
+    # ---------- Die Schleife einer Antwort (Zustand: Turn) ----------
+    async def _turn_loop(self, turn: Turn, emit: Emit, confirm: Confirm) -> None:
+        """Modellschritt → Werkzeuge → Modellschritt …, bis das Modell ohne Aufruf antwortet (turn.finished) oder
+        Schritt-Limit bzw. Schleifenerkennung die Antwort anhalten (dann folgt _turn_pause)."""
+        conv = self.memory.conversation
+        while await self._turn_next(turn, emit):
+            step = await self._turn_step(turn, emit)
+            if step is None:  # Platz geschaffen bzw. Hinweis gesetzt – denselben Schritt noch einmal
+                continue
+            content, calls, cut_notes = step
+            entry = {"role": "assistant", "content": content}
+            if calls:
+                entry["tool_calls"] = calls
+            conv.add(entry)
+            if not calls:
+                if await self._turn_answer(turn, entry, emit, confirm):
+                    return
+                continue
+            if content:
+                turn.spoken.append(content)
+            turn.nudges = 0
+            await emit({"type": "segment_end", "id": turn.msg_id})
+            if await self._turn_calls(turn, calls, cut_notes, emit, confirm):  # das Modell dreht sich im Kreis
+                if turn.goal is not None:
+                    await self._goal_event(emit, "stopped", turn.goal)
+                return
+
+    async def _turn_next(self, turn: Turn, emit: Emit) -> bool:
+        """Vor jedem Schritt: Darf es weitergehen (Schritt-Limit, Grenzen des Ziels)? Dann zählen, Werkzeuge
+        nachladen und bei vollem Fenster Platz schaffen."""
+        if turn.goal is not None and self.goal_state() is None:  # „/goal stop“ während der Arbeit
+            turn.goal, turn.steps = None, 0
+        limit = self.max_steps()
+        if turn.goal is None and limit and turn.steps >= limit:
+            return False
+        if turn.goal is not None and self._goal_exhausted(turn.goal):
+            await self._goal_event(emit, "limit", turn.goal)
+            return False
+        turn.steps += 1
+        if turn.goal is not None:
+            turn.goal["steps"] = int(turn.goal.get("steps", 0)) + 1
+        added = self.choose_tools(turn.used_tools)
+        if added or self._tools_dropped:
+            await self._tools_added(emit, turn.msg_id, added, self._tools_dropped)
+        if self._over_limit():  # kurz vor dem Limit: Platz schaffen (ausblenden oder zusammenfassen)
+            await self._make_room(emit, turn.msg_id)
+        return True
+
+    async def _turn_step(self, turn: Turn, emit: Emit) -> tuple[str, list, dict[int, str]] | None:
+        """Ein Modellschritt → (Text, Aufrufe, Hinweise zu geretteten Aufrufen) oder None: noch einmal versuchen."""
+        try:
+            content, calls = await self._step(emit, turn.msg_id)
+            calls, cut_notes = self._salvage_calls(calls or [])
+        except ContextOverflow as e:
+            # Server meldet „zu groß“ (z. B. kleiner als eingestellt): Platz schaffen und weitermachen
+            if turn.retried or not await self._make_room(emit, turn.msg_id, overflow=e):
+                raise
+            turn.retried = True
+            return None
+        except ToolCallBroken:
+            # Aufruf wurde abgeschnitten (z. B. riesige Datei in einem write): einmal mit dem Hinweis, in Teilen
+            # zu schreiben, wiederholen – der Hinweis gilt nur für diesen Schritt
+            if turn.broken:
+                raise LLMError(prompts.text(self.cfg, "tool_call_broken")) from None
+            turn.broken = True
+            self._step_hint = prompts.text(self.cfg, "tool_call_split")
+            await self._make_room(emit, turn.msg_id)  # immer: der Grund ist meist zu wenig Platz für die Ausgabe
+            return None
+        self._step_hint = None
+        turn.retried = False
+        return content, calls, cut_notes
+
+    async def _turn_answer(self, turn: Turn, entry: dict, emit: Emit, confirm: Confirm) -> bool:
+        """Das Modell antwortet ohne Werkzeug-Aufruf: fertig (True) – oder es geht weiter (False), weil die
+        Prüf-Schranke rot ist oder das Ziel noch nicht erreicht."""
+        conv, goal, marker = self.memory.conversation, turn.goal, ""
+        if goal is not None:
+            marker, entry["content"] = goal_marker(entry["content"])
+        if entry["content"]:
+            turn.spoken.append(entry["content"])
+        if goal is None or marker == "done":
+            if hint := await self.verify_gate(emit, confirm, turn.vstate):  # Änderungen geprüft: rot → weiter
+                conv.add({"role": "user", "content": hint, "verify_nudge": True})
+                await emit({"type": "segment_end", "id": turn.msg_id})
+                return False
+            if goal is not None:
+                await self._goal_event(emit, "done", goal)
+        elif marker or turn.nudges >= 3:  # Rückfrage – oder das Modell hört trotz Nudges auf
+            if not marker:  # aufgegeben: wenigstens ehrlich melden, wie die Prüfungen stehen
+                await self.verify_gate(emit, confirm, turn.vstate, final=True)
+            await self._goal_event(emit, marker or "stopped", goal)
+        else:
+            turn.nudges += 1
+            conv.add({"role": "user", "content": prompts.text(self.cfg, "goal_nudge").format(goal=goal["text"]),
+                      "goal_nudge": True})
+            await emit({"type": "segment_end", "id": turn.msg_id})  # nächste Runde als eigener Absatz
+            await emit({"type": "goal", "state": "progress", "text": goal["text"], "steps": goal["steps"]})
+            return False
+        turn.finished = True
+        return True
+
+    async def _turn_calls(self, turn: Turn, calls: list[dict], cut_notes: dict[int, str], emit: Emit,
+                          confirm: Confirm) -> bool:
+        """Die Werkzeug-Aufrufe eines Schritts ausführen, Ergebnisse in den Verlauf. → True, wenn das Modell
+        denselben Aufruf immer wieder stellt (Schleife) – dann endet die Antwort."""
+        conv, seen = self.memory.conversation, turn.seen
+        looping = False
+        done: dict[int, tuple[str, str, str]] = {}
+        for i, call in enumerate(calls):
+            fn = call.get("function", {})
+            turn.used_tools.add(fn.get("name", ""))
+            key = fn.get("name", "") + json.dumps(fn.get("arguments"), sort_keys=True, ensure_ascii=False)
+            seen[key] = seen.get(key, 0) + 1
+            if seen[key] >= 3:
+                # Nicht noch einmal ausführen – das Modell dreht sich im Kreis
+                name = fn.get("name", "")
+                done[i] = (name, prompts.text(self.cfg, "repeat_skipped"), f"{name}: Wiederholung übersprungen")
+                looping = looping or seen[key] >= 4
+        # Mehrere Aufrufe ohne Rückfrage (lesend) gleichzeitig – das Modell hat sie ohnehin unabhängig
+        # voneinander geplant. Bringt einer fremde Inhalte (Mail, Bildschirm), bleibt es bei der Reihenfolge.
+        todo = [i for i in range(len(calls)) if i not in done]
+        if len(todo) > 1 and not any(c.get("function", {}).get("name") in TAINT_SOURCES for c in calls):
+            quick = [i for i in todo if self._runs_unasked(calls[i])]
+            if len(quick) > 1:
+                results = await asyncio.gather(*(self._execute(calls[i], emit, confirm) for i in quick))
+                done.update(zip(quick, results))
+        for i, call in enumerate(calls):
+            fn = call.get("function", {})
+            if fn.get("name") in ("edit", "write"):  # für die Prüf-Schranke ohne Schnappschüsse
+                turn.vstate["edited"] = True
+                turn.vstate.setdefault("paths", set()).add(str((fn.get("arguments") or {}).get("path", "")))
+            name, result, note = done[i] if i in done else await self._execute(call, emit, confirm)
+            if fn.get("name") in ("edit", "write") and result.startswith(("Geändert", "Angelegt")):
+                # der Code ist jetzt ein anderer: derselbe Test-/Lesebefehl danach ist keine Schleife
+                seen.clear()
+            result += cut_notes.get(i, "")
+            conv.add({"role": "tool", "content": result, "tool_name": name})
+            turn.tool_notes.append(note)
+        return looping
+
+    async def _turn_pause(self, turn: Turn, emit: Emit, confirm: Confirm) -> None:
+        """Schritt-Limit oder Schleife: ohne Tools zusammenfassen lassen, statt hart abzubrechen. Was bis hierher
+        geändert wurde, wird trotzdem geprüft – nur gemeldet, nicht mehr nachgebessert."""
+        content, _ = await self._step(emit, turn.msg_id, final=True)
+        if not content:
+            content = prompts.text(self.cfg, "paused")
+            await emit({"type": "token", "id": turn.msg_id, "text": content})
+        hint = prompts.text(self.cfg, "goal_continue_hint" if turn.goal is not None else "continue_hint")
+        await emit({"type": "token", "id": turn.msg_id, "text": "\n\n" + hint})
+        content = f"{content}\n\n{hint}"
+        self.memory.conversation.add({"role": "assistant", "content": content})
+        turn.spoken.append(content)
+        await self.verify_gate(emit, confirm, turn.vstate, final=True)
 
     async def _tools_added(self, emit: Emit, msg_id: str, groups: set[str], dropped: set[str] = frozenset()) -> None:
         tid = uuid.uuid4().hex[:8]

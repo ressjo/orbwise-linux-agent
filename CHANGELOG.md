@@ -16,8 +16,18 @@ All notable changes to this project are documented here. The format follows
   ruff are taken from there instead of the system Python, where they are often missing – the check was then skipped
   without a word. When every check had to be skipped, the answer now ends with **○ Not checked – not installed here:
   …** instead of nothing.
+- **Coding mode – checks also run when an answer is stopped:** an answer that ended at the step limit, in the loop
+  detection or with a `/goal` the model gave up on skipped the checks, so changed files went unverified without a
+  word. They now run once and the answer ends with the usual **✓ Checked** / **⚠ Checks still failing** line (reported
+  only – the answer is over, nothing is sent back to the model).
 - **Coding mode – more than 50 `edits` in one call are refused** instead of applying the first 50 and reporting
   success.
+
+### Changed
+- **Internal – the answer loop is split up:** `Agent._run` kept nine loose variables in one 200-line loop. The state
+  of an answer now lives in a small `Turn` object and the loop consists of separately readable steps (may it go on,
+  one model step, answer without calls, run the calls, pause); `run` and `run_in_chat` share one frame. No change in
+  behaviour apart from the fix above.
 
 ## [0.4.0] – 2026-11-10
 

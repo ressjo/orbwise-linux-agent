@@ -221,3 +221,51 @@ def test_declined_check_is_not_asked_again(tmp_path, cfg, memory, monkeypatch):
         return name != "shell"  # Dateien ja, Prüfung nein
     answer = run(agent.run("Mach f richtig", emit, confirm))
     assert asked.count("shell") == 1 and "Geprüft" not in answer and "rot" not in answer
+
+
+class Busy:
+    """Liest, schreibt falschen Code und arbeitet dann immer weiter (jedes Mal ein anderer Befehl) – bis Orbwise die
+    Antwort anhält. stop=True: hört stattdessen nach dem Schreiben ohne Ziel-Marker auf."""
+
+    def __init__(self, stop=False):
+        self.stop, self.nudges = stop, 0
+
+    async def chat_stream(self, messages, tools=None):
+        last = messages[-1]
+        self.nudges += "automatisch geprüft" in (last.get("content") or "")
+        n = sum(1 for m in messages if m["role"] == "tool")
+        if n == 0:
+            call = {"name": "read", "arguments": {"path": "m.py"}}
+        elif n == 1:
+            call = {"name": "write", "arguments": {"path": "m.py", "content": "def f():\n    return 1\n# geändert\n"}}
+        elif self.stop or last["role"] == "user":  # Zwischenbilanz bzw. „mach weiter“
+            call = None
+        else:
+            call = {"name": "shell", "arguments": {"command": f"echo {n}"}}
+        if call:
+            yield {"type": "done", "message": {"role": "assistant", "content": "", "tool_calls": [{"function": call}]}, "stats": {}}
+        else:
+            yield {"type": "token", "text": "Zwischenstand."}
+            yield {"type": "done", "message": {"role": "assistant", "content": "Zwischenstand."}, "stats": {}}
+
+
+@needs_git
+def test_step_limit_still_reports_the_checks(tmp_path, cfg, memory, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg.coding.max_steps = 4
+    llm = Busy()
+    answer, events = _go(_agent(cfg, memory, llm, _proj(tmp_path)))
+    assert "Zwischenstand." in answer and "⚠ Prüfung weiterhin rot: check" in answer
+    assert llm.nudges == 0  # nur gemeldet – die Antwort war am Limit ohnehin zu Ende
+    assert memory.conversation.history[-1]["content"].endswith("Details im Aktivitäts-Panel.")
+
+
+@needs_git
+def test_goal_given_up_still_reports_the_checks(tmp_path, cfg, memory, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    llm = Busy(stop=True)
+    agent = _agent(cfg, memory, llm, _proj(tmp_path))
+    agent.set_goal("Mach f richtig")
+    answer, events = _go(agent)
+    assert [e["state"] for e in events if e["type"] == "goal"][-1] == "stopped" and agent.goal_state() is None
+    assert "⚠ Prüfung weiterhin rot: check" in answer and llm.nudges == 0

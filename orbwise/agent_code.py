@@ -235,10 +235,11 @@ class CodingMixin:
         await emit({"type": "changes", "id": msg_id, "turn": turn, "files": files})
 
     # ---------- Prüf-Schranke (siehe verify.py) ----------
-    async def verify_gate(self, emit, confirm, state: dict) -> str | None:
+    async def verify_gate(self, emit, confirm, state: dict, final: bool = False) -> str | None:
         """Vor „fertig“: hat diese Antwort Dateien geändert, die Prüfungen des Projekts ausführen.
         → Hinweis für das Modell (rot, Runden übrig) oder None (fertig). Das Ergebnis für unter die Antwort steht dann
-        in state["status"]. state lebt eine Antwort lang: rounds, after, results, off."""
+        in state["status"]. state lebt eine Antwort lang: rounds, after, results, off. final: die Antwort endet hier
+        ohnehin (Schritt-Limit, Schleife) – nur prüfen und melden, nichts zurückgeben."""
         from . import verify
         if self.mode != "coding" or self._plan or self.cfg.coding.verify == "off" or state.get("off"):
             return None
@@ -275,7 +276,8 @@ class CodingMixin:
             return None
         state["results"], state["after"] = results, after
         en = self.cfg.language == "en"
-        if any(r["status"] == "fail" for r in results) and state.get("rounds", 0) < self.cfg.coding.verify_rounds:
+        if not final and any(r["status"] == "fail" for r in results) \
+                and state.get("rounds", 0) < self.cfg.coding.verify_rounds:
             state["rounds"] = state.get("rounds", 0) + 1
             return verify.nudge(results, en)
         state["status"] = verify.summary(results, en)
