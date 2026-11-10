@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] – 2026-11-10
+
 ### Added
 - **Coding mode – checks before "done":** when an answer changed files, Orbwise runs the project's tests and linters
   (from `check:` in `.orbwise.yaml`, `coding.verify_command`, or detected) before the answer ends. Failures go back to
@@ -20,6 +22,9 @@ All notable changes to this project are documented here. The format follows
   the step limit.
 
 ### Changed
+- **Documentation tidied up:** the README is a short overview now (installation, first steps, commands,
+  troubleshooting); the details moved to `docs/` – models, coding, voice/skills/integrations, memory, security and
+  configuration. Setup is described through the web UI; the optional `config.yaml` is covered on its own experts page.
 - **Model page tidied up:** the details of a model are split into tabs (Overview, Performance, Quality, Diagnostics)
   instead of one long page; the context window is a slider; options such as experts in RAM, KV cache, batch size and
   speculative decoding are switches with a one-line explanation, longer explanations sit behind an **i**. The list
