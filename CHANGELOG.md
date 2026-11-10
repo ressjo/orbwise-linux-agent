@@ -6,6 +6,13 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Coding mode – checks before "done":** when an answer changed files, Orbwise runs the project's tests and linters
+  (from `check:` in `.orbwise.yaml`, `coding.verify_command`, or detected) before the answer ends. Failures go back to
+  the model, which fixes them – up to three rounds – and the answer ends with **✓ Checked: …** or an honest **⚠ Checks
+  still failing: …** written by Orbwise, not the model. `edit`/`write` also check the syntax right away (parse only).
+- **Coding mode – repo map:** new tool `map` lists classes, functions and methods per file with line and signature,
+  for a folder or the definitions of a name – one call instead of many reads and greps. Uses universal-ctags if
+  installed, otherwise built-in parsing; cached per project.
 - **Coding mode – sturdier edits:** `edit` takes several changes to one file in one call (`edits`, applied in order,
   all or nothing – the message names the change that failed). An existing file must be read in the chat before it is
   edited (new files and files the agent wrote itself are fine). After three failed edits in a row on the same file

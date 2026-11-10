@@ -22,7 +22,7 @@ from .tools.registry import SAFE, coerce_args, get_tool
 
 log = logging.getLogger(__name__)
 
-EXPLORE_TOOLS = {"read", "grep", "glob", "shell", "job_output", "websearch", "webfetch", "recall"}
+EXPLORE_TOOLS = {"read", "grep", "glob", "map", "shell", "job_output", "websearch", "webfetch", "recall"}
 GENERAL_EXCLUDED = {"subagent", "question"}
 SNAPSHOTS_KEEP = 60
 
@@ -226,12 +226,60 @@ class CodingMixin:
         if not files:
             return
         conv = self.memory.conversation
-        turn = sum(1 for m in conv.history if m["role"] == "user" and not m.get("goal_nudge"))
+        turn = sum(1 for m in conv.history if m["role"] == "user" and not m.get("goal_nudge")
+                   and not m.get("verify_nudge"))
         snaps = conv.meta.setdefault("snapshots", {})
         snaps[str(turn)] = {"project": project, "before": before, "after": after, "files": files, "msg": msg_id}
         for key in list(snaps)[:-SNAPSHOTS_KEEP]:
             snaps.pop(key, None)
         await emit({"type": "changes", "id": msg_id, "turn": turn, "files": files})
+
+    # ---------- Prüf-Schranke (siehe verify.py) ----------
+    async def verify_gate(self, emit, confirm, state: dict) -> str | None:
+        """Vor „fertig“: hat diese Antwort Dateien geändert, die Prüfungen des Projekts ausführen.
+        → Hinweis für das Modell (rot, Runden übrig) oder None (fertig). Das Ergebnis für unter die Antwort steht dann
+        in state["status"]. state lebt eine Antwort lang: rounds, after, results, off."""
+        from . import verify
+        if self.mode != "coding" or self._plan or self.cfg.coding.verify == "off" or state.get("off"):
+            return None
+        project = self.project_dir()
+        if not project:
+            return None
+        snap = getattr(self, "_snap", None)
+        after = await asyncio.to_thread(snapshot.capture, project) if snap and snap[1] else None
+        if snap and snap[1] and after:
+            files = [f["path"] for f in await asyncio.to_thread(snapshot.changed, project, snap[1], after)
+                     if f.get("status") != "deleted"]
+            if not files and not state.get("results"):
+                return None  # nichts geändert – nichts zu prüfen
+            if after == state.get("after") and state.get("results"):  # seit der letzten Prüfung nichts geändert
+                state["status"] = verify.summary(state["results"], self.cfg.language == "en")
+                return None
+        elif state.get("edited"):  # ohne Schnappschüsse: edit/write in dieser Antwort benutzt
+            files = list(state.get("paths") or [])
+        else:
+            return None
+        checks = verify.checks_for(self.cfg, project, files)
+        if not checks:
+            return None
+        timeout = max(30, int(self.cfg.coding.verify_timeout))
+        call = {"function": {"name": "shell", "arguments": {
+            "command": verify.script(checks, timeout), "timeout": timeout * len(checks) + 30}}}
+        await emit({"type": "segment_end", "id": state.get("msg_id", "")})
+        _name, result, note = await self._execute(call, emit, confirm)
+        if note.endswith("abgelehnt") or result.startswith("BLOCKIERT") or result.startswith("Unbekanntes Tool"):
+            state["off"] = True  # vom Nutzer abgelehnt bzw. nicht möglich – in dieser Antwort nicht erneut fragen
+            return None
+        results = verify.parse(result)
+        if not results:
+            return None
+        state["results"], state["after"] = results, after
+        en = self.cfg.language == "en"
+        if any(r["status"] == "fail" for r in results) and state.get("rounds", 0) < self.cfg.coding.verify_rounds:
+            state["rounds"] = state.get("rounds", 0) + 1
+            return verify.nudge(results, en)
+        state["status"] = verify.summary(results, en)
+        return None
 
     # ---------- Unteragenten ----------
     async def run_subagent(self, ctx, kind: str, description: str, task: str) -> str:

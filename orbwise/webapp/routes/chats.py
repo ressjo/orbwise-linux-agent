@@ -53,6 +53,7 @@ def register(app, ctx) -> None:
         return {"summary": first, "chat": {"id": conv.chat_id, "title": conv.meta.get("title", "")},
                 "messages": [{"role": m["role"], "content": m["content"], "turn": turns.get(i, 0), **changes(i, m),
                               **({"goal_nudge": True} if m.get("goal_nudge") else {}),
+                              **({"verify_nudge": True} if m.get("verify_nudge") else {}),
                               "editable": i >= start,
                               **({"images": m["attachments"]} if m.get("attachments") else {}),
                               **({"images": m["shots"]} if m.get("shots") else {}),
@@ -105,7 +106,7 @@ def register(app, ctx) -> None:
         Frage davor) – so kann die Oberfläche „Frage 3 bearbeiten / neu generieren“ sagen."""
         out, n = {}, 0
         for i, m in enumerate(conv.history):
-            if m["role"] == "user" and not m.get("goal_nudge"):  # „weiter am Ziel“ ist keine eigene Frage
+            if m["role"] == "user" and not m.get("goal_nudge") and not m.get("verify_nudge"):  # keine eigene Frage
                 n += 1
             out[i] = n
         return out

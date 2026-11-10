@@ -264,6 +264,7 @@ export async function loadHistory() {
     h.messages.forEach((m, i) => {
       if (dividers[i]) { chat.appendChild(compactDivider(dividers[i].summary, dividers[i].ts)); }
       if (m.goal_nudge) { addSystem(L("↻ weiter am Ziel", "↻ continuing with the goal")); return; }
+      if (m.verify_nudge) { addSystem(L("↻ Prüfung rot – Orbwise korrigiert", "↻ checks failed – Orbwise fixes it")); return; }
       if (m.role === "user") { addUser(m.content, "", m.images, m.turn, m.editable, m.files); return; }
       const el = addMsg("assistant" + (m.editable === false ? " locked" : ""), S.name, renderMarkdown(m.content));
       el._raw = m.content;

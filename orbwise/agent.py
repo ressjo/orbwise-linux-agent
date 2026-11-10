@@ -644,6 +644,7 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
             used_tools: set[str] = set()
             goal = self.goal_state() if not self._plan else None  # Ziel-Modus: ohne „mach weiter“ bis zum Ende
             steps = nudges = 0
+            vstate: dict = {"msg_id": msg_id}  # Prüf-Schranke dieser Antwort (verify_gate)
             while True:
                 if goal is not None and self.goal_state() is None:  # „/goal stop“ während der Arbeit
                     goal, steps = None, 0
@@ -688,6 +689,12 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
                 if not calls and goal is not None:
                     marker, content = goal_marker(content)
                     entry["content"] = content
+                    if marker == "done" and (hint := await self.verify_gate(emit, confirm, vstate)):
+                        if content:  # „erreicht“ – aber die Prüfung ist rot: weiterarbeiten
+                            spoken.append(content)
+                        conv.add({"role": "user", "content": hint, "verify_nudge": True})
+                        await emit({"type": "segment_end", "id": msg_id})
+                        continue
                     if marker or nudges >= 3:  # erreicht, Rückfrage – oder das Modell hört trotz Nudges auf
                         if content:
                             spoken.append(content)
@@ -705,6 +712,10 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
                 if content:
                     spoken.append(content)
                 if not calls:
+                    if hint := await self.verify_gate(emit, confirm, vstate):  # Änderungen geprüft: rot → weiter
+                        conv.add({"role": "user", "content": hint, "verify_nudge": True})
+                        await emit({"type": "segment_end", "id": msg_id})
+                        continue
                     finished = True
                     break
                 nudges = 0
@@ -730,6 +741,10 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
                         results = await asyncio.gather(*(self._execute(calls[i], emit, confirm) for i in quick))
                         done.update(zip(quick, results))
                 for i, call in enumerate(calls):
+                    fn = call.get("function", {})
+                    if fn.get("name") in ("edit", "write"):  # für die Prüf-Schranke ohne Schnappschüsse
+                        vstate["edited"] = True
+                        vstate.setdefault("paths", set()).add(str((fn.get("arguments") or {}).get("path", "")))
                     name, result, note = done[i] if i in done else await self._execute(call, emit, confirm)
                     result += cut_notes.get(i, "")
                     conv.add({"role": "tool", "content": result, "tool_name": name})
@@ -774,6 +789,13 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
             raise
         self._turn_open = False
         self._note_recent()
+        if vstate.get("status"):  # Ergebnis der Prüf-Schranke – vom Harness, nicht vom Modell
+            line = vstate["status"]
+            await emit({"type": "token", "id": msg_id, "text": "\n\n" + line})
+            spoken.append(line)
+            last = next((m for m in reversed(conv.history[start_len:]) if m["role"] == "assistant"), None)
+            if last is not None:
+                last["content"] = (last.get("content") or "") + "\n\n" + line
 
         answer = "\n\n".join(spoken)
         if self._shots:  # an der letzten Antwort merken – nach dem Neuladen wieder zu sehen
