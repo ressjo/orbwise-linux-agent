@@ -65,7 +65,11 @@ server keeps the setting for every open window, Telegram and routines.
 - **Auto** – **everything runs without asking**, like in your own terminal: servers, `docker compose up`, package
   managers without root, network, deleting, editing any file. Only three things ask:
   - `sudo` (also `yay`/`paru`/`makepkg -si`, which call sudo themselves) – no extra card, just the **password
-    dialog**, which shows the command; a remembered password is not used for these;
+    dialog**, which shows the command; a remembered password is not used for these, and neither is a ticket sudo
+    itself may still hold (Orbwise drops it before such a command and after every password entry – this matters with
+    `timestamp_type=global` or `!tty_tickets` in sudoers). If sudo asks this user for **no password** (`NOPASSWD`),
+    there is no dialog to be the question: `sudo` then asks with a normal card, and `orbwise doctor` warns – a
+    script that calls sudo itself still runs as root without asking on such a machine;
   - pushing (`git push`, *Push to GitHub*);
   - sending e-mail in your name.
 

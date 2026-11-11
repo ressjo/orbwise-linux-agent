@@ -5,7 +5,7 @@ import { ask, toast } from "./dialogs.js";
 import { IMS } from "./images.js";
 import { renderModelsPage } from "./models.js";
 import { loadPlanner, loadStatus } from "./planner.js";
-import { loadMemory } from "./reminders.js";
+import { greet, loadMemory } from "./reminders.js";
 import { loadSkills } from "./skills.js";
 import { openVoiceMenu } from "./voice.js";
 
@@ -74,6 +74,22 @@ const STEP_CHOICES = [10, 25, 50, 100, 200, 500, 0];
 async function renderSteps() {
   let st;
   try { st = await getJSON("/api/steps"); } catch { return; }
+  // Denken bei Aufgaben: vor jedem Schritt (all) oder nur zu Beginn und nach einem Fehlschlag (lean)
+  const seg = $("set-think-steps");
+  const mark = (value) => seg.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.steps === value));
+  mark(st.think_steps);
+  seg.querySelectorAll("button").forEach((b) => {
+    b.onclick = async () => {
+      if (b.classList.contains("on")) return;
+      try {
+        const r = await api("POST", "/api/steps", { think_steps: b.dataset.steps });
+        mark(r.think_steps);
+        toast(r.think_steps === "lean"
+          ? L("Denkt nur noch zu Beginn und nach einem Fehlschlag.", "Now thinks only at the start and after a failed step.")
+          : L("Denkt wieder vor jedem Schritt.", "Thinks before every step again."));
+      } catch { renderSteps(); }
+    };
+  });
   for (const mode of ["tools", "coding"]) {
     const sel = $("steps-" + mode);
     const values = STEP_CHOICES.includes(st[mode]) ? STEP_CHOICES
@@ -211,8 +227,8 @@ async function renderHfToken() {
   small.textContent = st.source === "env" ? L("Token kommt aus der Umgebung (HF_TOKEN).", "Token comes from the environment (HF_TOKEN).")
     : st.set ? L("Token gespeichert – zugangsbeschränkte Modelle lassen sich laden (Lizenz auf der Modellseite akzeptieren).",
                  "Token saved – gated models can be downloaded (accept the license on the model page).")
-    : L("Nur für zugangsbeschränkte Modelle (z. B. Llama, Gemma): Token mit Leserecht von huggingface.co/settings/tokens.",
-        "Only for gated models (e.g. Llama, Gemma): a read token from huggingface.co/settings/tokens.");
+    : L("Token für zugangsbeschränkte Modelle.",
+        "Token for gated models.");
   const form = row.querySelector("form");
   const input = form.querySelector("input");
   const btn = form.querySelector("button");
@@ -246,6 +262,7 @@ export function init() {
     const has = !!$("chat").querySelector(".msg.user, .msg.assistant");
     if (has !== isCompact()) {
       main.classList.toggle("has-messages", has);
+      if (!has) greet(true);  // zurück auf der Startseite (neuer Chat): ein neuer Spruch
     }
   };
   new MutationObserver(updateStage).observe($("chat"), { childList: true });

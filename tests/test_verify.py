@@ -74,6 +74,175 @@ def test_syntax_check_parses_only(tmp_path):
     assert not marker.exists()
 
 
+def _venv(project, body):
+    bin_ = project / ".venv" / "bin"
+    bin_.mkdir(parents=True)
+    (project / ".venv" / "pyvenv.cfg").write_text("home = /usr/bin\n")
+    (bin_ / "python").write_text(f"#!/bin/sh\n{body}\n")
+    (bin_ / "python").chmod(0o755)
+
+
+def test_checks_use_the_projects_virtual_environment(tmp_path):
+    p = _proj(tmp_path, ok=True)
+    assert "python3 -m pytest" in dict(verify.detect(p, []))["pytest"]  # ohne .venv: System-Python
+    _venv(p, f'exec {sys.executable} "$@"')  # „venv“ mit pytest: reicht an das Python der Tests weiter
+    (p / ".venv" / "bin" / "ruff").write_text("#!/bin/sh\necho ruff aus der venv\n")
+    (p / ".venv" / "bin" / "ruff").chmod(0o755)
+    checks = verify.detect(p, ["m.py"])
+    cmds = dict(checks)
+    assert cmds["pytest"].startswith(".venv/bin/python -c 'import pytest' 2>/dev/null && .venv/bin/python -m pytest")
+    assert cmds["ruff"].startswith("command -v .venv/bin/ruff >/dev/null && .venv/bin/ruff check")
+    out = subprocess.run(["bash", "-c", verify.script(checks, 60)], cwd=p, capture_output=True, text=True).stdout
+    res = {r["name"]: r for r in verify.parse(out)}
+    assert res["pytest"]["status"] == "ok" and "1 passed" in res["pytest"]["output"]
+    assert res["ruff"]["status"] == "ok" and "ruff aus der venv" in res["ruff"]["output"]
+    # eine venv ohne pytest: übersprungen statt rot
+    q = tmp_path / "q"
+    (q / "tests").mkdir(parents=True)
+    (q / "tests" / "test_a.py").write_text("def test_a():\n    pass\n")
+    _venv(q, "exit 1")  # venv ohne pytest
+    out = subprocess.run(["bash", "-c", verify.script(verify.detect(q, []), 60)], cwd=q, capture_output=True,
+                         text=True).stdout
+    assert [r["status"] for r in verify.parse(out)] == ["skip"]
+
+
+def test_tests_of_the_changed_files_run_first(tmp_path):
+    p = _proj(tmp_path)  # m.py + tests/test_m.py (rot)
+    (p / "pkg").mkdir()
+    (p / "pkg" / "__init__.py").write_text("")
+    (p / "pkg" / "store.py").write_text("def get():\n    return 1\n")
+    (p / "pkg" / "speed_test.py").write_text("def measure():\n    return 1\n")  # heißt nur so – kein Test
+    (p / "other.py").write_text("y = 1\n")
+    (p / "tests" / "test_store_roundtrip.py").write_text("def test_a():\n    assert True\n")
+    (p / "tests" / "test_api.py").write_text("import sys, pathlib\nsys.path.insert(0, str(pathlib.Path(__file__).parent.parent))\n"
+                                        "from pkg import store\n\n\ndef test_b():\n    assert store.get() == 1\n")
+    (p / "tests" / "test_slow.py").write_text(
+        "import pathlib\n\n\ndef test_slow():\n    pathlib.Path('ran-all').write_text('x')\n")
+    assert verify.targeted_tests(p, ["m.py"]) == ["tests/test_m.py"]
+    # Name mit allen Teilen vor Import; geänderte Tests selbst zuerst; Dateien ohne Tests nicht
+    assert verify.targeted_tests(p, ["pkg/store.py", "tests/test_slow.py", "pkg/speed_test.py"]) == [
+        "tests/test_slow.py", "tests/test_store_roundtrip.py", "tests/test_api.py"]
+    assert verify.targeted_tests(p, ["pkg/__init__.py"]) == ["tests/test_api.py"]  # Paket: wer es importiert
+    assert verify.targeted_tests(p, ["other.py"]) == [] and verify.targeted_tests(p, ["README.md"]) == []
+    assert verify.targeted_tests(p, ["m.py", "tests/conftest.py"]) == []  # conftest betrifft alle
+    cmd = dict(verify.detect(p, ["m.py"]))["pytest"]
+    assert cmd.endswith("-m pytest -q --maxfail=5 -p no:cacheprovider tests/test_m.py && "
+                        "python3 -m pytest -q --maxfail=5 -p no:cacheprovider")
+    assert " && python3 -m pytest" not in dict(verify.detect(p, ["other.py"]))["pytest"].split("2>/dev/null && ", 1)[1]
+    # rot im gezielten Lauf: die ganze Suite startet gar nicht erst; grün: danach läuft alles
+    checks = [("pytest", cmd.replace("python3", sys.executable))]
+    out = subprocess.run(["bash", "-c", verify.script(checks, 60)], cwd=p, capture_output=True, text=True).stdout
+    assert verify.parse(out)[0]["status"] == "fail" and not (p / "ran-all").exists()
+    (p / "m.py").write_text("def f():\n    return 1 + 1\n")  # andere Länge – sonst gilt der .pyc-Cache noch
+    out = subprocess.run(["bash", "-c", verify.script(checks, 60)], cwd=p, capture_output=True, text=True).stdout
+    assert verify.parse(out)[0]["status"] == "ok" and (p / "ran-all").exists()
+
+
+def test_poetry_projects_run_their_checks_through_poetry(tmp_path, monkeypatch):
+    p = _proj(tmp_path)
+    (p / "poetry.lock").write_text("")
+    which = shutil.which
+    monkeypatch.setattr(verify.shutil, "which", lambda name: "/usr/bin/poetry" if name == "poetry" else which(name))
+    cmd = dict(verify.detect(p, []))["pytest"]
+    assert cmd.startswith("poetry run python -c 'import pytest' 2>/dev/null && poetry run python -m pytest")
+    # fehlt poetry bzw. pytest darin: übersprungen statt rot
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "poetry").write_text("#!/bin/sh\nexit 1\n")
+    (fake / "poetry").chmod(0o755)
+    out = subprocess.run(["bash", "-c", verify.script([("pytest", cmd)], 30)], cwd=p, capture_output=True, text=True,
+                         env={"PATH": f"{fake}:/usr/bin:/bin"}).stdout
+    assert [r["status"] for r in verify.parse(out)] == ["skip"]
+    _venv(p, "exit 0")  # eine .venv im Projekt geht vor
+    assert dict(verify.detect(p, []))["pytest"].startswith(".venv/bin/python")
+    monkeypatch.setattr(verify.shutil, "which", lambda name: None if name == "poetry" else which(name))
+    (p / ".venv" / "bin" / "python").unlink()
+    assert "python3 -m pytest" in dict(verify.detect(p, []))["pytest"]  # ohne poetry im PATH: System-Python
+
+
+def test_npm_and_go_run_the_related_tests_first(tmp_path):
+    p = tmp_path / "web"
+    (p / "node_modules" / ".bin").mkdir(parents=True)
+    (p / "src").mkdir()
+    (p / "src" / "math.ts").write_text("export const a = 1;\n")
+    (p / "src" / "gone.ts").touch()
+    (p / "package.json").write_text('{"scripts": {"test": "vitest run"}}')
+    all_ = "npm test --silent"
+    assert dict(verify.detect(p, ["src/math.ts"]))["npm-test"] == all_  # vitest nicht installiert: nur alles
+    (p / "node_modules" / ".bin" / "vitest").touch()
+    assert dict(verify.detect(p, ["src/math.ts", "README.md", "src/fehlt.ts"]))["npm-test"] == \
+        "node_modules/.bin/vitest related --run --passWithNoTests src/math.ts && " + all_
+    assert dict(verify.detect(p, ["README.md"]))["npm-test"] == all_  # nichts Passendes geändert
+    (p / "package.json").write_text('{"scripts": {"test": "jest --ci"}}')
+    assert dict(verify.detect(p, ["src/math.ts"]))["npm-test"] == all_
+    (p / "node_modules" / ".bin" / "jest").touch()
+    assert dict(verify.detect(p, ["src/math.ts"]))["npm-test"] == \
+        "node_modules/.bin/jest --findRelatedTests --passWithNoTests src/math.ts && " + all_
+    (p / "package.json").write_text('{"scripts": {"test": "mocha"}}')  # anderer Runner: wie bisher
+    assert dict(verify.detect(p, ["src/math.ts"]))["npm-test"] == all_
+    g = tmp_path / "svc"
+    (g / "pkg" / "store").mkdir(parents=True)
+    (g / "go.mod").write_text("module x\n")
+    (g / "main.go").touch()
+    (g / "pkg" / "store" / "store.go").touch()
+    assert dict(verify.detect(g, ["pkg/store/store.go", "main.go", "README.md"]))["go-test"] == \
+        "command -v go >/dev/null && go test ./ ./pkg/store && go vet ./... && go test ./..."
+    assert dict(verify.detect(g, ["README.md"]))["go-test"] == "command -v go >/dev/null && go vet ./... && go test ./..."
+
+
+def test_summary_says_when_nothing_could_be_checked():
+    skipped = [{"name": "ruff", "status": "skip", "output": "fehlt"}, {"name": "pytest", "status": "skip", "output": ""}]
+    assert verify.summary(skipped) == "○ Nicht geprüft – hier nicht installiert: ruff, pytest"
+    assert verify.summary(skipped, en=True) == "○ Not checked – not installed here: ruff, pytest"
+    assert verify.summary([]) == ""
+    assert verify.summary([*skipped, {"name": "make", "status": "ok", "output": ""}]) == "✓ Geprüft: make"
+
+
+needs_node = pytest.mark.skipif(not shutil.which("node"), reason="node fehlt")
+TS_OK = "enum E { A, B }\nclass K { constructor(private x: number) {} }\nexport const a: number = E.A;\n"
+TS_BAD = "export const a: number = 1;\nfunction f(x: string { return x }\n"
+
+
+@needs_node
+def test_typescript_is_parsed_with_node(tmp_path, monkeypatch):
+    monkeypatch.setattr(verify, "_typescript_lib", lambda p: "")  # kein tsc auf dem Rechner
+    probe = subprocess.run(["node", "-p", "typeof require('node:module').stripTypeScriptTypes"], capture_output=True,
+                           text=True).stdout.strip()
+    if probe != "function":
+        assert verify.check_syntax(tmp_path / "a.ts", TS_BAD) == ""  # älteres Node: still, kein Fehlalarm
+        return
+    assert verify.check_syntax(tmp_path / "a.ts", TS_OK) == ""  # enum & Co. sind kein Syntaxfehler
+    assert verify.check_syntax(tmp_path / "a.ts", TS_BAD).startswith("Syntaxfehler: ")
+    assert verify.check_syntax(tmp_path / "a.mts", TS_BAD).startswith("Syntaxfehler: ")
+    assert verify.check_syntax(tmp_path / "a.tsx", "export const C = () => <div>x</span>;\n") == ""  # JSX nur mit tsc
+
+
+@pytest.mark.skipif(not shutil.which("node") or not shutil.which("tsc"), reason="node oder tsc fehlt")
+def test_typescript_and_tsx_are_parsed_with_the_machines_tsc(tmp_path):
+    assert verify.check_syntax(tmp_path / "a.ts", TS_OK) == ""
+    assert verify.check_syntax(tmp_path / "a.ts", TS_BAD).startswith("Syntaxfehler: Zeile 2: ")
+    assert verify.check_syntax(tmp_path / "c.tsx", "export const C = () => <div>x</div>;\n") == ""
+    assert "Zeile 1" in verify.check_syntax(tmp_path / "c.tsx", "export const C = () => <div>x</span>;\n")
+    # Typfehler sind kein Syntaxfehler – dafür ist die Prüf-Schranke da
+    assert verify.check_syntax(tmp_path / "t.ts", "const n: number = 'text';\n") == ""
+
+
+def test_typescript_from_the_project_is_never_run(tmp_path, monkeypatch):
+    """Ein tsc im Projektordner (node_modules) kann der Agent geschrieben haben – es läuft nicht auf dem Rechner."""
+    lib = tmp_path / "proj" / "node_modules" / "typescript" / "lib"
+    (lib.parent / "bin").mkdir(parents=True)
+    lib.mkdir()
+    (lib / "typescript.js").write_text("require('fs').writeFileSync(%r, 'x')" % str(tmp_path / "ran"))
+    (lib.parent / "bin" / "tsc").write_text("#!/bin/sh\n")
+    which = shutil.which
+    monkeypatch.setattr(verify.shutil, "which", lambda name: str(lib.parent / "bin" / "tsc") if name == "tsc"
+                        else which(name))
+    assert verify._typescript_lib(tmp_path / "proj" / "src" / "a.ts") == ""
+    verify.check_syntax(tmp_path / "proj" / "src" / "a.tsx", "export const a = 1;\n")
+    assert not (tmp_path / "ran").exists()
+    assert verify._typescript_lib(tmp_path / "anderswo" / "a.ts") == str(lib / "typescript.js")  # sonst gefunden
+
+
 # ---------------------------------------------------------------- im Agenten
 class Scripted:
     """Schreibt zuerst falschen Code, meldet „fertig“; bekommt die rote Prüfung zurück und korrigiert."""
@@ -181,3 +350,51 @@ def test_declined_check_is_not_asked_again(tmp_path, cfg, memory, monkeypatch):
         return name != "shell"  # Dateien ja, Prüfung nein
     answer = run(agent.run("Mach f richtig", emit, confirm))
     assert asked.count("shell") == 1 and "Geprüft" not in answer and "rot" not in answer
+
+
+class Busy:
+    """Liest, schreibt falschen Code und arbeitet dann immer weiter (jedes Mal ein anderer Befehl) – bis Orbwise die
+    Antwort anhält. stop=True: hört stattdessen nach dem Schreiben ohne Ziel-Marker auf."""
+
+    def __init__(self, stop=False):
+        self.stop, self.nudges = stop, 0
+
+    async def chat_stream(self, messages, tools=None):
+        last = messages[-1]
+        self.nudges += "automatisch geprüft" in (last.get("content") or "")
+        n = sum(1 for m in messages if m["role"] == "tool")
+        if n == 0:
+            call = {"name": "read", "arguments": {"path": "m.py"}}
+        elif n == 1:
+            call = {"name": "write", "arguments": {"path": "m.py", "content": "def f():\n    return 1\n# geändert\n"}}
+        elif self.stop or last["role"] == "user":  # Zwischenbilanz bzw. „mach weiter“
+            call = None
+        else:
+            call = {"name": "shell", "arguments": {"command": f"echo {n}"}}
+        if call:
+            yield {"type": "done", "message": {"role": "assistant", "content": "", "tool_calls": [{"function": call}]}, "stats": {}}
+        else:
+            yield {"type": "token", "text": "Zwischenstand."}
+            yield {"type": "done", "message": {"role": "assistant", "content": "Zwischenstand."}, "stats": {}}
+
+
+@needs_git
+def test_step_limit_still_reports_the_checks(tmp_path, cfg, memory, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    cfg.coding.max_steps = 4
+    llm = Busy()
+    answer, events = _go(_agent(cfg, memory, llm, _proj(tmp_path)))
+    assert "Zwischenstand." in answer and "⚠ Prüfung weiterhin rot: check" in answer
+    assert llm.nudges == 0  # nur gemeldet – die Antwort war am Limit ohnehin zu Ende
+    assert memory.conversation.history[-1]["content"].endswith("Details im Aktivitäts-Panel.")
+
+
+@needs_git
+def test_goal_given_up_still_reports_the_checks(tmp_path, cfg, memory, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    llm = Busy(stop=True)
+    agent = _agent(cfg, memory, llm, _proj(tmp_path))
+    agent.set_goal("Mach f richtig")
+    answer, events = _go(agent)
+    assert [e["state"] for e in events if e["type"] == "goal"][-1] == "stopped" and agent.goal_state() is None
+    assert "⚠ Prüfung weiterhin rot: check" in answer and llm.nudges == 0

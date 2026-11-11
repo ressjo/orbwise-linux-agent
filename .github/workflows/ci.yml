@@ -19,7 +19,7 @@ jobs:
       - name: Lint
         run: uv run ruff check orbwise tests
       - name: Test
-        run: uv run pytest -q
+        run: uv run pytest -q -n auto
       - name: Version and changelog agree
         run: |
           version=$(grep -m1 '^__version__' orbwise/__init__.py | cut -d'"' -f2)

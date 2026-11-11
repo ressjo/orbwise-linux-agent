@@ -37,6 +37,7 @@ class Job:
     tail: deque = field(default_factory=lambda: deque(maxlen=TAIL_LINES))
     proc: asyncio.subprocess.Process | None = None
     task: asyncio.Task | None = None
+    on_end: Callable[[], None] | None = None  # aufräumen, wenn der Job endet (z. B. das Token für den Passwortdialog)
     stop_argv: list[str] | None = None  # Sandbox: beendet den Befehl im Container (der exec-Client allein reicht nicht)
 
     def info(self) -> dict:
@@ -88,17 +89,19 @@ def new_id() -> str:
 
 
 async def start(command: str, cwd: str, limit: int = 4, emit: Broadcast | None = None,
-                argv: list[str] | None = None, jid: str | None = None, stop_argv: list[str] | None = None) -> Job:
+                argv: list[str] | None = None, jid: str | None = None, stop_argv: list[str] | None = None,
+                env: dict | None = None, on_end: Callable[[], None] | None = None) -> Job:
     """Startet den Befehl in einer eigenen Prozessgruppe. Mehr als limit laufende Jobs → RuntimeError.
-    argv: stattdessen genau dieses Programm starten (Sandbox: `podman exec … bash -lc <Befehl>`)."""
+    argv: stattdessen genau dieses Programm starten (Sandbox: `podman exec … bash -lc <Befehl>`).
+    env: zusätzliche Umgebung; on_end: wird aufgerufen, sobald der Job endet."""
     if len(running()) >= limit:
         raise RuntimeError(f"Es laufen schon {limit} Hintergrund-Jobs – erst einen mit job_output(id, stop=true) "
                            "beenden.")
     jid = jid or new_id()
     log = os.path.join(jobs_dir(), f"{jid}.log")
-    job = Job(id=jid, command=command, cwd=cwd, log=log, stop_argv=stop_argv)
+    job = Job(id=jid, command=command, cwd=cwd, log=log, stop_argv=stop_argv, on_end=on_end)
     kwargs = dict(stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=cwd,
-                  env={**os.environ, **QUIET_ENV}, start_new_session=True)
+                  env={**os.environ, **QUIET_ENV, **(env or {})}, start_new_session=True)
     if argv:
         job.proc = await asyncio.create_subprocess_exec(*argv, **kwargs)
     else:
@@ -128,6 +131,12 @@ async def _pump(job: Job, emit: Broadcast | None) -> None:
                 await _send({"type": "job", "phase": "output", "id": job.id, "text": "".join(buf)[-4000:]}, emit)
                 buf, last = [], time.monotonic()
     rc = await job.proc.wait()
+    if job.on_end:
+        try:
+            job.on_end()
+        except Exception:  # noqa: BLE001 – Aufräumen darf den Job nicht als abgestürzt melden
+            pass
+        job.on_end = None
     if buf:
         await _send({"type": "job", "phase": "output", "id": job.id, "text": "".join(buf)[-4000:]}, emit)
     if job.status == "running":

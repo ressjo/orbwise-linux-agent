@@ -22,6 +22,8 @@ llm:
   temperature: 0.6
   num_ctx: 16384         # the model's context window
   think: false           # Qwen3 "thinking" by default (slower); the THINK button toggles it per request
+  think_steps: all       # with thinking on: all = think before every step · lean = only in the first step of an
+                         # answer and after a failed step (faster on long tasks, may cost quality with some models)
   # keep_alive: 30m        # how long Ollama keeps the model in (V)RAM after the last request
   # request_timeout: 300   # seconds until a model request is given up
 
@@ -185,6 +187,7 @@ coding:                    # Coding mode (works like OpenCode 2: read/edit/grep/
   snapshots: true          # snapshot of the project before/after each answer → "Undo" under the answer
   # max_steps: 60          # tool rounds per answer in coding mode (tools mode: tools.max_steps), then "continue"
   # subagent_steps: 15     # max steps of a subagent (explore = read-only search, general = may change things)
+  # subagent_parallel: 3   # explore subagents side by side – never more than the model server serves at once
   # max_jobs: 4            # background commands (shell with background=true) at the same time
   # instructions: [AGENTS.md, CLAUDE.md]   # first file found in the project folder goes into the system prompt
   # goal_max_steps: 300     # goal mode (/goal <goal>): works without "continue" – at most this many tool steps …
@@ -217,6 +220,17 @@ briefing:                  # "good morning" – also adjustable in the dashboard
   news_count: 3            # headlines per topic
   inbox_tag: ""            # Paperless inbox tag – empty = the inbox tags defined in Paperless
   instructions: ""         # e.g. "Keep it short and start with my appointments."
+
+mcp:                       # tools of other servers (Model Context Protocol) – they appear as mcp_<name>_<tool>
+  servers: {}              # each one: a program Orbwise starts (command) or an address (url), e.g.:
+#    files:
+#      command: npx -y @modelcontextprotocol/server-filesystem ~/Documents
+#      env: {}              # extra environment variables for the command
+#      allow: [read_file, list_directory]   # these run without asking ("*" = all); everything else asks first
+#    wiki:
+#      url: https://example.com/mcp
+#      headers: {}          # e.g. Authorization: "Bearer …"
+#      enabled: true
 
 websites: {}               # your own shortcuts for "open …", e.g.:
 #  nas: http://192.168.1.10:5000

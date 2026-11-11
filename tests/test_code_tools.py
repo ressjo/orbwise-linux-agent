@@ -204,3 +204,56 @@ def test_repeated_failed_edits_get_a_way_out(ctx, project):
     assert "gescheitert" not in call(ctx, "edit", path="src/app.py", oldString="return 99", newString="x")
     call(ctx, "edit", path="src/app.py", oldString="return 1", newString="return 5")  # Erfolg setzt zurück
     assert "gescheitert" not in call(ctx, "edit", path="src/app.py", oldString="return 98", newString="x")
+
+
+def test_write_needs_a_read_before_replacing_a_file(ctx, project):
+    f = project / "src" / "app.py"
+    before = f.read_text()
+    out = call(ctx, "write", path="src/app.py", content="x = 1\n")
+    assert "noch nicht gelesen" in out and f.read_text() == before
+    call(ctx, "read", path="src/app.py")
+    assert "Geändert" in call(ctx, "write", path="src/app.py", content="x = 1\n")
+    # neue, leere und selbst geschriebene Dateien sowie Anhängen: ohne read
+    (project / "leer.py").write_text("")
+    assert "Geändert" in call(ctx, "write", path="leer.py", content="a = 1\n")
+    assert "Angelegt" in call(ctx, "write", path="neu.py", content="a = 1\n")
+    assert "Geändert" in call(ctx, "write", path="neu.py", content="a = 2\n")
+    (project / "log.txt").write_text("eins\n")
+    call(ctx, "write", path="log.txt", content="zwei\n", append=True)
+    assert (project / "log.txt").read_text() == "eins\nzwei\n"
+
+
+def test_too_many_edits_are_refused_not_cut(ctx, project):
+    f = project / "viele.py"
+    f.write_text("".join(f"v{i} = 0\n" for i in range(60)))
+    call(ctx, "read", path="viele.py")
+    out = call(ctx, "edit", path="viele.py", edits=[{"oldString": f"v{i} = 0", "newString": f"v{i} = 1"}
+                                                     for i in range(59, -1, -1)])
+    assert "Zu viele Änderungen" in out and "höchstens 50" in out and "= 1" not in f.read_text()
+    out = call(ctx, "edit", path="viele.py", edits=[{"oldString": f"v{i} = 0", "newString": f"v{i} = 1"}
+                                                     for i in range(49, -1, -1)])
+    assert "+50 −50" in out and f.read_text().count("= 1") == 50
+
+
+@pytest.mark.parametrize("ripgrep", [True, False])
+def test_grep_shows_context_lines(ctx, project, monkeypatch, ripgrep):
+    if ripgrep and not shutil.which("rg"):
+        pytest.skip("ripgrep fehlt")
+    if not ripgrep:
+        monkeypatch.setattr(code.shutil, "which", lambda name: None)
+    (project / "src" / "lang-datei.py").write_text("".join(f"zeile{i}\n" for i in range(1, 31)) + "ziel = 1\n")
+    out = call(ctx, "grep", pattern="return 2", context=1)
+    assert out.splitlines() == ["1 Treffer", "src/app.py", "  5- def b():", "  6:     return 2"]
+    # zwei Treffer in einer Datei: getrennte Stellen bekommen „…“, die Einrückung bleibt
+    out = call(ctx, "grep", pattern=r"return \d", path="src/app.py", context=1)
+    assert out.splitlines() == ["2 Treffer", "src/app.py", "  1- def a():", "  2:     return 1", "  3- ", "  …",
+                                "  5- def b():", "  6:     return 2"]
+    # Dateiname mit Bindestrich und Ziffern-Zeilen: Umgebung wird nicht mit dem Pfad verwechselt
+    out = call(ctx, "grep", pattern="ziel", context=2)
+    assert out.splitlines() == ["1 Treffer", "src/lang-datei.py", "  29- zeile29", "  30- zeile30", "  31: ziel = 1"]
+    # limit zählt Treffer, nicht Umgebungszeilen; ohne context wie bisher
+    out = call(ctx, "grep", pattern="zeile(5|20)$", path="src/lang-datei.py", context=1, limit=1)
+    assert out.splitlines() == ["1 Treffer (weitere gekürzt – genauer suchen)", "src/lang-datei.py", "  4- zeile4",
+                                "  5: zeile5", "  6- zeile6"]
+    assert "2: return 1" in call(ctx, "grep", pattern="return 1") and "-" not in call(ctx, "grep", pattern="return 1")
+    assert "  1- def a():" in call(ctx, "grep", pattern="return 1", context=99)  # gedeckelt, kein Fehler

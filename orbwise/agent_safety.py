@@ -40,7 +40,7 @@ FILE_TOOLS = ("write_file", "edit_file", "write", "edit")
 
 # Nach dem Lesen fremder Inhalte (Mail, Webseite, Bild) brauchen auch sonst sichere Tools dieser Gruppen eine
 # Bestätigung – der Text könnte versteckte Anweisungen enthalten (z. B. Daten per fetch_url nach außen schicken).
-TAINT_GUARDED = {"shell", "ssh", "portainer", "web", "files", "code", "apps", "obsidian", "trilium", "calendar_tools",
+TAINT_GUARDED = {"mcp", "shell", "ssh", "portainer", "web", "files", "code", "apps", "obsidian", "trilium", "calendar_tools",
                  "homeassistant", "memory_tools", "reminder_tools", "power", "telegram_tools"}
 
 # Lesende Werkzeuge dieser Gruppen laufen auch nach fremden Inhalten ohne Rückfrage: lokal lesen kann nichts
@@ -180,6 +180,9 @@ class SafetyMixin:
             return CONFIRM, why
         if kind == "root":
             if name in LOCAL_SHELLS and self._password_dialog():
+                from . import askpass
+                if askpass.sudo_needs_no_password():  # kein Passwort nötig → kein Dialog: dann fragt die Karte
+                    return CONFIRM, prompts.text(self.cfg, "auto_sudo_nopasswd")
                 ctx.fresh_sudo = True
                 return SAFE, prompts.text(self.cfg, "auto_sudo")
             return CONFIRM, why

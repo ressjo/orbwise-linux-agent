@@ -103,6 +103,7 @@ def test_project_files_are_free_from_files_mode_outside_asks(coding, project, tm
     coding.auto_mode = "files"
     hidden = project / ".github"
     hidden.mkdir()
+    collect(coding, tool("read", path="app.py"))  # eine bestehende Datei ersetzt write erst nach dem Lesen
     for path in ("app.py", ".github/ci.yml", "neu/datei.txt"):
         ev = collect(coding, tool("write", path=path, content="x"), approve=False)
         assert next(e for e in ev if e["type"] == "tool_call")["risk"] == "safe", path
@@ -214,3 +215,207 @@ def test_question_round_trip_over_the_websocket(cfg, monkeypatch):
             if ev["type"] == "tool_result":
                 break
         assert "Sprache? → Python" in ev["text"]
+
+
+class EditAndTest:
+    """Ändert die Datei und lässt danach jedes Mal denselben Testbefehl laufen – wie ein Modell, das sich an eine
+    Lösung herantastet. loop=True: ruft stattdessen nur immer wieder denselben Befehl auf."""
+
+    def __init__(self, rounds: int, loop: bool = False):
+        self.rounds, self.loop = rounds, loop
+
+    async def chat_stream(self, messages, tools=None):
+        n = sum(1 for m in messages if m["role"] == "tool")
+        test = {"name": "shell", "arguments": {"command": "cat app.py"}}
+        if self.loop:
+            call = test
+        elif n == 0:
+            call = {"name": "read", "arguments": {"path": "app.py"}}
+        elif n <= 2 * self.rounds:
+            k = (n + 1) // 2
+            call = test if n % 2 == 0 else {"name": "edit", "arguments": {
+                "path": "app.py", "oldString": f"x = {k}", "newString": f"x = {k + 1}"}}
+        else:
+            call = None
+        if call and tools is not None and messages[-1]["role"] != "user" or call and n == 0:
+            yield {"type": "done", "message": {"role": "assistant", "content": "",
+                                                "tool_calls": [{"function": call}]}, "stats": {}}
+        else:
+            yield {"type": "token", "text": "Fertig."}
+            yield {"type": "done", "message": {"role": "assistant", "content": "Fertig."}, "stats": {}}
+
+
+def test_same_command_after_each_edit_is_not_a_loop(cfg, memory, project):
+    cfg.coding.verify = "off"
+    agent = Agent(cfg, EditAndTest(rounds=5), memory)
+    memory.switch_mode("coding")
+    memory.set_project(str(project))
+    agent.auto_mode = "auto"
+    collect(agent, "Zähl x hoch")
+    results = [m["content"] for m in memory.conversation.history if m.get("tool_name") == "shell"]
+    assert len(results) == 5 and not any("bereits ausgeführt" in r for r in results)
+    assert "x = 6" in results[-1] and (project / "app.py").read_text() == "x = 6\n"
+
+
+def test_same_command_without_changes_is_still_stopped(cfg, memory, project):
+    cfg.coding.verify = "off"
+    agent = Agent(cfg, EditAndTest(rounds=0, loop=True), memory)
+    memory.switch_mode("coding")
+    memory.set_project(str(project))
+    agent.auto_mode = "auto"
+    collect(agent, "Zeig die Datei")
+    results = [m["content"] for m in memory.conversation.history if m.get("tool_name") == "shell"]
+    assert len(results) == 4 and ["bereits ausgeführt" in r for r in results] == [False, False, True, True]
+
+
+class SubScript:
+    """Hauptagent: startet einen explore-Unteragenten und antwortet mit dessen Ergebnis. Unteragent: stellt die
+    Aufrufe aus `plan` (Schritt → Liste von Aufrufen; der letzte Eintrag gilt für alle weiteren Schritte), bis er ohne
+    Werkzeuge antworten soll. overflow: ab so vielen Zeichen Prompt meldet der „Server“ Kontextüberlauf."""
+
+    def __init__(self, plan, overflow=0, fail_after=0):
+        self.plan, self.overflow, self.fail_after = plan, overflow, fail_after
+        self.sub_prompts: list[int] = []  # Größe jedes Unteragenten-Prompts in Zeichen
+        self.sub_tools: list[bool] = []
+
+    async def chat_stream(self, messages, tools=None):
+        sub = "Unteragent" in messages[0]["content"]
+        n = sum(1 for m in messages if m["role"] == "assistant")
+        calls, text = None, "Fertig."
+        if not sub:
+            if messages[-1]["role"] == "tool":
+                text = messages[-1]["content"]
+            else:
+                calls = [{"name": "subagent", "arguments": {"agent": "explore", "description": "Suche",
+                                                             "prompt": "Finde x"}}]
+        else:
+            size = len(json.dumps(messages, ensure_ascii=False))
+            self.sub_prompts.append(size)
+            self.sub_tools.append(tools is not None)
+            if self.overflow and size > self.overflow:
+                from orbwise.llm import ContextOverflow
+                raise ContextOverflow("zu groß", n_ctx=1000, n_prompt=2000)
+            if self.fail_after and n >= self.fail_after:
+                from orbwise.llm import LLMError
+                raise LLMError("Server weg")
+            if tools is not None:
+                calls = self.plan[min(n, len(self.plan) - 1)]
+                text = f"Notiz {n + 1}: x steht in app.py."
+            else:
+                text = "Ergebnis: x = 1 in app.py."
+        msg = {"role": "assistant", "content": text if not calls or sub else ""}
+        if calls:
+            msg["tool_calls"] = [{"function": c} for c in calls]
+        else:
+            yield {"type": "token", "text": text}
+        yield {"type": "done", "message": msg, "stats": {}}
+
+
+def _sub_run(cfg, memory, project, llm, budget=0, monkeypatch=None):
+    agent = Agent(cfg, llm, memory)
+    memory.switch_mode("coding")
+    memory.set_project(str(project))
+    if budget:
+        monkeypatch.setattr(agent, "context_budget", lambda: budget)
+        monkeypatch.setattr(agent, "output_chars", lambda: 6000)
+    events = collect(agent, "Such x")
+    result = next(e for e in events if e["type"] == "tool_result" and not e.get("sub"))["text"]
+    reads = sum(1 for e in events if e.get("sub") and e["type"] == "tool_call")
+    return result, reads
+
+
+def test_subagent_stops_repeating_the_same_call(cfg, memory, project):
+    llm = SubScript([[{"name": "read", "arguments": {"path": "app.py"}}]])
+    result, reads = _sub_run(cfg, memory, project, llm)
+    # zweimal ausgeführt, zweimal übersprungen, dann ohne Werkzeuge zusammengefasst – nicht bis zum Schritt-Limit
+    assert reads == 2 and llm.sub_tools == [True, True, True, True, False]
+    assert "Ergebnis: x = 1 in app.py." in result and "abgebrochen" not in result
+
+
+def test_subagent_shrinks_old_results_instead_of_overflowing(cfg, memory, project, monkeypatch):
+    for i in range(4):
+        (project / f"big{i}.py").write_text(f"# Datei {i}\n" + "wert = 'abcdefghij'\n" * 250)
+    step = [{"name": "read", "arguments": {"path": f"big{i}.py"}} for i in range(4)]
+    llm = SubScript([step, [{"name": "grep", "arguments": {"pattern": "Datei"}}]])
+    budget = 6000 + 2000  # Werkzeugbeschreibungen von explore (≈ 2000 geschätzte Token) + 6000 für den Verlauf
+    result, reads = _sub_run(cfg, memory, project, llm, budget=budget, monkeypatch=monkeypatch)
+    assert reads == 4 and "Ergebnis: x = 1 in app.py." in result and "abgebrochen" not in result
+    assert max(llm.sub_prompts) // 3 <= budget  # vier Dateien auf einmal hätten das Fenster gesprengt
+
+
+def test_subagent_survives_a_server_overflow(cfg, memory, project):
+    (project / "big.py").write_text("wert = 'abcdefghij'\n" * 200)
+    llm = SubScript([[{"name": "read", "arguments": {"path": "big.py"}}],
+                     [{"name": "read", "arguments": {"path": "app.py"}}]], overflow=4000)
+    result, _ = _sub_run(cfg, memory, project, llm)
+    assert "Ergebnis: x = 1 in app.py." in result and "abgebrochen" not in result
+    assert llm.sub_tools[-1] is False and llm.sub_prompts[-1] <= 4000  # gekürzt und ohne Werkzeuge zusammengefasst
+
+
+def test_subagent_failure_keeps_what_it_found(cfg, memory, project):
+    llm = SubScript([[{"name": "read", "arguments": {"path": "app.py"}}],
+                     [{"name": "glob", "arguments": {"pattern": "*.py"}}]], fail_after=2)
+    result, _ = _sub_run(cfg, memory, project, llm)
+    assert "Notiz 1: x steht in app.py." in result and "Unteragent abgebrochen: Server weg" in result
+
+
+class ManySubs:
+    """Hauptagent startet vier Unteragenten in einem Schritt; zählt, wie viele gleichzeitig beim Modell anfragen.
+    slots: was der Server über sich meldet (None = nichts, wie Ollama oder ein fremder Server)."""
+
+    def __init__(self, kind="explore", slots=None, profile=None):
+        self.kind, self.slots, self.now, self.peak = kind, slots, 0, 0
+        if profile:
+            self.profile = profile
+
+    async def server_props(self):
+        return {"total_slots": self.slots} if self.slots else {}
+
+    async def chat_stream(self, messages, tools=None, **_):
+        if "Unteragent" not in messages[0]["content"]:
+            if messages[-1]["role"] == "tool":
+                yield {"type": "done", "message": {"role": "assistant", "content": "Fertig."}, "stats": {}}
+                return
+            calls = [{"function": {"name": "subagent", "arguments": {
+                "agent": self.kind, "description": f"Teil {i}", "prompt": f"Aufgabe {i}"}}} for i in range(4)]
+            yield {"type": "done", "message": {"role": "assistant", "content": "", "tool_calls": calls}, "stats": {}}
+            return
+        self.now += 1
+        self.peak = max(self.peak, self.now)
+        await asyncio.sleep(0.03)
+        self.now -= 1
+        yield {"type": "done", "message": {"role": "assistant", "content": "Ergebnis."}, "stats": {}}
+
+
+def _peak(cfg, memory, project, llm):
+    agent = Agent(cfg, llm, memory)
+    memory.switch_mode("coding")
+    memory.set_project(str(project))
+    before = len(memory.conversation.history)
+    collect(agent, "Teile die Suche auf")
+    results = [m for m in memory.conversation.history[before:] if m.get("tool_name") == "subagent"]
+    assert len(results) == 4 and all("Ergebnis." in m["content"] for m in results)
+    assert agent._sub_running == 0  # der Prompt-Vergleich des Hauptlaufs ist wieder zurückgestellt
+    return llm.peak
+
+
+def test_subagents_run_one_by_one_on_a_single_slot_server(cfg, memory, project):
+    assert _peak(cfg, memory, project, ManySubs(slots=1)) == 1  # llama-server -np 1: sonst wechselt er ständig den Prompt
+    assert _peak(cfg, memory, project, ManySubs()) == 1         # Server sagt nichts über sich: vorsichtig
+
+
+def test_subagents_run_side_by_side_as_far_as_the_server_can(cfg, memory, project):
+    assert _peak(cfg, memory, project, ManySubs(slots=2)) == 2
+    assert _peak(cfg, memory, project, ManySubs(slots=8)) == 3  # coding.subagent_parallel (3) begrenzt
+    cfg.coding.subagent_parallel = 1
+    assert _peak(cfg, memory, project, ManySubs(slots=8)) == 1
+
+
+def test_remote_server_counts_as_parallel_and_general_stays_single(cfg, memory, project):
+    from types import SimpleNamespace
+    remote = SimpleNamespace(backend="openai", base_url="https://api.example.com/v1", think=False)
+    assert _peak(cfg, memory, project, ManySubs(profile=remote)) == 3
+    local = SimpleNamespace(backend="openai", base_url="http://127.0.0.1:8080/v1", think=False)
+    assert _peak(cfg, memory, project, ManySubs(profile=local)) == 1
+    # general darf Dateien ändern – nie zwei zugleich, auch wenn der Server es könnte
+    assert _peak(cfg, memory, project, ManySubs(kind="general", slots=8)) == 1

@@ -62,6 +62,7 @@ def _was_read(ctx: ToolContext, p: Path) -> bool:
 
 
 EDIT_FAIL_HINT = 3   # ab so vielen Fehlschlägen in Folge an derselben Datei: Hinweis, wie es anders geht
+EDITS_MAX = 50       # so viele Änderungen höchstens in einem edit-Aufruf (edits=[…])
 EDIT_FAIL_STOP = 5   # … und ab hier deutlicher
 
 
@@ -363,8 +364,11 @@ def _edit_list(args: dict) -> tuple[list[tuple[str, str, bool]], str]:
             return [], "Entweder oldString/newString oder edits angeben, nicht beides."
         if not isinstance(many, list) or not all(isinstance(e, dict) for e in many):
             return [], "edits muss eine Liste von {oldString, newString} sein."
+        if len(many) > EDITS_MAX:
+            return [], (f"Zu viele Änderungen in einem Aufruf ({len(many)}, höchstens {EDITS_MAX}) – auf mehrere "
+                        "edit-Aufrufe verteilen. Nichts geschrieben.")
         return [(str(e.get("oldString", "")).replace("\r\n", "\n"), str(e.get("newString", "")).replace("\r\n", "\n"),
-                 bool(e.get("replaceAll"))) for e in many[:50]], ""
+                 bool(e.get("replaceAll"))) for e in many], ""
     return [(str(args.get("oldString", "")).replace("\r\n", "\n"), str(args.get("newString", "")).replace("\r\n", "\n"),
              bool(args.get("replaceAll")))], ""
 
@@ -516,7 +520,8 @@ def write_preview(ctx: ToolContext, args: dict) -> str:
 
 
 @tool("Schreibt eine Datei (legt sie an oder überschreibt sie komplett; append=true hängt an); fehlende Ordner werden "
-      "angelegt. Für Teiländerungen an bestehenden Dateien edit nutzen.", risk=_write_risk, name="write",
+      "angelegt. Für Teiländerungen an bestehenden Dateien edit nutzen; eine bestehende Datei vor dem Überschreiben mit "
+      "read lesen.", risk=_write_risk, name="write",
       preview=lambda c, a: write_preview(c, a))
 async def code_write(
     ctx: ToolContext,
@@ -530,12 +535,21 @@ async def code_write(
     if p.is_file() and _stale(ctx, p):
         return f"{_rel(ctx, p)} wurde seit dem letzten read geändert – erst mit read neu lesen."
     before = _read_text(p) if p.exists() else None
+    if not append and before is not None and before.strip() and not _was_read(ctx, p):
+        return (f"{_rel(ctx, p)} gibt es schon und wurde in diesem Chat noch nicht gelesen – erst mit read lesen, dann "
+                "mit edit ändern (oder nach dem Lesen mit write ersetzen).")
     return _write_file(ctx, p, before, (before or "") + content if append else content, in_parts=True)
 
 
 # ---------------------------------------------------------------- grep / glob
-def _py_grep(root: Path, rx: re.Pattern, include: str, limit: int, deadline: float) -> list[tuple[str, int, str]]:
-    hits: list[tuple[str, int, str]] = []
+CONTEXT_MAX = 10  # höchstens so viele Zeilen vor/nach einem Treffer
+
+
+def _py_grep(root: Path, rx: re.Pattern, include: str, limit: int, deadline: float,
+             context: int = 0) -> list[tuple[str, int, str, bool]]:
+    """Ohne ripgrep: (Pfad, Zeile, Text, Treffer?) – mit context auch die Zeilen davor/danach (Treffer? = False)."""
+    hits: list[tuple[str, int, str, bool]] = []
+    found = 0
     files = [root] if root.is_file() else None
     walker = ((str(root.parent), [], [root.name]),) if files else os.walk(root, onerror=lambda e: None)
     for dirpath, dirnames, filenames in walker:
@@ -553,18 +567,33 @@ def _py_grep(root: Path, rx: re.Pattern, include: str, limit: int, deadline: flo
                 continue
             if b"\x00" in data[:4096]:
                 continue
-            for n, line in enumerate(data.decode(errors="replace").splitlines(), 1):
-                if rx.search(line):
-                    hits.append((path, n, line))
-                    if len(hits) >= limit:
-                        return hits
-            if time.monotonic() > deadline:
+            lines = data.decode(errors="replace").splitlines()
+            matched = [i for i, line in enumerate(lines) if rx.search(line)][:max(0, limit - found)]
+            found += len(matched)
+            want = set(matched)
+            shown = sorted({j for i in matched for j in range(max(0, i - context), min(len(lines), i + context + 1))})
+            hits += [(path, j + 1, lines[j], j in want) for j in shown]
+            if found >= limit or time.monotonic() > deadline:
                 return hits
     return hits
 
 
+def _rg_rows(out: str, fallback: str) -> list[tuple[str, int, str, bool]]:
+    """Ausgabe von `rg --null --with-filename -n`: „pfad\\0zeile:text“ (Treffer) bzw. „pfad\\0zeile-text“ (Kontext)."""
+    rows = []
+    for row in out.splitlines():
+        path, sep, rest = row.partition("\0")
+        if not sep:
+            path, rest = fallback, row
+        m = re.match(r"^(\d+)([:-])(.*)$", rest)
+        if m:
+            rows.append((path, int(m.group(1)), m.group(3), m.group(2) == ":"))
+    return rows
+
+
 @tool("Durchsucht Dateiinhalte mit ripgrep (Regex oder mit literal=true wörtlich) und liefert Datei, Zeilennummer "
-      "und Zeile jedes Treffers. Mit path/include eingrenzen. Beachtet .gitignore.", name="grep")
+      "und Zeile jedes Treffers; context=N zeigt N Zeilen davor/danach („13- “) und spart oft das read. Mit "
+      "path/include eingrenzen. Beachtet .gitignore.", name="grep")
 async def code_grep(
     ctx: ToolContext,
     pattern: Annotated[str, "Regulärer Ausdruck (ripgrep-Syntax) bzw. Text bei literal=true"],
@@ -573,16 +602,18 @@ async def code_grep(
     literal: Annotated[bool, "Optional: pattern wörtlich statt als Regex"] = False,
     caseSensitive: Annotated[bool, "Optional: Groß/Kleinschreibung beachten (Standard true)"] = True,
     limit: Annotated[int, "Optional: höchstens so viele Treffer-Zeilen (Standard 100)"] = SEARCH_LIMIT,
+    context: Annotated[int, "Optional: Zeilen vor/nach jedem Treffer (0–10)"] = 0,
 ) -> str:
     root = _root(ctx, path)
     if not root.exists():
         return _missing(ctx, path, root)
     limit = max(1, min(int(limit or SEARCH_LIMIT), 500))
+    context = max(0, min(int(context or 0), CONTEXT_MAX))
     rg = shutil.which("rg")
-    hits: list[tuple[str, int, str]] = []
     if rg:
-        argv = [rg, "--line-number", "--no-heading", "--color=never", "--max-columns", "300",
-                "--max-columns-preview", "--max-filesize", "5M", "--max-count", str(limit)]
+        argv = [rg, "--line-number", "--no-heading", "--with-filename", "--null", "--color=never",
+                "--max-columns", "300", "--max-columns-preview", "--max-filesize", "5M", "--max-count", str(limit + 1)]
+        argv += ["--context", str(context)] if context else []
         argv += [] if caseSensitive else ["--ignore-case"]
         argv += ["--fixed-strings"] if literal else []
         argv += ["--glob", include] if include else []
@@ -590,30 +621,31 @@ async def code_grep(
         rc, out = await proc.run(ctx, argv, timeout=60, stream=False)
         if rc not in (0, 1):
             return f"grep fehlgeschlagen: {out.strip()[:500]}"
-        for row in out.splitlines():
-            m = re.match(r"^(.*?):(\d+):(.*)$", row) if not root.is_file() else re.match(r"^(\d+):(.*)$", row)
-            if not m:
-                continue
-            if root.is_file():
-                hits.append((str(root), int(m.group(1)), m.group(2)))
-            else:
-                hits.append((m.group(1), int(m.group(2)), m.group(3)))
+        rows = _rg_rows(out, str(root))
     else:
         try:
             rx = re.compile(re.escape(pattern) if literal else pattern, 0 if caseSensitive else re.IGNORECASE)
         except re.error as e:
             return f"Ungültiger regulärer Ausdruck: {e}"
-        hits = await asyncio.to_thread(_py_grep, root, rx, include, limit + 1, time.monotonic() + 30)
-    if not hits:
+        rows = await asyncio.to_thread(_py_grep, root, rx, include, limit + 1, time.monotonic() + 30, context)
+    total = sum(1 for r in rows if r[3])
+    if not total:
         return f"Keine Treffer für {pattern!r}."
-    total = len(hits)
-    out_lines, last = [], None
-    for path_, n, line in hits[:limit]:
-        if path_ != last:
-            out_lines.append(("" if last is None else "\n") + _rel(ctx, path_))
-            last = path_
-        line = line.strip()
-        out_lines.append(f"  {n}: {line[:300]}")
+    out_lines: list[str] = []
+    last_path, last_n, seen = None, 0, 0
+    for path_, n, line, hit in rows:
+        if hit:
+            seen += 1
+            if seen > limit:
+                break
+        elif seen >= limit and (path_ != last_path or n > last_n + context):
+            break  # Umgebung des letzten gezeigten Treffers noch, danach Schluss
+        if path_ != last_path:
+            out_lines.append(("" if last_path is None else "\n") + _rel(ctx, path_))
+        elif context and n > last_n + 1:
+            out_lines.append("  …")
+        last_path, last_n = path_, n
+        out_lines.append(f"  {n}{':' if hit else '-'} {(line.strip() if not context else line.rstrip())[:300]}")
     head = f"{min(total, limit)} Treffer" + (" (weitere gekürzt – genauer suchen)" if total > limit else "")
     return proc.clip_saved(head + "\n" + "\n".join(out_lines), ctx.limit(), "grep")
 
@@ -742,13 +774,16 @@ async def code_shell(
         if prefix and ctx.sandbox:
             from .. import sandbox
             prefix, stop_argv = sandbox.job_argv(prefix[0], ctx.sandbox["name"], cwd, command, jid)
+        # auf dem Rechner (nicht Sandbox/Käfig): sudo fragt auch im Hintergrund über den Passwortdialog
+        extra, close = ({}, lambda: None) if prefix else proc.background_env(ctx, command)
         try:
             job = await jobs.start(command, cwd, limit=getattr(coding, "max_jobs", 4), emit=ctx.emit, argv=prefix,
-                                   jid=jid, stop_argv=stop_argv)
+                                   jid=jid, stop_argv=stop_argv, env=extra, on_end=close)
             if ctx.jail and job.proc:
                 from .. import jail
                 jail.register(job.proc.pid)
         except RuntimeError as e:
+            close()
             return str(e)
         if ctx.emit:
             await ctx.emit({"type": "job", "phase": "link", "id": job.id, "call": ctx.call_id})

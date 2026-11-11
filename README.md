@@ -219,6 +219,7 @@ orbwise model llamacpp --update # newest llama.cpp build for models from Hugging
 orbwise model add qwen-image   # image model (also z-image-turbo, flux-schnell, sdxl) – or in the image view
 orbwise model remove <name>    # remove a downloaded model from the list
 orbwise context-test [--quick] # check the context window with the active model (Orbwise must be running)
+orbwise bench [--runs N]       # agent benchmark: does the coding agent solve ten fixed tasks with the active model?
 orbwise voice install          # install the speech output Piper with your language's voice (pocket: Pocket TTS; remove: orbwise voice remove)
 orbwise update                 # update (git pull, dependencies, restart)
 orbwise version                # show the installed version

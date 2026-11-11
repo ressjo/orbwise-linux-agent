@@ -33,6 +33,15 @@ def _not_root(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _sudo_asks_for_a_password(monkeypatch):
+    """Wie auf einem üblichen Rechner: sudo verlangt ein Passwort (der Testrechner ist oft root oder hat NOPASSWD),
+    und das echte sudo wird in Tests nicht aufgerufen."""
+    from orbwise import askpass
+    monkeypatch.setattr(askpass, "sudo_needs_no_password", lambda: False)
+    monkeypatch.setattr(askpass, "drop_sudo_ticket", lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def _no_github_login(monkeypatch):
     """Kein GitHub-Token vom Testrechner (GH_TOKEN, gh auth) – sonst sind die GitHub-Werkzeuge je nach Rechner an
     oder aus. Tests, die ein Token brauchen, setzen cfg.github.token."""

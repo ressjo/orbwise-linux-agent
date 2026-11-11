@@ -10,6 +10,7 @@ import re
 import signal
 import subprocess
 import tempfile
+from collections.abc import Callable
 
 from .registry import ToolContext
 
@@ -106,6 +107,25 @@ async def run_user_shell(ctx: ToolContext, command: str, timeout: float, cwd: st
         if extra:
             extra = {**extra, "PATH": f"{folder}{os.pathsep}{os.environ.get('PATH', '')}"}
         return await _run(ctx, command, timeout, True, cwd, extra)
+
+
+def background_env(ctx: ToolContext, command: str) -> tuple[dict, Callable[[], None]]:
+    """Umgebung für einen Hintergrund-Befehl des Modells auf dem Rechner, damit sudo auch dort über den Passwortdialog
+    fragt (statt ohne Terminal zu scheitern) → (Umgebung, aufräumen). Wie run_user_shell: steht sudo -A im Befehl,
+    gilt ein gemerktes Passwort (außer im Auto-Modus); ruft erst ein Skript sudo auf, nie. Das Einmal-Token lebt,
+    bis der Job endet – der Aufrufer ruft dann „aufräumen“."""
+    from ..askpass import BROKER, privileged_env, wrapper_dir
+    if BROKER is None or not BROKER.ready():
+        return {}, lambda: None
+    explicit = bool(_ASKPASS_RE.search(command))
+    folder = wrapper_dir(BROKER.helper)
+    if not explicit and folder is None:
+        return {}, lambda: None
+    cm = privileged_env(command, use_cache=explicit and not getattr(ctx, "fresh_sudo", False), implicit=not explicit)
+    extra = dict(cm.__enter__())
+    if extra and not explicit:
+        extra["PATH"] = f"{folder}{os.pathsep}{os.environ.get('PATH', '')}"
+    return extra, lambda: cm.__exit__(None, None, None)
 
 
 async def _run(ctx: ToolContext, cmd: str | list[str], timeout: float, stream: bool, cwd: str | None,

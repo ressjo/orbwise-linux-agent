@@ -182,6 +182,18 @@ def setup(ctx) -> None:
         log.info("Strata entfernt (Profile: %s, %.1f GB frei)", ", ".join(found["strata"]), freed / 1e9)
         await hub.broadcast({"type": "models_changed"})
 
+    from ..mcp import McpManager
+    ctx.mcp = McpManager(cfg)
+
+    async def connect_mcp() -> None:
+        """MCP-Server im Hintergrund verbinden (npx lädt beim ersten Mal erst herunter) – danach kennt der Agent
+        ihre Werkzeuge."""
+        try:
+            if await ctx.mcp.start():
+                hub.agent.reload_tools()
+        except Exception as e:  # noqa: BLE001 – MCP ist Zubehör, der Start hängt nicht daran
+            log.warning("MCP-Server nicht verbunden: %s", e)
+
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI):
         hub.speaker.start()
@@ -194,6 +206,7 @@ def setup(ctx) -> None:
         else:
             await startup.set("model", "ok", T("Demo-Modus", "demo mode"))
         background.append(asyncio.create_task(warm_voice()))
+        background.append(asyncio.create_task(connect_mcp()))
         background.append(asyncio.create_task(remove_piper_voices()))
         background.append(asyncio.create_task(watch_telegram()))
         background.append(asyncio.create_task(ctx.summary_loop()))
@@ -207,6 +220,7 @@ def setup(ctx) -> None:
         for t in [*background, *healing, *side_tasks]:
             t.cancel()
         bg_jobs.stop_all()  # Dev-Server & Co. nicht verwaist weiterlaufen lassen
+        await ctx.mcp.stop()  # gestartete MCP-Server beenden
         from .. import sandbox as sbx
         for name in list(sbx.last_used):  # Sandbox-Container anhalten (nicht löschen – die Arbeit bleibt)
             await asyncio.to_thread(sbx.stop, cfg, name)

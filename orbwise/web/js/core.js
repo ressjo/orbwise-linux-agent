@@ -40,9 +40,9 @@ export function init() {
   LOCALE = EN ? "en-GB" : "de-DE";
 
   LABELS = {
-    offline: "OFFLINE", idle: L("BEREIT", "READY"), listening: L("HÖRE ZU", "LISTENING"),
-    thinking: L("DENKE NACH", "THINKING"), speaking: L("SPRECHE", "SPEAKING"), executing: L("FÜHRE AUS", "EXECUTING"),
-    confirm: L("WARTE AUF FREIGABE", "AWAITING APPROVAL"), error: L("FEHLER", "ERROR"),
+    offline: "Offline", idle: L("Bereit", "Ready"), listening: L("Höre zu", "Listening"),
+    thinking: L("Denke nach", "Thinking"), speaking: L("Spreche", "Speaking"), executing: L("Führe aus", "Running"),
+    confirm: L("Warte auf Freigabe", "Awaiting approval"), error: L("Fehler", "Error"),
   };
   STATUS_TEXT = EN
     ? { running: "running", waiting: "waiting", ok: "done", denied: "denied", blocked: "blocked", error: "error",
@@ -58,7 +58,9 @@ export function init() {
   // SVG-Symbol aus dem Sprite in index.html; Farbe/Wert einer CSS-Variablen (für Canvas)
   ico = (name) => `<svg class="i"><use href="#i-${name}"/></svg>`;
   cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  AUTO_LABEL = { off: L("Auto aus", "Auto off"), read: L("Lesen", "Read"), files: L("Dateien", "Files"), auto: "Auto" };
+  // Etikett am Knopf: immer mit „Auto“ davor – „Lesen“ allein läse sich wie eine Aktion
+  AUTO_LABEL = { off: L("Auto: aus", "Auto: off"), read: L("Auto: Lesen", "Auto: read"), files: L("Auto: Dateien", "Auto: files"),
+                 auto: L("Auto: alles", "Auto: all") };
   S = {
     name: "Orbwise", wakePhrase: "Wake-Word",  // aus „hello“: assistant_name und der Satz des Wake-Word-Modells
     previews: {},  // Diff-Vorschau je Werkzeug-Aufruf (für die Freigabe-Karte)

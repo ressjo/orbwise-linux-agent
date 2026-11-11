@@ -268,6 +268,8 @@ TEXTS = {
         "auto_jail_where_project": "im Projektordner und in /tmp",
         "auto_jail_where_tmp": "in /tmp und im Artefakt-Ordner – dein Home ist dabei nur lesbar",
         "auto_sudo": "braucht Root-Rechte (Auto) – der Passwortdialog zeigt den Befehl",
+        "auto_sudo_nopasswd": "braucht Root-Rechte – sudo verlangt auf diesem Rechner kein Passwort, darum fragt "
+                              "Orbwise hier selbst",
         "jail_escalate_root": "Lief isoliert und brauchte Root-Rechte. Ohne Isolation ausführen? (sudo fragt dann nach "
                               "dem Passwort)",
         "jail_escalate_net": "Lief isoliert ohne Netz („Lesen + Bearbeiten“) und brauchte das Internet. Ohne Isolation "
@@ -348,6 +350,8 @@ TEXTS = {
         "auto_jail_where_project": "in the project folder and /tmp",
         "auto_jail_where_tmp": "in /tmp and the artifacts folder – your home folder is read-only meanwhile",
         "auto_sudo": "needs root privileges (Auto) – the password dialog shows the command",
+        "auto_sudo_nopasswd": "needs root privileges – sudo asks for no password on this machine, so Orbwise asks "
+                              "here itself",
         "jail_escalate_root": "Ran isolated and needed root privileges. Run it without isolation? (sudo then asks for "
                               "the password)",
         "jail_escalate_net": "Ran isolated without network (\u201cRead + edit\u201d) and needed the internet. Run it "

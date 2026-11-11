@@ -7,7 +7,7 @@ Thanks for helping to make Orbwise better! Bug reports, new tools, translations 
 ```bash
 git clone https://github.com/ressjo/orbwise-linux-agent.git && cd orbwise-linux-agent
 uv sync --extra dev --extra voice
-uv run pytest -q                 # all tests run offline, no GPU or Ollama needed
+uv run pytest -q -n auto         # all tests run offline, no GPU or Ollama needed (-n auto: in parallel)
 uv run ruff check orbwise tests
 ORBWISE_FAKE_LLM=1 uv run orbwise serve --open   # UI demo with a fake model
 ```

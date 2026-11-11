@@ -193,6 +193,14 @@ def cmd_doctor(args) -> None:
             write_helper()
             line(True, T("Root-Rechte: Passwortfeld in der Oberfläche", "Root privileges: password field in the web UI")
                  + f" (sudo -A, {helper_path()})")
+            from .askpass import sudo_needs_no_password
+            if os.geteuid() != 0 and sudo_needs_no_password():
+                print("  ⚠ " + T("sudo verlangt für diesen Benutzer kein Passwort (NOPASSWD). Der Passwortdialog "
+                                 "erscheint dann nie: Im Auto-Modus „Auto“ fragt Orbwise bei sudo mit einer Karte – "
+                                 "ruft aber ein Skript sudo auf, läuft es ohne Rückfrage als root.",
+                                 "sudo asks this user for no password (NOPASSWD). The password dialog never appears "
+                                 "then: in auto mode \"Auto\" Orbwise asks for sudo with a card – but when a script "
+                                 "calls sudo it runs as root without asking."))
         except OSError as e:
             line(False, T("Askpass-Helfer anlegen", "Create askpass helper"), str(e))
     else:
@@ -329,6 +337,21 @@ def cmd_doctor(args) -> None:
             line(True, f"GitHub @{gh_user['login']} ({source})")
         except Exception as e:  # noqa: BLE001
             line(False, f"GitHub ({source})", str(e))
+    if cfg.mcp.servers:
+        from .mcp import McpManager
+        print(T("MCP-Server:", "MCP servers:"))
+
+        async def probe() -> list[dict]:
+            manager = McpManager(cfg)
+            try:
+                await manager.start()
+                return manager.status()
+            finally:
+                await manager.stop()
+        for s in asyncio.run(probe()):
+            line(s["ok"], f"{s['name']} ({len(s['tools'])} " + T("Werkzeuge", "tools") + ")", s["error"])
+        for name in (n for n, s in cfg.mcp.servers.items() if not s.enabled):
+            print(f"  – {name} " + T("(ausgeschaltet)", "(disabled)"))
     print(T("Kalender:", "Calendar:"))
     if not cfg.calendar.enabled:
         print(T("  – nicht konfiguriert", "  – not configured") + " (calendar.url, username, password)")
@@ -749,6 +772,62 @@ def cmd_context_test(args) -> None:
         sys.exit(1)
 
 
+def cmd_bench(args) -> None:
+    """Agent-Benchmark mit dem aktiven Modell (siehe bench.py). Nutzt einen schon laufenden Modell-Server mit; läuft
+    keiner, startet er ihn und beendet ihn danach wieder."""
+    from . import bench
+    from .bench_tasks import TASKS
+
+    cfg = load_config()
+    en = cfg.language == "en"
+    if args.list:
+        for t in TASKS:
+            print(f"  {t.name:16} {t.title[1 if en else 0]}")
+        return
+    names = [n.strip() for n in (args.tasks or "").split(",") if n.strip()] or None
+    think = None if args.think is None else (args.think if args.think not in ("on", "off") else args.think == "on")
+
+    async def go() -> dict:
+        from .llm import FakeLLM
+        from .llm_router import LLMRouter
+        fake = env("FAKE_LLM") == "1"
+        llm = FakeLLM(delay=0, language=cfg.language) if fake else LLMRouter(
+            cfg.llm, state_path=cfg.memory.dir.parent / "state.json")
+        try:
+            if not fake:
+                if args.profile:
+                    await llm.activate(args.profile)
+                else:
+                    await llm.start()
+            model = "fake" if fake else (llm.profile.label or llm.profile.model or llm.active)
+            count = len(names or TASKS) * max(1, args.runs)
+            print(T(f"Benchmark mit {model}: {count} Läufe – das kann je nach Modell lange dauern …",
+                    f"Benchmark with {model}: {count} runs – this can take a while depending on the model …"), flush=True)
+
+            def progress(r: dict) -> None:
+                mark = "✔" if r["solved"] else "✘"
+                print(f"  {mark} {r['task']:16} {r['seconds']:6.0f} s  {r['steps']:3d} "
+                      + T("Schritte", "steps") + ("" if r["solved"] else f"  – {r['why'][:70]}"), flush=True)
+            return await bench.run_bench(cfg, llm, names, args.runs, think, args.timeout,
+                                         Path(args.keep).expanduser() if args.keep else None, progress, model)
+        finally:
+            await llm.close()
+
+    try:
+        result = asyncio.run(go())
+    except ValueError as e:
+        sys.exit(f"✘ {e}")
+    except Exception as e:  # noqa: BLE001 – z. B. Modell-Server nicht erreichbar
+        sys.exit(f"✘ {type(e).__name__}: {e}")
+    print()
+    print(bench.format_report(result, en))
+    base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "orbwise" / "bench"
+    path = bench.save(result, Path(args.json).expanduser().parent if args.json else base)
+    if args.json:
+        path = path.rename(Path(args.json).expanduser())
+    print("\n" + T(f"Gespeichert: {path}", f"Saved: {path}"))
+
+
 def cmd_version(args) -> None:
     from .update import project_root, version
     print(f"Orbwise {version()}\n{project_root()}")
@@ -830,6 +909,16 @@ def main(argv: list[str] | None = None) -> None:
                                     "update (git pull, dependencies, restart)"))
     sub.add_parser("stop", help=T("Laufenden Orbwise-Server beenden (auch einen im Hintergrund)",
                                   "stop the running Orbwise server (also one in the background)"))
+    p = sub.add_parser("bench", help=T("Agent-Benchmark: löst der Coding-Agent mit dem aktiven Modell feste Aufgaben?",
+                                       "agent benchmark: does the coding agent solve fixed tasks with the active model?"))
+    p.add_argument("--list", action="store_true", help=T("Aufgaben anzeigen", "list the tasks"))
+    p.add_argument("--tasks", default="", help=T("nur diese Aufgaben (Komma-getrennt)", "only these tasks (comma-separated)"))
+    p.add_argument("--runs", type=int, default=1, help=T("Läufe je Aufgabe (Ergebnisse schwanken)", "runs per task (results vary)"))
+    p.add_argument("--think", default=None, help=T("Denken: on, off oder eine Stufe des Modells", "thinking: on, off or a level of the model"))
+    p.add_argument("--profile", default="", help=T("dieses Modell-Profil statt des aktiven", "this model profile instead of the active one"))
+    p.add_argument("--timeout", type=float, default=900, help=T("Sekunden je Aufgabe", "seconds per task"))
+    p.add_argument("--keep", default="", help=T("Projekte der Läufe in diesem Ordner behalten", "keep the projects of the runs in this folder"))
+    p.add_argument("--json", default="", help=T("Ergebnis in diese Datei schreiben", "write the result to this file"))
     sub.add_parser("version", help=T("Installierte Version anzeigen", "show the installed version"))
     p = sub.add_parser("autostart", help=T("Beim Anmelden starten: on, off oder anzeigen (Standard: aus)",
                                            "start at login: on, off or show (default: off)"))
@@ -851,7 +940,7 @@ def main(argv: list[str] | None = None) -> None:
         logging.getLogger(noisy).setLevel(logging.WARNING)
     if args.cmd is None:
         args = parser.parse_args(["serve", *(argv or sys.argv[1:])])
-    {"serve": cmd_serve, "open": cmd_open, "stop": cmd_stop, "doctor": cmd_doctor, "update": cmd_update, "model": cmd_model, "version": cmd_version,
+    {"serve": cmd_serve, "open": cmd_open, "stop": cmd_stop, "doctor": cmd_doctor, "update": cmd_update, "model": cmd_model, "version": cmd_version, "bench": cmd_bench,
      "reindex": cmd_reindex, "summarize": cmd_summarize, "init-config": cmd_init_config,
      "context-test": cmd_context_test, "voice": cmd_voice, "skills": cmd_skills, "autostart": cmd_autostart}[args.cmd](args)
 

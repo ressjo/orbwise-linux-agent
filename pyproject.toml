@@ -46,6 +46,7 @@ voice = [
 ]
 dev = [
     "pytest>=8.0",
+    "pytest-xdist>=3.6",
     "radicale>=3.8.1",
     "ruff>=0.6",
 ]

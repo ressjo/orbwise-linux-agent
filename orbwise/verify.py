@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import re
 import shlex
 import shutil
@@ -23,6 +24,7 @@ from pathlib import Path
 import yaml
 
 from . import review_checks
+from .tools.files import SKIP_DIRS
 
 TAIL = 1500  # Zeichen Ausgabe je Prüfung (das Ende ist meist das Wichtige)
 
@@ -53,18 +55,122 @@ def _scripts(project: Path) -> dict:
         return {}
 
 
+def _venv_tool(root: Path, name: str) -> str:
+    """Programm aus der virtuellen Umgebung des Projekts (.venv/venv – uv, python -m venv) als relativer Pfad, sonst
+    leer. pytest und ruff sind oft nur dort installiert; mit dem System-Python fiele die Prüfung dann still aus."""
+    for folder in (".venv", "venv"):
+        if (root / folder / "bin" / name).is_file() and (root / folder / "pyvenv.cfg").is_file():
+            return f"{folder}/bin/{name}"
+    return ""
+
+
+def _poetry_python(root: Path) -> str:
+    """Poetry legt die Umgebung meist außerhalb des Projekts an – dann führt `poetry run` hinein (installiert nichts)."""
+    return "poetry run python" if (root / "poetry.lock").is_file() and shutil.which("poetry") else ""
+
+
+JS_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".vue", ".svelte")
+
+
+def _js_related(root: Path, scripts: dict, changed: list[str]) -> str:
+    """Befehl, der nur die Tests zu den geänderten Dateien laufen lässt – vitest und jest können das selbst
+    (sie folgen den Importen). Leer, wenn keiner von beiden der Test-Runner des Projekts ist."""
+    files = [f for f in changed if f.endswith(JS_SUFFIXES) and (root / f).is_file()][:50]
+    test = str(scripts.get("test") or "")
+    if not files:
+        return ""
+    names = " ".join(shlex.quote(f) for f in files)
+    if "vitest" in test and (root / "node_modules/.bin/vitest").exists():
+        return f"node_modules/.bin/vitest related --run --passWithNoTests {names}"
+    if "jest" in test and (root / "node_modules/.bin/jest").exists():
+        return f"node_modules/.bin/jest --findRelatedTests --passWithNoTests {names}"
+    return ""
+
+
+def _go_packages(root: Path, changed: list[str]) -> list[str]:
+    """Go-Pakete (Ordner) der geänderten .go-Dateien – deren Tests laufen zuerst."""
+    dirs = sorted({str(Path(f).parent) for f in changed if f.endswith(".go") and (root / f).is_file()})
+    return ["./" + ("" if d == "." else d) for d in dirs][:20]
+
+
+TARGETED_MAX = 10      # höchstens so viele Testdateien laufen vorab
+TEST_FILES_MAX = 400   # in größeren Projekten nur nach Dateinamen zuordnen (Inhalte lesen wäre zu langsam)
+
+
+def _is_test(name: str) -> bool:
+    return name.endswith(".py") and (name.startswith("test_") or name.endswith("_test.py"))
+
+
+def targeted_tests(project: str | Path, changed: list[str]) -> list[str]:
+    """Testdateien, die zu den geänderten Python-Dateien gehören (relativ zum Projekt, beste zuerst): geänderte Tests
+    selbst, Tests mit passendem Namen (test_<modul>.py, <modul>_test.py, alle Namensteile enthalten) und Tests, die
+    das Modul importieren. Leer, wenn nichts passt oder eine conftest.py geändert wurde (betrifft alle Tests)."""
+    root = Path(project)
+    py = [f for f in changed if f.endswith(".py")]
+    if not py or any(Path(f).name == "conftest.py" for f in py):
+        return []
+    scores: dict[str, int] = {f: 4 for f in py if _is_test(Path(f).name) and (root / f).is_file()}
+    stems = set()
+    for f in py:
+        path = Path(f)
+        if not _is_test(path.name):
+            stems.add(path.parent.name if path.stem == "__init__" else path.stem)
+    stems.discard("")
+    if stems:
+        tests: list[str] = []
+        for dirpath, dirnames, names in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
+            tests += [os.path.relpath(os.path.join(dirpath, n), root) for n in names if _is_test(n)]
+            if len(tests) > 5000:
+                break
+        imports = re.compile(r"^\s*(?:from|import)\s[^\n#]*\b(?:" + "|".join(re.escape(s) for s in sorted(stems))
+                             + r")\b", re.M)
+        for rel in tests:
+            name = Path(rel).stem
+            core = name.removeprefix("test_").removesuffix("_test")
+            parts = set(core.split("_"))
+            score = 0
+            if core in stems:
+                score = 3
+            elif any(set(s.split("_")) <= parts for s in stems):
+                score = 2
+            elif len(tests) <= TEST_FILES_MAX:
+                try:
+                    if imports.search((root / rel).read_text(encoding="utf-8", errors="replace")[:200_000]):
+                        score = 1
+                except OSError:
+                    pass
+            if score:
+                scores[rel] = max(score, scores.get(rel, 0))
+    out = []
+    for rel in sorted(scores, key=lambda f: (-scores[f], f)):
+        try:  # nur echte Testdateien (ein Modul namens context_test.py ist keine)
+            if re.search(r"^\s*(?:async\s+)?def test_|^class Test", (root / rel).read_text(encoding="utf-8", errors="replace"), re.M):
+                out.append(rel)
+        except OSError:
+            continue
+        if len(out) >= TARGETED_MAX:
+            break
+    return out
+
+
 def detect(project: str | Path, changed: list[str]) -> list[tuple[str, str]]:
     """Schnelle Prüfungen nach den Dateien im Projekt. Werkzeuge, die dort fehlen, überspringt das Skript selbst."""
     root = Path(project)
     out: list[tuple[str, str]] = []
     py = [f for f in changed if f.endswith(".py")]
+    python, ruff = _venv_tool(root, "python") or _poetry_python(root) or "python3", _venv_tool(root, "ruff") or "ruff"
     if py:
-        out.append(("ruff", "command -v ruff >/dev/null && ruff check --no-cache --output-format concise "
+        out.append(("ruff", f"command -v {ruff} >/dev/null && {ruff} check --no-cache --output-format concise "
                             + " ".join(shlex.quote(f) for f in py[:200])))
     if (root / "tests").is_dir() or (root / "test").is_dir() or any(root.glob("test_*.py")) or any(root.glob("*/test_*.py")):
         if any(root.rglob("*.py")):
-            out.append(("pytest", "python3 -c 'import pytest' 2>/dev/null && python3 -m pytest -q -x --maxfail=5 "
-                                  "-p no:cacheprovider"))
+            run = f"{python} -m pytest -q --maxfail=5 -p no:cacheprovider"
+            near = targeted_tests(root, changed)
+            # erst die Tests zu den geänderten Dateien (Sekunden), die ganze Suite nur, wenn die grün sind – in
+            # einer Korrekturrunde wartet das Modell so nicht jedes Mal auf alles
+            first = f"{run} {' '.join(shlex.quote(f) for f in near)} && " if near else ""
+            out.append(("pytest", f"{python} -c 'import pytest' 2>/dev/null && {first}{run}"))
     scripts = _scripts(root)
     if scripts and (root / "node_modules").is_dir():
         for key, name in (("lint", "npm-lint"), ("typecheck", "npm-typecheck")):
@@ -74,9 +180,12 @@ def detect(project: str | Path, changed: list[str]) -> list[tuple[str, str]]:
             out.append(("tsc", "node_modules/.bin/tsc --noEmit"))
         test = str(scripts.get("test") or "")
         if test and "no test specified" not in test:
-            out.append(("npm-test", "npm test --silent"))
+            first = _js_related(root, scripts, changed)  # erst die Tests zu den geänderten Dateien, dann alle
+            out.append(("npm-test", (first + " && " if first else "") + "npm test --silent"))
     if (root / "go.mod").is_file():
-        out.append(("go-test", "command -v go >/dev/null && go vet ./... && go test ./..."))
+        pkgs = _go_packages(root, changed)
+        first = f"go test {' '.join(shlex.quote(p) for p in pkgs)} && " if pkgs else ""
+        out.append(("go-test", f"command -v go >/dev/null && {first}go vet ./... && go test ./..."))
     if (root / "Cargo.toml").is_file():
         out.append(("cargo-check", "command -v cargo >/dev/null && cargo check --quiet"))
     makefile = root / "Makefile"
@@ -104,7 +213,7 @@ def script(checks: list[tuple[str, str]], timeout: int) -> str:
     parts = [f"c(){{ n=$1; shift; echo \"@@CHECK $n\"; echo \"@@CMD $*\"; timeout {int(timeout)} bash -c \"$*\" 2>&1 "
              f"| tail -c {TAIL}; rc=${{PIPESTATUS[0]}}; echo; echo \"@@RC $rc\"; }}"]
     for name, cmd in checks:
-        guard = re.match(r"^(command -v \S+ >/dev/null|python3 -c 'import \w+' 2>/dev/null) && ", cmd)
+        guard = re.match(r"^(command -v \S+ >/dev/null|(?:poetry run )?[\w./-]+ -c 'import \w+' 2>/dev/null) && ", cmd)
         if guard:  # Werkzeug fehlt → Abschnitt als übersprungen
             parts.append(f"if {guard.group(1)}; then c {shlex.quote(name)} {shlex.quote(cmd[guard.end():])}; "
                          f"else echo '@@CHECK {name}'; echo '@@SKIP fehlt'; fi")
@@ -122,8 +231,12 @@ def summary(results: list[dict], en: bool = False) -> str:
     """Einzeiler für unter die Antwort."""
     ran = [r for r in results if r["status"] != "skip"]
     bad = [r for r in ran if r["status"] == "fail"]
-    if not ran:
-        return ""
+    if not ran:  # alles übersprungen (Werkzeug fehlt): das sagen, statt den Eindruck „geprüft“ zu lassen
+        names = ", ".join(r["name"] for r in results)
+        if not names:
+            return ""
+        return (f"○ Not checked – not installed here: {names}" if en
+                else f"○ Nicht geprüft – hier nicht installiert: {names}")
     if not bad:
         return ("✓ Checked: " if en else "✓ Geprüft: ") + ", ".join(r["name"] for r in ran)
     names = ", ".join(r["name"] + (f" ({_short(r['output'])})" if _short(r["output"]) else "") for r in bad)
@@ -169,6 +282,8 @@ def check_syntax(path: Path, text: str) -> str:
             return _external(["bash", "-n", str(path)], "bash")
         elif suffix in (".js", ".mjs", ".cjs"):
             return _external(["node", "--check", str(path)], "node")
+        elif suffix in TS_SUFFIXES:
+            return _typescript(path, text)
     except SyntaxError as e:
         return f"SyntaxError Zeile {e.lineno}: {e.msg}"
     except json.JSONDecodeError as e:
@@ -179,6 +294,66 @@ def check_syntax(path: Path, text: str) -> str:
     except tomllib.TOMLDecodeError as e:
         return f"TOML-Fehler: {e}"
     return ""
+
+
+TS_SUFFIXES = (".ts", ".tsx", ".mts", ".cts")
+# Liest die Quelle von stdin und parst sie nur: mit dem TypeScript des Rechners (transpileModule – ohne Typprüfung,
+# ohne andere Dateien zu laden), sonst mit Nodes eingebautem Entfernen der Typen. Meldet den ersten Syntaxfehler.
+_TS_CHECK = r"""
+const src = require('fs').readFileSync(0, 'utf8');
+const [name, lib] = process.argv.slice(1);
+if (lib) {
+  const ts = require(lib);
+  const out = ts.transpileModule(src, {fileName: name, reportDiagnostics: true,
+    compilerOptions: {jsx: ts.JsxEmit.Preserve, target: ts.ScriptTarget.ESNext}});
+  const d = (out.diagnostics || []).find(x => x.category === ts.DiagnosticCategory.Error);
+  if (d) {
+    const at = d.file && d.start !== undefined ? d.file.getLineAndCharacterOfPosition(d.start) : null;
+    console.log((at ? 'Zeile ' + (at.line + 1) + ': ' : '') + ts.flattenDiagnosticMessageText(d.messageText, ' '));
+    process.exit(1);
+  }
+} else {
+  const strip = require('node:module').stripTypeScriptTypes;
+  if (!strip) process.exit(0);
+  try { strip(src, {mode: 'transform'}); } catch (e) {
+    if (e.code !== 'ERR_INVALID_TYPESCRIPT_SYNTAX') process.exit(0);
+    console.log(String(e.message).trim().split('\n')[0]);
+    process.exit(1);
+  }
+}
+"""
+
+
+def _typescript_lib(path: Path) -> str:
+    """typescript.js des auf dem Rechner installierten tsc – nie eines aus dem Projekt: was im Projektordner liegt,
+    kann der Agent (auch aus der Sandbox heraus) geschrieben haben und liefe hier sonst auf dem Rechner."""
+    tsc = shutil.which("tsc")
+    if not tsc:
+        return ""
+    lib = Path(tsc).resolve().parent.parent / "lib" / "typescript.js"
+    try:
+        target = path.resolve()
+    except OSError:
+        return ""
+    # der Ordner, in dem das node_modules mit diesem TypeScript liegt: enthält er die Datei, gehört es zum Projekt
+    parts = lib.parts
+    owner = Path(*parts[:parts.index("node_modules")]) if "node_modules" in parts else lib.parent.parent
+    return str(lib) if lib.is_file() and owner != target and owner not in target.parents else ""
+
+
+def _typescript(path: Path, text: str) -> str:
+    if not shutil.which("node"):
+        return ""
+    lib = _typescript_lib(path)
+    if not lib and path.suffix.lower() == ".tsx":
+        return ""  # JSX kann nur der TypeScript-Compiler lesen
+    try:
+        r = subprocess.run(["node", "--no-warnings", "-e", _TS_CHECK, path.name, *([lib] if lib else [])], input=text,
+                           capture_output=True, text=True, timeout=15, cwd="/")
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    msg = r.stdout.strip()
+    return f"Syntaxfehler: {msg[:300]}" if r.returncode == 1 and msg else ""
 
 
 def _external(argv: list[str], tool: str) -> str:

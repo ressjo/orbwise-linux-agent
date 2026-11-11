@@ -49,6 +49,8 @@
       <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></symbol>
       <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></symbol>
       <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8Z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8Z"/></symbol>
+      <symbol id="i-auto" viewBox="0 0 24 24"><path d="m5 6 6 6-6 6"/><path d="m13 6 6 6-6 6"/></symbol>
+      <symbol id="i-think" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12h.01M12 12h.01M16 12h.01"/></symbol>
       <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7Z"/></symbol>
       <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12Z"/></symbol>
       <symbol id="i-code" viewBox="0 0 24 24"><path d="m8 7-5 5 5 5M16 7l5 5-5 5M13.5 4l-3 16"/></symbol>
@@ -120,9 +122,9 @@
         <div class="chip-split head-split" id="project-wrap">
           <button class="project-chip coding-only" id="project-chip" aria-haspopup="menu" title="Projektordner für diesen Coding-Chat – Shell und relative Pfade starten dort"><svg class="i"><use href="#i-folder"/></svg><em id="project-label">Projektordner wählen</em><span class="branch-badge hidden" id="project-branch"><svg class="i"><use href="#i-branch"/></svg><span></span></span></button>
           <div class="chip-menu head-menu hidden" id="project-menu" role="menu">
-            <button type="button" role="menuitem" data-project="folder"><b>Ordner wählen …</b><small>Einen Ordner auf diesem PC als Projekt nehmen.</small></button>
-            <button type="button" role="menuitem" data-project="github"><b>Von GitHub klonen …</b><small>Eines deiner Repos klonen und als Projekt nehmen.</small></button>
-            <button type="button" role="menuitem" data-project="push"><b>Zu GitHub pushen …</b><small>Den aktuellen Branch hochladen – oder das Projekt mit einem leeren Repo verbinden.</small></button>
+            <button type="button" role="menuitem" data-project="folder"><b>Ordner wählen …</b></button>
+            <button type="button" role="menuitem" data-project="github"><b>Von GitHub klonen …</b></button>
+            <button type="button" role="menuitem" data-project="push"><b>Zu GitHub pushen …</b></button>
           </div>
         </div>
         <div class="chip-split head-split" id="sandbox-wrap">
@@ -132,15 +134,15 @@
         <div class="chip-split head-split" id="review-wrap">
           <button class="project-chip review-chip coding-only" id="review-chip" aria-haspopup="menu" title="Code-Check: das Projekt in der Sandbox prüfen – Tests, Linter, Sicherheits-Scanner und ein Review mit frischem Blick; bestätigte Funde werden behoben"><svg class="i"><use href="#i-shield-check"/></svg><em>Prüfen</em></button>
           <div class="chip-menu head-menu hidden" id="review-menu" role="menu">
-            <button type="button" role="menuitem" data-review=""><b>Änderungen prüfen</b><small>Was sich in der Sandbox bzw. seit dem letzten Commit geändert hat – schnell und gründlich.</small></button>
-            <button type="button" role="menuitem" data-review="all"><b>Ganzes Projekt prüfen</b><small>Alle Quelldateien – dauert mit einem lokalen Modell deutlich länger.</small></button>
+            <button type="button" role="menuitem" data-review=""><b>Änderungen prüfen</b><small>Seit dem letzten Commit.</small></button>
+            <button type="button" role="menuitem" data-review="all"><b>Ganzes Projekt prüfen</b><small>Dauert deutlich länger.</small></button>
           </div>
         </div>
         <div class="head-actions">
           <button class="model-chip" id="pill-llm" title="Sprachmodell wechseln"><i></i><svg class="i"><use href="#i-chip"/></svg><em>–</em><svg class="i caret"><use href="#i-chevron"/></svg></button>
-          <button class="icon-btn" id="btn-tts" title="Sprachausgabe an/aus" aria-label="Sprachausgabe"><svg class="i"><use href="#i-volume"/></svg></button>
-          <button class="icon-btn" id="btn-wake" title="Wake-Word an/aus" aria-label="Wake-Word"><svg class="i"><use href="#i-ear"/></svg></button>
-          <button class="icon-btn" id="btn-activity" title="Aktivität und Systemauslastung" aria-label="Aktivität"><svg class="i"><use href="#i-activity"/></svg><span class="badge hidden" id="act-badge"></span></button>
+          <button class="icon-btn" id="btn-tts" title="Sprachausgabe an/aus" aria-label="Sprachausgabe"><svg class="i"><use href="#i-volume"/></svg><span class="ib-label">Stimme</span></button>
+          <button class="icon-btn" id="btn-wake" title="Wake-Word an/aus" aria-label="Wake-Word"><svg class="i"><use href="#i-ear"/></svg><span class="ib-label">Wake-Word</span></button>
+          <button class="icon-btn" id="btn-activity" title="Aktivität und Systemauslastung" aria-label="Aktivität"><svg class="i"><use href="#i-activity"/></svg><span class="ib-label">Aktivität</span><span class="badge hidden" id="act-badge"></span></button>
         </div>
       </header>
 
@@ -156,18 +158,6 @@
         </div>
         <div class="hero">
           <h1 class="greeting" id="greeting">Wie kann ich helfen?</h1>
-          <div class="suggestions coding-only" id="suggestions-coding">
-            <button class="suggestion" data-text="Gib mir einen Überblick über dieses Projekt: Aufbau, Stack, wie man es baut und testet.">Projekt verstehen</button>
-            <button class="suggestion" data-text="Führe die Tests aus und behebe, was fehlschlägt.">Tests reparieren</button>
-            <button class="suggestion" data-text="Was hat sich seit dem letzten Commit geändert? Prüfe die Änderungen auf Fehler.">Änderungen prüfen</button>
-            <button class="suggestion" data-text="Schreib mir ein kleines Python-Skript, das ">Skript schreiben</button>
-          </div>
-          <div class="suggestions tools-only" id="suggestions">
-            <button class="suggestion" data-text="Mach ein Systemupdate">Systemupdate</button>
-            <button class="suggestion" data-text="Was ist das für eine Fehlermeldung auf meinem Bildschirm?">Bildschirm erklären</button>
-            <button class="suggestion" data-text="Guten Morgen – was steht heute an?">Briefing</button>
-            <button class="suggestion" data-text="Wie viel Speicherplatz ist noch frei?">Speicherplatz</button>
-          </div>
         </div>
       </section>
 
@@ -209,26 +199,26 @@
           <input id="input" type="text" autocomplete="off" placeholder="Frag Orbwise …">
           <button type="button" class="chip-toggle" id="btn-plan" title="Planmodus: Orbwise schaut nur lesend nach und legt erst einen Plan vor – ausgeführt wird nach deiner Freigabe."><svg class="i"><use href="#i-plan"/></svg><span>Plan</span></button>
           <div class="chip-split" id="auto-wrap">
-            <button type="button" class="chip-toggle" id="btn-auto" aria-haspopup="menu" aria-expanded="false" title="Auto-Modus: was ohne Rückfrage laufen darf"><svg class="i"><use href="#i-bolt"/></svg><span id="auto-label">Lesen</span><svg class="i caret"><use href="#i-chevron"/></svg></button>
+            <button type="button" class="chip-toggle" id="btn-auto" aria-haspopup="menu" aria-expanded="false" title="Auto-Modus: was ohne Rückfrage laufen darf"><svg class="i"><use href="#i-auto"/></svg><span id="auto-label">Lesen</span><svg class="i caret"><use href="#i-chevron"/></svg></button>
             <div class="chip-menu hidden" id="auto-menu" role="menu">
-              <button type="button" role="menuitemradio" data-auto="off"><b>Aus</b><small>Jeder Shell-Befehl fragt vorher.</small></button>
-              <button type="button" role="menuitemradio" data-auto="read"><b>Nur lesen</b><small>Lesende Befehle (ls, df, git status …) laufen ohne Rückfrage.</small></button>
-              <button type="button" role="menuitemradio" data-auto="files"><b>Lesen + Dateien bearbeiten</b><small>Dazu Dateien im Home ändern; Bauen und Tests laufen isoliert ohne Netz. Löschen, Netz und sudo fragen. Der sichere Mittelweg.</small></button>
-              <button type="button" role="menuitemradio" data-auto="auto"><b>Auto</b><small>Alles läuft ohne Rückfrage, auch Server, Docker und Netz. Nur sudo fragt nach dem Passwort, Pushen und Mails senden fragen. Risiko: Inhalte aus Webseiten/Mails könnten Befehle auslösen.</small></button>
+              <button type="button" role="menuitemradio" data-auto="off"><b>Aus</b><small>Jeder Befehl fragt.</small></button>
+              <button type="button" role="menuitemradio" data-auto="read"><b>Nur lesen</b><small>Lesende Befehle laufen.</small></button>
+              <button type="button" role="menuitemradio" data-auto="files"><b>Lesen + Dateien bearbeiten</b><small>Dazu Dateien ändern; Bauen und Tests isoliert.</small></button>
+              <button type="button" role="menuitemradio" data-auto="auto"><b>Auto</b><small>Alles läuft. Nur sudo, Pushen und Mails fragen.</small></button>
               <p class="auto-hint hidden" id="auto-jail-hint"></p>
             </div>
           </div>
           <div class="chip-split" id="think-wrap">
-            <button type="button" class="chip-toggle" id="btn-think" aria-haspopup="menu" aria-expanded="false" title="Denkmodus: Orbwise denkt vor der Antwort nach – langsamer, dafür gründlicher."><svg class="i"><use href="#i-sparkles"/></svg><span id="think-label">Denken</span><svg class="i caret"><use href="#i-chevron"/></svg></button>
+            <button type="button" class="chip-toggle" id="btn-think" aria-haspopup="menu" aria-expanded="false" title="Denkmodus: Orbwise denkt vor der Antwort nach – langsamer, dafür gründlicher."><svg class="i"><use href="#i-think"/></svg><span id="think-label">Denken</span><svg class="i caret"><use href="#i-chevron"/></svg></button>
             <div class="chip-menu hidden" id="think-menu" role="menu">
-              <button type="button" role="menuitemradio" data-think="off"><b>Nicht denken</b><small>Direkte Antworten – am schnellsten.</small></button>
-              <button type="button" role="menuitemradio" data-think="on" class="hidden"><b>Denken</b><small>Das Modell überlegt vor der Antwort.</small></button>
+              <button type="button" role="menuitemradio" data-think="off"><b>Nicht denken</b><small>Am schnellsten.</small></button>
+              <button type="button" role="menuitemradio" data-think="on" class="hidden"><b>Denken</b><small>Gründlicher, langsamer.</small></button>
             </div>
           </div>
           <button type="submit" class="send" id="btn-send" title="Senden" aria-label="Senden"><svg class="i"><use href="#i-send"/></svg></button>
           <button type="button" class="send stop hidden" id="btn-stop" title="Aktuelle Aufgabe abbrechen (Esc)" aria-label="Abbrechen"><svg class="i"><use href="#i-stop"/></svg></button>
         </form>
-        <div class="composer-hint">Leertaste halten zum Sprechen · Esc bricht ab · Änderungen am System fragt Orbwise vorher</div>
+        <div class="composer-hint">Leertaste: sprechen · Esc: abbrechen</div>
       </footer>
     </main>
 
@@ -428,27 +418,29 @@
           </div>
         </div>
         <div class="set-section" id="set-general">
-          <div class="set-row"><div><b>Darstellung</b><small>Hell, dunkel oder wie das System.</small></div>
+          <div class="set-row"><div><b>Darstellung</b></div>
             <div class="seg" id="set-theme"><button type="button" data-theme-pick="light">Hell</button><button type="button" data-theme-pick="dark">Dunkel</button><button type="button" data-theme-pick="system">System</button></div></div>
-          <div class="set-row"><div><b>Orb im Chat</b><small>Größe und Platz der Statuskugel während eines Gesprächs.</small></div>
+          <div class="set-row"><div><b>Orb im Chat</b></div>
             <div class="orb-ctl"><div class="seg" id="set-orb-size"><button type="button" data-orb-size="off">Aus</button><button type="button" data-orb-size="s">Klein</button><button type="button" data-orb-size="m">Mittel</button><button type="button" data-orb-size="l">Groß</button></div>
             <div class="seg" id="set-orb-pos"><button type="button" data-orb-pos="bl">Links</button><button type="button" data-orb-pos="br">Rechts</button><button type="button" data-orb-pos="tr">Oben rechts</button></div></div></div>
-          <div class="set-row"><div><b>Sprachausgabe</b><small>Antworten werden vorgelesen.</small></div>
+          <div class="set-row"><div><b>Sprachausgabe</b></div>
             <button class="switch" data-mirror="btn-tts">Aus</button></div>
-          <div class="set-row"><div><b>Wake-Word</b><small>Das Wake-Word startet die Spracheingabe.</small></div>
+          <div class="set-row"><div><b>Wake-Word</b></div>
             <button class="switch" data-mirror="btn-wake">Aus</button></div>
-          <div class="set-row"><div><b>Planmodus</b><small>Erst einen Plan vorlegen, ausführen nach Freigabe.</small></div>
+          <div class="set-row"><div><b>Planmodus</b><small>Erst planen, dann ausführen.</small></div>
             <button class="switch" data-mirror="btn-plan">Aus</button></div>
-          <div class="set-row"><div><b>Auto-Modus</b><small>Was ohne Rückfrage laufen darf.</small></div>
+          <div class="set-row"><div><b>Auto-Modus</b><small>Was ohne Rückfrage läuft.</small></div>
             <div class="seg" id="set-auto"><button type="button" data-auto="off">Aus</button><button type="button" data-auto="read">Nur lesen</button><button type="button" data-auto="files">+ Dateien</button><button type="button" data-auto="auto">Auto</button></div></div>
-          <div class="set-row"><div><b>Denkmodus</b><small>Gründlicher, dafür langsamer.</small></div>
+          <div class="set-row"><div><b>Denkmodus</b></div>
             <div class="seg" id="set-think"><button type="button" data-think="off">Aus</button><button type="button" data-think="on" class="hidden">An</button></div></div>
-          <div class="set-row" id="set-steps"><div><b>Schritt-Limit</b><small>Werkzeug-Schritte je Antwort – danach fasst Orbwise zusammen und bietet „mach weiter“ an.</small></div>
+          <div class="set-row"><div><b>Denken bei Aufgaben</b><small>Nur wo nötig ist schneller.</small></div>
+            <div class="seg" id="set-think-steps"><button type="button" data-steps="all">Jeder Schritt</button><button type="button" data-steps="lean">Nur wo nötig</button></div></div>
+          <div class="set-row" id="set-steps"><div><b>Schritt-Limit</b><small>Werkzeug-Schritte je Antwort.</small></div>
             <div class="steps-ctl"><label>Tools <select id="steps-tools"></select></label><label>Coding <select id="steps-coding"></select></label></div></div>
-          <div class="set-row"><div><b>Beim Anmelden starten</b><small>Sonst startet Orbwise über den Eintrag im Anwendungsmenü. Routinen und Telegram laufen nur, solange Orbwise läuft.</small></div>
+          <div class="set-row"><div><b>Beim Anmelden starten</b></div>
             <button class="switch" id="btn-autostart">Aus</button></div>
           <div class="set-row" id="set-hf"></div>
-          <div class="set-row" id="set-storage"><div><b>Speicherplatz</b><small>Modelle, Programme und Zwischenspeicher – was Orbwise auf der Platte belegt.</small></div>
+          <div class="set-row" id="set-storage"><div><b>Speicherplatz</b></div>
             <div class="artifacts-ctl"><span class="artifacts-size" id="storage-total">–</span><button type="button" class="btn small" id="btn-storage-details" aria-expanded="false" aria-controls="storage-list">Details</button></div></div>
           <div class="storage-list hidden" id="storage-list"></div>
           <p class="set-hint">Mail, Paperless, Telegram und andere Verbindungen richtest du unter <b>Skills</b> ein. Alles Weitere steht in <code>~/.config/orbwise/config.yaml</code> – <code>orbwise doctor</code> prüft es.</p>

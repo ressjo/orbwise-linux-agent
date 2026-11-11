@@ -81,12 +81,22 @@ class LLMConfig(BaseModel):
     num_ctx: int = 16384
     # Qwen3 "Thinking" abschalten – deutlich schnellere Antworten
     think: bool = False
+    # Mit Denken: "all" = vor jedem Schritt denken; "lean" = nur im ersten Schritt einer Antwort und nach einem
+    # Fehlschlag (schneller bei langen Aufgaben – kann je nach Modell Qualität kosten, darum nicht der Standard)
+    think_steps: str = "all"
     keep_alive: str = "30m"
     request_timeout: float = 300.0
     # Modell-Profile; leer = ein Profil "standard" aus den Werten oben
     profiles: dict[str, ProfileConfig] = Field(default_factory=dict)
     # Profil beim Start (eine Auswahl in der Oberfläche wird gemerkt und hat Vorrang)
     active: str = ""
+
+    @field_validator("think_steps")
+    @classmethod
+    def _think_steps(cls, v: str) -> str:
+        if v not in ("all", "lean"):
+            raise ValueError("llm.think_steps muss 'all' oder 'lean' sein")
+        return v
     # GGUF-Modelle für llama.cpp: Downloads von Hugging Face landen hier, vorhandene Dateien erscheinen im
     # Modell-Menü unter „Auf der Festplatte“
     models_dir: str = "~/models"
@@ -460,6 +470,8 @@ class CodingConfig(BaseModel):
     # Coding-Modus (Arbeitsweise nach OpenCode 2)
     snapshots: bool = True          # vor/nach jeder Antwort Schnappschuss des Projekts → „Rückgängig“
     subagent_steps: int = 15        # höchstens so viele Schritte je Unteragent (explore/general)
+    # so viele explore-Unteragenten nebeneinander – nie mehr, als der Modell-Server zugleich bedient (1 = nacheinander)
+    subagent_parallel: int = 3
     max_steps: int = 60             # Werkzeug-Schritte je Antwort im Coding-Modus (Tools-Modus: tools.max_steps), 0 = unbegrenzt
     max_jobs: int = 4               # gleichzeitig laufende Hintergrund-Befehle (shell mit background=true)
     # Projektanweisungen aus dem Projektordner (die erste vorhandene Datei kommt in den Systemprompt)
@@ -475,7 +487,7 @@ class CodingConfig(BaseModel):
     verify_command: str = ""        # eigener Prüfbefehl (sonst `check:` in .orbwise.yaml oder automatisch erkannt)
     verify_timeout: int = 300       # Sekunden je Prüfung
 
-    @field_validator("subagent_steps", "max_jobs")
+    @field_validator("subagent_steps", "max_jobs", "subagent_parallel")
     @classmethod
     def _small(cls, v: int) -> int:
         return max(1, min(int(v), 50))
@@ -506,6 +518,21 @@ class GitHubConfig(BaseModel):
     # Token: leer = $ORBWISE_GITHUB_TOKEN / $GH_TOKEN / $GITHUB_TOKEN, sonst das Token einer angemeldeten GitHub-CLI (gh)
     token: str = ""
     clone_dir: str = ""             # wohin geklont wird (leer = ~/Projekte bzw. ~/Projects)
+
+
+class McpServerConfig(BaseModel):
+    """Ein MCP-Server: entweder ein Programm, das Orbwise startet (command), oder eine Adresse (url)."""
+    command: str = ""               # z. B. "npx -y @modelcontextprotocol/server-filesystem ~/Dokumente"
+    env: dict[str, str] = Field(default_factory=dict)       # zusätzliche Umgebungsvariablen für command
+    url: str = ""                   # stattdessen: Server über HTTP, z. B. https://example.com/mcp
+    headers: dict[str, str] = Field(default_factory=dict)   # z. B. Authorization: "Bearer …"
+    allow: list[str] = Field(default_factory=list)          # Werkzeuge, die ohne Rückfrage laufen ("*" = alle)
+    enabled: bool = True
+
+
+class McpConfig(BaseModel):
+    # Werkzeuge fremder Server (Model Context Protocol) – erscheinen als mcp_<name>_<werkzeug>
+    servers: dict[str, McpServerConfig] = Field(default_factory=dict)
 
 
 class Config(BaseModel):
@@ -543,6 +570,7 @@ class Config(BaseModel):
     coding: CodingConfig = Field(default_factory=CodingConfig)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     github: GitHubConfig = Field(default_factory=GitHubConfig)
+    mcp: McpConfig = Field(default_factory=McpConfig)
     # Zusätzliche Websites für open_website: Name → URL; "{q}" wird durch die Suche ersetzt
     websites: dict[str, str] = Field(default_factory=dict)
 

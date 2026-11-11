@@ -5,6 +5,111 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Agent benchmark (`orbwise bench`):** lets the coding agent solve ten small fixed tasks with the active model –
+  fixing a bug, adding a function, renaming across files, a precise edit in a large file, writing tests, reading and
+  answering – each in a throw-away project with an objective check. The report shows what was solved, steps, time,
+  failed edits, thinking cut short and skipped repeats, and is saved as JSON to compare models, context windows and
+  settings. Confirmations are decided by a fixed rule (what the cage of *Read + edit files* would allow).
+- **MCP servers:** Orbwise can use the tools of any Model Context Protocol server – a program it starts (`command`,
+  stdio) or one reached over HTTP (`url`). Configure them under `mcp.servers`; the tools appear as
+  `mcp_<server>_<tool>` in the Tools and the Coding mode, and `orbwise doctor` shows what connected. They ask before
+  every call unless listed under `allow`, their results count as outside content like a web page, and the data-leak
+  guard checks what is sent to them. Tools only (no resources, prompts, sampling); no extra package needed.
+- **Models that write tool calls as text now work:** when a model's chat template and the server don't match, the
+  call arrives as plain text – Orbwise took it for the answer and showed raw JSON. The common spellings are now
+  recognised and run as calls: `<tool_call>{…}</tool_call>` (Hermes/Qwen), `<function=name>…</function>` with JSON or
+  `<parameter=…>` (Qwen-Coder, Llama), `[TOOL_CALLS] …` (Mistral) and bare `{"name": …, "arguments": …}`. Such text
+  is held back while streaming, so it never shows up in the chat. Only names of existing tools count – a JSON example
+  in an answer stays text. Sub-agents do the same.
+- **Thinking that goes in circles is stopped:** when the end of a reasoning chain repeats for the third time, Orbwise
+  cuts it and lets the model act with what it had worked out before the loop – in every window size (the activity
+  shows "thoughts repeating"). Long reasoning that keeps moving is not touched.
+- **Thinking during tasks – every step or only where needed:** new setting under *Settings → General*, next to the
+  step limit (`llm.think_steps: lean` in the config). With thinking on, *Only where needed* thinks in the first step
+  of an answer and after a failed step instead of before every tool call. Faster on long tasks; *Every step* stays
+  the default because the other may cost quality with some models and can change what the prompt cache holds.
+- **Coding mode – `grep` with context lines:** `context: N` shows up to ten lines before and after every match
+  (`12: ` for the match, `13- ` for the lines around it, `…` between separate places) – often saves the `read` that
+  used to follow a search. `limit` still counts matches, not context lines.
+- **Coding mode – syntax check for TypeScript:** `edit`/`write` now also parse `.ts`, `.tsx`, `.mts` and `.cts`
+  right away and report the first syntax error with its line. Uses the TypeScript installed on the machine (`tsc`
+  in `PATH`, also reads JSX), otherwise Node's built-in type stripping (Node 22.13+, no `.tsx`). Parse only – no type
+  check, and never a TypeScript from the project's own `node_modules`, which the agent could have written.
+
+### Fixed
+- **Coding mode – running the same test after every fix no longer counts as a loop:** the loop detection counted
+  identical calls over the whole answer, so the third `pytest -q` was skipped with "the result is above" although the
+  code had changed in between, and the fourth ended the answer (or the `/goal`). A successful `edit`/`write` now
+  resets the count; the same call repeated without any change is still stopped.
+- **Coding mode – `write` no longer replaces a file it never read:** like `edit`, it refuses an existing, non-empty
+  file that was not read in this chat. New and empty files, files the agent wrote itself and `append` work as before.
+- **Coding mode – checks use the project's virtual environment:** with `.venv` or `venv` in the project, pytest and
+  ruff are taken from there instead of the system Python, where they are often missing – the check was then skipped
+  without a word. When every check had to be skipped, the answer now ends with **○ Not checked – not installed here:
+  …** instead of nothing.
+- **Coding mode – checks also run when an answer is stopped:** an answer that ended at the step limit, in the loop
+  detection or with a `/goal` the model gave up on skipped the checks, so changed files went unverified without a
+  word. They now run once and the answer ends with the usual **✓ Checked** / **⚠ Checks still failing** line (reported
+  only – the answer is over, nothing is sent back to the model).
+- **Coding mode – sub-agents no longer lose their work:** several large results in one step (four files read at once)
+  could overflow the context window, and the sub-agent then returned nothing but "aborted". Older tool results are now
+  shortened to their beginning when room runs out, the tool descriptions count towards the budget, and if the model
+  server still reports an overflow the sub-agent halves its prompt and summarises without tools. A sub-agent that
+  repeats the same call is stopped like the main agent (skipped from the third time, summary after the fourth) instead
+  of running to its step limit; if it does fail, the notes it made on the way come back with the error.
+- **Auto mode – root always asks, also with passwordless sudo:** in **Auto** the password dialog is the only question
+  before a `sudo` command. On a machine where sudo asks for no password (`NOPASSWD`) no dialog ever appeared, so such
+  commands ran as root without any question. Orbwise now detects this and shows a normal confirmation card instead;
+  `orbwise doctor` warns about it.
+- **Auto mode – an old sudo ticket no longer skips the password dialog:** with `timestamp_type=global` or
+  `!tty_tickets` in sudoers, one accepted password let every later `sudo` – also from a script – run for minutes
+  without the dialog. Orbwise now drops sudo's ticket before commands where the dialog is the question and after every
+  password entry.
+- **Coding mode – more than 50 `edits` in one call are refused** instead of applying the first 50 and reporting
+  success.
+
+### Changed
+- **Coding mode – sub-agents in parallel, as far as the model server allows:** several sub-agents started in one step
+  already ran at the same time, but unchecked: on a llama-server with one slot they kept swapping prompts, so each step
+  re-read everything. Now as many `explore` sub-agents run side by side as the server serves at once (its slot count;
+  remote/API servers up to `coding.subagent_parallel`, default 3) – with one slot they run one after the other.
+  `general` sub-agents, which may change files, never overlap.
+- **Coding mode – related tests first, also for npm and Go:** with vitest or jest as the project's test runner the
+  check runs the tests related to the changed files first (`vitest related` / `jest --findRelatedTests`), with Go the
+  packages of the changed files – the whole suite only once those are green, as with pytest.
+- **Coding mode – checks in Poetry projects:** with a `poetry.lock` and no `.venv` in the project, pytest runs through
+  `poetry run` instead of the system Python, where it was usually missing.
+- **Background commands can ask for the sudo password:** `shell` with `background: true` got no password dialog, so
+  a `sudo` in it (or in a script it started) simply failed. It now asks like a foreground command; the one-time token
+  lives until the job ends.
+- **Interface tidied up – calmer and less wordy:**
+  - The start page shows the orb and a line that changes with every new chat (by time of day and mode) instead of
+    one fixed greeting; the suggestion pills are gone.
+  - Controls look like what they are: the toggles in the input bar (Plan, Auto, Think) are plain text buttons, the
+    header buttons (project folder, sandbox, check) and the model picker are rectangular – no more pills everywhere.
+    The sparkle and lightning icons are replaced by neutral ones.
+  - Settings use real toggle switches instead of buttons reading "On"/"Off".
+  - Clearer labels: the auto button reads "Auto: Read" instead of just "Read"; the icon buttons at the top right
+    carry their names (Voice, Wake word, Activity) when there is room; the state under the orb is written normally
+    instead of in spaced capitals.
+  - Less text: short or no descriptions in settings and menus, a shorter hint under the input, no explanatory
+    message when switching modes.
+  - The orb next to the input during a chat is off by default (still available under *Settings → Orb in the chat*);
+    it stays on the start page.
+- **Thinking in large windows ends when the window is full:** from 16k on there was no limit at all, so a runaway
+  reasoning chain ended in a context overflow. It is now cut when no room would be left for the answer; below that
+  the model still decides how long it thinks.
+- **Coding mode – the tests of the changed files run first:** the automatic check used to start the whole pytest
+  suite after every answer and every fix round. It now runs the test files that belong to the changed Python files
+  first – changed tests themselves, tests named after the module (`test_<module>.py`) and tests that import it, at
+  most ten – and the whole suite only once those are green. A fix round with a failing test costs seconds instead of
+  the full run. Without matching tests, or when a `conftest.py` changed, the whole suite runs as before.
+- **Internal – the answer loop is split up:** `Agent._run` kept nine loose variables in one 200-line loop. The state
+  of an answer now lives in a small `Turn` object and the loop consists of separately readable steps (may it go on,
+  one model step, answer without calls, run the calls, pause); `run` and `run_in_chat` share one frame. No change in
+  behaviour apart from the fix above.
+
 ## [0.4.0] – 2026-11-10
 
 ### Added

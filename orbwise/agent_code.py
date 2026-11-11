@@ -9,12 +9,14 @@ import asyncio
 import json
 import logging
 import os
+import time
 import uuid
 from pathlib import Path
+from urllib.parse import urlparse
 
 from . import prompts, snapshot, workspace
 from . import sandbox as sbx
-from .llm import LLMError, strip_think
+from .llm import ContextOverflow, LLMError, strip_think
 from .memory import est_tokens
 from .tools import jobs
 from .tools.proc import clip_saved
@@ -25,6 +27,26 @@ log = logging.getLogger(__name__)
 EXPLORE_TOOLS = {"read", "grep", "glob", "map", "shell", "job_output", "websearch", "webfetch", "recall"}
 GENERAL_EXCLUDED = {"subagent", "question"}
 SNAPSHOTS_KEEP = 60
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+SUB_REMOTE_SLOTS = 8  # entfernter Server ohne Angabe: so viele Anfragen nebeneinander höchstens
+SUB_STUB = 300  # so viele Zeichen bleiben von einem älteren Werkzeug-Ergebnis des Unteragenten, wenn Platz fehlt
+
+
+def _sub_tokens(messages: list[dict]) -> int:
+    return est_tokens(json.dumps(messages, ensure_ascii=False))
+
+
+def _sub_fit(messages: list[dict], room: int) -> None:
+    """Passt der Prompt des Unteragenten nicht in room (geschätzte Token), ältere Werkzeug-Ergebnisse auf ihren Anfang
+    kürzen – das älteste zuerst, das letzte nur im Notfall. Auftrag und Antworten des Modells bleiben."""
+    tools = [m for m in messages if m["role"] == "tool"]
+    for m in tools:
+        if _sub_tokens(messages) <= room:
+            return
+        text = m["content"]
+        if len(text) > SUB_STUB * 2:
+            m["content"] = (text[:SUB_STUB] + f"\n[… gekürzt, um Platz zu schaffen ({len(text)} Zeichen) – bei Bedarf "
+                                              "erneut abrufen]")
 
 
 class CodingMixin:
@@ -235,10 +257,11 @@ class CodingMixin:
         await emit({"type": "changes", "id": msg_id, "turn": turn, "files": files})
 
     # ---------- Prüf-Schranke (siehe verify.py) ----------
-    async def verify_gate(self, emit, confirm, state: dict) -> str | None:
+    async def verify_gate(self, emit, confirm, state: dict, final: bool = False) -> str | None:
         """Vor „fertig“: hat diese Antwort Dateien geändert, die Prüfungen des Projekts ausführen.
         → Hinweis für das Modell (rot, Runden übrig) oder None (fertig). Das Ergebnis für unter die Antwort steht dann
-        in state["status"]. state lebt eine Antwort lang: rounds, after, results, off."""
+        in state["status"]. state lebt eine Antwort lang: rounds, after, results, off. final: die Antwort endet hier
+        ohnehin (Schritt-Limit, Schleife) – nur prüfen und melden, nichts zurückgeben."""
         from . import verify
         if self.mode != "coding" or self._plan or self.cfg.coding.verify == "off" or state.get("off"):
             return None
@@ -275,16 +298,80 @@ class CodingMixin:
             return None
         state["results"], state["after"] = results, after
         en = self.cfg.language == "en"
-        if any(r["status"] == "fail" for r in results) and state.get("rounds", 0) < self.cfg.coding.verify_rounds:
+        if not final and any(r["status"] == "fail" for r in results) \
+                and state.get("rounds", 0) < self.cfg.coding.verify_rounds:
             state["rounds"] = state.get("rounds", 0) + 1
             return verify.nudge(results, en)
         state["status"] = verify.summary(results, en)
         return None
 
     # ---------- Unteragenten ----------
+    async def subagent_slots(self) -> int:
+        """So viele Unteragenten fragen gleichzeitig beim Modell an: coding.subagent_parallel, aber nie mehr, als der
+        Server nebeneinander bedienen kann. Ein llama-server mit einem Slot (so startet Orbwise ihn) müsste zwischen
+        den Prompts hin- und herwechseln und jedes Mal alles neu einlesen – dort also einer nach dem anderen."""
+        want = int(self.cfg.coding.subagent_parallel)
+        if want <= 1:
+            return 1
+        cache = self.__dict__.setdefault("_sub_slots", {})
+        key = self._profile_key()
+        hit = cache.get(key)
+        if not hit or time.monotonic() - hit[0] > 120:
+            hit = cache[key] = (time.monotonic(), await self._server_slots())
+        return max(1, min(want, hit[1]))
+
+    async def _server_slots(self) -> int:
+        client = getattr(self.llm, "client", self.llm)
+        props = getattr(client, "server_props", None)
+        if props:
+            try:
+                n = (await props()).get("total_slots")
+            except Exception:  # noqa: BLE001 – dann gilt die vorsichtige Annahme unten
+                n = None
+            if isinstance(n, int) and not isinstance(n, bool) and n > 0:
+                return n
+        profile = getattr(self.llm, "profile", None)
+        host = (urlparse(str(getattr(profile, "base_url", "") or "")).hostname or "").lower()
+        if getattr(profile, "backend", "") == "openai" and host and host not in LOCAL_HOSTS:
+            return SUB_REMOTE_SLOTS  # entfernter Server bzw. API: bedient mehrere Anfragen nebeneinander
+        return 1
+
+    def _sub_gates(self, slots: int) -> tuple[asyncio.Semaphore, asyncio.Lock]:
+        """Schranken je Ereignisschleife: wie viele Unteragenten zugleich, und general (darf ändern) immer einzeln."""
+        key = (id(asyncio.get_running_loop()), slots)
+        gates = self.__dict__.get("_sub_gate")
+        if not gates or gates[0] != key:
+            gates = self.__dict__["_sub_gate"] = (key, asyncio.Semaphore(slots), asyncio.Lock())
+        return gates[1], gates[2]
+
     async def run_subagent(self, ctx, kind: str, description: str, task: str) -> str:
         """Eigene Nachrichtenliste, eigener Systemprompt, eingeschränkte Werkzeuge; nur die Antwort geht zurück.
-        Läuft innerhalb des Werkzeug-Aufrufs (die Sperre des Agenten hält schon der Hauptlauf)."""
+        Läuft innerhalb des Werkzeug-Aufrufs (die Sperre des Agenten hält schon der Hauptlauf). Stellt das Modell
+        mehrere in einem Schritt, laufen so viele nebeneinander, wie der Server verträgt (subagent_slots) –
+        general, der Dateien ändern darf, immer nur einer."""
+        semaphore, single = self._sub_gates(await self.subagent_slots())
+        async with semaphore:
+            if kind != "explore":
+                async with single:
+                    return await self._sub_guarded(ctx, kind, description, task)
+            return await self._sub_guarded(ctx, kind, description, task)
+
+    async def _sub_guarded(self, ctx, kind: str, description: str, task: str) -> str:
+        """Der Prompt-Vergleich des Hauptlaufs (self._prompt_prev) gilt für Unteragenten nicht: beim ersten merken,
+        nach dem letzten zurückstellen – auch wenn mehrere nebeneinander laufen."""
+        running = self.__dict__.get("_sub_running", 0)
+        if not running:
+            self._sub_prev, self._prompt_prev = self._prompt_prev, None
+        self._sub_running = running + 1
+        try:
+            return await self._sub_work(ctx, kind, description, task)
+        finally:
+            self._sub_running -= 1
+            if not self._sub_running:
+                self._prompt_prev = self._sub_prev
+            self._cache_owner = None  # der Server hat jetzt den Prompt eines Unteragenten im Cache
+
+    async def _sub_work(self, ctx, kind: str, description: str, task: str) -> str:
         parent, emit, confirm = ctx.call_id, ctx.emit, ctx.confirm
         allowed = EXPLORE_TOOLS if kind == "explore" else \
             {s["function"]["name"] for s in self._mode_schemas()[0]} - GENERAL_EXCLUDED
@@ -302,15 +389,31 @@ class CodingMixin:
             # Zustände und Tokens des Unteragenten nicht als Antwort des Hauptagenten zeigen
 
         steps = self.cfg.coding.subagent_steps
-        budget = self.context_budget()
-        prev, self._prompt_prev = self._prompt_prev, None  # eigener Prompt – nicht als „neu eingelesen“ verbuchen
-        answer = ""
+        # Platz: das Budget des Fensters abzüglich der Werkzeugbeschreibungen, die mit jedem Schritt mitgehen
+        room = max(1500, self.context_budget() - est_tokens(json.dumps(schemas, ensure_ascii=False)))
+        from .agent import changed_code
+        answer, notes = "", []
+        seen: dict[str, int] = {}
+        final = squeezed = False
         try:
             for step in range(steps + 1):
-                final = step == steps or est_tokens(json.dumps(messages, ensure_ascii=False)) > 0.75 * budget
+                final = final or step == steps or _sub_tokens(messages) > 0.75 * room
                 if final:
                     messages.append({"role": "user", "content": prompts.subagent_text(self.cfg, "final")})
-                message = await self._sub_step(messages, None if final else schemas)
+                _sub_fit(messages, room)  # mehrere große Ergebnisse in einem Schritt: ältere kürzen statt überlaufen
+                try:
+                    message = await self._sub_step(messages, None if final else schemas)
+                except ContextOverflow:
+                    if squeezed:
+                        raise
+                    # der Server zählt mehr als geschätzt: auf die Hälfte des jetzigen Prompts kürzen und ohne
+                    # Werkzeuge zusammenfassen lassen
+                    squeezed = True
+                    _sub_fit(messages, min(room, _sub_tokens(messages)) // 2)
+                    if not final:
+                        final = True
+                        messages.append({"role": "user", "content": prompts.subagent_text(self.cfg, "final")})
+                    message = await self._sub_step(messages, None)
                 content = strip_think(message.get("content") or "")
                 calls = [] if final else message.get("tool_calls") or []
                 entry = {"role": "assistant", "content": content}
@@ -320,14 +423,19 @@ class CodingMixin:
                 if not calls:
                     answer = content
                     break
-                for call in calls:
-                    name, result = await self._sub_execute(call, kind, allowed, sub_emit, confirm)
+                if content.strip():
+                    notes.append(content.strip())
+                done, looping = self._repeats(seen, calls)
+                for i, call in enumerate(calls):
+                    name, result = done[i][:2] if i in done else \
+                        await self._sub_execute(call, kind, allowed, sub_emit, confirm)
+                    if changed_code(name, result):
+                        seen.clear()
                     messages.append({"role": "tool", "content": result, "tool_name": name})
+                final = final or looping  # dreht sich im Kreis: nächster Schritt ohne Werkzeuge
         except LLMError as e:
-            answer = (answer or "") + f"\n(Unteragent abgebrochen: {e})"
-        finally:
-            self._prompt_prev = prev
-            self._cache_owner = None  # der Server hat jetzt den Prompt des Unteragenten im Cache
+            # nicht alles verlieren: was der Unteragent unterwegs festgehalten hat, geht mit zurück
+            answer = "\n".join(notes[-3:]) + f"\n(Unteragent abgebrochen: {e})"
         answer = answer.strip() or "(Der Unteragent hat kein Ergebnis geliefert.)"
         return clip_saved(f"[{kind}: {description}]\n{answer}", ctx.limit(), "subagent")
 
@@ -337,6 +445,11 @@ class CodingMixin:
         async for ev in self._call_llm(messages, tools, **kwargs):
             if ev.get("type") == "done":
                 result = ev.get("message") or {}
+        if tools and not result.get("tool_calls"):  # Aufruf als Text geschrieben (siehe textcalls.py)
+            from . import textcalls
+            rest, calls = textcalls.parse(strip_think(result.get("content") or ""), set(self.tools))
+            if calls:
+                result = {**result, "content": rest, "tool_calls": calls}
         return result
 
     async def _sub_execute(self, call: dict, kind: str, allowed: set[str], emit, confirm) -> tuple[str, str]:
