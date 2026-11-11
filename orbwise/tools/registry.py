@@ -226,21 +226,26 @@ def get_tool(name: str) -> ToolSpec | None:
 
 def load_all_tools() -> dict[str, ToolSpec]:
     # Import registriert die Tools per Decorator
+    # Zusätze (Paperless, Mail, Kalender …): eingetragen werden sie immer, angeboten erst nach dem Einrichten
+    from ..extras import (  # noqa: F401
+        calendar_tools,
+        homeassistant,
+        mail,
+        obsidian,
+        paperless,
+        portainer,
+        telegram_tools,
+        trilium,
+    )
     from . import (  # noqa: F401
         apps,
         briefing,
-        calendar_tools,
         code,
         files,
         github_tools,
-        homeassistant,
         image_tools,
-        mail,
         memory_tools,
-        obsidian,
         packages,
-        paperless,
-        portainer,
         power,
         reminder_tools,
         routine_tools,
@@ -248,10 +253,8 @@ def load_all_tools() -> dict[str, ToolSpec]:
         ssh,
         sysadmin,
         system,
-        telegram_tools,
         todo_tools,
         toolload,
-        trilium,
         vision,
         weather,
         web,

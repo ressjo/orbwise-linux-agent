@@ -18,9 +18,9 @@ from typing import Annotated, Any
 import httpx
 
 from ..lang import T
-from .netutil import client_kwargs, explain, normalize_url
-from .proc import clip_saved
-from .registry import CONFIRM, ToolContext, tool
+from ..tools.netutil import client_kwargs, explain, normalize_url
+from ..tools.proc import clip_saved
+from ..tools.registry import CONFIRM, ToolContext, tool
 
 # Für Tests austauschbar (httpx.MockTransport)
 TRANSPORT: httpx.AsyncBaseTransport | None = None

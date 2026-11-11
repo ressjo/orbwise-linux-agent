@@ -200,7 +200,7 @@ class TelegramBot:
             return
 
         async def run() -> None:
-            from .imagegen import ImageError
+            from ..imagegen import ImageError
             try:
                 saved = await engine.generate(prompt)
                 img = saved[0]
@@ -428,7 +428,7 @@ class TelegramBot:
             return ""
 
     def prompt(self, key: str) -> str:
-        from . import prompts
+        from .. import prompts
         return prompts.text(self.cfg, key)
 
     async def _worker(self) -> None:

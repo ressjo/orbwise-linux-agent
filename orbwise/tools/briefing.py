@@ -15,12 +15,12 @@ from typing import Any
 
 from .. import state
 from ..config import BRIEFING_SECTIONS, BriefingConfig
+from ..extras.calendar_tools import CalendarError, events_between
+from ..extras.mail import inbox_brief
+from ..extras.paperless import inbox_summary
 from ..memory.files import german_date
 from . import proc
-from .calendar_tools import CalendarError, events_between
-from .mail import inbox_brief
 from .packages import package_manager
-from .paperless import inbox_summary
 from .registry import ToolContext, tool
 from .reminder_tools import store_for
 from .weather import WeatherError, weather_report

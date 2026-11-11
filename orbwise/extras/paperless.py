@@ -23,10 +23,10 @@ from typing import Annotated, Any
 import httpx
 
 from ..lang import T
-from . import proc
-from .netutil import client_kwargs, explain, html_instead_of_json, normalize_url
-from .registry import BLOCKED, CONFIRM, SAFE, ToolContext, tool
-from .secretpaths import is_secret_path, secret_reason
+from ..tools import proc
+from ..tools.netutil import client_kwargs, explain, html_instead_of_json, normalize_url
+from ..tools.registry import BLOCKED, CONFIRM, SAFE, ToolContext, tool
+from ..tools.secretpaths import is_secret_path, secret_reason
 
 # Für Tests austauschbar (httpx.MockTransport)
 TRANSPORT: httpx.AsyncBaseTransport | None = None
@@ -234,7 +234,7 @@ def _strip_html(text: str) -> str:
 
 # ---------------------------------------------------------------- Passagen auswählen („Dokument befragen“)
 # gemeinsame Logik mit Obsidian: passages.py
-from .passages import keyword_scores, rank_passages, split_passages  # noqa: E402,F401
+from ..tools.passages import keyword_scores, rank_passages, split_passages  # noqa: E402,F401
 
 
 def _embedder(ctx: ToolContext):

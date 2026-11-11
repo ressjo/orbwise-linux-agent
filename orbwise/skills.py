@@ -71,42 +71,42 @@ async def _t_web(cfg):
 
 
 async def _t_mail(cfg):
-    from .tools.mail import mail_status
+    from .extras.mail import mail_status
     return await mail_status(cfg)
 
 
 async def _t_paperless(cfg):
-    from .tools.paperless import paperless_status
+    from .extras.paperless import paperless_status
     return await paperless_status(cfg)
 
 
 async def _t_ha(cfg):
-    from .tools.homeassistant import ha_status
+    from .extras.homeassistant import ha_status
     return await ha_status(cfg)
 
 
 async def _t_portainer(cfg):
-    from .tools.portainer import portainer_status
+    from .extras.portainer import portainer_status
     return await portainer_status(cfg)
 
 
 async def _t_calendar(cfg):
-    from .tools.calendar_tools import calendar_status
+    from .extras.calendar_tools import calendar_status
     return await calendar_status(cfg)
 
 
 async def _t_trilium(cfg):
-    from .tools.trilium import trilium_status
+    from .extras.trilium import trilium_status
     return await trilium_status(cfg)
 
 
 async def _t_obsidian(cfg):
-    from .tools.obsidian import obsidian_status
+    from .extras.obsidian import obsidian_status
     return await obsidian_status(cfg)
 
 
 async def _t_telegram(cfg):
-    from .telegram import check_bot
+    from .extras.telegram import check_bot
     return await check_bot(cfg.telegram.secret, want_chat=not cfg.telegram.chat_id)
 
 

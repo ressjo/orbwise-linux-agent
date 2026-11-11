@@ -31,7 +31,7 @@ def setup(ctx) -> None:
     # ---------- Telegram ----------
     telegram_bot = None
     if cfg.telegram.secret:
-        from ..telegram import CHAT_TITLE, TelegramBot, chat_state_file, transcribe_voice
+        from ..extras.telegram import CHAT_TITLE, TelegramBot, chat_state_file, transcribe_voice
         tg_state = chat_state_file(cfg)
 
         async def run_telegram(text: str, emit, confirm, plan: bool = False, approved_plan: str = "") -> str:

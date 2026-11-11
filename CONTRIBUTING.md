@@ -20,7 +20,8 @@ ORBWISE_FAKE_LLM=1 uv run orbwise serve --open   # UI demo with a fake model
 | `orbwise/prompts.py` | System prompt and fixed texts (German + English) |
 | `orbwise/llm.py`, `orbwise/llm_router.py` | Ollama and OpenAI-compatible clients, model profiles, managed llama-server |
 | `orbwise/memory/` | Journal, summaries, facts, chats, search index, context budget |
-| `orbwise/tools/` | All tools – one module per group |
+| `orbwise/tools/` | The core tools – one module per group (shell, files, web, packages, coding …) |
+| `orbwise/extras/` | Optional integrations: Paperless, mail, calendar, Portainer, Trilium, Obsidian, Home Assistant, Telegram. The core does not depend on them (a test checks it); their tests live in `tests/extras/` |
 | `orbwise/tools/safety/` | Which shell commands run without asking: parsing (`shellwords`), read-only rules per program (`readonly.RULES`), credentials, the auto modes (`auto.AUTO_RULES`), `sudo` rewriting |
 | `orbwise/server.py` | `create_app`: builds the FastAPI app from the parts below |
 | `orbwise/hub.py` | WebSocket hub: clients, requests to the agent, confirmations, questions |
@@ -60,6 +61,9 @@ async def restart_container(ctx: ToolContext, name: Annotated[str, "container na
 - **New UI code:** in the matching module under `orbwise/web/js/`; import what you use, export what others use.
   Code that has to run on page load goes into the module's `init()`. A new module must be imported somewhere
   (a test checks that every module is reachable from `app.js`).
+- **New integration with a service:** a module in `orbwise/extras/` with its tests in `tests/extras/` – or, if the
+  service has an MCP server, no code at all (see [MCP servers](docs/integrations.md#mcp-servers-tools-from-other-programs)).
+  Core code must not import from `extras` outside the few places that plug the extras in.
 - **Shell command rules:** a program that only reads with certain arguments gets a function in
   `tools/safety/readonly.RULES`; what Auto mode should still ask for goes into `tools/safety/auto.AUTO_RULES`.
 

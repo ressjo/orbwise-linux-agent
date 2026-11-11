@@ -72,7 +72,9 @@ summaries and a `facts.md` you can edit by hand. A local search index brings old
 
 ## Skills
 
-What Orbwise can do for you – each line links to the details.
+What Orbwise can do for you – each line links to the details. System, files, web, coding, memory, routines and voice
+are the **core**; servers, smart home, documents, mail, notes, calendar and phone are optional **extras** that only
+appear once you set them up.
 
 | | |
 |---|---|

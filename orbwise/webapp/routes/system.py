@@ -14,9 +14,9 @@ from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 
 from ... import askpass, metrics, usage
+from ...extras.calendar_tools import calendar_status
+from ...extras.trilium import trilium_status
 from ...lang import T
-from ...tools.calendar_tools import calendar_status
-from ...tools.trilium import trilium_status
 
 log = logging.getLogger(__name__)
 

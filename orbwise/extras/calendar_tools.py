@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..lang import T
 from ..memory.files import WEEKDAYS
-from .registry import CONFIRM, ToolContext, tool
+from ..tools.registry import CONFIRM, ToolContext, tool
 
 log = logging.getLogger(__name__)
 

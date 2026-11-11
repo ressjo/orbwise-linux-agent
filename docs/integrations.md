@@ -62,7 +62,9 @@ The sections below describe each integration. Everything here is set up on the S
 
 ## Integrations
 
-All integrations are optional – their tools are only offered to the model once URL and token are set.
+All integrations are optional **extras** – their tools are only offered to the model once URL and token are set.
+They live apart from the core (`orbwise/extras/`): Orbwise's promise – running your PC, coding, memory, voice, asking
+before it changes things – does not depend on them, and they are tested separately.
 `orbwise doctor` checks each one. HTTPS with a self-signed certificate: switch off the certificate check in the
 skill's *More settings* (or set `verify_ssl` to the path of your CA file in [`config.yaml`](configuration.md)). Home-network services are always contacted directly, never through a system proxy.
 

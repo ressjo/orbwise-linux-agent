@@ -3,7 +3,7 @@ import pytest
 from conftest import run
 from fake_paperless import TOKEN, FakePaperless
 
-from orbwise.tools import paperless as pl
+from orbwise.extras import paperless as pl
 from orbwise.tools.registry import CONFIRM, SAFE, ToolContext, get_tool, load_all_tools, tool_schemas
 
 TOOLS = {"paperless_search", "paperless_ask", "paperless_read", "paperless_open"}

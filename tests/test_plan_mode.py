@@ -9,8 +9,8 @@ from fastapi.testclient import TestClient
 
 from orbwise import server
 from orbwise.agent import Agent, plan_steps
+from orbwise.extras.telegram import TelegramBot
 from orbwise.llm import FakeLLM
-from orbwise.telegram import TelegramBot
 
 WS = "ws://localhost:8765/ws"
 ORIGIN = {"Origin": "http://localhost:8765"}

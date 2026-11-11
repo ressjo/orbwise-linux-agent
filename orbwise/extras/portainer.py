@@ -22,8 +22,8 @@ from urllib.parse import quote
 import httpx
 
 from ..lang import T
-from .netutil import client_kwargs, explain, html_instead_of_json, normalize_url
-from .registry import CONFIRM, ToolContext, tool
+from ..tools.netutil import client_kwargs, explain, html_instead_of_json, normalize_url
+from ..tools.registry import CONFIRM, ToolContext, tool
 
 TRANSPORT: httpx.AsyncBaseTransport | None = None  # für Tests (httpx.MockTransport)
 
@@ -258,7 +258,7 @@ async def portainer_logs(
             r = await pc.request("GET", pc.docker(env, f"/containers/{c['Id']}/logs"), raw=True,
                                  params={"stdout": 1, "stderr": 1, "tail": max(1, min(lines or 100, 2000))})
             text = demux_logs(r.content).strip() or T("(keine Ausgabe)", "(no output)")
-            from .proc import clip_saved
+            from ..tools.proc import clip_saved
             return f"Logs {_name(c)}:\n" + clip_saved(text, ctx.limit(), f"logs-{_name(c)}")
     return await _guard(go())
 

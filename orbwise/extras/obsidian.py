@@ -20,9 +20,9 @@ from urllib.parse import quote
 import yaml
 
 from ..lang import T
-from . import proc
-from .passages import _words, rank_passages, select_passages, split_passages
-from .registry import CONFIRM, ToolContext, tool
+from ..tools import proc
+from ..tools.passages import _words, rank_passages, select_passages, split_passages
+from ..tools.registry import CONFIRM, ToolContext, tool
 
 MAX_FILE_BYTES = 2_000_000
 BAD_NAME_CHARS = re.compile(r'[\\/:*?"<>|#^\[\]]+')

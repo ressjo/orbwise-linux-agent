@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated, Any
 
-from .registry import BLOCKED, SAFE, ToolContext, tool
-from .secretpaths import is_secret_path, secret_reason
+from ..tools.registry import BLOCKED, SAFE, ToolContext, tool
+from ..tools.secretpaths import is_secret_path, secret_reason
 
 MAX_FILE = 50_000_000  # Grenze der Telegram-Bot-API
 CONFIG_NAMES = {"config.yaml", "config.yml", "config.json", "config.toml", "config.ini", "settings.json"}

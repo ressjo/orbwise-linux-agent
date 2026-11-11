@@ -207,7 +207,7 @@ def cmd_doctor(args) -> None:
         print(f"  ℹ {T('Root-Rechte über', 'Root privileges via')} {cfg.tools.privilege_cmd} "
               + T("(tools.privilege_cmd: dashboard = Passwortfeld im Dashboard)", "(tools.privilege_cmd: dashboard = password field in the dashboard)"))
     print("Trilium:")
-    from .tools.trilium import trilium_status
+    from .extras.trilium import trilium_status
     tr = asyncio.run(trilium_status(cfg))
     if not tr["enabled"]:
         print(T("  – nicht konfiguriert", "  – not configured") + " (trilium.url, trilium.token)")
@@ -216,7 +216,7 @@ def cmd_doctor(args) -> None:
         line(tr["online"], f"{normalize_url(cfg.trilium.url, '/etapi')}" + (f" (Version {tr.get('version')})" if tr["online"] else ""),
              tr.get("error", ""))
     print("Obsidian:")
-    from .tools.obsidian import obsidian_status
+    from .extras.obsidian import obsidian_status
     obs = asyncio.run(obsidian_status(cfg))
     if not obs["enabled"]:
         print(T("  – nicht konfiguriert", "  – not configured") + " (obsidian.vault)")
@@ -227,7 +227,7 @@ def cmd_doctor(args) -> None:
     if proxies and (cfg.trilium.enabled or cfg.paperless.enabled):
         print(f"  ℹ Proxy ({', '.join(proxies)}) – " + T("Heimnetz-Dienste werden bewusst direkt angesprochen", "home network services are contacted directly on purpose"))
     print("Paperless:")
-    from .tools.paperless import paperless_status
+    from .extras.paperless import paperless_status
     ps_ = asyncio.run(paperless_status(cfg))
     if not ps_["enabled"]:
         print(T("  – nicht konfiguriert", "  – not configured") + " (paperless.url, paperless.token)")
@@ -235,7 +235,7 @@ def cmd_doctor(args) -> None:
         line(ps_["online"], f"{ps_.get('url') or cfg.paperless.url}" + (f" – {ps_['count']} {T('Dokumente', 'documents')} (Version {ps_['version']})"
                                                        if ps_["online"] else ""), ps_.get("error", ""))
     print("Home Assistant:")
-    from .tools.homeassistant import ha_status
+    from .extras.homeassistant import ha_status
     hs = asyncio.run(ha_status(cfg))
     if not hs["enabled"]:
         print(T("  – nicht konfiguriert", "  – not configured") + " (homeassistant.url, homeassistant.token)")
@@ -243,7 +243,7 @@ def cmd_doctor(args) -> None:
         line(hs["online"], f"{hs.get('url') or cfg.homeassistant.url}" + (
             f" – {hs['entities']} {T('Entitäten', 'entities')} (Version {hs['version']})" if hs["online"] else ""), hs.get("error", ""))
     print("Portainer:")
-    from .tools.portainer import portainer_status
+    from .extras.portainer import portainer_status
     pt = asyncio.run(portainer_status(cfg))
     if not pt["enabled"]:
         print(T("  – nicht konfiguriert", "  – not configured") + " (portainer.url, portainer.token)")
@@ -282,7 +282,7 @@ def cmd_doctor(args) -> None:
         print("  ℹ " + T("Kurznamen: ", "Short names: ") + ", ".join(
             f"{k} → {h.host}" + (f":{h.port}" if h.port != 22 else "") for k, h in cfg.ssh.hosts.items()))
     print(T("E-Mail:", "E-mail:"))
-    from .tools.mail import mail_status
+    from .extras.mail import mail_status
     ms = asyncio.run(mail_status(cfg))
     if not ms["enabled"]:
         print(T("  – nicht konfiguriert", "  – not configured") + " (mail.username, mail.password)")
@@ -356,7 +356,7 @@ def cmd_doctor(args) -> None:
     if not cfg.calendar.enabled:
         print(T("  – nicht konfiguriert", "  – not configured") + " (calendar.url, username, password)")
     else:
-        from .tools.calendar_tools import calendar_status
+        from .extras.calendar_tools import calendar_status
         cs = asyncio.run(calendar_status(cfg))
         line(cs["online"], f"{cfg.calendar.url} – " + (", ".join(cs.get("calendars", [])) if cs["online"] else T("Fehler", "error")),
              cs.get("error", ""))
@@ -395,7 +395,7 @@ def cmd_doctor(args) -> None:
     if cfg.telegram.secret:
         import httpx
 
-        from .telegram import API, explain, redact
+        from .extras.telegram import API, explain, redact
         try:  # echte Verbindung: Token gültig? Webhook gesetzt (blockiert getUpdates)?
             me = httpx.get(f"{API}/bot{cfg.telegram.secret}/getMe", timeout=10).json()
             if not me.get("ok"):

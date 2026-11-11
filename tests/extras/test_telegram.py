@@ -7,7 +7,7 @@ from conftest import run
 from fake_telegram import TOKEN, FakeTelegram, wait_for
 from fastapi.testclient import TestClient
 
-from orbwise.telegram import TelegramBot, split_text
+from orbwise.extras.telegram import TelegramBot, split_text
 
 ME = 4242
 
@@ -69,7 +69,7 @@ def test_chat_id_is_only_revealed_during_setup(cfg, tg):
 
 def test_token_never_leaks(cfg, tg, caplog):
     """Der Bot-Token steckt in jeder API-URL – er darf weder im Log noch in Antworten aufs Handy landen."""
-    from orbwise.telegram import redact
+    from orbwise.extras.telegram import redact
 
     assert redact(f"GET https://api.telegram.org/bot{TOKEN}/getUpdates", TOKEN).count("<token>") == 1
     assert "AAH" not in redact("https://api.telegram.org/bot1234567890:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw/x", "")
@@ -89,7 +89,7 @@ def test_token_never_leaks(cfg, tg, caplog):
         try:
             raise RuntimeError(f"kaputt: https://api.telegram.org/bot{TOKEN}/getFile")
         except RuntimeError:
-            logging.getLogger("orbwise.telegram").exception("Fehler mit %s", TOKEN)
+            logging.getLogger("orbwise.extras.telegram").exception("Fehler mit %s", TOKEN)
         logging.getLogger("httpx").info("HTTP Request: POST https://api.telegram.org/bot%s/getUpdates", TOKEN)
     assert "404" in caplog.text and "kaputt" in caplog.text and "Traceback" in caplog.text
     assert TOKEN not in caplog.text
@@ -188,7 +188,7 @@ def test_server_telegram_chat_confirm_and_reminder(cfg, tg, tmp_path, monkeypatc
 
 
 def test_startup_check_and_errors_are_reported(cfg, tg, monkeypatch):
-    from orbwise import telegram
+    from orbwise.extras import telegram
 
     async def scenario():
         bot = make_bot(cfg, tg, None)
@@ -254,7 +254,7 @@ def test_files_from_the_phone_are_saved(cfg, tg, tmp_path):
 
 
 def test_send_file_tool(cfg, tg, tmp_path, monkeypatch):
-    from orbwise.tools import telegram_tools
+    from orbwise.extras import telegram_tools
     from orbwise.tools.registry import BLOCKED, SAFE, ToolContext, get_tool, load_all_tools, tool_schemas
 
     load_all_tools()
@@ -285,8 +285,8 @@ def test_send_paperless_document_and_upload_from_inbox(cfg, tg, tmp_path, monkey
     from fake_paperless import TOKEN as PL_TOKEN
     from fake_paperless import FakePaperless
 
-    from orbwise.tools import paperless as pl
-    from orbwise.tools import telegram_tools
+    from orbwise.extras import paperless as pl
+    from orbwise.extras import telegram_tools
     from orbwise.tools.registry import CONFIRM, SAFE, ToolContext, get_tool, load_all_tools
 
     fake = FakePaperless()

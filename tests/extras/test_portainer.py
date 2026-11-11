@@ -9,7 +9,7 @@ import pytest
 from conftest import run
 
 from orbwise.config import Config
-from orbwise.tools import portainer as pt
+from orbwise.extras import portainer as pt
 from orbwise.tools.registry import CONFIRM, SAFE, ToolContext, get_tool, load_all_tools
 
 COMPOSE = "services:\n  jellyfin:\n    image: jellyfin/jellyfin:latest\n"

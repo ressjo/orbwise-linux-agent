@@ -9,8 +9,8 @@ from datetime import date, datetime, timedelta
 import pytest
 from conftest import run
 
+from orbwise.extras import calendar_tools as cal
 from orbwise.tools import briefing
-from orbwise.tools import calendar_tools as cal
 from orbwise.tools.registry import CONFIRM, SAFE, ToolContext, get_tool, load_all_tools
 
 USER, PASSWORD = "alex", "app-pass-1234"

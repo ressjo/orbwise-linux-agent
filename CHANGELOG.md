@@ -72,6 +72,10 @@ All notable changes to this project are documented here. The format follows
   success.
 
 ### Changed
+- **Core and extras apart:** the integrations with services not everyone has – Paperless, mail, calendar, Portainer,
+  Trilium, Obsidian, Home Assistant, Telegram – moved from `orbwise/tools/` (and `orbwise/telegram.py`) to
+  `orbwise/extras/`, their tests to `tests/extras/`, and CI runs core and extras as separate steps. A test makes sure
+  the core only touches the extras where it plugs them in. Nothing changes for users: same tools, same settings.
 - **Readable tool names in the chat, real commands on the confirmation card:** above an answer and in the status line
   the chat now says "Web search" or "System update" instead of `web_search` and `system_update` (the technical name
   shows on hover). The confirmation card for a system update or for installing/removing packages shows the command

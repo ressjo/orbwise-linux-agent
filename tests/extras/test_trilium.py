@@ -3,7 +3,7 @@ from conftest import run
 from fake_trilium import TOKEN, FakeTrilium
 
 from orbwise.agent import Agent
-from orbwise.tools import trilium as tr
+from orbwise.extras import trilium as tr
 from orbwise.tools.registry import CONFIRM, SAFE, ToolContext, get_tool, load_all_tools, tool_schemas
 
 TRILIUM_TOOLS = {"trilium_search", "trilium_read", "trilium_create_note", "trilium_append", "trilium_update_note"}
