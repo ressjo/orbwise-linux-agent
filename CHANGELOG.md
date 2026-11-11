@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Trust you can check:**
+  - a **threat model** in `docs/security.md`: what Orbwise withstands, how, and which test proves it – plus an honest
+    list of what it does not protect against (also in the README);
+  - **`tests/test_attacks.py`**: every protection as a readable scenario – hidden instructions in a web page, reading
+    keys, smuggling data out, root in every spelling, destroying the system, a symlink out of the sandbox, an MCP
+    server that calls itself harmless;
+  - the **permission matrix** in README and docs is computed from the rules the agent applies
+    (`python -m orbwise.security_matrix`); a test fails when the table is out of date;
+  - **`orbwise doctor --security`** shows which safeguards are in effect on your machine: running as root, listening
+    beyond localhost, the cage, sudo with or without a password, the `docker` group, MCP servers allowed wholesale.
 - **Agent benchmark (`orbwise bench`):** lets the coding agent solve ten small fixed tasks with the active model –
   fixing a bug, adding a function, renaming across files, a precise edit in a large file, writing tests, reading and
   answering – each in a throw-away project with an objective check. The report shows what was solved, steps, time,

@@ -64,6 +64,9 @@ async def restart_container(ctx: ToolContext, name: Annotated[str, "container na
 - **New integration with a service:** a module in `orbwise/extras/` with its tests in `tests/extras/` – or, if the
   service has an MCP server, no code at all (see [MCP servers](docs/integrations.md#mcp-servers-tools-from-other-programs)).
   Core code must not import from `extras` outside the few places that plug the extras in.
+- **Anything that changes what runs without asking:** add the scenario to `tests/test_attacks.py`, and after
+  changing the rules run `python -m orbwise.security_matrix` – it rewrites the table in the README and in
+  `docs/security.md` (a test fails when they are out of date).
 - **Shell command rules:** a program that only reads with certain arguments gets a function in
   `tools/safety/readonly.RULES`; what Auto mode should still ask for goes into `tools/safety/auto.AUTO_RULES`.
 

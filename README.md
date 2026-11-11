@@ -70,6 +70,44 @@ summaries and a `facts.md` you can edit by hand. A local search index brings old
 **Connects to what you already run.** Home Assistant, Paperless, mail, calendars, Docker, SSH, Telegram – and any
 [MCP server](docs/integrations.md#mcp-servers-tools-from-other-programs).
 
+## What it protects – and what it doesn't
+
+Orbwise runs commands on your machine, so this is the part to read. The table is computed from the code
+(`python -m orbwise.security_matrix`) and a test fails when it is out of date.
+
+<!-- security-matrix:begin -->
+|  | Off | Read only | Read + edit files | Auto |
+|---|---|---|---|---|
+| Reading: `ls`, `df`, `git status` | **asks** | runs | runs | runs |
+| Create or change a file in your home | **asks** | **asks** | runs | runs |
+| Scripts, builds, tests: `python3 x.py`, `npm test` | **asks** | **asks** | runs caged | runs |
+| Deleting: `rm file` | **asks** | **asks** | **asks** | runs |
+| Sending to the network: `curl -d @file …` | **asks** | **asks** | **asks** | runs |
+| Changing start-up files: `~/.bashrc`, autostart | **asks** | **asks** | **asks** | runs |
+| Reading credentials: `cat ~/.ssh/id_rsa` | **asks** | **asks** | **asks** | runs |
+| The same file with the read tool | **never** | **never** | **never** | **never** |
+| Root: `sudo …`, `su`, `pkexec`, `yay` | **asks** | **asks** | **asks** | **password dialog** |
+| `git push` | **asks** | **asks** | **asks** | **asks** |
+| `rm -rf /`, overwriting a disk, `chmod -R … /` | **never** | **never** | **never** | **never** |
+<!-- security-matrix:end -->
+
+Each protection – hidden instructions in web pages and mails, reading your keys, smuggling data out, root, destroying
+the system – is a readable test in [`tests/test_attacks.py`](tests/test_attacks.py); the
+[threat model](docs/security.md#threat-model) says which test proves what.
+
+**It does not protect against:** approving a card without reading it · the level *Auto*, which lets everything but
+root, pushing and mail run (including what a web page talks the model into) · passwordless sudo, where a script
+calling sudo runs as root unasked in *Auto* · the `docker` group, which is root without a password · a kernel exploit
+· a model that is simply wrong. `orbwise doctor --security` shows which of these apply on your machine.
+→ [Details](docs/security.md#what-it-does-not-protect-against)
+
+## Built with AI, checked by tests
+
+Most of Orbwise's code was written with an AI coding assistant (Claude Code), directed, reviewed and used daily by a
+human. What keeps it honest is not the author but the checks: more than 1,300 tests on every commit, the safety rules
+in code instead of in the prompt, and a [benchmark](docs/models.md#does-the-agent-work-with-this-model-orbwise-bench)
+that measures whether the agent solves real tasks with a given model.
+
 ## Skills
 
 What Orbwise can do for you – each line links to the details. System, files, web, coding, memory, routines and voice
@@ -92,8 +130,7 @@ appear once you set them up.
 | **Planning** | Plan mode: looks things up read-only and presents a plan to run, change or discard → [Plan mode](docs/coding.md#plan-mode) |
 
 > Orbwise is an independent hobby project. It can run commands on your computer – use it at your own risk, see the
-> [Disclaimer](#disclaimer). Most of the code was written with an AI coding assistant (Claude Code) and reviewed,
-> tested and used by a human; bug reports and fixes are welcome.
+> [Disclaimer](#disclaimer). Bug reports and fixes are welcome.
 
 ## Requirements
 
@@ -230,6 +267,7 @@ orbwise serve [--open] [-v]    # start the server
 orbwise open                   # open the UI in the browser (signed in)
 orbwise stop                   # stop a running Orbwise (also one in the background)
 orbwise doctor                 # check the installation
+orbwise doctor --security      # which safeguards are in effect on this machine (cage, sudo, network, level)
 orbwise skills                 # skills overview (setup / enable / disable <name>)
 orbwise autostart [on|off]     # start at login (default: off)
 orbwise model [name]           # list or switch model profiles

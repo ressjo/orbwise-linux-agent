@@ -74,6 +74,17 @@ def cmd_init_config(args) -> None:
 
 def cmd_doctor(args) -> None:
     cfg = load_config()
+    if getattr(args, "security", False):  # nur die Schutzmechanismen, wie sie auf diesem Rechner greifen
+        from . import security_check
+        lines = security_check.report(cfg)
+        print(T("Sicherheit auf diesem Rechner:", "Security on this machine:"))
+        print(security_check.render(lines))
+        warn = sum(1 for x in lines if x["level"] == "warn")
+        print("\n" + (T(f"{warn} Hinweis(e) – was Orbwise schützt und was nicht: docs/security.md",
+                        f"{warn} warning(s) – what Orbwise protects and what it doesn't: docs/security.md") if warn
+                      else T("Alle Schutzmechanismen greifen. Was Orbwise schützt und was nicht: docs/security.md",
+                             "All safeguards are in effect. What Orbwise protects and what it doesn't: docs/security.md")))
+        return
 
     def line(ok: bool, text: str, hint: str = "") -> None:
         print(f"  {'✔' if ok else '✘'} {text}" + (f"  → {hint}" if hint and not ok else ""))
@@ -887,7 +898,10 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("-v", "--verbose", action="store_true")
     p = sub.add_parser("open", help=T("Oberfläche im Browser öffnen (angemeldet)", "open the web UI (signed in)"))
     p.add_argument("--print", action="store_true", help=T("nur den Einmal-Link ausgeben", "only print the one-time link"))
-    sub.add_parser("doctor", help=T("Installation prüfen", "check the installation"))
+    p = sub.add_parser("doctor", help=T("Installation prüfen", "check the installation"))
+    p.add_argument("--security", action="store_true",
+                   help=T("nur zeigen, welche Schutzmechanismen auf diesem Rechner greifen",
+                          "only show which safeguards are in effect on this machine"))
     p = sub.add_parser("model", help=T("Modelle anzeigen, umschalten, laden (add) oder entfernen (remove)",
                                        "list, switch, download (add) or remove (remove) models"))
     p.add_argument("name", nargs="?", help=T("Profilname zum Umschalten – oder add / remove / search (Bildmodelle: add qwen-image, z-image-turbo, flux-schnell, sdxl)",

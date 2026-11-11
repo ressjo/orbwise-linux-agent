@@ -2,6 +2,66 @@
 
 ← [Back to the README](../README.md)
 
+## Threat model
+
+What Orbwise is built to withstand, how, and where it is proven. Every line links to a test you can read without
+knowing the code – [`tests/test_attacks.py`](https://github.com/ressjo/orbwise-linux-agent/blob/main/tests/test_attacks.py) holds the scenarios, one function per threat.
+
+| Threat | What Orbwise does | Proof |
+|---|---|---|
+| A web page, mail, PDF or image contains hidden instructions ("delete …", "send …") | While that content is in the chat, everything that changes something asks first – also what the level would otherwise allow | `test_a_web_page_cannot_make_orbwise_change_things_unasked` |
+| The model tries to read your keys and passwords | The file tools never read `~/.ssh`, `~/.gnupg`, password stores, Orbwise's config … – in no level | `test_secrets_cannot_be_read_with_the_file_tools_in_any_mode` |
+| Private data is smuggled out in a search or URL | The data-leak guard checks what leaves the machine: keys, IBANs, text copied from your files | `test_private_data_does_not_leave_the_machine_unnoticed` |
+| The model gets root without you noticing | `sudo`, `su`, `pkexec`, AUR helpers in every spelling ask; in *Auto* only through the password dialog, never a remembered password | `test_root_never_runs_without_a_question` |
+| A command destroys the system | `rm -rf /`, overwriting disks, `mkfs`, `chmod -R … /`, fork bombs are never run – not even after confirmation | `test_destruction_is_never_run_not_even_with_confirmation` |
+| The model makes itself permanent or deletes your files | Start-up files, autostart, cron, SSH keys, deleting, shutting down ask up to *Read + edit files* | `test_persistence_deletion_and_shutdown_ask_below_auto` |
+| A script does something its command line doesn't show | In *Read + edit files* scripts and builds run in a cage: no network, writable only in the project | `test_scripts_run_caged_without_network_in_read_plus_edit` |
+| Code in the sandbox reaches your real files | Host writes into the working copy never follow a symlink out of it | `test_sandbox_code_cannot_write_outside_through_a_symlink` |
+| A third-party MCP server claims its tool is harmless | Its tools ask unless you allowed them; its results count as outside content | `test_other_servers_tools_ask_and_their_results_are_outside_content` |
+| Something is pushed or sent in your name | `git push` and sending mail ask in every level, also in *Auto* | `test_pushing_and_sending_mail_ask_even_in_auto` |
+| Plan mode changes something after all | In plan mode nothing that changes something is run | `test_plan_mode_runs_nothing_that_changes_something` |
+
+The rules live in code, not in the prompt: a model cannot talk its way past them.
+
+### What runs in which level
+
+Computed from the rules the agent applies (`python -m orbwise.security_matrix` rewrites the table; a test fails when
+it is out of date). Assumes the usual case: not root, cage available, the web UI open, sudo with a password, no
+outside content in the chat.
+
+<!-- security-matrix:begin -->
+|  | Off | Read only | Read + edit files | Auto |
+|---|---|---|---|---|
+| Reading: `ls`, `df`, `git status` | **asks** | runs | runs | runs |
+| Create or change a file in your home | **asks** | **asks** | runs | runs |
+| Scripts, builds, tests: `python3 x.py`, `npm test` | **asks** | **asks** | runs caged | runs |
+| Deleting: `rm file` | **asks** | **asks** | **asks** | runs |
+| Sending to the network: `curl -d @file …` | **asks** | **asks** | **asks** | runs |
+| Changing start-up files: `~/.bashrc`, autostart | **asks** | **asks** | **asks** | runs |
+| Reading credentials: `cat ~/.ssh/id_rsa` | **asks** | **asks** | **asks** | runs |
+| The same file with the read tool | **never** | **never** | **never** | **never** |
+| Root: `sudo …`, `su`, `pkexec`, `yay` | **asks** | **asks** | **asks** | **password dialog** |
+| `git push` | **asks** | **asks** | **asks** | **asks** |
+| `rm -rf /`, overwriting a disk, `chmod -R … /` | **never** | **never** | **never** | **never** |
+<!-- security-matrix:end -->
+
+### What it does not protect against
+
+- **You approving without reading.** The card shows the exact command or diff; it protects only if you look.
+- **The level *Auto*.** It lets everything but root, pushing and mail run – deleting, network, start-up files, and
+  whatever a web page talks the model into. In *Auto* the model can also read credentials with a shell command
+  (`cat ~/.ssh/id_rsa`), although the read tool refuses the same file.
+- **Passwordless sudo (`NOPASSWD`).** Orbwise then asks for a visible `sudo` with a card, but a script that calls
+  sudo itself runs as root without asking in *Auto*.
+- **The `docker` group.** `docker run -v /:/host …` is root without a password; Orbwise does not see it as root.
+- **A kernel exploit.** Neither the cage nor the sandbox container rules it out; rootless Podman limits the damage to
+  your user.
+- **Programs running as you.** They can read the access token and control Orbwise.
+- **A model that is simply wrong.** It can misunderstand you and propose something harmful that looks reasonable.
+
+`orbwise doctor --security` shows which of these apply on your machine: whether the cage works, whether sudo asks
+for a password, whether Orbwise listens beyond localhost, which level is active.
+
 ## Security
 
 Orbwise can run commands on your system, so:
