@@ -313,6 +313,39 @@ step – faster on long tasks, but it may cost quality with some models.
 call into the answer instead of calling the tool. Orbwise recognises the common spellings (`<tool_call>…`,
 `<function=…>`, `[TOOL_CALLS]`, bare `{"name": …}`) and runs them as calls, without showing the raw text.
 
+### Does the agent work with this model? (`orbwise bench`)
+
+A fast model that cannot drive the tools is of little use. `orbwise bench` lets the coding agent solve ten small,
+fixed tasks with the active model – each in a throw-away project, each with an objective check:
+
+```bash
+orbwise bench                       # all ten tasks, once
+orbwise bench --runs 3              # three runs per task – results vary from run to run
+orbwise bench --tasks fix-bug,rename --think on
+orbwise bench --list                # what the tasks are
+```
+
+| Task | Checks |
+|---|---|
+| `fix-bug`, `fix-syntax` | finding a cause instead of guessing; the project's tests must pass |
+| `add-function`, `write-script`, `write-tests` | writing new code that runs – tests that test nothing don't count |
+| `rename`, `change-value` | touching every place in several files |
+| `precise-edit` | changing one of forty similar functions in a large file |
+| `find-code`, `run-and-report` | reading or running and answering – without changing anything |
+
+The report shows per task whether it was solved, the steps and the time, and in total: failed edits, thinking cut
+short, repeats the loop detection skipped, timeouts. The full result lands as JSON in
+`~/.local/share/orbwise/bench/` – run it before and after changing a model, the context window, the thinking setting
+or the prompt, and compare.
+
+- It uses a model server that is already running (so Orbwise can stay open) or starts it and stops it again.
+- Nobody is there to confirm: the agent runs in *Read + edit files*, and what would ask there is decided by a fixed
+  rule – allowed is what that level's cage would allow (no root, deleting, sending to the network; files only in
+  the project), everything else is refused and counted.
+- Weakening the given tests doesn't help: the check resets them first.
+- Plan for a few minutes up to an hour, depending on model and hardware; a task counts as failed after
+  `--timeout` (900) seconds.
+
 ### Benchmarking your models
 
 A standalone script (not part of the web UI) runs your model profiles one after another through the benchmarks

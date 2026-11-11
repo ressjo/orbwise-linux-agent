@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Agent benchmark (`orbwise bench`):** lets the coding agent solve ten small fixed tasks with the active model –
+  fixing a bug, adding a function, renaming across files, a precise edit in a large file, writing tests, reading and
+  answering – each in a throw-away project with an objective check. The report shows what was solved, steps, time,
+  failed edits, thinking cut short and skipped repeats, and is saved as JSON to compare models, context windows and
+  settings. Confirmations are decided by a fixed rule (what the cage of *Read + edit files* would allow).
 - **MCP servers:** Orbwise can use the tools of any Model Context Protocol server – a program it starts (`command`,
   stdio) or one reached over HTTP (`url`). Configure them under `mcp.servers`; the tools appear as
   `mcp_<server>_<tool>` in the Tools and the Coding mode, and `orbwise doctor` shows what connected. They ask before
