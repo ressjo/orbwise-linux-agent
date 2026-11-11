@@ -168,15 +168,16 @@ class SafetyMixin:
         return risk, reason
 
     def _auto_full(self, name: str, args: dict, ctx: ToolContext, reason: str) -> tuple[str, str]:
-        """Auto-Modus „Auto“: alles ohne Rückfrage – außer Root-Rechten, Pushen und Senden in deinem Namen.
+        """Auto-Modus „Auto“: alles ohne Rückfrage – außer Root-Rechten, Pushen, Senden in deinem Namen und dem Lesen
+        von Zugangsdaten.
         sudo braucht keine eigene Karte: der Passwortdialog zeigt den Befehl und ist die Rückfrage."""
         from .tools.safety import auto_full_check
         if name in AUTO_ASK:
             return CONFIRM, reason
         if name not in SHELL_TOOLS:
             return SAFE, prompts.text(self.cfg, "auto_full")
-        kind, why = auto_full_check(str(args.get("command") or ""))
-        if kind == "push":
+        kind, why = auto_full_check(str(args.get("command") or ""), self._shell_cwd(name, args, ctx.cwd))
+        if kind in ("push", "secrets"):
             return CONFIRM, why
         if kind == "root":
             if name in LOCAL_SHELLS and self._password_dialog():

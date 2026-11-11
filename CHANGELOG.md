@@ -45,6 +45,9 @@ All notable changes to this project are documented here. The format follows
   check, and never a TypeScript from the project's own `node_modules`, which the agent could have written.
 
 ### Fixed
+- **Auto mode – reading credentials asks:** in *Auto* a shell command such as `cat ~/.ssh/id_rsa`, `env` or
+  `echo $API_TOKEN` ran without a question, although the read tools refuse the same files in every level. It now
+  asks there too, with the same rules as in the other levels (also inside `bash -c '…'` and `$(…)`).
 - **English interface – German leftovers:** a new chat was called "Neuer Chat", and the reason on the confirmation
   card of a file change read "ändert …". Both now follow the language.
 - **Header buttons overlapped the activity panel:** the labels of the buttons at the top right depended on the window

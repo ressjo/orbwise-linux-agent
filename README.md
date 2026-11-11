@@ -84,7 +84,7 @@ Orbwise runs commands on your machine, so this is the part to read. The table is
 | Deleting: `rm file` | **asks** | **asks** | **asks** | runs |
 | Sending to the network: `curl -d @file …` | **asks** | **asks** | **asks** | runs |
 | Changing start-up files: `~/.bashrc`, autostart | **asks** | **asks** | **asks** | runs |
-| Reading credentials: `cat ~/.ssh/id_rsa` | **asks** | **asks** | **asks** | runs |
+| Reading credentials: `cat ~/.ssh/id_rsa` | **asks** | **asks** | **asks** | **asks** |
 | The same file with the read tool | **never** | **never** | **never** | **never** |
 | Root: `sudo …`, `su`, `pkexec`, `yay` | **asks** | **asks** | **asks** | **password dialog** |
 | `git push` | **asks** | **asks** | **asks** | **asks** |
@@ -96,7 +96,7 @@ the system – is a readable test in [`tests/test_attacks.py`](tests/test_attack
 [threat model](docs/security.md#threat-model) says which test proves what.
 
 **It does not protect against:** approving a card without reading it · the level *Auto*, which lets everything but
-root, pushing and mail run (including what a web page talks the model into) · passwordless sudo, where a script
+root, pushing, mail and reading credentials run (including what a web page talks the model into) · passwordless sudo, where a script
 calling sudo runs as root unasked in *Auto* · the `docker` group, which is root without a password · a kernel exploit
 · a model that is simply wrong. `orbwise doctor --security` shows which of these apply on your machine.
 → [Details](docs/security.md#what-it-does-not-protect-against)

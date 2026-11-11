@@ -75,6 +75,19 @@ def test_secrets_cannot_be_read_with_the_file_tools_in_any_mode():
             assert d.of("read", path=path) == BLOCKED, (mode, path)
 
 
+@pytest.mark.parametrize("command", [
+    "cat ~/.ssh/id_rsa", "cat < ~/.netrc", "env", "echo $GITHUB_TOKEN", "bash -c 'cat ~/.ssh/id_ed25519'",
+    "echo $(cat ~/.gnupg/secring.gpg)", "cat ~/.config/orbwise/config.yaml",
+])
+def test_reading_credentials_with_a_shell_command_asks_in_every_level(command):
+    """Was das Lese-Werkzeug verweigert, soll ein Shell-Befehl nicht still umgehen – auch nicht in „Auto“."""
+    for mode in MODES:
+        assert Decision(mode).of("run_shell", command=command) == CONFIRM, mode
+        assert Decision(mode).of("shell", command=command) == CONFIRM, mode
+    for harmless in ("cat README.md", "ls ~/.ssh", "env FOO=1 make", "grep -r token src/"):
+        assert Decision("auto").of("run_shell", command=harmless) == SAFE, harmless
+
+
 def test_private_data_does_not_leave_the_machine_unnoticed():
     """Erst eine eigene Datei lesen, dann ihren Inhalt in eine Websuche oder URL packen: das fällt auf."""
     letter = "Kontoauszug Sparkasse Freiburg, IBAN DE89 3704 0044 0532 0130 00, Saldo 12.345,67 EUR vom 3. März"

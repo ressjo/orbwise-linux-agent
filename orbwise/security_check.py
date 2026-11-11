@@ -75,9 +75,9 @@ def report(cfg: Any) -> list[dict]:
     mode = saved if saved in MODE_NAMES else "read"
     name = T(*MODE_NAMES[mode])
     if mode == "auto":
-        add("warn", f"Auto-Stufe „{name}“: alles außer Root, Pushen und Mails läuft ohne Rückfrage – auch Löschen, "
+        add("warn", f"Auto-Stufe „{name}“: alles außer Root, Pushen, Mails und Zugangsdaten läuft ohne Rückfrage – auch Löschen, "
                     "Netz und was eine Webseite dem Modell einredet.",
-            f"Auto level \"{name}\": everything but root, pushing and mail runs without asking – deleting, network "
+            f"Auto level \"{name}\": everything but root, pushing, mail and credentials runs without asking – deleting, network "
             "and whatever a web page talks the model into included.")
     else:
         add("ok", f"Auto-Stufe „{name}“.", f"Auto level \"{name}\".")

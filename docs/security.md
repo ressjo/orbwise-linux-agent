@@ -10,7 +10,7 @@ knowing the code – [`tests/test_attacks.py`](https://github.com/ressjo/orbwise
 | Threat | What Orbwise does | Proof |
 |---|---|---|
 | A web page, mail, PDF or image contains hidden instructions ("delete …", "send …") | While that content is in the chat, everything that changes something asks first – also what the level would otherwise allow | `test_a_web_page_cannot_make_orbwise_change_things_unasked` |
-| The model tries to read your keys and passwords | The file tools never read `~/.ssh`, `~/.gnupg`, password stores, Orbwise's config … – in no level | `test_secrets_cannot_be_read_with_the_file_tools_in_any_mode` |
+| The model tries to read your keys and passwords | The file tools never read `~/.ssh`, `~/.gnupg`, password stores, Orbwise's config … – in no level; shell commands that read or print them ask in every level, also in *Auto* | `test_secrets_cannot_be_read_with_the_file_tools_in_any_mode`, `test_reading_credentials_with_a_shell_command_asks_in_every_level` |
 | Private data is smuggled out in a search or URL | The data-leak guard checks what leaves the machine: keys, IBANs, text copied from your files | `test_private_data_does_not_leave_the_machine_unnoticed` |
 | The model gets root without you noticing | `sudo`, `su`, `pkexec`, AUR helpers in every spelling ask; in *Auto* only through the password dialog, never a remembered password | `test_root_never_runs_without_a_question` |
 | A command destroys the system | `rm -rf /`, overwriting disks, `mkfs`, `chmod -R … /`, fork bombs are never run – not even after confirmation | `test_destruction_is_never_run_not_even_with_confirmation` |
@@ -38,7 +38,7 @@ outside content in the chat.
 | Deleting: `rm file` | **asks** | **asks** | **asks** | runs |
 | Sending to the network: `curl -d @file …` | **asks** | **asks** | **asks** | runs |
 | Changing start-up files: `~/.bashrc`, autostart | **asks** | **asks** | **asks** | runs |
-| Reading credentials: `cat ~/.ssh/id_rsa` | **asks** | **asks** | **asks** | runs |
+| Reading credentials: `cat ~/.ssh/id_rsa` | **asks** | **asks** | **asks** | **asks** |
 | The same file with the read tool | **never** | **never** | **never** | **never** |
 | Root: `sudo …`, `su`, `pkexec`, `yay` | **asks** | **asks** | **asks** | **password dialog** |
 | `git push` | **asks** | **asks** | **asks** | **asks** |
@@ -48,9 +48,8 @@ outside content in the chat.
 ### What it does not protect against
 
 - **You approving without reading.** The card shows the exact command or diff; it protects only if you look.
-- **The level *Auto*.** It lets everything but root, pushing and mail run – deleting, network, start-up files, and
-  whatever a web page talks the model into. In *Auto* the model can also read credentials with a shell command
-  (`cat ~/.ssh/id_rsa`), although the read tool refuses the same file.
+- **The level *Auto*.** It lets everything but root, pushing, mail and reading credentials run – deleting, network,
+  start-up files, and whatever a web page talks the model into.
 - **Passwordless sudo (`NOPASSWD`).** Orbwise then asks for a visible `sudo` with a card, but a script that calls
   sudo itself runs as root without asking in *Auto*.
 - **The `docker` group.** `docker run -v /:/host …` is root without a password; Orbwise does not see it as root.
@@ -123,7 +122,7 @@ server keeps the setting for every open window, Telegram and routines.
   tests and scripts (`make`, `npm test`, `python3 x.py` …) run **isolated without network** (see below). The safe
   middle ground.
 - **Auto** – **everything runs without asking**, like in your own terminal: servers, `docker compose up`, package
-  managers without root, network, deleting, editing any file. Only three things ask:
+  managers without root, network, deleting, editing any file. Only four things ask:
   - `sudo` (also `yay`/`paru`/`makepkg -si`, which call sudo themselves) – no extra card, just the **password
     dialog**, which shows the command; a remembered password is not used for these, and neither is a ticket sudo
     itself may still hold (Orbwise drops it before such a command and after every password entry – this matters with
@@ -131,7 +130,9 @@ server keeps the setting for every open window, Telegram and routines.
     there is no dialog to be the question: `sudo` then asks with a normal card, and `orbwise doctor` warns – a
     script that calls sudo itself still runs as root without asking on such a machine;
   - pushing (`git push`, *Push to GitHub*);
-  - sending e-mail in your name.
+  - sending e-mail in your name;
+  - reading credentials with a shell command (`cat ~/.ssh/id_rsa`, `env`, `echo $API_TOKEN`) – the read tools refuse
+    these files in every level, and a shell command should not get around that silently.
 
   The risk is deliberate: content from a web page or e-mail could make the model run something, and data can go out
   over the network (the data-leak guard only stops access keys, tokens and passwords here). If you don't want that,

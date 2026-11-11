@@ -28,8 +28,7 @@ def test_matrix_says_what_the_levels_promise():
     assert rows["`git push`"] == ["ask"] * 4
     assert rows["`rm -rf /`, overwriting a disk, `chmod -R … /`"] == ["never"] * 4
     assert rows["The same file with the read tool"] == ["never"] * 4
-    # die Schwäche, die das README offen nennt: in „Auto“ liest ein Shell-Befehl Zugangsdaten
-    assert rows["Reading credentials: `cat ~/.ssh/id_rsa`"] == ["ask", "ask", "ask", "run"]
+    assert rows["Reading credentials: `cat ~/.ssh/id_rsa`"] == ["ask"] * 4  # auch in „Auto“
     assert "| **asks** | runs | runs | runs |" in security_matrix.render("en")
     assert "läuft im Käfig" in security_matrix.render("de")
 
