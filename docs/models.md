@@ -343,6 +343,8 @@ or the prompt, and compare.
   rule – allowed is what that level's cage would allow (no root, deleting, sending to the network; files only in
   the project), everything else is refused and counted.
 - Weakening the given tests doesn't help: the check resets them first.
+- No pytest needed, neither for the agent nor for the check: every project brings a small test runner
+  (`python3 run_tests.py`, named in its `AGENTS.md`), so the result does not depend on what is installed.
 - Plan for a few minutes up to an hour, depending on model and hardware; a task counts as failed after
   `--timeout` (900) seconds.
 

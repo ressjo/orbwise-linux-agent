@@ -26,13 +26,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .bench_tasks import BY_NAME, CONFTEST, TASKS, Task
+from .bench_tasks import BY_NAME, COMMON, TASKS, Task
 
 TIMEOUT = 900  # Sekunden je Aufgabe, danach zählt sie als nicht gelöst
 
 
 def _prepare(task: Task, project: Path) -> None:
-    for rel, content in {**task.files, "conftest.py": CONFTEST}.items():
+    for rel, content in {**task.files, **COMMON}.items():
         target = project / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
@@ -47,13 +47,13 @@ def _prepare(task: Task, project: Path) -> None:
 def verdict(task: Task, project: Path, answer: str) -> tuple[bool, str]:
     """Prüfung der Aufgabe. Geschützte Dateien (die Tests) gelten im Ausgangszustand; eine Aufgabe, die nichts ändern
     darf, ist mit geänderten Dateien nicht gelöst."""
-    originals = {**task.files, "conftest.py": CONFTEST}
+    originals = {**task.files, **COMMON}
     if task.read_only:
         changed = [rel for rel, content in originals.items()
                    if not (project / rel).is_file() or (project / rel).read_text(encoding="utf-8") != content]
         if changed:
             return False, "hat Dateien geändert: " + ", ".join(changed[:3])
-    for rel in (*task.protect, "conftest.py"):
+    for rel in (*task.protect, *COMMON):
         (project / rel).parent.mkdir(parents=True, exist_ok=True)
         (project / rel).write_text(originals[rel], encoding="utf-8")
     try:

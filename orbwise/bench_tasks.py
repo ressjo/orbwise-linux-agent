@@ -37,20 +37,62 @@ class Task:
     read_only: bool = False                # die Aufgabe darf nichts ändern
 
 
-def pytest_ok(project: Path, timeout: int = 120) -> tuple[bool, str]:
-    """Laufen die Tests des Projekts durch? → (ja?, letzte Zeile der Ausgabe)."""
+# Jedes Projekt bringt seinen eigenen kleinen Test-Lauf mit: Der Benchmark soll auf jedem Rechner dasselbe messen –
+# auch dort, wo pytest nicht installiert ist (in Orbwises eigener Umgebung ist es das nicht). pytest funktioniert in den
+# Projekten ebenfalls (conftest.py), ist aber weder für den Agenten noch für die Prüfung nötig.
+RUN_TESTS = '''"""Führt die Tests dieses Projekts aus: python3 run_tests.py (pytest geht auch, ist aber nicht nötig)."""
+import importlib.util
+import sys
+import traceback
+from pathlib import Path
+
+root = Path(__file__).parent
+sys.path.insert(0, str(root))
+passed, failed = 0, []
+for path in sorted(root.glob("tests/test_*.py")) + sorted(root.glob("test_*.py")):
     try:
-        r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider"], cwd=project,
-                           capture_output=True, text=True, timeout=timeout,
-                           env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
+        spec = importlib.util.spec_from_file_location(path.stem, path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    except BaseException:
+        failed.append(f"{path.name} (Import)")
+        traceback.print_exc()
+        continue
+    for name in [n for n in dir(module) if n.startswith("test_") and callable(getattr(module, n))]:
+        try:
+            getattr(module, name)()
+            passed += 1
+        except BaseException:
+            failed.append(f"{path.name}::{name}")
+            traceback.print_exc()
+for name in failed:
+    print("FAILED", name)
+print(f"{len(failed)} failed, {passed} passed")
+sys.exit(1 if failed or not passed else 0)
+'''
+AGENTS = "Tests ausführen: `python3 run_tests.py` (run the tests with `python3 run_tests.py`).\n"
+# Damit auch pytest die Module im Projektordner findet (kein Paket, kein Installieren)
+CONFTEST = "import sys\nfrom pathlib import Path\n\nsys.path.insert(0, str(Path(__file__).parent))\n"
+# Liegt in jedem Projekt und gilt bei der Prüfung immer im Ausgangszustand
+# .orbwise.yaml: die Prüf-Schranke des Agenten nimmt denselben Test-Lauf (sonst suchte sie pytest)
+COMMON = {"run_tests.py": RUN_TESTS, "AGENTS.md": AGENTS, "conftest.py": CONFTEST,
+          ".orbwise.yaml": "check: python3 run_tests.py\n"}
+
+
+def tests_ok(project: Path, timeout: int = 120) -> tuple[bool, str]:
+    """Laufen die Tests des Projekts durch? → (ja?, letzte Zeile der Ausgabe). Nutzt den Test-Lauf des Projekts mit dem
+    Python, mit dem Orbwise läuft – ohne pytest."""
+    try:
+        r = subprocess.run([sys.executable, "run_tests.py"], cwd=project, capture_output=True, text=True,
+                           timeout=timeout, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
     except (OSError, subprocess.TimeoutExpired) as e:
-        return False, f"pytest: {type(e).__name__}"
-    lines = [ln for ln in (r.stdout + r.stderr).strip().splitlines() if ln.strip()]
-    return r.returncode == 0, lines[-1][:160] if lines else f"pytest rc={r.returncode}"
+        return False, f"Tests: {type(e).__name__}"
+    lines = [ln for ln in r.stdout.strip().splitlines() if ln.strip()]
+    return r.returncode == 0, lines[-1][:160] if lines else f"Tests: Rückgabewert {r.returncode}"
 
 
 def _tests(project: Path, answer: str) -> tuple[bool, str]:  # noqa: ARG001
-    return pytest_ok(project)
+    return tests_ok(project)
 
 
 # ---------------------------------------------------------------- 1 Fehler finden
@@ -155,7 +197,7 @@ def _renamed(project: Path, answer: str) -> tuple[bool, str]:  # noqa: ARG001
     for name in ("cart.py", "order.py", "report.py"):
         if re.search(r"\bcalc\b", (project / name).read_text(encoding="utf-8")):
             return False, f"{name}: calc kommt noch vor"
-    return pytest_ok(project)
+    return tests_ok(project)
 
 
 # ---------------------------------------------------------------- 4 ein Wert an mehreren Stellen
@@ -297,7 +339,7 @@ def _tests_written(project: Path, answer: str) -> tuple[bool, str]:  # noqa: ARG
         return False, "tests/test_utils.py fehlt"
     if len(re.findall(r"^def test_", test.read_text(encoding="utf-8"), re.M)) < 3:
         return False, "weniger als drei Testfälle"
-    ok, why = pytest_ok(project)
+    ok, why = tests_ok(project)
     if not ok:
         return False, why
     # prüfen die Tests wirklich etwas? Mit einem kaputten clamp müssen sie rot werden
@@ -305,7 +347,7 @@ def _tests_written(project: Path, answer: str) -> tuple[bool, str]:  # noqa: ARG
     original = utils.read_text(encoding="utf-8")
     try:
         utils.write_text("def clamp(value, low, high):\n    return value\n", encoding="utf-8")
-        broken_ok, _ = pytest_ok(project)
+        broken_ok, _ = tests_ok(project)
     finally:
         utils.write_text(original, encoding="utf-8")
     return not broken_ok, "Tests grün und erkennen ein kaputtes clamp" if not broken_ok else \
@@ -397,9 +439,9 @@ TASKS: list[Task] = [
          protect=("tests/test_handlers.py",), solution={"handlers.py": _HANDLERS_SOLVED}),
     Task("write-tests", ("Tests schreiben", "write tests"),
          ("Schreibe Tests für die Funktion clamp aus utils.py in tests/test_utils.py – mindestens drei Fälle, die "
-          "ihr Verhalten wirklich prüfen. Sie müssen durchlaufen.",
+          "ihr Verhalten wirklich prüfen, als schlichte Funktionen test_… mit assert. Sie müssen durchlaufen.",
           "Write tests for the function clamp from utils.py in tests/test_utils.py – at least three cases that "
-          "really check its behaviour. They must pass."),
+          "really check its behaviour, as plain functions test_… with assert. They must pass."),
          {"utils.py": _UTILS, "tests/__init__.py": ""}, _tests_written, protect=("utils.py",),
          solution={"tests/test_utils.py": _UTILS_TEST_SOLVED}),
     Task("run-and-report", ("Ausführen und berichten", "run and report"),
@@ -412,5 +454,3 @@ TASKS: list[Task] = [
 ]
 
 BY_NAME = {t.name: t for t in TASKS}
-# Damit pytest die Module im Projektordner findet (kein Paket, kein Installieren)
-CONFTEST = "import sys\nfrom pathlib import Path\n\nsys.path.insert(0, str(Path(__file__).parent))\n"
