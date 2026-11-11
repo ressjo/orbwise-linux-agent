@@ -64,6 +64,7 @@ export function init() {
   S = {
     name: "Orbwise", wakePhrase: "Wake-Word",  // aus „hello“: assistant_name und der Satz des Wake-Word-Modells
     previews: {},  // Diff-Vorschau je Werkzeug-Aufruf (für die Freigabe-Karte)
+    commands: {},  // der Befehl, den ein Werkzeug ausführen wird (für die Freigabe-Karte)
     question: null,  // offene Rückfrage (Werkzeug question)
     ws: null, connected: false, retry: 0,
     serverState: "idle", substate: "",

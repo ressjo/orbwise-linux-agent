@@ -72,6 +72,11 @@ All notable changes to this project are documented here. The format follows
   success.
 
 ### Changed
+- **Readable tool names in the chat, real commands on the confirmation card:** above an answer and in the status line
+  the chat now says "Web search" or "System update" instead of `web_search` and `system_update` (the technical name
+  shows on hover). The confirmation card for a system update or for installing/removing packages shows the command
+  that will really run (`sudo pacman -Syu --noconfirm`, `sudo apt-get -y install htop` …) instead of
+  `system_update({})`; other tools list their arguments line by line, and an empty box is no longer shown.
 - **README and pictures renewed:** the README opens with what Orbwise is for – the local assistant you can trust with
   your Linux machine –, a short film of a coding task (diff card, approval, result with preview and Undo), three
   reasons and a three-line quick start. All screenshots show the current interface; `scripts/screenshots.mjs` signs

@@ -11,9 +11,12 @@ import { SAYINGS, Say, sayNext } from "./ws.js";
 export let acts, num, secs, oldResults;
 let activity, actGroup, runGroups, MAX_GROUPS, TOOL_LABELS, TOOL_PREFIX, ACT_ICONS, CODE_ICONS, toolIcon, kChars, phaseTimer, GROUP_NAMES, groupName, groupNames, toolsChanged, REREAD, SAT_GROUPS, ICON_GROUPS, reviewText;
 
-function toolLabel(name) {
+// Lesbarer Name eines Werkzeugs („Websuche“ statt web_search) – für Aktivität, Chat und Bestätigungskarte
+export function toolLabel(name) {
   const hit = TOOL_LABELS[name];
   if (hit) return hit[EN ? 1 : 0];
+  const mcp = /^mcp_([^_]+)_(.+)$/.exec(name);  // Werkzeug eines MCP-Servers: mcp_<server>_<werkzeug>
+  if (mcp) return `${mcp[1]} · ${mcp[2].replace(/_/g, " ")}`;
   for (const [rx, l] of TOOL_PREFIX) {
     if (rx.test(name)) return `${l[EN ? 1 : 0]} · ${name.replace(rx, "").replace(/_/g, " ")}`.replace(/ · $/, "");
   }
@@ -254,7 +257,7 @@ function chatPhase(a, ev) {
     live._start = performance.now();
     live.querySelector(".ls").textContent = "";
     live.querySelector(".lt").textContent = a.reviewStep ? reviewText(a) : ev.calls && ev.calls.length
-      ? L(`führt ${ev.calls.join(", ")} aus`, `running ${ev.calls.join(", ")}`) : L("gleich weiter", "continuing");
+      ? L("läuft: ", "running: ") + ev.calls.map(toolLabel).join(", ") : L("gleich weiter", "continuing");
     return;
   }
   if (live._phase !== ev.id) { live._phase = ev.id; live._start = performance.now(); live.querySelector(".ls").textContent = ""; }
@@ -357,6 +360,7 @@ export function toolCall(ev) {
     return;
   }
   if (ev.preview) S.previews[ev.id] = ev.preview;
+  if (ev.command) S.commands[ev.id] = ev.command;
   if (!ev.routine) { sayNext(SAYINGS[ev.group] ? ev.group : "think"); refresh(); }
   if (ev.group === "memory_tools") orb.memoryGlow(ev.id, true, satLabel(ev.name));
   else orb.addSatellite(ev.id, satLabel(ev.name), ICON_GROUPS[ev.group] || null);
@@ -388,7 +392,8 @@ export function toolCall(ev) {
     const chip = document.createElement("span");
     chip.className = "tool-chip running";
     chip.id = "chip-" + ev.id;
-    chip.textContent = ev.name;
+    chip.textContent = toolLabel(ev.name);
+    chip.title = ev.name;  // der technische Name bleibt beim Darüberfahren sichtbar
     tools.appendChild(chip);
     if (a.toolCount > 1) {
       const more = document.createElement("button");
@@ -436,6 +441,7 @@ export function toolOutput(ev) {
 
 export function toolResult(ev) {
   delete S.previews[ev.id];
+  delete S.commands[ev.id];
   if (!ev.sub) {
     orb.removeSatellite(ev.id, ev.status === "error" || ev.status === "blocked");
     orb.memoryGlow(ev.id, false);

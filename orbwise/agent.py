@@ -1203,8 +1203,15 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
                 preview = spec.preview(ctx, args)
             except Exception as e:  # noqa: BLE001
                 log.debug("Vorschau für %s fehlgeschlagen: %s", name, e)
+        shown = ""
+        if spec.command and risk == CONFIRM:  # was genau laufen wird – für die Bestätigungskarte
+            try:
+                shown = spec.command(ctx, args)
+            except Exception as e:  # noqa: BLE001
+                log.debug("Befehl für %s nicht ermittelbar: %s", name, e)
         await emit({"type": "tool_call", "id": call_id, "name": name, "args": args, "risk": risk, "reason": reason,
                     "group": spec.group, **({"preview": preview} if preview else {}),
+                    **({"command": shown} if shown else {}),
                     **({"jailed": True} if ctx.jail else {})})
         if self._plan and risk != SAFE:  # Planmodus: Veränderndes nur vormerken, nicht ausführen, nicht nachfragen
             result = prompts.text(self.cfg, "plan_skipped")

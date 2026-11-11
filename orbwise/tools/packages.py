@@ -76,8 +76,51 @@ def _names_risk(verb):  # verb: () -> Text in der aktuellen Sprache
     return risk
 
 
+def _sudo(ctx: ToolContext) -> str:
+    """Wie Root-Rechte geholt werden – für die Anzeige auf der Bestätigungskarte."""
+    return "pkexec" if ctx.cfg.tools.privilege_cmd == "pkexec" else "sudo"
+
+
+def update_command(ctx: ToolContext, args: dict) -> str:  # noqa: ARG001
+    """Was system_update ausführt (siehe dort) – eine Zeile je Befehl."""
+    if package_manager(ctx) == "apt":
+        return f"{_sudo(ctx)} apt-get update && {_sudo(ctx)} apt-get -y upgrade"
+    lines = [f"{_sudo(ctx)} pacman -Syu --noconfirm"]
+    helper = aur_helper(ctx)
+    if helper:
+        lines.append(f"{helper} -Sua --noconfirm")
+    return "\n".join(lines)
+
+
+def _valid_names(args: dict) -> str:
+    """Paketnamen für die Anzeige – leer, sobald einer ungültig ist (dann lehnt das Werkzeug ohnehin alles ab)."""
+    pkgs = split_names(args.get("names", ""))
+    return " ".join(pkgs) if pkgs and all(PKG_RE.match(p) for p in pkgs) else ""
+
+
+def install_command(ctx: ToolContext, args: dict) -> str:
+    names = _valid_names(args)
+    if not names:
+        return ""
+    if package_manager(ctx) == "apt":
+        return f"{_sudo(ctx)} apt-get -y install {names}"
+    helper = aur_helper(ctx)
+    aur = f"\n{helper} -S --needed --noconfirm …   ({T('für Pakete aus dem AUR', 'for packages from the AUR')})" if helper else ""
+    return f"{_sudo(ctx)} pacman -S --needed --noconfirm {names}{aur}"
+
+
+def remove_command(ctx: ToolContext, args: dict) -> str:
+    names = _valid_names(args)
+    if not names:
+        return ""
+    if package_manager(ctx) == "apt":
+        return f"{_sudo(ctx)} apt-get -y remove --autoremove {names}"
+    return f"{_sudo(ctx)} pacman -Rns --noconfirm {names}"
+
+
 @tool("Aktualisiert das ganze System (pacman -Syu + AUR bzw. apt-get upgrade).",
-      risk=lambda ctx, a: (CONFIRM, T("Systemupdate mit Root-Rechten", "system update with root privileges")))
+      risk=lambda ctx, a: (CONFIRM, T("Systemupdate mit Root-Rechten", "system update with root privileges")),
+      command=update_command)
 async def system_update(ctx: ToolContext) -> str:
     limit = ctx.limit()
     timeout = ctx.cfg.tools.update_timeout
@@ -135,7 +178,7 @@ async def search_package(ctx: ToolContext, query: str) -> str:
 
 
 @tool("Installiert Pakete (Arch notfalls aus dem AUR). Namen exakt – im Zweifel erst search_package.",
-      risk=_names_risk(lambda: T("Pakete installieren", "install packages")))
+      risk=_names_risk(lambda: T("Pakete installieren", "install packages")), command=install_command)
 async def install_package(ctx: ToolContext, names: Annotated[str, "Mit Leerzeichen getrennt"]) -> str:
     pkgs = split_names(names)
     invalid = [p for p in pkgs if not PKG_RE.match(p)]
@@ -181,7 +224,7 @@ async def install_package(ctx: ToolContext, names: Annotated[str, "Mit Leerzeich
 
 
 @tool("Deinstalliert Pakete samt nicht mehr benötigter Abhängigkeiten.",
-      risk=_names_risk(lambda: T("Pakete entfernen", "remove packages")))
+      risk=_names_risk(lambda: T("Pakete entfernen", "remove packages")), command=remove_command)
 async def remove_package(ctx: ToolContext, names: Annotated[str, "Mit Leerzeichen getrennt"]) -> str:
     pkgs = split_names(names)
     if not pkgs or any(not PKG_RE.match(p) for p in pkgs):

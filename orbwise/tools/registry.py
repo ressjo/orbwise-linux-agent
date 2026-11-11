@@ -75,6 +75,8 @@ class ToolSpec:
     describe: Callable[[Any], str] | None = None
     # Vorschau fürs Bestätigungsfenster (z. B. Diff einer Dateiänderung)
     preview: Callable[[ToolContext, dict], str] | None = None
+    # Der Befehl, den das Werkzeug ausführen wird – steht auf der Bestätigungskarte (z. B. „sudo pacman -Syu“)
+    command: Callable[[ToolContext, dict], str] | None = None
 
     def is_enabled(self, cfg: Any) -> bool:
         if cfg is None:
@@ -142,7 +144,8 @@ def _json_type(tp: Any) -> tuple[str, type]:
 
 def tool(description: str, risk: str | RiskFn = SAFE, name: str | None = None,
          enabled: Callable[[Any], bool] | None = None, editable: tuple[str, ...] = (),
-         describe: Callable[[Any], str] | None = None, preview: Callable[[ToolContext, dict], str] | None = None):
+         describe: Callable[[Any], str] | None = None, preview: Callable[[ToolContext, dict], str] | None = None,
+         command: Callable[[ToolContext, dict], str] | None = None):
     def deco(func):
         sig = inspect.signature(func)
         hints = typing.get_type_hints(func, include_extras=True)
@@ -176,6 +179,7 @@ def tool(description: str, risk: str | RiskFn = SAFE, name: str | None = None,
             editable=tuple(editable),
             describe=describe,
             preview=preview,
+            command=command,
         )
         REGISTRY[spec.name] = spec
         return func

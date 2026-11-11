@@ -208,7 +208,9 @@ export function openConfirm(ev) {
   cmd.classList.toggle("diff", !!preview);
   if (preview) cmd.innerHTML = renderDiff(preview);
   else cmd.textContent = ev.name === "run_shell" || ev.name === "shell"
-    ? (ev.args.workdir ? `(${ev.args.workdir}) ` : "") + ev.args.command : `${ev.name}(${JSON.stringify(ev.args, null, 2)})`;
+    ? (ev.args.workdir ? `(${ev.args.workdir}) ` : "") + ev.args.command : S.commands[ev.id] || argLines(ev.args);
+  // ohne Befehl, Diff oder Angaben (z. B. Systemupdate) sagt die Frage schon alles – kein leerer Kasten
+  if (!editable.length) cmd.classList.toggle("hidden", !preview && !cmd.textContent.trim());
   $("confirm-reason").textContent = ev.reason && !editable.length ? L("Grund: ", "Reason: ") + ev.reason : "";
   $("confirm-trust").classList.toggle("hidden", !ev.trustable || !!editable.length);
   $("confirm-voice").textContent = editable.length ? L("Senden nur per Klick – „Nein“ bricht ab.", "Send only by click – “no” cancels.")
@@ -223,6 +225,12 @@ export function openConfirm(ev) {
   }, 50);
   refresh();
   if (!S.tts) onSpeechDrained();
+}
+
+// Angaben eines Aufrufs lesbar untereinander („Ort: Berlin“) statt als name({json})
+function argLines(args) {
+  return Object.entries(args || {}).filter(([, v]) => v !== "" && v != null)
+    .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`).join("\n");
 }
 
 function editedFields() {
