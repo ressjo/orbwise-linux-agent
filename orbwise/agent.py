@@ -88,24 +88,6 @@ def thought_loop(text: str) -> int:
     return norm.find(piece) + LOOP_TAIL
 
 
-_FAILED = re.compile(r"nicht gefunden|gibt es nicht|fehlgeschlagen|keine (lese)?berechtigung|nicht verfügbar|"
-                     r"ungültig|fehler|abgelehnt|blockiert|unbekanntes tool|fehlende parameter|zeitüberschreitung|"
-                     r"nicht installiert|nicht geschrieben|keine treffer|keine dateien|kommt .* nicht vor|"
-                     r"noch nicht gelesen|⚠", re.I)
-
-
-def looks_failed(name: str, result: str) -> bool:
-    """Ist dieses Werkzeug-Ergebnis ein Fehlschlag oder eine Sackgasse, über die das Modell nachdenken sollte
-    (think_steps: lean)? Im Zweifel ja – einmal zu oft denken kostet nur Zeit."""
-    head = result.lstrip()[:300]
-    if name in ("edit", "write"):
-        return not changed_code(name, result) or "⚠" in result
-    m = re.match(r"Exit-Code (\d+)", head)
-    if m:
-        return m.group(1) != "0"
-    return bool(_FAILED.search(head.splitlines()[0] if head else ""))
-
-
 def plan_steps(text: str) -> int:
     """Anzahl nummerierter Schritte in einem Plan (für „Mein Plan hat n Schritte“)."""
     return len(re.findall(r"^\s*\d+[.)]\s", text, re.M))
@@ -172,7 +154,6 @@ class Turn:
     goal: dict | None = None            # Ziel-Modus (/goal): das aktive Ziel
     steps: int = 0                      # Modellschritte dieser Antwort (Schritt-Limit)
     nudges: int = 0                     # „mach weiter“ in Folge im Ziel-Modus
-    rethink: bool = True                # think_steps „lean“: dieser Schritt darf denken (erster, nach Fehlschlag)
     retried: bool = False               # nach „Kontext zu groß“ schon einmal Platz geschaffen
     broken: bool = False                # ein abgeschnittener Aufruf wurde schon einmal wiederholt
     finished: bool = False              # das Modell hat von sich aus geendet (nicht Limit/Schleife)
@@ -812,8 +793,6 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
 
     async def _turn_step(self, turn: Turn, emit: Emit) -> tuple[str, list, dict[int, str]] | None:
         """Ein Modellschritt → (Text, Aufrufe, Hinweise zu geretteten Aufrufen) oder None: noch einmal versuchen."""
-        # think_steps „lean“: gedacht wird im ersten Schritt und nach einem Fehlschlag – nicht vor jedem Aufruf
-        self._skip_think = bool(self._think) and self.cfg.llm.think_steps == "lean" and not turn.rethink
         try:
             content, calls = await self._step(emit, turn.msg_id)
             calls, cut_notes = self._salvage_calls(calls or [])
@@ -834,9 +813,6 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
             return None
         self._step_hint = None
         turn.retried = False
-        if self._skip_think:
-            self._cache_owner = None  # ohne Denken kann die Vorlage anders rendern als die nächste Frage
-        self._skip_think, turn.rethink = False, False
         return content, calls, cut_notes
 
     async def _turn_answer(self, turn: Turn, entry: dict, emit: Emit, confirm: Confirm) -> bool:
@@ -849,7 +825,6 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
             turn.spoken.append(entry["content"])
         if goal is None or marker == "done":
             if hint := await self.verify_gate(emit, confirm, turn.vstate):  # Änderungen geprüft: rot → weiter
-                turn.rethink = True
                 conv.add({"role": "user", "content": hint, "verify_nudge": True})
                 await emit({"type": "segment_end", "id": turn.msg_id})
                 return False
@@ -861,7 +836,6 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
             await self._goal_event(emit, marker or "stopped", goal)
         else:
             turn.nudges += 1
-            turn.rethink = True
             conv.add({"role": "user", "content": prompts.text(self.cfg, "goal_nudge").format(goal=goal["text"]),
                       "goal_nudge": True})
             await emit({"type": "segment_end", "id": turn.msg_id})  # nächste Runde als eigener Absatz
@@ -891,7 +865,6 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
                 turn.vstate["edited"] = True
                 turn.vstate.setdefault("paths", set()).add(str((fn.get("arguments") or {}).get("path", "")))
             name, result, note = done[i] if i in done else await self._execute(call, emit, confirm)
-            turn.rethink = turn.rethink or looks_failed(name, result)
             if changed_code(fn.get("name", ""), result):
                 seen.clear()  # der Code ist jetzt ein anderer: derselbe Test-/Lesebefehl danach ist keine Schleife
             result += cut_notes.get(i, "")
@@ -1144,7 +1117,7 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
                     messages.append({"role": "user", "content": tail})
                 if getattr(self, "_step_hint", None):
                     messages.append({"role": "user", "content": self._step_hint})
-                kwargs = self._think_kwargs(no_think or getattr(self, "_skip_think", False))
+                kwargs = self._think_kwargs(no_think)
                 # auch die Zwischenbilanz mit derselben Werkzeugliste – ohne sie stünde vorn im Prompt etwas anderes
                 # und der ganze Chat müsste neu eingelesen werden (und bei der nächsten Frage gleich noch einmal)
                 async for ev in self._call_llm(messages, self.schemas, **kwargs):

@@ -1,13 +1,11 @@
 """Werkzeug-Aufrufe, die ein Modell als Text schreibt (Vorlage und Server passen nicht zusammen): erkennen,
-ausführen, nicht als rohes JSON im Chat zeigen. Dazu die Denk-Bremse: Schleifen erkennen, Denken nur wo nötig."""
-
-import json
+ausführen, nicht als rohes JSON im Chat zeigen. Dazu die Denk-Bremse: Gedanken, die sich im Kreis drehen, werden abgebrochen."""
 
 import pytest
 from conftest import run
 
 from orbwise import textcalls
-from orbwise.agent import Agent, looks_failed, thought_loop
+from orbwise.agent import Agent, thought_loop
 
 KNOWN = {"read", "edit", "shell"}
 READ = {"function": {"name": "read", "arguments": {"path": "a.py"}}}
@@ -171,28 +169,3 @@ def test_short_thoughts_are_never_cut(cfg, memory):
     llm = Thinker()
     _answer, events = _ask(cfg, memory, llm)
     assert llm.think_flags == [True] and not any(e.get("phase") == "think_cut" for e in events)
-
-
-def test_lean_thinks_at_the_start_and_after_a_failure_only(cfg, memory, tmp_path):
-    (tmp_path / "a.txt").write_text("eins")
-    ok = {"name": "read_file", "arguments": {"path": str(tmp_path / "a.txt")}}
-    missing = {"name": "read_file", "arguments": {"path": str(tmp_path / "fehlt.txt")}}
-    plan = [ok, ok | {"arguments": {"path": str(tmp_path / "a.txt"), "offset": 1}}, missing, ok | {"arguments": {
-        "path": str(tmp_path / "a.txt"), "limit": 5}}]
-    llm = Thinker(plan=plan)
-    _ask(cfg, memory, llm)
-    assert llm.think_flags == [True] * 5  # Standard: vor jedem Schritt
-    memory.new_chat() if hasattr(memory, "new_chat") else None
-    cfg.llm.think_steps = "lean"
-    llm = Thinker(plan=plan)
-    _ask(cfg, memory, llm)
-    # Schritt 1 denkt; nach zwei gelungenen Lesern nicht; nach dem Fehlschlag (Datei fehlt) wieder; danach nicht
-    assert llm.think_flags == [True, False, False, True, False]
-
-
-def test_looks_failed():
-    assert looks_failed("shell", "Exit-Code 1\nTraceback …") and not looks_failed("shell", "Exit-Code 0\nok")
-    assert looks_failed("edit", "oldString kommt in a.py nicht vor") and not looks_failed("edit", "Geändert: a.py (+1 −1)")
-    assert looks_failed("read", "Nicht gefunden: a.py.") and not looks_failed("read", "1: x = 1")
-    assert looks_failed("shell", "Der Nutzer hat die Ausführung abgelehnt.")
-    assert json.dumps(textcalls.MARKERS)  # Markierungen sind einfache Texte

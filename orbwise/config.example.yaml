@@ -22,8 +22,6 @@ llm:
   temperature: 0.6
   num_ctx: 16384         # the model's context window
   think: false           # Qwen3 "thinking" by default (slower); the THINK button toggles it per request
-  think_steps: all       # with thinking on: all = think before every step · lean = only in the first step of an
-                         # answer and after a failed step (faster on long tasks, may cost quality with some models)
   # keep_alive: 30m        # how long Ollama keeps the model in (V)RAM after the last request
   # request_timeout: 300   # seconds until a model request is given up
 

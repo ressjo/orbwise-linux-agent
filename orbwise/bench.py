@@ -170,7 +170,7 @@ async def run_bench(cfg: Any, llm: Any, names: list[str] | None = None, runs: in
     default = getattr(profile, "think", None)
     thinking = think if think is not None else bool(cfg.llm.think if default is None else default)
     return {"model": model, "window": getattr(llm, "context_size", None) or cfg.llm.num_ctx, "think": thinking,
-            "think_steps": cfg.llm.think_steps,
+
             "date": datetime.now().isoformat(timespec="seconds"), "runs": max(1, runs), "results": results,
             "summary": summary(results)}
 
@@ -214,14 +214,8 @@ def format_report(result: dict, en: bool = False) -> str:
     s = result["summary"]
     model = f"{result.get('model') or '?'} · {result.get('window') or '?'} Token"
     think = result.get("think")
-    if think in (None, False):
-        model += " · thinking off" if en else " · Denken aus"
-    else:
-        steps = result.get("think_steps", "all")
-        model += ((" · thinking " if en else " · Denken ") + ("on" if think is True and en else "an" if think is True
-                                                               else str(think))
-                  + ((", only where needed" if en else ", nur wo nötig") if steps == "lean"
-                     else (", every step" if en else ", jeder Schritt")))
+    model += (" · thinking " if en else " · Denken ") + (
+        ("off" if en else "aus") if think in (None, False) else ("on" if en else "an") if think is True else str(think))
     total = (f"{s['solved']}/{s['total']} solved ({s['rate']:.0%}) · {s['seconds']:.0f} s · median {s['median_steps']:g} "
              f"steps · {s['edit_fails']} failed edits · {s['think_cuts']} thinking cut · {s['repeats_skipped']} repeats "
              f"skipped · {s['denied']} denied · {s['timeouts']} timeouts" if en else

@@ -305,10 +305,6 @@ a reasoning chain that goes in circles (its end repeats for the third time) is c
 continues without further thinking, with the thoughts so far (the activity shows "enough thinking – acting now" or
 "thoughts repeating – acting now").
 
-**Thinking during tasks** (*Settings → General*, or `llm.think_steps` in the config): *Every step* (`all`, default)
-thinks before every tool call; *Only where needed* (`lean`) thinks in the first step of an answer and after a failed
-step – faster on long tasks, but it may cost quality with some models.
-
 **Tool calls written as text.** If a model's chat template and the server don't match, the model writes its tool
 call into the answer instead of calling the tool. Orbwise recognises the common spellings (`<tool_call>…`,
 `<function=…>`, `[TOOL_CALLS]`, bare `{"name": …}`) and runs them as calls, without showing the raw text.
@@ -322,7 +318,6 @@ fixed tasks with the active model – each in a throw-away project, each with an
 orbwise bench                       # all ten tasks, once
 orbwise bench --runs 3              # three runs per task – results vary from run to run
 orbwise bench --tasks fix-bug,rename --think on
-orbwise bench --think on --think-steps lean   # thinking only where needed – compare with --think-steps all
 orbwise bench --list                # what the tasks are
 ```
 
@@ -339,8 +334,8 @@ short, repeats the loop detection skipped, timeouts. The full result lands as JS
 `~/.local/share/orbwise/bench/` – run it before and after changing a model, the context window, the thinking setting
 or the prompt, and compare.
 
-- Without `--think` the model profile decides whether it thinks; "Thinking during tasks" and the step limit
-  come from the settings. The first line of the report says what the run really used.
+- Without `--think` the model profile decides whether it thinks; the step limit comes from the settings. The first
+  line of the report says what the run really used.
 - It uses a model server that is already running (so Orbwise can stay open) or starts it and stops it again.
 - Nobody is there to confirm: the agent runs in *Read + edit files*, and what would ask there is decided by a fixed
   rule – allowed is what that level's cage would allow (no root, deleting, sending to the network; files only in

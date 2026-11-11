@@ -147,11 +147,9 @@ def test_bench_report_and_file(cfg, tmp_path, monkeypatch):
     assert "2/4 gelöst (50%)" in report and "4 fehlgeschlagene Edits" in report
     assert "2/4 solved (50%)" in bench.format_report(result, en=True)
     # die Kopfzeile sagt, womit wirklich gelaufen wurde
-    assert "Denken aus" in report and result["think"] is False and result["think_steps"] == "all"
-    cfg.llm.think_steps = "lean"
+    assert "Denken aus" in report and result["think"] is False
     thinking = run(bench.run_bench(cfg, Solver(), ["find-code"], think=True, model="Test 7B"))
-    assert "Denken an, nur wo nötig" in bench.format_report(thinking)
-    assert "thinking on, only where needed" in bench.format_report(thinking, en=True)
+    assert "· Denken an" in bench.format_report(thinking) and "· thinking on" in bench.format_report(thinking, en=True)
     cfg.llm.think = True  # ohne Vorgabe gilt das Modell-Profil
     assert run(bench.run_bench(cfg, Solver(), ["find-code"], model="x"))["think"] is True
     path = bench.save(result, tmp_path / "out")

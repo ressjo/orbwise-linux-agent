@@ -47,20 +47,15 @@ def test_api_sets_limits_and_they_survive_a_restart(cfg, monkeypatch):
     monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
     from orbwise.server import create_app
     with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
-        assert client.get("/api/steps").json() == {"tools": 25, "coding": 60, "max": 500, "think_steps": "all"}
+        assert client.get("/api/steps").json() == {"tools": 25, "coding": 60, "max": 500}
         assert client.post("/api/steps", json={"tools": 0}).json()["tools"] == 0
-        assert client.post("/api/steps", json={"coding": 120}).json() == {"tools": 0, "coding": 120, "max": 500,
-                                                                           "think_steps": "all"}
-        assert client.post("/api/steps", json={"think_steps": "lean"}).json()["think_steps"] == "lean"
-        assert client.post("/api/steps", json={"think_steps": "nie"}).status_code == 400
-        assert cfg.llm.think_steps == "lean"
+        assert client.post("/api/steps", json={"coding": 120}).json() == {"tools": 0, "coding": 120, "max": 500}
         assert client.post("/api/steps", json={"tools": "viele"}).status_code == 400
         assert client.post("/api/steps", json={"tools": [1]}).status_code == 400
         assert cfg.tools.max_steps == 0 and cfg.coding.max_steps == 120
     state = cfg.memory.dir.parent / "state.json"
     assert json.loads(state.read_text())["max_steps"] == {"tools": 0, "coding": 120}
-    assert json.loads(state.read_text())["think_steps"] == "lean"
     fresh = Config()
     fresh.memory.dir = cfg.memory.dir
     step_limit.apply_saved(fresh, state)
-    assert (fresh.tools.max_steps, fresh.coding.max_steps) == (0, 120) and fresh.llm.think_steps == "lean"
+    assert (fresh.tools.max_steps, fresh.coding.max_steps) == (0, 120)

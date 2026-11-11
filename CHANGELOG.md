@@ -26,10 +26,6 @@ All notable changes to this project are documented here. The format follows
 - **Thinking that goes in circles is stopped:** when the end of a reasoning chain repeats for the third time, Orbwise
   cuts it and lets the model act with what it had worked out before the loop – in every window size (the activity
   shows "thoughts repeating"). Long reasoning that keeps moving is not touched.
-- **Thinking during tasks – every step or only where needed:** new setting under *Settings → General*, next to the
-  step limit (`llm.think_steps: lean` in the config). With thinking on, *Only where needed* thinks in the first step
-  of an answer and after a failed step instead of before every tool call. Faster on long tasks; *Every step* stays
-  the default because the other may cost quality with some models and can change what the prompt cache holds.
 - **Coding mode – `grep` with context lines:** `context: N` shows up to ten lines before and after every match
   (`12: ` for the match, `13- ` for the lines around it, `…` between separate places) – often saves the `read` that
   used to follow a search. `limit` still counts matches, not context lines.
