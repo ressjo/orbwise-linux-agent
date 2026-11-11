@@ -67,8 +67,8 @@ for path in sorted(root.glob("tests/test_*.py")) + sorted(root.glob("test_*.py")
             traceback.print_exc()
 for name in failed:
     print("FAILED", name)
-print(f"{len(failed)} failed, {passed} passed")
-sys.exit(1 if failed or not passed else 0)
+print(f"{len(failed)} failed, {passed} passed" + ("" if failed or passed else " (keine Tests / no tests)"))
+sys.exit(1 if failed else 0)
 '''
 AGENTS = "Tests ausführen: `python3 run_tests.py` (run the tests with `python3 run_tests.py`).\n"
 # Damit auch pytest die Module im Projektordner findet (kein Paket, kein Installieren)
@@ -88,7 +88,10 @@ def tests_ok(project: Path, timeout: int = 120) -> tuple[bool, str]:
     except (OSError, subprocess.TimeoutExpired) as e:
         return False, f"Tests: {type(e).__name__}"
     lines = [ln for ln in r.stdout.strip().splitlines() if ln.strip()]
-    return r.returncode == 0, lines[-1][:160] if lines else f"Tests: Rückgabewert {r.returncode}"
+    last = lines[-1][:160] if lines else f"Tests: Rückgabewert {r.returncode}"
+    # ohne einen einzigen Test ist nichts bewiesen (der Lauf selbst meldet das nicht als Fehler – ein Projekt ohne
+    # Tests soll die Prüf-Schranke des Agenten nicht rot machen)
+    return r.returncode == 0 and " 0 passed" not in last, last
 
 
 def _tests(project: Path, answer: str) -> tuple[bool, str]:  # noqa: ARG001

@@ -48,8 +48,13 @@ def test_checks_need_no_pytest(tmp_path):
     (project / "tests" / "test_stats.py").write_text("import gibt_es_nicht\n")
     r = subprocess.run([sys.executable, "-I", "-S", "run_tests.py"], cwd=project, capture_output=True, text=True)
     assert r.returncode == 1 and "FAILED test_stats.py (Import)" in r.stdout
+    # ein Projekt ganz ohne Tests: der Lauf meldet keinen Fehler (sonst machte er die Prüf-Schranke des Agenten bei
+    # jeder Aufgabe ohne Tests rot) – als „gelöst“ zählt es für die Prüfung trotzdem nicht
     (project / "tests" / "test_stats.py").unlink()
-    assert subprocess.run([sys.executable, "run_tests.py"], cwd=project, capture_output=True).returncode == 1
+    r = subprocess.run([sys.executable, "run_tests.py"], cwd=project, capture_output=True, text=True)
+    assert r.returncode == 0 and "0 failed, 0 passed (keine Tests" in r.stdout
+    from orbwise.bench_tasks import tests_ok
+    assert tests_ok(project)[0] is False
 
 
 def test_cheating_does_not_count(tmp_path):
@@ -141,6 +146,14 @@ def test_bench_report_and_file(cfg, tmp_path, monkeypatch):
     assert "Test 7B" in report and "fix-bug" in report and "2/2" in report and "0/2" in report
     assert "2/4 gelöst (50%)" in report and "4 fehlgeschlagene Edits" in report
     assert "2/4 solved (50%)" in bench.format_report(result, en=True)
+    # die Kopfzeile sagt, womit wirklich gelaufen wurde
+    assert "Denken aus" in report and result["think"] is False and result["think_steps"] == "all"
+    cfg.llm.think_steps = "lean"
+    thinking = run(bench.run_bench(cfg, Solver(), ["find-code"], think=True, model="Test 7B"))
+    assert "Denken an, nur wo nötig" in bench.format_report(thinking)
+    assert "thinking on, only where needed" in bench.format_report(thinking, en=True)
+    cfg.llm.think = True  # ohne Vorgabe gilt das Modell-Profil
+    assert run(bench.run_bench(cfg, Solver(), ["find-code"], model="x"))["think"] is True
     path = bench.save(result, tmp_path / "out")
     assert path.name.endswith("-Test-7B.json") and '"rate": 0.5' in path.read_text()
     with pytest.raises(ValueError, match="Unbekannte Aufgabe: gibt-es-nicht"):

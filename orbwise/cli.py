@@ -785,6 +785,10 @@ def cmd_bench(args) -> None:
             print(f"  {t.name:16} {t.title[1 if en else 0]}")
         return
     names = [n.strip() for n in (args.tasks or "").split(",") if n.strip()] or None
+    from . import step_limit
+    step_limit.apply_saved(cfg, cfg.memory.dir.parent / "state.json")  # Schritt-Limit und „Denken bei Aufgaben“ aus der Oberfläche
+    if args.think_steps:
+        cfg.llm.think_steps = args.think_steps
     think = None if args.think is None else (args.think if args.think not in ("on", "off") else args.think == "on")
 
     async def go() -> dict:
@@ -914,7 +918,11 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--list", action="store_true", help=T("Aufgaben anzeigen", "list the tasks"))
     p.add_argument("--tasks", default="", help=T("nur diese Aufgaben (Komma-getrennt)", "only these tasks (comma-separated)"))
     p.add_argument("--runs", type=int, default=1, help=T("Läufe je Aufgabe (Ergebnisse schwanken)", "runs per task (results vary)"))
-    p.add_argument("--think", default=None, help=T("Denken: on, off oder eine Stufe des Modells", "thinking: on, off or a level of the model"))
+    p.add_argument("--think", default=None, help=T("Denken: on, off oder eine Stufe des Modells (ohne Angabe: wie im Modell-Profil)",
+                                                   "thinking: on, off or a level of the model (default: as in the model profile)"))
+    p.add_argument("--think-steps", choices=["all", "lean"], default="",
+                   help=T("mit Denken: vor jedem Schritt (all) oder nur wo nötig (lean) – ohne Angabe wie in den Einstellungen",
+                          "with thinking: before every step (all) or only where needed (lean) – default: as in the settings"))
     p.add_argument("--profile", default="", help=T("dieses Modell-Profil statt des aktiven", "this model profile instead of the active one"))
     p.add_argument("--timeout", type=float, default=900, help=T("Sekunden je Aufgabe", "seconds per task"))
     p.add_argument("--keep", default="", help=T("Projekte der Läufe in diesem Ordner behalten", "keep the projects of the runs in this folder"))

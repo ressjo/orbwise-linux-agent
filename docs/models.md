@@ -322,6 +322,7 @@ fixed tasks with the active model – each in a throw-away project, each with an
 orbwise bench                       # all ten tasks, once
 orbwise bench --runs 3              # three runs per task – results vary from run to run
 orbwise bench --tasks fix-bug,rename --think on
+orbwise bench --think on --think-steps lean   # thinking only where needed – compare with --think-steps all
 orbwise bench --list                # what the tasks are
 ```
 
@@ -338,6 +339,8 @@ short, repeats the loop detection skipped, timeouts. The full result lands as JS
 `~/.local/share/orbwise/bench/` – run it before and after changing a model, the context window, the thinking setting
 or the prompt, and compare.
 
+- Without `--think` the model profile decides whether it thinks; "Thinking during tasks" and the step limit
+  come from the settings. The first line of the report says what the run really used.
 - It uses a model server that is already running (so Orbwise can stay open) or starts it and stops it again.
 - Nobody is there to confirm: the agent runs in *Read + edit files*, and what would ask there is decided by a fixed
   rule – allowed is what that level's cage would allow (no root, deleting, sending to the network; files only in
