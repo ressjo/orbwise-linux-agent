@@ -35,6 +35,11 @@ All notable changes to this project are documented here. The format follows
   check, and never a TypeScript from the project's own `node_modules`, which the agent could have written.
 
 ### Fixed
+- **English interface – German leftovers:** a new chat was called "Neuer Chat", and the reason on the confirmation
+  card of a file change read "ändert …". Both now follow the language.
+- **Header buttons overlapped the activity panel:** the labels of the buttons at the top right depended on the window
+  width; with the activity panel open or the coding buttons present they ran into each other. They now depend on the
+  room actually available, and in a narrow header Sandbox and Check shrink to their icons.
 - **Coding mode – running the same test after every fix no longer counts as a loop:** the loop detection counted
   identical calls over the whole answer, so the third `pytest -q` was skipped with "the result is above" although the
   code had changed in between, and the fourth ended the answer (or the `/goal`). A successful `edit`/`write` now
@@ -67,6 +72,10 @@ All notable changes to this project are documented here. The format follows
   success.
 
 ### Changed
+- **README and pictures renewed:** the README opens with what Orbwise is for – the local assistant you can trust with
+  your Linux machine –, a short film of a coding task (diff card, approval, result with preview and Undo), three
+  reasons and a three-line quick start. All screenshots show the current interface; `scripts/screenshots.mjs` signs
+  in with the access token, starts each picture from a clean chat and can also record the film (`demo`, needs ffmpeg).
 - **Coding mode – sub-agents in parallel, as far as the model server allows:** several sub-agents started in one step
   already ran at the same time, but unchecked: on a llama-server with one slot they kept swapping prompts, so each step
   re-read everything. Now as many `explore` sub-agents run side by side as the server serves at once (its slot count;

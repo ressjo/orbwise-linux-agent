@@ -792,8 +792,7 @@ class FakeLLM:
         return {"role": "assistant", "content": (
             "The hero now leads with the roast date – **Roasted on Tuesday, in your cup by Friday** "
             "(`index.html:19`). The screenshot shows it fits on two lines next to the cup, and the call to action "
-            "stays above the fold.\n\nThe change is on the sandbox branch; apply it to the project or push it "
-            "when you like it.")}
+            "stays above the fold.\n\nUndo is right below if you liked the old one better.")}
 
     def _demo_plan(self, request: str) -> str:
         if self.en:

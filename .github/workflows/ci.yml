@@ -2,8 +2,7 @@ name: CI
 
 on:
   push:
-    # Standardbranch – nach einem Umbenennen in main greift die erste Zeile
-    branches: [main, claude/epic-volta-vyvxlk]
+    branches: [main]
   pull_request:
 
 jobs:

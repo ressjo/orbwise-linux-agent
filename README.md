@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <b>A local AI assistant for Linux that remembers, writes code and runs your PC – on your own hardware.</b>
+  <b>The local AI assistant you can trust with your Linux machine.</b>
 </p>
 
 <p align="center">
@@ -16,41 +16,59 @@
   <img alt="Languages: German, English" src="https://img.shields.io/badge/language-de%20%7C%20en-2b6f73">
 </p>
 
-Orbwise is a web app on `localhost` with a voice, a long memory and real hands on your system. The model runs on
-your machine through llama.cpp or Ollama; speech recognition and speech output run locally too – in German or
-English.
+Orbwise runs a language model on your own GPU and gives it real hands on your system – updates, files, code, your
+servers. It shows you the exact command or diff before anything changes, and nothing leaves the PC unless you use web
+search or a service you set up.
 
-![A conversation: answer in a serif reading font, a running web search on the small orb, activity panel with live telemetry](docs/screenshot-chat.png)
+![Orbwise changes a landing page: it shows the diff and asks, then checks the result with a screenshot – "1 file changed" with Undo](docs/demo.gif)
 
-<p align="center"><i>Remembers for weeks · codes in a sandbox and shows you what it built · runs your PC, but asks first</i></p>
+## Why Orbwise
 
-## What makes it different
+- **It asks first – and you can see why.** Every change appears as a card with the exact command or diff. Four levels
+  decide what may run without asking, from *nothing* to *everything but root*; `sudo` always goes through a password
+  dialog that shows what gets root; scripts and builds run in a cage without network. Content from web pages or
+  mails cannot trigger actions on its own. → [Security](docs/security.md#security)
+- **It runs on the hardware you have.** From 8 GB of video memory up: the prompt, the tools and the memory adapt to
+  the context window. llama.cpp or Ollama, speech recognition and speech output all run locally.
+  → [Models](docs/models.md#models--profiles)
+- **It measures itself.** `orbwise bench` lets the coding agent solve ten fixed tasks with your model and tells you
+  what was solved, in how many steps and how long it took – so you know whether a model is any good as an agent
+  before you rely on it. → [Benchmark](docs/models.md#does-the-agent-work-with-this-model-orbwise-bench)
 
-**It remembers – without running out of context.** Every conversation lands in a plain Markdown journal, one file
-per day, plus daily summaries and a `facts.md` you can edit by hand. A local search index (full text + embeddings)
-brings old details back when they matter: "what did we do with the NAS last Tuesday?" works weeks later. Long chats
-are compacted the way Claude Code does it, so the prompt stays small and the prompt cache stays warm. Each coding
-project gets a memory of its own. → [Memory](docs/memory.md#memory--without-context-window-problems)
+## Quick start
 
-**A coding agent that looks at its own work.** Switch to *Coding*, pick a project and the agent works like OpenCode:
-reads before it edits, makes small exact changes, runs the tests, can be undone per answer. Turn on the sandbox and
-it works in a container on its own copy and branch – it may install and build freely there, takes a screenshot of
-the page it just built to check the result, and your project folder stays untouched until you apply the changes or
-push the branch. Hand it a whole job with `/goal` and it keeps going until it's done.
-→ [Coding mode](docs/coding.md#coding-mode)
+```bash
+git clone https://github.com/ressjo/orbwise-linux-agent.git ~/orbwise
+~/orbwise/scripts/install.sh --lang en
+orbwise serve --open
+```
 
-![Coding in the sandbox: the agent edits a landing page, checks it with a screenshot shown in the chat, "1 file changed" with Undo, the steps in the activity panel](docs/screenshot-sandbox.png)
+The installer detects your graphics card and proposes a model that fits. Details: [Installation](#installation).
 
-**Local, voice included.** A model page in the style of LM Studio downloads GGUF models from Hugging Face, picks
-the right llama.cpp build for your GPU (ROCm, CUDA or Vulkan) and measures which settings read prompts fastest.
-Whisper listens, Pocket TTS answers sentence by sentence. Nothing leaves the PC unless you use web search or a
-service you configured. → [Models](docs/models.md#models--profiles) · [Voice](docs/integrations.md#voice--voice-effect)
+## What it does
 
-**It asks before it changes things.** Every command that changes the system appears as a card with the exact command
-or diff – confirm by click, key or voice. Read-only commands run directly, destructive ones never; content from mails,
-web pages or the screen can't trigger actions on its own. → [Security](docs/security.md#security)
+**Runs your PC – but asks.** "Update my system", "what is filling up my disk?", "restart the web server on the NAS":
+read-only commands run directly, everything else waits for your click, key or voice. → [Security](docs/security.md#security)
 
 ![Confirmation card in the chat before a system update](docs/screenshot-confirm.png)
+
+**Writes code and looks at its own work.** In *Coding* the agent reads before it edits, makes small exact changes,
+runs the project's tests before it says "done" and can be undone per answer. With the sandbox it works in a container
+on its own copy and branch; `/goal` hands it a whole job. → [Coding mode](docs/coding.md#coding-mode)
+
+![Coding: the agent changed the landing page headline, the preview it took is shown in the chat, "1 file changed" with Undo](docs/screenshot-coding.png)
+
+**Remembers – without running out of context.** Every conversation lands in a plain Markdown journal, with daily
+summaries and a `facts.md` you can edit by hand. A local search index brings old details back when they matter:
+"what did we do with the NAS last Tuesday?" works weeks later. → [Memory](docs/memory.md#memory--without-context-window-problems)
+
+![A conversation with a running web search; the activity panel shows speed, context and what the agent is doing](docs/screenshot-chat.png)
+
+**Speaks and listens, locally.** Whisper listens, Pocket TTS answers sentence by sentence – in German or English.
+→ [Voice](docs/integrations.md#voice--voice-effect)
+
+**Connects to what you already run.** Home Assistant, Paperless, mail, calendars, Docker, SSH, Telegram – and any
+[MCP server](docs/integrations.md#mcp-servers-tools-from-other-programs).
 
 ## Skills
 

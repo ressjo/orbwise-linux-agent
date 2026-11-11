@@ -12,6 +12,7 @@ import time
 import uuid
 from pathlib import Path
 
+from ..lang import T
 from .context import Conversation, make_title
 
 log = logging.getLogger(__name__)
@@ -145,7 +146,7 @@ class ChatStore:
                 continue
             last_user = next((m["content"] for m in reversed(msgs) if m["role"] == "user"), "")
             out.append({
-                "id": chat_id, "title": meta.get("title") or "Neuer Chat",
+                "id": chat_id, "title": meta.get("title") or T("Neuer Chat", "New chat"),
                 "created": meta.get("created"), "updated": meta.get("updated") or meta.get("created"),
                 "starred": bool(meta.get("starred")), "messages": len(msgs), "active": chat_id == active,
                 "preview": make_title(last_user, 90) if last_user else "", "legacy": bool(meta.get("legacy")),
@@ -170,7 +171,7 @@ class ChatStore:
         return self._update_meta(chat_id, starred=bool(starred))
 
     def rename(self, chat_id: str, title: str) -> dict:
-        return self._update_meta(chat_id, title=make_title(title, 80) or "Neuer Chat")
+        return self._update_meta(chat_id, title=make_title(title, 80) or T("Neuer Chat", "New chat"))
 
     def delete(self, chat_id: str) -> None:
         self.path(chat_id).unlink(missing_ok=True)

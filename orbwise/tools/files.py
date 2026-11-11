@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
+from ..lang import T
 from . import proc
 from .registry import BLOCKED, CONFIRM, SAFE, ToolContext, tool
 from .secretpaths import is_secret_path, secret_reason
@@ -330,7 +331,8 @@ async def _mime_default(ctx: ToolContext, target: str) -> str:
 
 def _write_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     p = ctx.path(args.get("path", ""))
-    return (CONFIRM, f"{'überschreibt' if p.exists() else 'erstellt'} {p}") if args.get("path") else (SAFE, "")
+    return (CONFIRM, f"{T('überschreibt', 'overwrites') if p.exists() else T('erstellt', 'creates')} {p}") \
+        if args.get("path") else (SAFE, "")
 
 
 @tool("Schreibt eine Datei (neu oder überschreiben). Für Änderungen an bestehenden Dateien edit_file.", risk=_write_risk)
@@ -348,7 +350,7 @@ async def write_file(
 
 
 def _edit_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
-    return (CONFIRM, f"ändert {ctx.path(args['path'])}") if args.get("path") else (SAFE, "")
+    return (CONFIRM, f"{T('ändert', 'changes')} {ctx.path(args['path'])}") if args.get("path") else (SAFE, "")
 
 
 def _around(text: str, start: int, end: int, context: int = 3) -> tuple[int, int, str]:

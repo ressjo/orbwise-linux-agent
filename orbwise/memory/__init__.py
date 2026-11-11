@@ -21,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ..config import MemoryConfig
+from ..lang import T
 from .chats import ChatStore, chat_mode
 from .context import Conversation, est_tokens
 from .files import Facts, Journal, Summaries, day_str, digest, valid_day
@@ -231,7 +232,7 @@ class Memory:
         conv = self._loaded(chat_id)
         if conv:
             from .context import make_title
-            conv.meta["title"] = make_title(title, 80) or "Neuer Chat"
+            conv.meta["title"] = make_title(title, 80) or T("Neuer Chat", "New chat")
             conv.save()
         else:
             self.chats.rename(chat_id, title)
