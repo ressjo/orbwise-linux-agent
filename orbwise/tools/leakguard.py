@@ -7,6 +7,7 @@ Steht der Treffer wörtlich in der letzten Nachricht des Nutzers, hat er es selb
 
 from __future__ import annotations
 
+import json
 import re
 import shlex
 from urllib.parse import parse_qsl, unquote_plus, urlparse
@@ -77,6 +78,9 @@ def outbound_text(name: str, args: dict) -> str:
         parts.append(str(args.get("url") or ""))
     elif name == "open_website":
         parts += [str(args.get("site") or ""), str(args.get("query") or "")]
+    elif name.startswith("mcp_"):  # Werkzeug eines fremden Servers: alles, was mitgeht, verlässt Orbwise
+        parts += [v if isinstance(v, str) else json.dumps(v, ensure_ascii=False) for v in args.values()
+                  if isinstance(v, (str, list, dict))]
     elif name in ("run_shell", "ssh_run", "shell"):
         command = str(args.get("command") or "")
         try:

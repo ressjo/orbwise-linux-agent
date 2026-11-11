@@ -520,6 +520,21 @@ class GitHubConfig(BaseModel):
     clone_dir: str = ""             # wohin geklont wird (leer = ~/Projekte bzw. ~/Projects)
 
 
+class McpServerConfig(BaseModel):
+    """Ein MCP-Server: entweder ein Programm, das Orbwise startet (command), oder eine Adresse (url)."""
+    command: str = ""               # z. B. "npx -y @modelcontextprotocol/server-filesystem ~/Dokumente"
+    env: dict[str, str] = Field(default_factory=dict)       # zusätzliche Umgebungsvariablen für command
+    url: str = ""                   # stattdessen: Server über HTTP, z. B. https://example.com/mcp
+    headers: dict[str, str] = Field(default_factory=dict)   # z. B. Authorization: "Bearer …"
+    allow: list[str] = Field(default_factory=list)          # Werkzeuge, die ohne Rückfrage laufen ("*" = alle)
+    enabled: bool = True
+
+
+class McpConfig(BaseModel):
+    # Werkzeuge fremder Server (Model Context Protocol) – erscheinen als mcp_<name>_<werkzeug>
+    servers: dict[str, McpServerConfig] = Field(default_factory=dict)
+
+
 class Config(BaseModel):
     # Abschnitte, wie sie aus config.yaml kamen – Grundlage für die Skills (skills.apply), nicht Teil der Datei
     _skills_base: dict | None = PrivateAttr(default=None)
@@ -555,6 +570,7 @@ class Config(BaseModel):
     coding: CodingConfig = Field(default_factory=CodingConfig)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     github: GitHubConfig = Field(default_factory=GitHubConfig)
+    mcp: McpConfig = Field(default_factory=McpConfig)
     # Zusätzliche Websites für open_website: Name → URL; "{q}" wird durch die Suche ersetzt
     websites: dict[str, str] = Field(default_factory=dict)
 

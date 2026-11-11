@@ -244,7 +244,9 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
 
     def reload_tools(self) -> None:
         """Nach dem Ein-/Ausschalten oder Einrichten eines Skills: Werkzeuglisten neu aufbauen (die nächste Anfrage
-        liest den Prompt einmal neu ein – die Werkzeuge stehen vorn)."""
+        liest den Prompt einmal neu ein – die Werkzeuge stehen vorn). Auch nachdem MCP-Server ihre Werkzeuge
+        eingetragen haben."""
+        self.groups_of = {name: spec.group for name, spec in self.tools.items()}
         self.all_schemas = [s for s in tool_schemas(self.cfg)
                             if self.groups_of.get(s["function"]["name"]) not in CODING_ONLY]
         self.all_schema_tokens = est_tokens(json.dumps(self.all_schemas, ensure_ascii=False))

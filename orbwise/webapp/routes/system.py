@@ -158,6 +158,11 @@ def register(app, ctx) -> None:
             raise HTTPException(500, str(e)) from e
         return {"enabled": on, "path": str(autostart.path())}
 
+    # ---------- MCP-Server: verbunden? welche Werkzeuge? ----------
+    @app.get("/api/mcp")
+    async def mcp_status():
+        return {"servers": ctx.mcp.status() if getattr(ctx, "mcp", None) else []}
+
     # ---------- Schritt-Limit je Antwort (Einstellungen → Allgemein), 0 = unbegrenzt ----------
     @app.get("/api/steps")
     async def steps_get():

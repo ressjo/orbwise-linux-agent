@@ -280,6 +280,33 @@ Search, read, create notes (Markdown is converted), append; overwriting a note r
 List events, find free time and create events directly; changing and deleting events requires confirmation.
 Today's events are part of the morning briefing.
 
+### MCP servers (tools from other programs)
+
+Orbwise can use the tools of any [Model Context Protocol](https://modelcontextprotocol.io) server – no code needed
+per service. Add them in `~/.config/orbwise/config.yaml` and restart:
+
+```yaml
+mcp:
+  servers:
+    files:                 # a program Orbwise starts and talks to over stdin/stdout
+      command: npx -y @modelcontextprotocol/server-filesystem ~/Documents
+      allow: [read_file, list_directory]    # these run without asking; "*" = all
+    wiki:                  # or a server reached over HTTP
+      url: https://example.com/mcp
+      headers: {Authorization: "Bearer …"}
+```
+
+The tools appear as `mcp_<server>_<tool>` in the Tools and the Coding mode. `orbwise doctor` shows which servers
+connected and how many tools each brings; a server that fails does not hold up the others.
+
+- **They ask first.** Every call shows a confirmation card unless the tool is listed under `allow` (or the auto mode
+  is *Auto*). What a server says about itself ("read-only") does not count.
+- **Their results are outside content**, like a web page: afterwards everything that changes something asks, even in
+  *Read + edit files*.
+- **What goes to them is checked** by the data-leak guard, like a web search.
+- Only tools are supported – no resources, prompts or sampling. Each server may bring at most 60 tools; with a small
+  context window (< 16k) they take noticeable room in the prompt.
+
 ### Websites, weather, reminders
 
 The weather location is set under **Settings → Skills → Weather**. Named websites ("open the NAS", search URLs with `{q}`) go into [`config.yaml`](configuration.md#integrations-in-configyaml).

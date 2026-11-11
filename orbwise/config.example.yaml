@@ -221,6 +221,17 @@ briefing:                  # "good morning" – also adjustable in the dashboard
   inbox_tag: ""            # Paperless inbox tag – empty = the inbox tags defined in Paperless
   instructions: ""         # e.g. "Keep it short and start with my appointments."
 
+mcp:                       # tools of other servers (Model Context Protocol) – they appear as mcp_<name>_<tool>
+  servers: {}              # each one: a program Orbwise starts (command) or an address (url), e.g.:
+#    files:
+#      command: npx -y @modelcontextprotocol/server-filesystem ~/Documents
+#      env: {}              # extra environment variables for the command
+#      allow: [read_file, list_directory]   # these run without asking ("*" = all); everything else asks first
+#    wiki:
+#      url: https://example.com/mcp
+#      headers: {}          # e.g. Authorization: "Bearer …"
+#      enabled: true
+
 websites: {}               # your own shortcuts for "open …", e.g.:
 #  nas: http://192.168.1.10:5000
 #  proxmox: https://pve.local:8006

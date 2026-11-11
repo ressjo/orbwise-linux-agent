@@ -337,6 +337,21 @@ def cmd_doctor(args) -> None:
             line(True, f"GitHub @{gh_user['login']} ({source})")
         except Exception as e:  # noqa: BLE001
             line(False, f"GitHub ({source})", str(e))
+    if cfg.mcp.servers:
+        from .mcp import McpManager
+        print(T("MCP-Server:", "MCP servers:"))
+
+        async def probe() -> list[dict]:
+            manager = McpManager(cfg)
+            try:
+                await manager.start()
+                return manager.status()
+            finally:
+                await manager.stop()
+        for s in asyncio.run(probe()):
+            line(s["ok"], f"{s['name']} ({len(s['tools'])} " + T("Werkzeuge", "tools") + ")", s["error"])
+        for name in (n for n, s in cfg.mcp.servers.items() if not s.enabled):
+            print(f"  – {name} " + T("(ausgeschaltet)", "(disabled)"))
     print(T("Kalender:", "Calendar:"))
     if not cfg.calendar.enabled:
         print(T("  – nicht konfiguriert", "  – not configured") + " (calendar.url, username, password)")

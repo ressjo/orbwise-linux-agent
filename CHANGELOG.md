@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **MCP servers:** Orbwise can use the tools of any Model Context Protocol server – a program it starts (`command`,
+  stdio) or one reached over HTTP (`url`). Configure them under `mcp.servers`; the tools appear as
+  `mcp_<server>_<tool>` in the Tools and the Coding mode, and `orbwise doctor` shows what connected. They ask before
+  every call unless listed under `allow`, their results count as outside content like a web page, and the data-leak
+  guard checks what is sent to them. Tools only (no resources, prompts, sampling); no extra package needed.
 - **Models that write tool calls as text now work:** when a model's chat template and the server don't match, the
   call arrives as plain text – Orbwise took it for the answer and showed raw JSON. The common spellings are now
   recognised and run as calls: `<tool_call>{…}</tool_call>` (Hermes/Qwen), `<function=name>…</function>` with JSON or
