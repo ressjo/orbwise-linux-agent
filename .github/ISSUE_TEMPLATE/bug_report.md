@@ -14,7 +14,7 @@ labels: bug
 
 **Environment**
 - Distribution: (e.g. Arch, EndeavourOS, Ubuntu 24.04)
-- GPU / model: (e.g. RX 6650 XT, qwen3:8b via Ollama)
+- GPU / model: (e.g. RX 6650 XT, Qwen3-8B Q4_K_M, llama.cpp b1234)
 - `orbwise version`:
 - Relevant part of `orbwise doctor`:
 

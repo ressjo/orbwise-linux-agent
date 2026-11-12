@@ -75,7 +75,6 @@ def app(cfg, monkeypatch, tmp_path):
     from orbwise.server import create_app
     monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
     monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
-    cfg.llm.base_url = "http://127.0.0.1:9"  # kein Ollama
     cfg.image.dir = str(tmp_path / "img")
     cfg.image.output_dir = str(tmp_path / "out")
     return create_app(cfg)

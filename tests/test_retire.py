@@ -80,8 +80,7 @@ def test_server_start_removes_strata(cfg, tmp_path, monkeypatch):
     monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
     monkeypatch.setenv("STRATA_DATA_DIR", str(tmp_path / "keine-engine"))
     state, name, models = strata_state(cfg.memory.dir.parent)
-    cfg.llm.base_url = "http://127.0.0.1:9"
-    cfg.llm.profiles = {"qwen": ProfileConfig(model="qwen3:8b")}
+    cfg.llm.profiles = {"qwen": ProfileConfig(base_url="http://127.0.0.1:9/v1", model="qwen3-8b")}
     cfg.llm.active = "qwen"
     from orbwise.server import create_app
     with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:

@@ -2,12 +2,11 @@
 
 import json
 
-import httpx
 import pytest
 from conftest import run
 
 from orbwise.config import LLMConfig, ProfileConfig, ServerConfig
-from orbwise.llm import LLMError, OllamaLLM
+from orbwise.llm import LLMError
 from orbwise.llm_memory import kv_per_token_from_info, parse_llama_log, recommend, summary
 from orbwise.llm_router import LLMRouter
 
@@ -46,27 +45,16 @@ def test_recommendation_grows_with_free_vram_and_shrinks_on_spill():
     assert summary(spill)["kv_vram_share"] == 0.5
 
 
-def test_ollama_memory_estimate():
+def test_kv_per_token_from_gguf_metadata():
     info = {"qwen3.block_count": 36, "qwen3.attention.head_count": 32, "qwen3.attention.head_count_kv": 8,
             "qwen3.attention.key_length": 128, "qwen3.attention.value_length": 128, "qwen3.context_length": 40960}
-    per_token = kv_per_token_from_info(info)
-    assert per_token == 36 * 8 * 256 * 2  # 144 KiB pro Token (f16)
+    assert kv_per_token_from_info(info) == 36 * 8 * 256 * 2  # 144 KiB pro Token (f16)
 
-    def handler(req):
-        if req.url.path == "/api/ps":
-            return httpx.Response(200, json={"models": [{"name": "qwen3:8b", "size": 8 * GB,
-                                                         "size_vram": 6 * GB, "context_length": 16384}]})
-        return httpx.Response(200, json={"model_info": info})
-
-    llm = OllamaLLM(LLMConfig(model="qwen3:8b"), transport=httpx.MockTransport(handler))
-    m = run(llm.memory_info())
-    assert m["ctx"] == 16384 and m["ctx_train"] == 40960 and m["kv_ram"] > 0 and m["model_ram_offload"] > 0
-    assert recommend(m, {"vram_total": 8 * GB, "vram_used": 7.5 * GB})["verdict"] == "reduce"
 
 
 def test_context_setting_is_applied_and_remembered(tmp_path):
     cfg = LLMConfig(profiles={
-        "qwen": ProfileConfig(model="qwen3:8b"),
+        "qwen": ProfileConfig(base_url="http://127.0.0.1:9/v1", model="qwen3-8b"),
         "eigen": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8080/v1", model="eigen",
                                server=ServerConfig(command="~/llama/llama-server -m y.gguf -np 1")),
         "other": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8081/v1", model="x",
@@ -78,8 +66,8 @@ def test_context_setting_is_applied_and_remembered(tmp_path):
     run(router.set_context("other", 12288))
     assert router.profiles["eigen"].server.command == "~/llama/llama-server -m y.gguf -np 1 -c 16384"  # -c ergänzt
     assert router.profiles["other"].server.command == "llama-server -m x.gguf -c 12288 -np 1"
-    run(router.set_context("qwen", 24576))  # aktiv (Ollama): neuer Client mit num_ctx
-    assert router.client.cfg.num_ctx == 24576 and router.context_size == 24576
+    run(router.set_context("qwen", 24576))  # aktiv, fremder Server: Orbwise rechnet ab jetzt mit dieser Größe
+    assert router.client.profile.num_ctx == 24576 and router.context_size == 24576
     assert json.loads(state.read_text())["context"] == {"eigen": 16384, "other": 12288, "qwen": 24576}
     again = LLMRouter(cfg.model_copy(deep=True), state_path=state)  # nach Neustart wieder angewendet
     assert again.profiles["eigen"].server.command.endswith("-c 16384") and again.context_size == 24576
@@ -91,7 +79,7 @@ def test_kv_cache_level_is_applied_and_remembered(tmp_path, monkeypatch):
     from orbwise.llm_memory import cache_type
     monkeypatch.setattr(llamacpp, "server_help", lambda *a, **k: "-fa,   --flash-attn [on|off|auto]  set Flash Attention")
     cfg = LLMConfig(profiles={
-        "qwen": ProfileConfig(model="qwen3:8b"),
+        "qwen": ProfileConfig(base_url="http://127.0.0.1:9/v1", model="qwen3-8b"),
         "eigen": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8080/v1", model="eigen",
                                server=ServerConfig(command="~/llama/llama-server -m y.gguf -np 1")),
         "other": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8090/v1", model="x",
@@ -109,7 +97,7 @@ def test_kv_cache_level_is_applied_and_remembered(tmp_path, monkeypatch):
     b = router.profiles["eigen"].server
     assert b.command.endswith("-ctk q8_0 -ctv q8_0 -fa on") and cache_type(b.command, b.env) == "q8_0"
     with pytest.raises(LLMError):
-        run(router.set_kv("qwen", "q8_0"))  # Ollama: gilt für den ganzen Dienst
+        run(router.set_kv("qwen", "q8_0"))  # fremder Server: legt die Stufe selbst fest
     with pytest.raises(LLMError):
         run(router.set_kv("other", "q2"))
     assert json.loads(state.read_text())["kv_cache"] == {"other": "f16", "eigen": "q8_0"}
@@ -127,8 +115,7 @@ def test_kv_api(cfg, monkeypatch, tmp_path):
     from orbwise.server import create_app
     monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
     monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
-    cfg.llm.base_url = "http://127.0.0.1:9"
-    cfg.llm.profiles = {"qwen": ProfileConfig(model="qwen3:8b"),
+    cfg.llm.profiles = {"qwen": ProfileConfig(base_url="http://127.0.0.1:9/v1", model="qwen3-8b"),
                         "other": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8091/v1", model="x",
                                                server=ServerConfig(command="llama-server -m x.gguf -c 4096 -fa on"))}
     cfg.llm.active = "qwen"
@@ -137,7 +124,7 @@ def test_kv_api(cfg, monkeypatch, tmp_path):
         p = {x["name"]: x for x in client.get("/api/models").json()["profiles"]}
         assert p["other"]["kv"] == "q8_0" and p["other"]["kv_settable"] and not p["qwen"]["kv_settable"]
         r = client.post("/api/models/qwen/kv", json={"kv": "q8_0"})
-        assert r.status_code == 400 and "OLLAMA_KV_CACHE_TYPE" in r.json()["detail"]
+        assert r.status_code == 400 and "llama-server" in r.json()["detail"]
         assert client.post("/api/models/other/kv", json={"kv": "q3"}).status_code == 400
 
 
@@ -161,7 +148,7 @@ def test_coding_has_its_own_window(tmp_path):
     cfg = LLMConfig(profiles={
         "big": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8090/v1", model="x",
                              server=ServerConfig(command="llama-server -m x.gguf -c 65536 -np 1")),
-        "qwen": ProfileConfig(model="qwen3:8b"),
+        "qwen": ProfileConfig(base_url="http://127.0.0.1:9/v1", model="qwen3-8b"),
     }, active="qwen")
     state = tmp_path / "state.json"
     router = LLMRouter(cfg, state_path=state)
@@ -174,7 +161,7 @@ def test_coding_has_its_own_window(tmp_path):
     run(router.set_mode("tools"))
     assert "-c 65536" in router.profiles["big"].server.command
     run(router.set_context("qwen", 32768, mode="coding"))
-    assert run(router.set_mode("coding")) is True and router.context_size == 32768  # aktiv (Ollama): neues num_ctx
+    assert run(router.set_mode("coding")) is True and router.context_size == 32768  # aktiv (fremder Server): neue Größe
     run(router.set_context("qwen", 0, mode="coding"))  # wieder wie Tools
     assert router.context_size == 16384 and "qwen" not in json.loads(state.read_text())["context_coding"]
     with pytest.raises(LLMError):
@@ -192,7 +179,7 @@ def test_kv_levels_come_from_the_server(tmp_path, monkeypatch):
             "                                    (default: f16)\n-fa, --flash-attn [on|off|auto]\n")
     monkeypatch.setattr(llamacpp, "server_help", lambda *a, **k: fork)
     assert kv_types("llama-server -m x", {}) == ["f16", "q8_0", "q4_0", "q2_0", "tq3_0"]
-    cfg = LLMConfig(profiles={"q": ProfileConfig(model="qwen3:8b"),
+    cfg = LLMConfig(profiles={"q": ProfileConfig(base_url="http://127.0.0.1:9/v1", model="qwen3-8b"),
                               "x": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8090/v1", model="x",
                                                  server=ServerConfig(command="llama-server -m x.gguf -c 4096"))},
                     active="q")
@@ -342,7 +329,6 @@ def test_mode_switch_applies_the_coding_window(cfg, monkeypatch):
     from orbwise.server import create_app
     monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
     monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
-    cfg.llm.base_url = "http://127.0.0.1:9"
     with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
         r = client.post("/api/models/standard/context", json={"ctx": 32768, "mode": "coding"})
         assert r.status_code == 200 and r.json()["ctx"] == 32768

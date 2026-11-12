@@ -25,12 +25,12 @@ def run(coro):
 
 def router(tmp_path, cmd_mtp, cmd_plain):
     cfg = LLMConfig(profiles={
-        "ollama": ProfileConfig(model="qwen3:8b"),
+        "extern": ProfileConfig(base_url="http://127.0.0.1:9/v1", model="qwen3-8b"),
         "mtp": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8091/v1", model="a",
                              server=ServerConfig(command=cmd_mtp)),
         "plain": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8092/v1", model="b",
                                server=ServerConfig(command=cmd_plain)),
-    }, active="ollama")
+    }, active="extern")
     return LLMRouter(cfg, state_path=tmp_path / "state.json")
 
 
@@ -48,7 +48,7 @@ def test_mtp_needs_model_and_build(tmp_path, monkeypatch):
     opts = options(r)
     assert opts["mtp"]["mtp"]["ok"] and opts["mtp"]["mtp"]["layers"] == 1 and opts["mtp"]["ngram"]["ok"]
     assert not opts["plain"]["mtp"]["ok"] and "keine MTP" in opts["plain"]["mtp"]["why"] and opts["plain"]["ngram"]["ok"]
-    assert not opts["ollama"]["mtp"]["ok"] and "Ollama" in opts["ollama"]["ngram"]["why"]
+    assert not opts["extern"]["mtp"]["ok"] and "llama-server" in opts["extern"]["ngram"]["why"]
 
     run(r.set_spec("mtp", "mtp"))
     assert r.profiles["mtp"].server.command.endswith("-np 1 --spec-type draft-mtp")
@@ -56,11 +56,11 @@ def test_mtp_needs_model_and_build(tmp_path, monkeypatch):
     assert r.profiles["plain"].server.command.endswith("-c 8192 --spec-default")
     with pytest.raises(LLMError):
         run(r.set_spec("plain", "mtp"))
-    assert {p["name"]: p["spec"] for p in r.describe()} == {"ollama": "off", "mtp": "mtp", "plain": "ngram"}
+    assert {p["name"]: p["spec"] for p in r.describe()} == {"extern": "off", "mtp": "mtp", "plain": "ngram"}
     assert json.loads((tmp_path / "state.json").read_text())["speculative"] == {"mtp": "mtp", "plain": "ngram"}
 
     again = router(tmp_path, f"llama-server -m {with_mtp} -c 8192 -np 1", f"llama-server -m {plain} -c 8192")
-    assert {p["name"]: p["spec"] for p in again.describe()} == {"ollama": "off", "mtp": "mtp", "plain": "ngram"}
+    assert {p["name"]: p["spec"] for p in again.describe()} == {"extern": "off", "mtp": "mtp", "plain": "ngram"}
     run(again.set_spec("mtp", "off"))
     assert again.profiles["mtp"].server.command == f"llama-server -m {with_mtp} -c 8192 -np 1"
 
@@ -106,7 +106,7 @@ def test_batch_size_is_applied_and_remembered(tmp_path, monkeypatch):
     cmd = "llama-server -m x.gguf -c 8192 -np 1"
     r = router(tmp_path, cmd, cmd + " -b 4096 --ubatch-size 256")
     assert {p["name"]: (p["ubatch"], p["ubatch_settable"]) for p in r.describe()} == \
-        {"ollama": (None, False), "mtp": (512, True), "plain": (256, True)}
+        {"extern": (None, False), "mtp": (512, True), "plain": (256, True)}
     run(r.set_ubatch("mtp", 2048))
     assert r.profiles["mtp"].server.command == cmd + " -ub 2048 -b 2048"
     run(r.set_ubatch("mtp", 1024))
@@ -114,7 +114,7 @@ def test_batch_size_is_applied_and_remembered(tmp_path, monkeypatch):
     run(r.set_ubatch("plain", 512))
     assert r.profiles["plain"].server.command == cmd  # Standard: keine eigenen Flags
     with pytest.raises(LLMError):
-        run(r.set_ubatch("ollama", 1024))
+        run(r.set_ubatch("extern", 1024))
     with pytest.raises(LLMError):
         run(r.set_ubatch("mtp", 333))
     assert json.loads((tmp_path / "state.json").read_text())["ubatch"] == {"mtp": 1024, "plain": 512}
@@ -129,8 +129,7 @@ def test_batch_api_resets_the_measured_speed(cfg, monkeypatch):
     monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
     monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
     monkeypatch.setattr(llamacpp, "server_help", lambda *a, **k: NEW_HELP)
-    cfg.llm.base_url = "http://127.0.0.1:9"
-    cfg.llm.profiles = {"qwen": ProfileConfig(model="qwen3:8b"),
+    cfg.llm.profiles = {"qwen": ProfileConfig(base_url="http://127.0.0.1:9/v1", model="qwen3-8b"),
                         "other": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8091/v1", model="x",
                                                server=ServerConfig(command="llama-server -m x.gguf -c 4096"))}
     cfg.llm.active = "qwen"
@@ -144,4 +143,4 @@ def test_batch_api_resets_the_measured_speed(cfg, monkeypatch):
         assert p["ubatch"] == 2048 and p["prefill_tps"] is None
         assert client.post("/api/models/other/ubatch", json={"size": 300}).status_code == 400
         r = client.post("/api/models/qwen/ubatch", json={"size": 1024})
-        assert r.status_code == 400 and "Ollama" in r.json()["detail"]
+        assert r.status_code == 400 and "llama-server" in r.json()["detail"]

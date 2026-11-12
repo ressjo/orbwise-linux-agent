@@ -73,7 +73,7 @@ def test_example_config_loads():
     from orbwise.config import load_config
     cfg = load_config(Path(__file__).parent.parent / "orbwise" / "config.example.yaml")
     assert cfg.tools.search_paths == [Path.home()]
-    assert cfg.llm.model.startswith("qwen")
+    assert cfg.llm.embed_model == "bge-m3" and not cfg.llm.profiles
 
 
 def test_launch_reports_failure_and_success():

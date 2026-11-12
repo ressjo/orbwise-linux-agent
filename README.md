@@ -29,7 +29,7 @@ search or a service you set up.
   dialog that shows what gets root; scripts and builds run in a cage without network. Content from web pages or
   mails cannot trigger actions on its own. → [Security](docs/security.md#security)
 - **It runs on the hardware you have.** From 8 GB of video memory up: the prompt, the tools and the memory adapt to
-  the context window. llama.cpp or Ollama, speech recognition and speech output all run locally.
+  the context window. llama.cpp, speech recognition and speech output all run locally.
   → [Models](docs/models.md#models--profiles)
 - **It measures itself.** `orbwise bench` lets the coding agent solve ten fixed tasks with your model and tells you
   what was solved, in how many steps and how long it took – so you know whether a model is any good as an agent
@@ -154,9 +154,10 @@ The installer asks for the **language**, the **graphics card** (NVIDIA / AMD / n
 pre-selected), the **language model** from a list of presets that shows what fits your video memory
 (✔ fits · ~ partly in RAM · ✘ too big) with a recommendation, and which **skills** to set up (see
 [Skills: set up and switch](docs/integrations.md#skills-set-up-and-switch)). On AMD cards that ROCm doesn't officially support
-(RX 6600/6650/6700, RX 7600) it offers to set the needed `HSA_OVERRIDE_GFX_VERSION` for Ollama.
+(RX 6600/6650/6700, RX 7600) it tells you the `HSA_OVERRIDE_GFX_VERSION` the card usually needs (see
+[AMD GPUs](docs/models.md#amd-gpus)); without it llama.cpp falls back to its Vulkan build.
 
-Options: `--model qwen3:8b` (skip the model question), `--gpu auto|cuda|rocm|vulkan|cpu`, `--lang de|en`,
+Options: `--model unsloth/Qwen3-8B-GGUF` (skip the model question; a Hugging Face repo or link), `--gpu auto|cuda|rocm|vulkan|cpu`, `--lang de|en`,
 `--yes` (no questions, use the detected/recommended defaults), `--autostart` (also start Orbwise at login – off by
 default).
 
@@ -165,9 +166,9 @@ default).
 
 The installer
 
-1. installs the system packages (Ollama with the right GPU backend, `uv`, `fd`, `ripgrep`, `plocate`, `xdg-utils`, …),
+1. installs the system packages (`uv`, `fd`, `ripgrep`, `plocate`, `xdg-utils`, …),
 2. sets up the Python environment (`uv sync --extra voice`),
-3. pulls the chosen model (recommendation: ≥ 22 GB → `qwen3:30b`, ≥ 12 GB → `qwen3:14b`, ≥ 6 GB → `qwen3:8b`, otherwise `qwen3:4b`) together with `bge-m3` (embeddings) – if a download fails you can pick another model,
+3. downloads a prebuilt **llama.cpp** (the build that runs on your GPU: CUDA, ROCm, Vulkan or CPU – nothing is compiled) and the chosen model as a GGUF file from Hugging Face (recommendation: ≥ 22 GB → Qwen 3 30B-A3B, ≥ 12 GB → Qwen 3 14B, ≥ 6 GB → Qwen 3 8B, otherwise Qwen 3 4B) together with `bge-m3` (embeddings, runs on the CPU) – if a download fails you can pick another model,
 4. installs the speech output Piper with the voice of your language (`orbwise voice install`), the wake word model and Whisper,
 5. adds an **Orbwise** entry to the application menu – it starts the server when needed and opens the UI in its own
    window. Orbwise does **not** start at login unless you ask for it (`--autostart`, **Settings → General → Start at
@@ -180,7 +181,7 @@ Everything else – models, skills and their passwords, voice – is set up in t
 Then:
 
 ```bash
-orbwise doctor        # checks Ollama, models, voice, wake word, tools, integrations, NAS
+orbwise doctor        # checks llama.cpp, models, voice, wake word, tools, integrations, NAS
 orbwise serve --open  # starts the server and opens http://localhost:8765
 ```
 
@@ -271,7 +272,8 @@ orbwise doctor --security      # which safeguards are in effect on this machine 
 orbwise skills                 # skills overview (setup / enable / disable <name>)
 orbwise autostart [on|off]     # start at login (default: off)
 orbwise model [name]           # list or switch model profiles
-orbwise model add [ollama-tag] # download another model (interactive presets without a tag; also HF links)
+orbwise model add [user/repo]  # download another model (interactive presets without a name; HF links, .gguf files)
+orbwise model embed            # download the embedding model for the memory search
 orbwise model search <term>    # search GGUF models on Hugging Face (or <user/repo> for its quantizations)
 orbwise model llamacpp --update # newest llama.cpp build for models from Hugging Face / ~/models
 orbwise model add qwen-image   # image model (also z-image-turbo, flux-schnell, sdxl) – or in the image view
@@ -292,7 +294,7 @@ orbwise init-config            # experts: write the commented example config.yam
 |---|---|
 | `orbwise: command not found` | Open a new terminal (PATH was extended) or run `~/orbwise/scripts/install.sh` again |
 | The orb stays "OFFLINE" | Is `orbwise serve` running? Log: `~/.local/state/orbwise.log` |
-| "Ollama not reachable" | `sudo systemctl enable --now ollama` |
+| A profile "used Ollama" / the model is gone after an update | Orbwise runs models with llama.cpp only. Add the model again as GGUF (**Models → Add** or `orbwise model add <user/repo>`); the memory search keeps working with the `bge-m3` file Ollama already downloaded. `orbwise doctor` lists what is left to do |
 | Context: "shortened", slow answers, the window seems smaller | `orbwise context-test` (or Models → model → *Diagnostics* → *Test context*): checks whether the server really runs with the configured window, KV cache in VRAM, token estimate, prompt cache (same prompt and follow-up), a prompt up to the compaction point (the model must still repeat a code word from its start) and overflow detection. `--quick` skips the two slow fill checks |
 | No natural voice (the browser speaks) | `orbwise doctor` → Piper missing? `orbwise voice install`; its log: `~/.local/share/orbwise/piper/server.log` (Pocket TTS: `…/pocket-tts/server.log`) |
 | Microphone doesn't work | Open `http://localhost:8765` (not the IP), check the browser's microphone permission |
@@ -316,7 +318,7 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
  ├─ microphone → 16 kHz PCM             ──WS──►   wake word (openWakeWord) → VAD → Whisper
  └─ playback + level → orb              ◄──────   Pocket TTS (sentence by sentence)
                                                    │
-                         Ollama / llama-server (LLM + bge-m3)   ~/.local/share/orbwise/memory/
+                         llama-server (LLM) + bge-m3 on CPU     ~/.local/share/orbwise/memory/
 ```
 
 Screenshots are made in demo mode (`ORBWISE_FAKE_LLM=1`, no real model) – regenerate them with
@@ -324,7 +326,7 @@ Screenshots are made in demo mode (`ORBWISE_FAKE_LLM=1`, no real model) – rege
 
 ```bash
 uv sync --extra voice --extra dev
-uv run pytest -q                                   # all tests run offline, no GPU/Ollama needed
+uv run pytest -q                                   # all tests run offline, no GPU or model needed
 uv run ruff check orbwise tests
 ORBWISE_FAKE_LLM=1 uv run orbwise serve --open       # UI demo without a model ("/tool <name> <json>" calls tools)
 ```
@@ -365,7 +367,7 @@ from their original sources, and their licenses apply:
 | [Pocket TTS](https://github.com/kyutai-labs/pocket-tts) + its model and voices (downloaded by the installer or on request) | speech output | program MIT · model see [its model card](https://huggingface.co/kyutai/pocket-tts) · voices per voice, see [kyutai/tts-voices](https://huggingface.co/kyutai/tts-voices) |
 | [openWakeWord](https://github.com/dscripka/openWakeWord) | wake word | code Apache-2.0 · pre-trained "hey_jarvis" model **CC BY-NC-SA 4.0 (non-commercial)** |
 | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) + Whisper models | speech recognition | MIT |
-| Language models via Ollama / llama.cpp (Qwen, Llama, Mistral, gpt-oss, …) | chat | per model – see its model card |
+| Language models via llama.cpp (Qwen, Llama, Mistral, gpt-oss, …) | chat | per model – see its model card |
 | [ddgs](https://pypi.org/project/ddgs/), [trafilatura](https://github.com/adbar/trafilatura), [caldav](https://github.com/python-caldav/caldav) | web search, page text, calendar | MIT · Apache-2.0 · GPL-3.0-or-later OR Apache-2.0 |
 | [pypdf](https://github.com/py-pdf/pypdf) | reading attached PDFs | BSD-3-Clause |
 

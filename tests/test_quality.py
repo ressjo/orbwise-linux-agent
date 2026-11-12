@@ -136,7 +136,7 @@ def test_measure_job_with_fake_binary(tmp_path, cfg, monkeypatch):
 
 
 def test_missing_binary_and_no_llamacpp(tmp_path, cfg):
-    llm = LLMConfig(base_url="http://127.0.0.1:9", profiles={"o": ProfileConfig(backend="ollama", model="x")}, active="o")
+    llm = LLMConfig(profiles={"o": ProfileConfig(base_url="http://127.0.0.1:9/v1", model="x")}, active="o")
     router = LLMRouter(llm, state_path=tmp_path / "s.json")
     with pytest.raises(ValueError, match="llama.cpp"):
         asyncio.run(q.measure(cfg, router, "o"))
@@ -223,9 +223,8 @@ def test_quality_routes(cfg, monkeypatch):
     from orbwise.server import create_app
     monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
     monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
-    cfg.llm.base_url = "http://127.0.0.1:9"
-    cfg.llm.profiles = {"o": ProfileConfig(backend="ollama", model="qwen3")}
+    cfg.llm.profiles = {"o": ProfileConfig(base_url="http://127.0.0.1:9/v1", model="qwen3")}
     with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
-        assert client.post("/api/models/o/quality").status_code == 400  # Ollama: kein llama-perplexity
+        assert client.post("/api/models/o/quality").status_code == 400  # fremder Server: kein llama-perplexity
         assert client.get("/api/models/o/quality").json() == {"result": None}
         assert client.post("/api/models/fehlt/quality").status_code == 404

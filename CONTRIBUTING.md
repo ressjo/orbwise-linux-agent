@@ -7,7 +7,7 @@ Thanks for helping to make Orbwise better! Bug reports, new tools, translations 
 ```bash
 git clone https://github.com/ressjo/orbwise-linux-agent.git && cd orbwise-linux-agent
 uv sync --extra dev --extra voice
-uv run pytest -q -n auto         # all tests run offline, no GPU or Ollama needed (-n auto: in parallel)
+uv run pytest -q -n auto         # all tests run offline, no GPU or model needed (-n auto: in parallel)
 uv run ruff check orbwise tests
 ORBWISE_FAKE_LLM=1 uv run orbwise serve --open   # UI demo with a fake model
 ```
@@ -18,7 +18,7 @@ ORBWISE_FAKE_LLM=1 uv run orbwise serve --open   # UI demo with a fake model
 |---|---|
 | `orbwise/agent.py` | The agent loop: prompt building, streaming, tool calls, confirmations, step limit |
 | `orbwise/prompts.py` | System prompt and fixed texts (German + English) |
-| `orbwise/llm.py`, `orbwise/llm_router.py` | Ollama and OpenAI-compatible clients, model profiles, managed llama-server |
+| `orbwise/llm.py`, `orbwise/llm_router.py` | OpenAI-compatible client, model profiles, managed llama-server (`embedder.py`: embeddings) |
 | `orbwise/memory/` | Journal, summaries, facts, chats, search index, context budget |
 | `orbwise/tools/` | The core tools – one module per group (shell, files, web, packages, coding …) |
 | `orbwise/extras/` | Optional integrations: Paperless, mail, calendar, Portainer, Trilium, Obsidian, Home Assistant, Telegram. The core does not depend on them (a test checks it); their tests live in `tests/extras/` |

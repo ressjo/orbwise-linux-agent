@@ -254,8 +254,8 @@ class ContextTest:
     # ------------------------------------------------------------------ 5. Cache
     def _cache_hint(self) -> str:
         if not self.llama:
-            return T(" Ollama: Wechselt num_ctx oder wird das Modell entladen, ist der Cache weg.",
-                     " Ollama: changing num_ctx or unloading the model clears the cache.")
+            return T(" Fremder Server: Prompt-Cache dort einschalten (Orbwise steuert ihn nur bei llama.cpp).",
+                     " External server: enable the prompt cache there (Orbwise only controls it for llama.cpp).")
         return T(" Startbefehl prüfen (cache_prompt, --cache-reuse, bei Hybrid-Modellen --ctx-checkpoints).",
                  " Check the start command (cache_prompt, --cache-reuse, --ctx-checkpoints for hybrid models).")
 
@@ -304,7 +304,7 @@ class ContextTest:
         head = T(f"Merke dir das Codewort: {word}\n\n", f"Remember the code word: {word}\n\n")
         question = T("\n\nWie lautet das Codewort vom Anfang dieser Nachricht? Antworte nur mit dem Codewort.",
                      "\n\nWhat is the code word from the start of this message? Reply only with the code word.")
-        def system() -> dict:  # eigener Anfang je Anfrage: Ollama zählt sonst nur die nicht gecachten Token
+        def system() -> dict:  # eigener Anfang je Anfrage: sonst zählt mancher Server nur die nicht gecachten Token
             return {"role": "system", "content": f"[{uuid.uuid4().hex[:10]}] " + T(
                 "Du bist ein Testassistent. Antworte knapp.", "You are a test assistant. Reply briefly.")}
         sys_est = est_tokens(system()["content"])
@@ -338,9 +338,9 @@ class ContextTest:
         if real and real < 0.8 * expected:
             self.checks["fill"] = _check("fail", "fill", title, T(
                 f"Gesendet ca. {_num(expected)} Token, verarbeitet nur {_num(real)} – der Server kürzt den Prompt "
-                "still (Ollama: num_ctx kleiner als gedacht).",
+                "still (Kontextfenster des Servers kleiner als gedacht).",
                 f"Sent about {_num(expected)} tokens, only {_num(real)} processed – the server silently truncates "
-                "the prompt (Ollama: num_ctx smaller than expected).") + speed)
+                "the prompt (the server's context window is smaller than expected).") + speed)
         elif seen:
             self.checks["fill"] = _check("ok", "fill", title, T(
                 f"{_num(real or expected)} Token ({round(100 * (real or expected) / window)} % des Fensters) passen, "

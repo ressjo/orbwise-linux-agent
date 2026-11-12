@@ -23,26 +23,43 @@ def free_port() -> int:
 
 # ---------------------------------------------------------------- Config
 
-def test_legacy_config_becomes_standard_profile():
-    cfg = Config.model_validate({"llm": {"model": "qwen3:8b", "base_url": "http://nas:11434"}})
-    profiles = cfg.llm.resolved_profiles()
-    assert list(profiles) == ["standard"]
-    p = profiles["standard"]
-    assert p.backend == "ollama" and p.model == "qwen3:8b" and p.base_url == "http://nas:11434"
+def test_legacy_ollama_config_is_retired(tmp_path):
+    """Alte Config (llm.model = Ollama-Modell): lädt weiter, das Profil fällt aber weg – mit Hinweis statt Absturz."""
+    cfg = Config.model_validate({"llm": {"model": "qwen3:8b", "base_url": "http://nas:11434", "keep_alive": "30m"}})
+    assert cfg.llm.resolved_profiles()["standard"].backend == "ollama"
+    router = LLMRouter(cfg.llm, state_path=tmp_path / "state.json")
+    assert router.retired == ["standard"]
+    p = router.profiles["standard"]  # Platzhalter, bis ein Modell hinzugefügt ist
+    assert p.backend == "openai" and p.base_url == "http://127.0.0.1:8080/v1"
     assert p.temperature == 0.6 and p.think is False
+    assert run(router.status())["retired"] == ["standard"]
 
 
-def test_profiles_config():
+def test_without_models_there_is_one_placeholder_profile(tmp_path):
+    router = LLMRouter(LLMConfig(), state_path=tmp_path / "state.json")
+    assert list(router.profiles) == ["standard"] and router.retired == []
+
+
+def test_added_model_replaces_the_placeholder(tmp_path):
+    from orbwise import models as mdl
+    state = tmp_path / "state.json"
+    mdl.register_profile(state, "qwen", {"backend": "openai", "base_url": "http://127.0.0.1:8090/v1", "model": "qwen"})
+    router = LLMRouter(LLMConfig(), state_path=state)
+    assert list(router.profiles) == ["qwen"]  # kein Geister-Profil „standard“ daneben
+
+
+def test_profiles_config(tmp_path):
     cfg = Config.model_validate({"llm": {"active": "llama", "profiles": {
-        "qwen": {"model": "qwen3:8b"},
+        "alt": {"backend": "ollama", "model": "qwen3:8b"},
         "llama": {"backend": "openai", "base_url": "http://127.0.0.1:8080/v1/", "model": "llama",
-                   "num_ctx": 8192, "embed_on_cpu": True,
+                   "num_ctx": 8192, "embed_on_cpu": True,  # alte Schlüssel stören nicht
                    "server": {"command": "~/llama/scripts/start_llama_server.sh -np 1",
                               "env": {"HSA_OVERRIDE_GFX_VERSION": "10.3.0"}}}}}})
     ps = cfg.llm.resolved_profiles()
-    assert ps["qwen"].base_url == "http://localhost:11434"
     assert ps["llama"].base_url == "http://127.0.0.1:8080/v1" and ps["llama"].num_ctx == 8192
     assert ps["llama"].server.env["HSA_OVERRIDE_GFX_VERSION"] == "10.3.0"
+    router = LLMRouter(cfg.llm, state_path=tmp_path / "state.json")
+    assert list(router.profiles) == ["llama"] and router.retired == ["alt"] and router.active == "llama"
     with pytest.raises(ValueError):
         Config.model_validate({"llm": {"profiles": {"x": {"backend": "magic"}}}})
 
@@ -165,37 +182,19 @@ def test_errors():
 # ---------------------------------------------------------------- Router
 
 def make_llm_cfg(port: int, server: dict | None = None) -> LLMConfig:
-    llama = {"backend": "openai", "base_url": f"http://127.0.0.1:{port}/v1", "model": "llama", "embed_on_cpu": True}
+    llama = {"backend": "openai", "base_url": f"http://127.0.0.1:{port}/v1", "model": "llama"}
     if server:
         llama["server"] = server
-    return LLMConfig.model_validate({"active": "qwen", "profiles": {"qwen": {"model": "qwen3:8b"}, "llama": llama}})
+    return LLMConfig.model_validate({"active": "qwen", "profiles": {
+        "qwen": {"base_url": "http://127.0.0.1:9/v1", "model": "qwen"}, "llama": llama}})
 
 
-def ollama_mock(calls):
-    def handler(req):
-        calls.append((req.url.path, json.loads(req.content) if req.content else None))
-        if req.url.path == "/api/ps":
-            return httpx.Response(200, json={"models": [{"name": "qwen3:8b"}]})
-        if req.url.path == "/api/embed":
-            return httpx.Response(200, json={"embeddings": [[0.1, 0.2]]})
-        if req.url.path == "/api/tags":
-            return httpx.Response(200, json={"models": [{"name": "bge-m3:latest"}, {"name": "qwen3:8b"}]})
-        return httpx.Response(200, json={})
-    return handler
-
-
-def test_router_embed_on_cpu_and_state(tmp_path):
-    calls = []
+def test_router_remembers_the_active_profile(tmp_path):
     cfg = make_llm_cfg(9)
-    router = LLMRouter(cfg, state_path=tmp_path / "state.json", transport=httpx.MockTransport(ollama_mock(calls)))
+    router = LLMRouter(cfg, state_path=tmp_path / "state.json")
     assert router.active == "qwen"
-    run(router.embed(["a"]))
-    assert "options" not in calls[-1][1]
-    # Umschalten ohne verwalteten Server (Server „läuft extern“ – hier nicht nötig)
     router.active = "llama"
     router._build_client()
-    run(router.embed(["a"]))
-    assert calls[-1][1]["options"] == {"num_gpu": 0}
     router._write_state()
     assert LLMRouter(cfg, state_path=tmp_path / "state.json").active == "llama"
 
@@ -246,23 +245,18 @@ def test_managed_server_start_failure(tmp_path, monkeypatch):
     assert "GPU nicht gefunden" in str(err.value)
 
 
-def test_switch_starts_server_unloads_ollama_and_agent_works(cfg, llm, memory, tmp_path, monkeypatch):
+def test_switch_starts_server_and_agent_works(cfg, llm, memory, tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
     monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
     port = free_port()
     llm_cfg = make_llm_cfg(port, server_cfg(port))
-    llm_cfg.profiles["llama"].unload_ollama = True
-    calls = []
     router = LLMRouter(llm_cfg, state_path=tmp_path / "state.json")
-    # Ollama-Aufrufe abfangen, echte HTTP-Aufrufe zum Fake-llama-server zulassen
-    router.ollama = type(router.ollama)(llm_cfg, transport=httpx.MockTransport(ollama_mock(calls)))
     cfg.llm = llm_cfg
 
     async def scenario():
         await router.activate("llama")
         assert router.active == "llama" and router.servers["llama"].running()
         assert router.context_size == 12288  # vom Server (/props) übernommen
-        assert ("/api/generate", {"model": "qwen3:8b", "keep_alive": 0}) in calls
         events = []
 
         async def emit(e):
@@ -393,11 +387,6 @@ def test_think_effort_reaches_the_server(cfg):
     assert bodies[0]["chat_template_kwargs"] == {"enable_thinking": True, "reasoning_effort": "low"}
     assert bodies[1]["chat_template_kwargs"] == {"enable_thinking": False}
 
-    from orbwise.llm import OllamaLLM
-    o = OllamaLLM(LLMConfig(model="any"))
-    # die Stufe kommt nur aus der Vorlage des Modells (Agent._fit_think) – dann geht sie so an Ollama
-    assert o._payload([], None, True, think=True, effort="low")["think"] == "low"
-    assert o._payload([], None, True, think=True)["think"] is True
 
 
 def test_inline_think_tags_become_reasoning(cfg, memory):

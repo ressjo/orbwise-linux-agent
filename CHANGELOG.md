@@ -5,6 +5,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **llama.cpp only – Ollama is no longer used.** Every model runs as a `llama-server` that Orbwise starts and
+  stops; the installer downloads a prebuilt llama.cpp and the chosen model as GGUF from Hugging Face instead of
+  installing Ollama. The presets, `orbwise model add` and the model page take Hugging Face repos, links or `.gguf`
+  files.
+- **Embeddings for the memory search** run in their own small `llama-server` on the CPU (starts with the first
+  search), so they never compete with the language model or image mode for video memory. New:
+  `orbwise model embed` downloads the embedding model.
+
+### Migration from an Ollama setup
+- Existing configs keep loading. Profiles that used Ollama (`llm.model`, `backend: ollama`, models pulled through
+  the UI) are no longer offered; the model page and `orbwise doctor` name them. Add the model again under
+  **Models → Add** or with `orbwise model add <user/repo>`.
+- The `bge-m3` file Ollama already downloaded is read directly – same vectors, no re-indexing, Ollama does not need
+  to run. After that Ollama can be uninstalled.
+- Removed options: `llm.base_url`, `llm.model`, `llm.keep_alive`, and per profile `embed_on_cpu`, `unload_ollama`
+  (ignored when still present).
+
 ### Added
 - **Trust you can check:**
   - a **threat model** in `docs/security.md`: what Orbwise withstands, how, and which test proves it – plus an honest

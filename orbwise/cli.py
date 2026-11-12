@@ -101,16 +101,21 @@ def cmd_doctor(args) -> None:
           + (T("vorhanden", "found") if config_path().exists() else T("Standardwerte", "defaults")) + ")")
     print(T("Sprache: ", "Language: ") + cfg.language)
     print("LLM:")
-    from .llm import OllamaLLM, OpenAICompatLLM
+    from .llm import OpenAICompatLLM
     from .llm_router import LLMRouter
     router = LLMRouter(cfg.llm, state_path=cfg.memory.dir.parent / "state.json")
-    ollama = OllamaLLM(cfg.llm)
-    st = asyncio.run(ollama.status())
-    line(st["online"], f"Ollama {T('unter', 'at')} {cfg.llm.base_url}", "sudo systemctl enable --now ollama")
-    if st["online"]:
-        line(st["embed_available"], f"{T('Embedding-Modell', 'Embedding model')} {cfg.llm.embed_model}", f"ollama pull {cfg.llm.embed_model}")
+    emb = router.embedder.status()
+    line(emb["available"], f"{T('Embedding-Modell', 'Embedding model')} {cfg.llm.embed_model}"
+         + (f" ({emb['path']})" if emb["path"] else ""), emb["problem"])
+    for name in router.retired:
+        print("  ⚠ " + T(f"Profil „{name}“ nutzte Ollama – das wird nicht mehr unterstützt. Das Modell über Modelle → "
+                         "Hinzufügen (oder `orbwise model add <Hugging-Face-Name>`) als GGUF laden.",
+                         f"Profile \"{name}\" used Ollama – no longer supported. Add the model as GGUF under Models → "
+                         "Add (or `orbwise model add <Hugging Face name>`)."))
     from . import llamacpp
-    if llamacpp.installed(cfg):  # Build für eigene Modelle (Hugging Face, ~/models)
+    if not llamacpp.installed(cfg):
+        line(False, "llama.cpp", "orbwise model llamacpp")
+    else:
         m = llamacpp.manifest(cfg)
         why = llamacpp.check_build(llamacpp.binary(cfg).resolve().parent, m.get("flavor", ""))
         line(not why, f"llama.cpp {m.get('tag', '?')} ({m.get('flavor', '?')})" + (f" – {why}" if why else "")
@@ -124,40 +129,35 @@ def cmd_doctor(args) -> None:
     for name, p in router.profiles.items():
         mark = T(" (aktiv)", " (active)") if name == router.active else ""
         print(f"  {T('Profil', 'Profile')} {name}{mark}: {p.backend} · {p.model} · {p.base_url}")
-        if p.backend == "ollama":
-            ps = asyncio.run(OllamaLLM(cfg.llm.model_copy(update={"base_url": p.base_url, "model": p.model})).status())
-            if ps["online"]:
-                line(ps["model_available"], f"    {T('Modell', 'Model')} {p.model}", f"ollama pull {p.model}")
-        else:
-            ps = asyncio.run(OpenAICompatLLM(p).status())
-            if p.server:
-                script = os.path.expanduser(p.server.command.split()[0])
-                line(os.path.exists(script) or bool(shutil.which(script)), f"    {T('Startbefehl', 'Start command')} {script}",
-                     T("Pfad in llm.profiles.<name>.server.command prüfen", "check the path in llm.profiles.<name>.server.command"))
-            line(ps["online"], T("    Server erreichbar", "    Server reachable") if ps["online"]
-                 else T("    Server läuft gerade nicht", "    Server is not running"),
-                 T("startet automatisch beim Aktivieren", "starts automatically when activated") if p.server
-                 else T("Server von Hand starten", "start the server manually"))
-            if ps["online"] and p.server and name == router.active:
-                from .llm_memory import flash_attn
-                from .llm_router import _log_path
-                try:
-                    log_text = _log_path().read_text(errors="replace")[-300_000:].rsplit("===== Starte:", 1)[-1]
-                except OSError:
-                    log_text = ""
-                fa = flash_attn(log_text)
-                if fa:
-                    line(fa == "on", f"    Flash-Attention {T('aktiv', 'on') if fa == 'on' else T('aus', 'off')}",
-                         T("llama.cpp aktualisieren oder -fa on im Startbefehl", "update llama.cpp or add -fa on"))
-            if ps["online"]:
-                n_ctx = asyncio.run(OpenAICompatLLM(p).server_context())
-                if n_ctx:
-                    print(f"    ℹ {T('Kontextfenster laut Server', 'Context window reported by server')}: {n_ctx} Token")
-                slots = asyncio.run(OpenAICompatLLM(p).server_props()).get("total_slots")
-                if isinstance(slots, int) and slots > 1:  # Anfragen landen in verschiedenen Slots → Cache geteilt
-                    print(f"    ℹ {slots} Slots – " + T(
-                        "für den Prompt-Cache besser einer: llama-server mit -np 1 starten",
-                        "one is better for the prompt cache: start llama-server with -np 1"))
+        ps = asyncio.run(OpenAICompatLLM(p).status())
+        if p.server:
+            script = os.path.expanduser(p.server.command.split()[0])
+            line(os.path.exists(script) or bool(shutil.which(script)), f"    {T('Startbefehl', 'Start command')} {script}",
+                 T("Pfad in llm.profiles.<name>.server.command prüfen", "check the path in llm.profiles.<name>.server.command"))
+        line(ps["online"], T("    Server erreichbar", "    Server reachable") if ps["online"]
+             else T("    Server läuft gerade nicht", "    Server is not running"),
+             T("startet automatisch beim Aktivieren", "starts automatically when activated") if p.server
+             else T("Server von Hand starten", "start the server manually"))
+        if ps["online"] and p.server and name == router.active:
+            from .llm_memory import flash_attn
+            from .llm_router import _log_path
+            try:
+                log_text = _log_path().read_text(errors="replace")[-300_000:].rsplit("===== Starte:", 1)[-1]
+            except OSError:
+                log_text = ""
+            fa = flash_attn(log_text)
+            if fa:
+                line(fa == "on", f"    Flash-Attention {T('aktiv', 'on') if fa == 'on' else T('aus', 'off')}",
+                     T("llama.cpp aktualisieren oder -fa on im Startbefehl", "update llama.cpp or add -fa on"))
+        if ps["online"]:
+            n_ctx = asyncio.run(OpenAICompatLLM(p).server_context())
+            if n_ctx:
+                print(f"    ℹ {T('Kontextfenster laut Server', 'Context window reported by server')}: {n_ctx} Token")
+            slots = asyncio.run(OpenAICompatLLM(p).server_props()).get("total_slots")
+            if isinstance(slots, int) and slots > 1:  # Anfragen landen in verschiedenen Slots → Cache geteilt
+                print(f"    ℹ {slots} Slots – " + T(
+                    "für den Prompt-Cache besser einer: llama-server mit -np 1 starten",
+                    "one is better for the prompt cache: start llama-server with -np 1"))
     print(T("Sprache:", "Voice:"))
     from .voice.listen import WakeWordFactory, WhisperSTT
     from .voice.pocket import language_name
@@ -431,13 +431,13 @@ def cmd_doctor(args) -> None:
 
 
 def cmd_reindex(args) -> None:
-    from .llm import OllamaLLM
+    from .llm_router import LLMRouter
     from .memory import Memory
 
     cfg = load_config()
 
     async def run():
-        llm = OllamaLLM(cfg.llm)
+        llm = LLMRouter(cfg.llm, state_path=cfg.memory.dir.parent / "state.json")  # Embeddings über llama.cpp
         mem = Memory(cfg.memory, llm)
         n = await mem.rebuild_index()
         await llm.close()
@@ -491,6 +491,8 @@ def cmd_model(args) -> None:
         print(f"llama.cpp {m.get('tag', '?')} ({m.get('flavor', '?')}) · {llamacpp.binary(cfg)}")
         print(T("Aktualisieren: orbwise model llamacpp --update", "Update: orbwise model llamacpp --update"))
         return
+    if args.name == "embed":
+        return cmd_model_embed(args, cfg)
     if args.name in ("add", "remove", "choose"):
         return cmd_model_manage(args, cfg, state)
     router = LLMRouter(cfg.llm, state_path=state)
@@ -568,10 +570,9 @@ def cmd_model_search(args, cfg) -> None:
 
 
 def cmd_model_manage(args, cfg, state: Path) -> None:
-    """orbwise model add [ollama-name | hf-link | datei.gguf] · orbwise model remove <name> · orbwise model choose
+    """orbwise model add [hf-link | nutzer/repo | datei.gguf] · orbwise model remove <name> · orbwise model choose
     (für den Installer)."""
-    import subprocess
-
+    from . import imagegen_setup, llamacpp
     from . import models as mdl
 
     base = f"http://127.0.0.1:{cfg.port}"
@@ -581,7 +582,7 @@ def cmd_model_manage(args, cfg, state: Path) -> None:
         if not sys.stdin.isatty():
             tag = mdl.recommend(vram)
         else:
-            tag = mdl.choose_interactive(vram, mdl.installed_models(cfg.llm.base_url))
+            tag = mdl.choose_interactive(vram, llamacpp.models_dir(cfg))
         if args.out:
             Path(args.out).write_text(tag or "", encoding="utf-8")
         else:
@@ -591,11 +592,19 @@ def cmd_model_manage(args, cfg, state: Path) -> None:
         if not args.tag:
             print(T("Welches Modell? orbwise model remove <name>", "Which model? orbwise model remove <name>"))
             sys.exit(1)
-        from . import imagegen_setup
         if args.tag.strip().lower() in imagegen_setup.BY_ID or args.tag.strip().lower() in \
                 imagegen_setup.manifest(imagegen_setup.image_dir(cfg)).get("models", {}):  # Bildmodell
             freed = imagegen_setup.remove_model(cfg, args.tag.strip().lower())
             print(T(f"✔ Bildmodell gelöscht ({freed / 1e9:.1f} GB frei).", f"✔ Image model deleted ({freed / 1e9:.1f} GB freed)."))
+            return
+        record = llamacpp.local_record(state, args.tag)
+        if record and record.get("downloaded"):  # von Orbwise geladen: Datei auf Wunsch mitlöschen
+            delete = args.yes or sys.stdin.isatty() and input(
+                T("Auch die Modelldatei löschen? [j/N] ", "Also delete the model file? [y/N] ")
+            ).strip().lower() in ("j", "ja", "y", "yes")
+            mdl.unregister_model(state, args.tag)
+            freed = llamacpp.forget(cfg, state, args.tag, delete_files=bool(delete))
+            print(T(f"✔ '{args.tag}' entfernt ({freed / 1e9:.1f} GB frei).", f"✔ Removed '{args.tag}' ({freed / 1e9:.1f} GB freed)."))
             return
         tag = mdl.unregister_model(state, args.tag)
         if not tag:
@@ -603,47 +612,85 @@ def cmd_model_manage(args, cfg, state: Path) -> None:
                     f"'{args.tag}' is not a model added with 'orbwise model add'."))
             sys.exit(1)
         print(T(f"✔ '{tag}' aus der Modellliste entfernt.", f"✔ Removed '{tag}' from the model list."))
-        if shutil.which("ollama") and sys.stdin.isatty() and \
-                input(T("Auch die Modelldatei löschen (ollama rm)? [j/N] ", "Also delete the model files (ollama rm)? [y/N] ")
-                      ).strip().lower() in ("j", "ja", "y", "yes"):
-            subprocess.run(["ollama", "rm", tag])
         return
     # add
     gpu = mdl.detect_gpu()
     raw = (args.tag or "").strip()
-    if raw.lower().endswith(".gguf") and not mdl.HF_URL_RE.match(raw):  # vorhandene Datei (z. B. in ~/models)
-        name = _add_llamacpp(cfg, state, gpu, path=Path(os.path.expanduser(raw)))
-        if not name:
-            sys.exit(1)
-        print(T(f"✔ '{name}' angelegt – startet mit llama.cpp.", f"✔ '{name}' added – runs with llama.cpp."))
-        return _finish_add(args, state, name, name, base, headers)
-    tag = mdl.normalize_tag(args.tag or "") if (args.tag or "").strip() else \
-        mdl.choose_interactive(gpu["vram_gb"], mdl.installed_models(cfg.llm.base_url))
-    if not tag:
-        print(T("Ungültiger Modellname.", "Invalid model name."))
-        sys.exit(1)
-    from . import imagegen_setup
-    if tag in imagegen_setup.BY_ID:  # Bild-Modus: stable-diffusion.cpp + Bildmodell (qwen-image, z-image-turbo …)
-        if not imagegen_setup.install(gpu, cfg, model_id=tag):
+    if raw.lower() in imagegen_setup.BY_ID:  # Bild-Modus: stable-diffusion.cpp + Bildmodell (qwen-image, z-image-turbo …)
+        if not imagegen_setup.install(gpu, cfg, model_id=raw.lower()):
             sys.exit(1)
         return
-    if mdl.is_hf(tag):  # Hugging Face → Datei nach ~/models, läuft mit llama.cpp
-        name = _add_llamacpp(cfg, state, gpu, tag=tag)
-        if not name:
+    if raw.lower().endswith(".gguf") and not mdl.HF_URL_RE.match(raw):  # vorhandene Datei (z. B. in ~/models)
+        name = _add_llamacpp(cfg, state, gpu, path=Path(os.path.expanduser(raw)))
+    else:
+        tag = mdl.normalize_tag(raw) if raw else mdl.choose_interactive(gpu["vram_gb"], llamacpp.models_dir(cfg))
+        if not tag:
+            print(T("Ungültiger Modellname – erwartet wird ein Hugging-Face-Link, nutzer/repo[:quant] oder eine .gguf-Datei "
+                    "(Suche: orbwise model search <begriff>).",
+                    "Invalid model name – expected a Hugging Face link, user/repo[:quant] or a .gguf file "
+                    "(search: orbwise model search <term>)."))
             sys.exit(1)
-        print(T(f"✔ '{name}' angelegt – startet mit llama.cpp.", f"✔ '{name}' added – runs with llama.cpp."))
-        return _finish_add(args, state, name, name, base, headers)
-    if not shutil.which("ollama"):
-        print(T("ollama ist nicht installiert – erst scripts/install.sh ausführen.",
-                "ollama is not installed – run scripts/install.sh first."))
+        name = _add_llamacpp(cfg, state, gpu, tag=tag)  # Datei nach ~/models, läuft mit llama.cpp
+    if not name:
         sys.exit(1)
-    print(T(f"Lade {tag} … (das kann dauern)", f"Downloading {tag} … (this can take a while)"))
-    if subprocess.run(["ollama", "pull", tag]).returncode != 0:
-        print(T(f"✘ '{tag}' konnte nicht geladen werden – Name prüfen (ollama.com/library) oder anderes Modell wählen.",
-                f"✘ Could not download '{tag}' – check the name (ollama.com/library) or pick another model."))
+    print(T(f"✔ '{name}' angelegt – startet mit llama.cpp.", f"✔ '{name}' added – runs with llama.cpp."))
+    _finish_add(args, state, name, name, base, headers)
+
+
+def cmd_model_embed(args, cfg) -> None:
+    """orbwise model embed [nutzer/repo[:quant]] → das Embedding-Modell (llm.embed_model) als GGUF nach ~/models laden.
+    Ohne Angabe wird auf Hugging Face nach dem Namen gesucht und das meistgeladene GGUF-Repo genommen."""
+    import asyncio
+
+    import httpx
+
+    from . import llamacpp
+    from . import models as mdl
+    from .embedder import find_model
+    have = find_model(cfg.llm.embed_model, llamacpp.models_dir(cfg))
+    if have and not args.tag:
+        print(T(f"✔ Embedding-Modell ist da: {have}", f"✔ Embedding model is present: {have}"))
+        return
+    key = cfg.llm.embed_model.split("/")[-1].split(":")[0]
+    try:
+        if not llamacpp.install(cfg, mdl.detect_gpu()):
+            sys.exit(1)
+        tag = mdl.normalize_tag(args.tag) if args.tag else None
+        if args.tag and not tag:
+            print(T("Ungültiges Repo – erwartet: nutzer/repo[:quant].", "Invalid repo – expected: user/repo[:quant]."))
+            sys.exit(1)
+        if tag:
+            repo, _, quant = tag[6:].partition(":")
+        else:
+            hits = [r for r in mdl.hf_search(key) if key.lower() in r["repo"].lower()]
+            if not hits:
+                print(T(f"✘ Kein GGUF-Repo für „{key}“ auf Hugging Face gefunden – Repo selbst angeben: "
+                        "orbwise model embed <nutzer/repo>",
+                        f"✘ No GGUF repo for \"{key}\" found on Hugging Face – name one yourself: "
+                        "orbwise model embed <user/repo>"))
+                sys.exit(1)
+            repo, quant = hits[0]["repo"], ""
+        items = mdl.hf_quants(repo, 0, llamacpp.models_dir(cfg))
+        want = [quant] if quant else ["Q8_0", "F16", "Q6_K", "Q5_K_M", "Q4_K_M"]  # klein genug – lieber genau
+        item = next((x for q in want for x in items if x["quant"].lower() == q.lower()), None) or \
+            (items[-1] if items and not quant else None)
+        if not item:
+            print(T(f"✘ Keine passende GGUF-Datei in {repo}.", f"✘ No matching GGUF file in {repo}."))
+            sys.exit(1)
+        print(T(f"Lade {repo} {item['quant']} (~{item['download_gb']} GB) …",
+                f"Downloading {repo} {item['quant']} (~{item['download_gb']} GB) …"))
+        first, _, _ = asyncio.run(llamacpp.download_quant(cfg, repo, item))
+    except (httpx.HTTPError, OSError, ValueError) as e:
+        print(f"✘ {e}")
         sys.exit(1)
-    name = mdl.register_model(state, tag)
-    _finish_add(args, state, name, tag, base, headers)
+    if find_model(cfg.llm.embed_model, llamacpp.models_dir(cfg)) is None:
+        print(T(f"✔ Geladen: {first}\n  Der Dateiname enthält „{key}“ nicht – in der config.yaml eintragen: "
+                f"llm.embed_model: {first}",
+                f"✔ Downloaded: {first}\n  The file name does not contain \"{key}\" – set it in config.yaml: "
+                f"llm.embed_model: {first}"))
+        return
+    print(T(f"✔ Embedding-Modell geladen: {first}\n  Danach einmal: orbwise reindex",
+            f"✔ Embedding model downloaded: {first}\n  Then run once: orbwise reindex"))
 
 
 def _add_llamacpp(cfg, state: Path, gpu: dict, tag: str = "", path: Path | None = None) -> str | None:
@@ -906,8 +953,8 @@ def main(argv: list[str] | None = None) -> None:
                                        "list, switch, download (add) or remove (remove) models"))
     p.add_argument("name", nargs="?", help=T("Profilname zum Umschalten – oder add / remove / search (Bildmodelle: add qwen-image, z-image-turbo, flux-schnell, sdxl)",
                                              "profile to switch to – or add / remove / search"))
-    p.add_argument("tag", nargs="*", help=T("bei add: Ollama-Name oder Hugging-Face-Link · bei search: Suchbegriff",
-                                            "with add: Ollama name or Hugging Face link · with search: search term"))
+    p.add_argument("tag", nargs="*", help=T("bei add: Hugging-Face-Link, nutzer/repo oder .gguf-Datei · bei search: Suchbegriff",
+                                            "with add: Hugging Face link, user/repo or .gguf file · with search: search term"))
     p.add_argument("-y", "--yes", action="store_true", help=T("ohne Rückfragen", "no questions"))
     p.add_argument("--update", action="store_true", help=T("bei llamacpp: neuesten Build laden",
                                                            "with llamacpp: download the newest build"))

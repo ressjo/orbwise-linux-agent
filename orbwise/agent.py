@@ -94,8 +94,8 @@ def plan_steps(text: str) -> int:
 
 
 def prompt_size(stats: dict, estimated: int) -> int:
-    """Echte Prompt-Größe laut Server – 0, wenn sie unbrauchbar ist: Ollama zählt bei einem Cache-Treffer nur die
-    neu verarbeiteten Token (prompt_eval_count); so ein Wert weit unter der Schätzung würde das Budget aufblähen."""
+    """Echte Prompt-Größe laut Server – 0, wenn sie unbrauchbar ist: manche Server zählen bei einem Cache-Treffer nur die
+    neu verarbeiteten Token; so ein Wert weit unter der Schätzung würde das Budget aufblähen."""
     total = int(stats.get("prompt_total") or 0)
     if stats.get("prompt_cached") is not None:
         return total  # llama-server nennt den Cache-Anteil getrennt – dort ist total die volle Größe
@@ -1253,8 +1253,6 @@ class Agent(CompactMixin, CodingMixin, ReviewMixin, ToolSelectionMixin, SafetyMi
         except Exception as e:  # noqa: BLE001
             log.exception("Tool %s fehlgeschlagen", name)
             result, status = f"Fehler: {e}", "error"
-        if spec.group == "vision" and getattr(getattr(self.llm, "profile", None), "backend", "") == "ollama":
-            self._cache_owner = None  # Ollama hat fürs Bild ggf. das Hauptmodell verdrängt
         if edited:  # das Modell soll wissen, was tatsächlich ausgeführt wurde
             result += "\n(Vom Nutzer vor dem Ausführen geändert: " + ", ".join(edited) + " – " + \
                 json.dumps({k: args[k] for k in edited}, ensure_ascii=False)[:1500] + ")"

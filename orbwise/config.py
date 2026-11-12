@@ -46,18 +46,15 @@ class ServerConfig(BaseModel):
 class ProfileConfig(BaseModel):
     """Ein Modell-Profil. Leere Felder übernehmen die Werte aus dem llm-Block."""
     label: str = ""
-    # "ollama" oder "openai" (OpenAI-kompatibler Server: llama-server, LM Studio, vLLM …)
-    backend: str = "ollama"
+    # "openai": OpenAI-kompatibler Server – der von Orbwise gestartete llama-server (llama.cpp), oder ein eigener
+    # (LM Studio, vLLM …). "ollama" aus alten Configs wird noch gelesen, das Profil aber nicht mehr angeboten.
+    backend: str = "openai"
     base_url: str = ""
     model: str = ""
     api_key: str = ""
     temperature: float | None = None
     num_ctx: int | None = None
     think: bool | None = None
-    # Embeddings (Gedächtnis) über Ollama auf der CPU rechnen – spart Grafikspeicher
-    embed_on_cpu: bool = False
-    # Vor dem Aktivieren alle Ollama-Modelle aus dem Grafikspeicher entladen
-    unload_ollama: bool = False
     server: ServerConfig | None = None
     # Sampling je Modus, z. B. {"think": {"temperature": 1.0, "top_p": 0.95}, "fast": {"presence_penalty": 1.5}} –
     # fehlende Werte: Standard des Servers/Modells (temperature: siehe oben); in der Oberfläche einstellbar
@@ -73,15 +70,13 @@ class ProfileConfig(BaseModel):
 
 
 class LLMConfig(BaseModel):
-    # Adresse von Ollama (für Ollama-Profile und immer für die Embeddings des Gedächtnisses)
-    base_url: str = "http://localhost:11434"
-    model: str = "qwen3:14b"
+    # Embedding-Modell für die Gedächtnis-Suche: ein Name (die GGUF-Datei wird unter models_dir gesucht bzw. aus
+    # einem früheren Ollama übernommen) oder direkt ein Pfad zu einer .gguf-Datei – läuft über llama.cpp auf der CPU
     embed_model: str = "bge-m3"
     temperature: float = 0.6
     num_ctx: int = 16384
     # Qwen3 "Thinking" abschalten – deutlich schnellere Antworten
     think: bool = False
-    keep_alive: str = "30m"
     request_timeout: float = 300.0
     # Modell-Profile; leer = ein Profil "standard" aus den Werten oben
     profiles: dict[str, ProfileConfig] = Field(default_factory=dict)
@@ -91,16 +86,25 @@ class LLMConfig(BaseModel):
     # Modell-Menü unter „Auf der Festplatte“
     models_dir: str = "~/models"
 
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_ollama(cls, data):
+        """Alte Config: `llm.model: qwen3:14b` (+ base_url) war das Ollama-Modell. Daraus wird ein Profil „standard“
+        mit backend ollama – der Router legt es als abgelöst ab und sagt dem Nutzer, was zu tun ist."""
+        if isinstance(data, dict) and data.get("model") and not data.get("profiles"):
+            data = {**data, "profiles": {"standard": {"backend": "ollama", "model": str(data["model"])}}}
+        return data
+
     def resolved_profiles(self) -> dict[str, ProfileConfig]:
-        """Alle Profile mit aufgefüllten Standardwerten."""
-        raw = self.profiles or {"standard": ProfileConfig(backend="ollama")}
+        """Alle Profile mit aufgefüllten Standardwerten. Ohne eigenes Profil: ein OpenAI-kompatibler Server auf dem
+        üblichen Port von llama-server – Modelle kommen sonst über die Modellseite dazu (state.json)."""
+        raw = self.profiles or {"standard": ProfileConfig()}
         out = {}
         for name, p in raw.items():
-            default_url = self.base_url if p.backend == "ollama" else "http://127.0.0.1:8080/v1"
             out[name] = p.model_copy(update={
                 "label": p.label or name,
-                "base_url": (p.base_url or default_url).rstrip("/"),
-                "model": p.model or (self.model if p.backend == "ollama" else "default"),
+                "base_url": (p.base_url or "http://127.0.0.1:8080/v1").rstrip("/"),
+                "model": p.model or "default",
                 "temperature": self.temperature if p.temperature is None else p.temperature,
                 "num_ctx": self.num_ctx if p.num_ctx is None else p.num_ctx,
                 "think": self.think if p.think is None else p.think,
@@ -279,7 +283,7 @@ class ImageConfig(BaseModel):
     cfg_scale: float = 6.0
     size: str = "1:1"  # Seitenverhältnis: 1:1, 4:3, 3:4, 16:9, 9:16, 3:2, 2:3 – oder z. B. "1280x720"
     megapixels: float = 1.0  # Auflösung: 0.5 schnell · 1 Standard · 1.5 fein · 2 groß (mehr = langsamer, mehr VRAM)
-    # Immer nur ein Modell im Speicher: das Sprachmodell (eigener llama-server, Ollama) geht vor dem ersten Bild aus dem
+    # Immer nur ein Modell im Speicher: das Sprachmodell (eigener llama-server) geht vor dem ersten Bild aus dem
     # Grafikspeicher – always (Standard); auto = nur bei weniger als 16 GB VRAM; never = beide geladen lassen
     unload_llm: str = "always"
     # so lange bleibt das Bildmodell nach dem letzten Bild geladen (danach kommt das Sprachmodell zurück)
@@ -424,7 +428,7 @@ class TelegramConfig(BaseModel):
 
 class VisionConfig(BaseModel):
     # Bildschirm und Bilder verstehen („Was ist das für eine Fehlermeldung?“) – mit dem geladenen Modell, wenn es Bilder
-    # sehen kann (llama-server mit Bildmodul/mmproj, Ollama-Modell mit „vision“). Ein zweites Bildmodell gibt es nicht
+    # sehen kann (llama-server mit Bildmodul/mmproj). Ein zweites Bildmodell gibt es nicht
     # mehr; alte Schlüssel (backend, base_url, model, api_key, keep_alive) werden ignoriert.
     enabled: bool = True
     timeout: float = 180.0

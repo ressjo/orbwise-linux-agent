@@ -68,7 +68,7 @@ async def rank_passages(question: str, passages: list[str], embedder=None) -> li
 
             sims = _normalize([cos(v) for v in vecs[1:]])
             score = [(a + b) / 2 for a, b in zip(score, sims)]
-        except Exception:  # noqa: BLE001 – ohne Embeddings (Ollama aus) reicht die Stichwortsuche
+        except Exception:  # noqa: BLE001 – ohne Embeddings (Modell fehlt) reicht die Stichwortsuche
             pass
     return sorted(range(len(passages)), key=lambda i: -score[i])
 

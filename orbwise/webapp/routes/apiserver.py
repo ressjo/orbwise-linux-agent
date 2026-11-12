@@ -63,7 +63,7 @@ def resolve_model(profiles: dict, requested: str, active: str) -> str:
 
 
 def upstream(router, name: str) -> tuple[str, dict]:
-    """(Basis-URL der OpenAI-Schnittstelle, Header) des Profils: eigener llama-server oder Ollamas /v1."""
+    """(Basis-URL der OpenAI-Schnittstelle, Header) des Profils: eigener llama-server oder ein fremder OpenAI-kompatibler Server."""
     p = router.profiles[name]
     if p.backend == "openai":
         return p.base_url.rstrip("/"), ({"Authorization": f"Bearer {p.api_key}"} if p.api_key else {})

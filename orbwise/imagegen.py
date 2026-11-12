@@ -312,7 +312,7 @@ class ImageEngine:
         return vram == 0 or vram < 16
 
     async def _borrow_gpu(self, progress: Progress | None) -> None:
-        """Sprachmodell aus dem Grafikspeicher nehmen (nur ein von Orbwise verwalteter llama-server bzw. Ollama)."""
+        """Sprachmodell aus dem Grafikspeicher nehmen (nur ein von Orbwise verwalteter llama-server)."""
         router = self.llm
         if router is None or not hasattr(router, "server_for") or not self._should_unload():
             return
@@ -323,8 +323,6 @@ class ImageEngine:
             await server.stop()
             await server.stop_foreign()
             self.stopped_llm = True
-        with contextlib.suppress(Exception):
-            await router.ollama.unload_all()
         router.gpu_borrowed = self.release
 
     async def ensure(self, progress: Progress | None = None) -> None:

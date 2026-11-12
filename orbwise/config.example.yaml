@@ -15,14 +15,13 @@ persona_extra: ""        # extra personality instructions, e.g. "Call me 'boss'.
 # holiday_region: BW      # German state for regional public holidays (date_info), empty = nationwide only
 
 llm:
-  base_url: http://localhost:11434   # Ollama (always used for the memory embeddings, too)
-  # ≥16 GB VRAM: qwen3:14b · 8–12 GB: qwen3:8b · little VRAM / CPU only: qwen3:4b
-  model: qwen3:14b
-  embed_model: bge-m3    # multilingual embeddings for the memory search
+  # Models run with llama.cpp. Add one under Settings → Models (or `orbwise model add`) – Orbwise downloads the
+  # GGUF file, starts llama-server itself and needs no entry here.
+  embed_model: bge-m3    # embeddings for the memory search: a name (GGUF looked up in models_dir, download with
+                         # `orbwise model embed`) or a path to a .gguf file; runs on the CPU
   temperature: 0.6
-  num_ctx: 16384         # the model's context window
+  num_ctx: 16384         # context window, unless the profile or the model page says otherwise
   think: false           # Qwen3 "thinking" by default (slower); the THINK button toggles it per request
-  # keep_alive: 30m        # how long Ollama keeps the model in (V)RAM after the last request
   # request_timeout: 300   # seconds until a model request is given up
 
   # models_dir: ~/models    # GGUF models for llama.cpp (Hugging Face downloads land here; files placed here
@@ -30,12 +29,9 @@ llm:
 
   # Optional: several model profiles. Switch by clicking the LLM pill or with `orbwise model <name>`.
   # Models added in the web UI (Hugging Face, ~/models) need no entry here.
-  # Without profiles there is a single profile "standard" built from the values above.
+  # Without any model there is a single profile "standard": an OpenAI-compatible server at http://127.0.0.1:8080/v1.
   # active: llama
   # profiles:
-  #   qwen:
-  #     backend: ollama
-  #     model: qwen3:8b
   #   llama:                           # e.g. your own llama-server (models added in the web UI get one automatically)
   #     label: Qwen 27B (llama.cpp)
   #     backend: openai                # any OpenAI-compatible server (llama-server, vLLM, LM Studio …)
@@ -43,8 +39,6 @@ llm:
   #     model: qwen-27b
   #     api_key: "<random-password>"   # make up a long random password – the same value as --api-key below
   #     num_ctx: 32768                 # optional – Orbwise reads the real size from the server
-  #     embed_on_cpu: true             # run memory embeddings on the CPU (VRAM is scarce)
-  #     unload_ollama: true            # unload Ollama models from VRAM first
   #     # temperature: 0.6 · think: false – also per profile; empty = the values of the llm block
   #     # sampling:                    # per mode; easier: Models → Sampling (e.g. the Qwen preset)
   #     #   think: {temperature: 1.0, top_p: 0.95, top_k: 20, min_p: 0.0, presence_penalty: 0.0}

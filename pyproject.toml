@@ -2,12 +2,12 @@
 name = "orbwise"
 # Versionsnummer: nur in orbwise/__init__.py (__version__) pflegen
 dynamic = ["version"]
-description = "Orbwise – a local, voice-controlled AI assistant for Linux: Ollama/llama.cpp, persistent memory, tool use and an animated web UI"
+description = "Orbwise – a local, voice-controlled AI assistant for Linux: llama.cpp, persistent memory, tool use and an animated web UI"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "ressjo and contributors" }]
-keywords = ["assistant", "voice-assistant", "llm", "ollama", "llama.cpp", "voice", "agent", "linux", "home-assistant"]
+keywords = ["assistant", "voice-assistant", "llm", "llama.cpp", "gguf", "voice", "agent", "linux", "home-assistant"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Web Environment",

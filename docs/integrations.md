@@ -158,7 +158,7 @@ land in `~/Bilder/Orbwise` (or `~/Pictures/Orbwise`); prompt and settings are st
   FLUX CLIP-L + T5-XXL (fp8 below 20 GB). The exact files are read from Hugging Face during setup and recorded in
   `~/orbwise-image/manifest.json`; your own build can replace `~/orbwise-image/bin/sd-server`.
 - **Graphics memory:** only one model is in memory at a time – clicking **Image** stops the language model (its
-  llama-server, Ollama models too) right away, the active image model loads with the first picture, and switching
+  llama-server) right away, the active image model loads with the first picture, and switching
   image models stops the previous image server. While the image view is open, no background work loads the language
   model (daily summaries and index rebuilds wait, memory embeddings run on the CPU); after `image.idle_minutes` only
   the image server stops. Routines and Telegram messages are your own requests – they do bring the language model
@@ -381,7 +381,7 @@ screenshot is deleted right afterwards. The same works for image files and for p
 ("what plant is this?").
 
 This needs a model that can see images: a llama.cpp model with its image module (`mmproj`, downloaded with the model
-on the model page) or an Ollama model with vision. Without one, Orbwise doesn't offer the screen tools and says so
+on the model page). Without one, Orbwise doesn't offer the screen tools and says so
 when you attach an image – there is no separate vision model any more. Screenshots use whatever your desktop has: `spectacle` (KDE),
 `gnome-screenshot` (GNOME), `grim` (Sway/Hyprland) or `maim`/`scrot` (X11); `orbwise doctor` shows what was found. As
 with e-mails, screen content is treated as untrusted: after looking at the screen, actions in that chat need

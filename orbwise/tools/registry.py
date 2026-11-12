@@ -1,4 +1,4 @@
-"""Tool-Registry: Funktionen werden per Decorator registriert, das JSON-Schema für Ollama
+"""Tool-Registry: Funktionen werden per Decorator registriert, das JSON-Schema für das Sprachmodell
 wird aus den Typannotationen (Annotated[typ, "Beschreibung"]) erzeugt."""
 
 from __future__ import annotations

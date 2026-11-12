@@ -52,7 +52,6 @@ def client(cfg, monkeypatch):
     monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
     monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
     base = f"http://127.0.0.1:{srv.server_port}/v1"
-    cfg.llm.base_url = "http://127.0.0.1:9"  # kein Ollama nötig
     cfg.llm.profiles = {"local": ProfileConfig(backend="openai", base_url=base, model="m-local", api_key="innen",
                                                label="Lokal Q4"),
                         "other": ProfileConfig(backend="openai", base_url=base, model="m-other", label="Anderes")}

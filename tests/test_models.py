@@ -1,193 +1,99 @@
-import json
-import threading
-import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+"""Modell-Vorauswahl (GGUF-Repos auf Hugging Face), interaktive Auswahl, abgelöste Ollama-Einträge, Löschen."""
 
-import pytest
+import json
+
 from fastapi.testclient import TestClient
 
 from orbwise import models as mdl
 from orbwise.config import LLMConfig
 from orbwise.llm_router import LLMRouter
 
+Q8 = "hf.co/unsloth/Qwen3-8B-GGUF:Q4_K_M"
+Q14 = "hf.co/unsloth/Qwen3-14B-GGUF:Q4_K_M"
 
-def test_recommend_and_fit():
-    assert mdl.recommend(16) == "qwen3:14b" and mdl.recommend(8) == "qwen3:8b"
-    assert mdl.recommend(24) == "qwen3:30b" and mdl.recommend(0) == "qwen3:4b"
-    p14 = mdl.BY_TAG["qwen3:14b"]
+
+def test_presets_are_hugging_face_gguf():
+    for p in mdl.PRESETS:
+        assert mdl.normalize_tag(p.tag) == p.tag and p.tag.endswith(":Q4_K_M"), p.tag
+    assert len({p.tag for p in mdl.PRESETS}) == len(mdl.PRESETS)
+
+
+def test_recommend_and_fit(tmp_path):
+    assert mdl.recommend(16) == Q14 and mdl.recommend(8) == Q8
+    assert "30B-A3B" in mdl.recommend(24) and "Qwen3-4B" in mdl.recommend(0)
+    p14 = mdl.BY_TAG[Q14]
     assert mdl.fit(p14, 16) == "ok" and mdl.fit(p14, 9) == "tight" and mdl.fit(p14, 6) == "big"
-    assert mdl.slug("qwen3:14b") == "qwen3-14b" and mdl.slug("hf.co/x/y:Q4_K_M") == "hf.co-x-y-q4-k-m"
-    items = mdl.preset_list(16, {"qwen3:8b"})
-    assert next(i for i in items if i["tag"] == "qwen3:8b")["installed"]
-    assert [i["tag"] for i in items if i["recommended"]] == ["qwen3:14b"]
+    assert mdl.slug("Qwen3-8B Q4_K_M") == "qwen3-8b-q4-k-m"
+    folder = tmp_path / "unsloth_Qwen3-8B-GGUF"
+    folder.mkdir()
+    (folder / "Qwen3-8B-Q4_K_M.gguf").write_bytes(b"x")
+    (folder / "mmproj-Qwen3-8B-Q4_K_M.gguf").write_bytes(b"x")
+    items = mdl.preset_list(16, tmp_path)
+    assert [i["tag"] for i in items if i["installed"]] == [Q8]
+    assert [i["tag"] for i in items if i["recommended"]] == [Q14]
+    assert not any(i["installed"] for i in mdl.preset_list(16, None))
+
+
+def test_only_hugging_face_names_are_accepted():
+    assert mdl.normalize_tag("unsloth/Qwen3-8B-GGUF") == "hf.co/unsloth/Qwen3-8B-GGUF"
+    assert mdl.normalize_tag("unsloth/Qwen3-8B-GGUF:Q5_K_M") == "hf.co/unsloth/Qwen3-8B-GGUF:Q5_K_M"
+    assert mdl.normalize_tag("hf.co/unsloth/Qwen3-8B-GGUF:Q4_K_M") == Q8
+    for old in ("qwen3:8b", "llama3.1", "; rm -rf /", "", "a/b/c"):  # Ollama-Namen gibt es nicht mehr
+        assert mdl.normalize_tag(old) is None, old
 
 
 def test_interactive_choice():
-    answers = iter(["", "3", "unsinn ! name", "my-model:7b"])
+    answers = iter(["", "3", "unsinn ! name", "qwen3:7b", "bartowski/some-model-GGUF"])
 
     def ask(prompt):
         return next(answers)
 
     out = []
-    assert mdl.choose_interactive(8, ask=ask, out=out.append) == "qwen3:8b"
+    assert mdl.choose_interactive(8, ask=ask, out=out.append) == Q8
     assert mdl.choose_interactive(8, ask=ask, out=out.append) == mdl.PRESETS[2].tag
-    assert mdl.choose_interactive(8, ask=ask, out=out.append) == "my-model:7b"
+    assert mdl.choose_interactive(8, ask=ask, out=out.append) == "hf.co/bartowski/some-model-GGUF"
+    assert not any("Ollama" in line for line in out)
 
 
-def test_added_models_become_profiles(tmp_path):
+def test_old_ollama_entries_are_retired_not_loaded(tmp_path):
+    """state.json von früher: per Ollama geladene Modelle – sie werden gemeldet statt angeboten, und lassen sich
+    aus der Liste nehmen."""
     state = tmp_path / "state.json"
-    assert mdl.register_model(state, "qwen3:14b", activate=True) == "qwen3-14b"
-    mdl.register_model(state, "llama3.1:8b")
-    router = LLMRouter(LLMConfig(model="qwen3:8b"), state_path=state)
-    assert {"standard", "qwen3-14b", "llama3.1-8b"} <= set(router.profiles)
-    assert router.active == "qwen3-14b" and router.profile.model == "qwen3:14b" and router.profile.label == "Qwen 3 14B"
+    state.write_text(json.dumps({"added_models": ["qwen3:14b", "llama3.1:8b"], "active_profile": "qwen3-14b"}))
+    router = LLMRouter(LLMConfig(), state_path=state)
+    assert list(router.profiles) == ["standard"] and router.active == "standard"
+    assert router.retired == ["qwen3-14b", "llama3.1-8b"]
     assert mdl.unregister_model(state, "qwen3-14b") == "qwen3:14b"
     assert "active_profile" not in json.loads(state.read_text())
+    assert LLMRouter(LLMConfig(), state_path=state).retired == ["llama3.1-8b"]
     assert mdl.unregister_model(state, "gibtsnicht") is None
 
 
-class FakeOllama(BaseHTTPRequestHandler):
-    pulled: list = []
-    deleted: list = []
-
-    def log_message(self, *a):
-        pass
-
-    def _json(self, obj, code=200):
-        body = json.dumps(obj).encode()
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def do_GET(self):
-        if self.path == "/api/tags":
-            return self._json({"models": [{"name": "qwen3:8b", "size": 5_200_000_000},
-                                          {"name": "qwen3:14b", "size": 9_300_000_000},
-                                          {"name": "llama3.1:8b", "size": 4_900_000_000}]})
-        self._json({}, 404)
-
-    def do_DELETE(self):
-        req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
-        FakeOllama.deleted.append(req.get("model"))
-        self._json({})
-
-    def do_POST(self):
-        req = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
-        if self.path != "/api/pull":
-            return self._json({})
-        self.send_response(200)
-        self.send_header("Content-Type", "application/x-ndjson")
-        self.end_headers()
-        if req["model"] == "gibts:nicht":
-            self.wfile.write(b'{"error":"pull model manifest: file does not exist"}\n')
-            return
-        if req["model"] == "langsam:1b":  # großer Download – wird im Test abgebrochen
-            try:
-                for i in range(200):
-                    line = {"status": "downloading", "completed": i, "total": 200}
-                    self.wfile.write((json.dumps(line) + "\n").encode())
-                    self.wfile.flush()
-                    time.sleep(0.05)
-            except (BrokenPipeError, ConnectionResetError):
-                FakeOllama.aborted = True
-            return
-        FakeOllama.pulled.append(req["model"])
-        for line in ({"status": "pulling manifest"}, {"status": "downloading", "completed": 50, "total": 100},
-                     {"status": "success"}):
-            self.wfile.write((json.dumps(line) + "\n").encode())
-
-
-@pytest.fixture
-def ollama():
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeOllama)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    yield f"http://127.0.0.1:{srv.server_port}"
-    srv.shutdown()
-
-
-def test_pull_via_web_api(cfg, ollama, monkeypatch):
+def test_web_api_presets_pull_and_delete(cfg, monkeypatch):
     monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
     monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
-    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
-    cfg.llm.base_url = ollama
+    state = cfg.memory.dir.parent / "state.json"
+    state.parent.mkdir(parents=True, exist_ok=True)
+    for name, port in (("eins", 8091), ("zwei", 8092)):
+        mdl.register_profile(state, name, {"backend": "openai", "base_url": f"http://127.0.0.1:{port}/v1", "model": name})
+    state.write_text(json.dumps({**json.loads(state.read_text()), "added_models": ["qwen3:14b"]}))
     from orbwise.server import create_app
     with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
         presets = client.get("/api/models/presets").json()
-        assert any(p["tag"] == "qwen3:8b" and p["installed"] for p in presets["presets"])
-        with client.websocket_connect("ws://localhost:8765/ws", headers={"Origin": "http://localhost:8765"}) as ws:
-            ws.receive_json()
-            assert client.post("/api/models/pull", json={"tag": "qwen3:14b"}).status_code == 200
-            events = []
-            while True:
-                ev = ws.receive_json()
-                if ev["type"] == "model_pull":
-                    events.append(ev)
-                    if ev.get("done") or ev.get("error"):
-                        break
-            assert events[-1] == {"type": "model_pull", "tag": "qwen3:14b", "done": True, "profile": "qwen3-14b"}
-            assert any(e.get("status") for e in events[:-1])  # Fortschritt (gedrosselt auf ~2 pro Sekunde)
-            names = [p["name"] for p in client.get("/api/models").json()["profiles"]]
-            assert "qwen3-14b" in names
-            client.post("/api/models/pull", json={"tag": "gibts:nicht"})
-            while True:
-                ev = ws.receive_json()
-                if ev["type"] == "model_pull" and (ev.get("done") or ev.get("error")):
-                    break
-            assert "does not exist" in ev["error"]
-        assert client.post("/api/models/pull", json={"tag": "; rm -rf /"}).status_code == 400
-    assert FakeOllama.pulled == ["qwen3:14b"]
-
-
-def model_pull_events(ws, until):
-    while True:
-        ev = ws.receive_json()
-        if ev["type"] == "model_pull":
-            if until(ev):
-                return ev
-
-
-def test_cancel_download_and_delete_models(cfg, ollama, monkeypatch, tmp_path):
-    monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
-    monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
-    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
-    cfg.llm.base_url = ollama
-    FakeOllama.deleted, FakeOllama.aborted = [], False
-    from orbwise.server import create_app
-    with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
-        with client.websocket_connect("ws://localhost:8765/ws", headers={"Origin": "http://localhost:8765"}) as ws:
-            ws.receive_json()
-            # Download abbrechen
-            assert client.post("/api/models/pull", json={"tag": "langsam:1b"}).status_code == 200
-            model_pull_events(ws, lambda ev: ev.get("completed"))
-            running = client.get("/api/models").json()["pulls"]
-            assert running[0]["tag"] == "langsam:1b" and running[0]["total"] == 200
-            assert client.delete("/api/models/pull/langsam:1b").status_code == 200
-            assert model_pull_events(ws, lambda ev: ev.get("cancelled") or ev.get("done") or ev.get("error")) == \
-                {"type": "model_pull", "tag": "langsam:1b", "cancelled": True}
-            assert client.get("/api/models").json()["pulls"] == []
-            assert "langsam-1b" not in [p["name"] for p in client.get("/api/models").json()["profiles"]]
-            assert client.delete("/api/models/pull/langsam:1b").status_code == 404
-
-            # Geladenes Modell löschen
-            client.post("/api/models/pull", json={"tag": "llama3.1:8b"})
-            model_pull_events(ws, lambda ev: ev.get("done") or ev.get("error"))
-        models = {p["name"]: p for p in client.get("/api/models").json()["profiles"]}
-        assert models["llama3.1-8b"]["deletable"] and models["llama3.1-8b"]["size_gb"] == 4.9
-        assert not models["standard"]["deletable"]  # aus der config.yaml
-        assert client.delete("/api/models/standard").status_code in (400, 409)
+        assert presets["presets"] and all(p["tag"].startswith("hf.co/") and not p["installed"] for p in presets["presets"])
+        for bad in ("; rm -rf /", "qwen3:14b", ""):
+            assert client.post("/api/models/pull", json={"tag": bad}).status_code == 400
+        data = client.get("/api/models").json()
+        models = {p["name"]: p for p in data["profiles"]}
+        assert set(models) == {"eins", "zwei"} and all(p["deletable"] for p in models.values())
+        assert all(p["engine"] == "OpenAI-API" for p in models.values())
+        assert data["retired"] == ["qwen3-14b"] and data["embed"]["available"] is False and data["embed"]["problem"]
         assert client.delete("/api/models/gibtsnicht").status_code == 404
-        # nutzt ein anderes Profil dasselbe Ollama-Modell, bleiben die Dateien (hier: standard = qwen3:14b)
-        mdl.register_model(cfg.memory.dir.parent / "state.json", "qwen3:14b")
-        client.post("/api/models/reload")
-        assert client.delete("/api/models/qwen3-14b").json()["ok"] and FakeOllama.deleted == []
-        assert client.post("/api/models/llama3.1-8b/activate").status_code == 200
+        assert client.post("/api/models/eins/activate").status_code == 200
         # aktives Modell: wird entladen, ein anderes gewählt (ohne Laden), dann gelöscht
-        r = client.delete("/api/models/llama3.1-8b").json()
-        assert r["ok"] and r["active"] != "llama3.1-8b"
+        r = client.delete("/api/models/eins").json()
+        assert r["ok"] and r["active"] == "zwei"
         listed = client.get("/api/models").json()
-        assert listed["unloaded"] and listed["active"] == r["active"]
-        assert "llama3.1-8b" not in [p["name"] for p in client.get("/api/models").json()["profiles"]]
-        assert FakeOllama.deleted == ["llama3.1:8b"]
-        assert "llama3.1:8b" not in mdl.added_models(cfg.memory.dir.parent / "state.json")
+        assert listed["unloaded"] and [p["name"] for p in listed["profiles"]] == ["zwei"]
+        assert client.delete("/api/models/zwei").status_code == 409  # das einzige Modell
+    assert "eins" not in mdl.added_profiles(state)

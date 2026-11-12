@@ -108,7 +108,8 @@ def test_normalize_links_and_names():
     assert n(f"hf.co/{REPO}:Q4_K_M") == f"hf.co/{REPO}:Q4_K_M"  # Groß/Klein bleibt
     # geteilte Dateien: llama.cpp lädt alle Teile
     assert n(f"https://huggingface.co/{REPO}/blob/main/BF16/Qwen3.6-27B-BF16-00001-of-00002.gguf") == f"hf.co/{REPO}:BF16"
-    assert n("Qwen3:8B") == "qwen3:8b" and n("; rm -rf /") is None and n("") is None
+    assert n(REPO) == f"hf.co/{REPO}" and n(f"{REPO}:Q8_0") == f"hf.co/{REPO}:Q8_0"  # kurz: nutzer/repo
+    assert n("Qwen3:8B") is None and n("; rm -rf /") is None and n("") is None  # Ollama-Namen gibt es nicht mehr
     assert mdl.label_of(f"hf.co/{REPO}:UD-Q4_K_XL") == "Qwen3.6-27B UD-Q4_K_XL"
     assert mdl.slug(f"hf.co/{REPO}:Q4_K_M") == "hf.co-unsloth-qwen3.6-27b-gguf-q4-k-m"
 
@@ -151,14 +152,6 @@ def test_hf_search_api(cfg, hf, monkeypatch):
         assert quants["gpu"]["vram_gb"] == 24 and len(quants["quants"]) == 4
         assert client.get("/api/models/hf/quants", params={"repo": "x/gibtsnicht"}).status_code == 404
         assert client.post("/api/models/pull", json={"tag": "; rm -rf /"}).status_code == 400
-
-
-def test_runner_crash_is_explained():
-    from orbwise.llm import ollama_error
-    body = '{"error":"llama-server process has terminated: signal: segmentation fault (core dumped)"}'
-    text = ollama_error(500, body, f"hf.co/{REPO}:UD-Q4_K_XL")
-    assert "abgestürzt" in text and "segmentation fault" in text and "Mit llama.cpp neu laden" in text
-    assert ollama_error(500, '{"error":"model not found"}', "x") == "Ollama antwortet mit 500: model not found"
 
 
 def test_search_shows_details_and_sorts(hf):
