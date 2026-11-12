@@ -108,3 +108,54 @@ def test_router_uses_the_embedder_and_reports_it(tmp_path):
     st = run(router.status())
     assert st["embed_available"] is True and st["embed_problem"] == ""
     run(router.close())
+
+
+def test_missing_model_is_not_searched_on_every_question(tmp_path, monkeypatch):
+    calls = []
+    import orbwise.embedder as mod
+    real = mod.find_model
+    monkeypatch.setattr(mod, "find_model", lambda *a: calls.append(1) or real(*a))
+    monkeypatch.setattr(mod, "OLLAMA_DIRS", ())
+    monkeypatch.delenv("OLLAMA_MODELS", raising=False)
+    e = Embedder("bge-m3", tmp_path, None, transport=httpx.MockTransport(lambda r: httpx.Response(200)))
+    for _ in range(5):
+        assert e.model_path() is None and e.status()["available"] is False
+    assert len(calls) == 1  # einmal gesucht, dann für MISSING_TTL gemerkt
+    (tmp_path / "bge-m3.gguf").write_bytes(b"x")
+    e._looked = 0.0  # Wartezeit vorbei
+    assert e.model_path() == tmp_path / "bge-m3.gguf" and e.model_path() and len(calls) == 2  # gefunden → gemerkt
+    (tmp_path / "bge-m3.gguf").unlink()
+    assert e.model_path() is None  # Datei gelöscht: nicht blind weiterverwenden
+
+
+def test_failed_start_is_not_retried_for_every_question(tmp_path):
+    (tmp_path / "bge-m3.gguf").write_bytes(b"x")
+    binary = tmp_path / "llama-server"
+    binary.write_text("#!/bin/sh\necho 'kaputt' >&2\nexit 3\n")
+    binary.chmod(0o755)
+    e = Embedder("bge-m3", tmp_path, binary, port=18079)
+    with pytest.raises(LLMError, match="Exit-Code 3"):
+        run(e.embed(["a"]))
+    binary.write_text("#!/bin/sh\nsleep 30\n")  # würde jetzt bis zum Zeitlimit hängen …
+    import time
+    t = time.monotonic()
+    with pytest.raises(LLMError, match="Exit-Code 3"):
+        run(e.embed(["a"]))  # … wird aber gar nicht erst gestartet
+    assert time.monotonic() - t < 1 and "Exit-Code 3" in e.status()["problem"]
+    run(e.close())
+
+
+def test_gpu_option_and_warm(tmp_path):
+    assert "-ngl 99" in Embedder("bge-m3", tmp_path, tmp_path / "s", gpu=True).command(tmp_path / "m.gguf")
+    asked = []
+
+    def handler(req):
+        asked.append(1)
+        return httpx.Response(200, json={"data": [{"index": 0, "embedding": [1.0]}]})
+    e = Embedder("bge-m3", tmp_path, None, transport=httpx.MockTransport(handler))
+    run(e.warm())
+    assert asked == []  # ohne Modelldatei: nichts tun, kein Fehler
+    (tmp_path / "bge-m3.gguf").write_bytes(b"x")
+    e._looked = 0.0
+    run(e.warm())
+    assert asked == [1]

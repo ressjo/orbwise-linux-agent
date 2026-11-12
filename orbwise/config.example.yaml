@@ -19,6 +19,7 @@ llm:
   # GGUF file, starts llama-server itself and needs no entry here.
   embed_model: bge-m3    # embeddings for the memory search: a name (GGUF looked up in models_dir, download with
                          # `orbwise model embed`) or a path to a .gguf file; runs on the CPU
+  # embed_gpu: false     # true = embeddings in VRAM (~1 GB) instead of on the CPU; only worth it for a huge memory
   temperature: 0.6
   num_ctx: 16384         # context window, unless the profile or the model page says otherwise
   think: false           # Qwen3 "thinking" by default (slower); the THINK button toggles it per request

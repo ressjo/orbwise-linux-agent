@@ -13,6 +13,9 @@ All notable changes to this project are documented here. The format follows
 - **Embeddings for the memory search** run in their own small `llama-server` on the CPU (starts with the first
   search), so they never compete with the language model or image mode for video memory. New:
   `orbwise model embed` downloads the embedding model.
+  The server is warmed in the background at start, a missing model file is not searched for on every question,
+  and a server that fails to start is not retried for five minutes (questions do not wait for it).
+  `llm.embed_gpu: true` puts the embeddings into VRAM instead.
 
 ### Migration from an Ollama setup
 - Existing configs keep loading. Profiles that used Ollama (`llm.model`, `backend: ollama`, models pulled through

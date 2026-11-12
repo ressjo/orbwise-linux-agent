@@ -22,6 +22,7 @@ import logging
 import os
 import secrets
 import shlex
+import time
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,8 @@ PORT = 8079            # neben den Sprachmodellen (ab 8080)
 CONTEXT = 8192         # bge-m3 liest bis 8192 Token
 MAX_CHARS = 12_000     # längere Texte werden gekürzt (≈ 4.000 Token) – ein Eintrag soll den Server nie sprengen
 BATCH = 16             # so viele Texte je Anfrage
+MISSING_TTL = 30.0    # so lange gilt „Modelldatei fehlt“, bevor wieder gesucht wird (Suche liest Ordner)
+RETRY_AFTER = 300.0   # nach einem gescheiterten Start so lange nicht erneut versuchen – Fragen sollen nicht warten
 OLLAMA_DIRS = ("~/.ollama/models", "/usr/share/ollama/.ollama/models", "/var/lib/ollama/.ollama/models",
                "/var/lib/ollama/models")
 
@@ -85,9 +88,13 @@ class Embedder:
     """embed(texts) → Vektoren. Startet den Embedding-Server bei Bedarf selbst."""
 
     def __init__(self, embed_model: str, models_dir: str | Path, binary: Path | None, lib_dir: Path | None = None,
-                 port: int = PORT, transport: httpx.AsyncBaseTransport | None = None):
+                 port: int = PORT, transport: httpx.AsyncBaseTransport | None = None, gpu: bool = False):
         self.embed_model, self.models_dir = embed_model, models_dir
         self.binary, self.lib_dir, self.port = binary, lib_dir, port
+        self.gpu = gpu                    # llm.embed_gpu: im Grafikspeicher statt auf der CPU
+        self._path: Path | None = None    # gefundene Modelldatei (gemerkt, solange es sie gibt)
+        self._looked = 0.0                # wann zuletzt vergeblich gesucht
+        self._start_failed = 0.0          # wann der Server zuletzt nicht starten wollte
         self.transport = transport
         self.key = secrets.token_hex(16)  # llama-server erlaubt Anfragen von jeder Webseite (CORS *) – nur mit Schlüssel
         self.server = None                # ManagedServer, sobald gestartet
@@ -100,7 +107,16 @@ class Embedder:
         return f"http://127.0.0.1:{self.port}/v1"
 
     def model_path(self) -> Path | None:
-        return find_model(self.embed_model, self.models_dir)
+        """Die Modelldatei – gemerkt, damit nicht jede Frage die Ordner durchsucht; fehlt sie, wird höchstens alle
+        MISSING_TTL Sekunden neu gesucht (nach `orbwise model embed` ist sie also gleich da)."""
+        if self._path is not None and self._path.is_file():
+            return self._path
+        now = time.monotonic()
+        if self._looked and now - self._looked < MISSING_TTL:
+            return None
+        self._path = find_model(self.embed_model, self.models_dir)
+        self._looked = 0.0 if self._path else now
+        return self._path
 
     def missing(self) -> str:
         """Leer, wenn alles da ist – sonst, was fehlt (mit Rat)."""
@@ -114,9 +130,10 @@ class Embedder:
         return ""
 
     def command(self, gguf: Path) -> str:
-        """Startbefehl: Embedding-Modus, auf der CPU, nur lokal erreichbar. Die physische Batch-Größe muss einen
-        ganzen Text fassen – sonst lehnt der Server ihn ab."""
-        return (f"{shlex.quote(str(self.binary))} -m {shlex.quote(str(gguf))} --embedding -ngl 0 -c {CONTEXT} "
+        """Startbefehl: Embedding-Modus, auf der CPU (oder mit llm.embed_gpu im Grafikspeicher), nur lokal
+        erreichbar. Die physische Batch-Größe muss einen ganzen Text fassen – sonst lehnt der Server ihn ab."""
+        layers = 99 if self.gpu else 0
+        return (f"{shlex.quote(str(self.binary))} -m {shlex.quote(str(gguf))} --embedding -ngl {layers} -c {CONTEXT} "
                 f"-b {CONTEXT} -ub {CONTEXT} -np 1 --host 127.0.0.1 --port {self.port} --api-key {self.key}")
 
     async def _ensure(self) -> None:
@@ -127,12 +144,19 @@ class Embedder:
         if self.transport is not None:  # Tests: kein Prozess
             return
         async with self._lock:
+            if self._start_failed and time.monotonic() - self._start_failed < RETRY_AFTER:
+                raise LLMError(self._failed or "Embedding-Server startet nicht")
             if self.server is None:
                 from .llm_router import ManagedServer
                 env = {"LD_LIBRARY_PATH": str(self.lib_dir)} if self.lib_dir else {}
-                cfg = ServerConfig(command=self.command(self.model_path()), env=env, startup_timeout=120)
+                cfg = ServerConfig(command=self.command(self.model_path()), env=env, startup_timeout=60)
                 self.server = ManagedServer(cfg, self.base_url, plain=True)
-            await self.server.ensure_running()
+            try:
+                await self.server.ensure_running()
+            except LLMError as e:  # nicht bei jeder Frage wieder bis zum Zeitlimit warten
+                self._start_failed, self._failed = time.monotonic(), str(e)
+                raise
+            self._start_failed = 0.0
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
@@ -162,10 +186,20 @@ class Embedder:
         self._failed = ""
         return out
 
+    async def warm(self) -> None:
+        """Beim Start von Orbwise im Hintergrund: Server starten und das Modell laden, damit die erste Frage nicht
+        darauf wartet. Fehlt etwas, passiert nichts (die Suche nimmt dann Stichworte)."""
+        if self.missing():
+            return
+        try:
+            await self.embed(["warm"])
+        except LLMError as e:
+            log.warning("Embedding-Server nicht vorgeladen: %s", e)
+
     def status(self) -> dict[str, Any]:
-        path = self.model_path()
-        return {"model": self.embed_model, "path": str(path) if path else "", "available": not self.missing(),
-                "running": bool(self.server and self.server.running()), "problem": self.missing() or self._failed}
+        path, why = self.model_path(), self.missing()
+        return {"model": self.embed_model, "path": str(path) if path else "", "available": not why,
+                "running": bool(self.server and self.server.running()), "problem": why or self._failed}
 
     async def close(self) -> None:
         if self._client is not None:

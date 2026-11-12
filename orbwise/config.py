@@ -73,6 +73,9 @@ class LLMConfig(BaseModel):
     # Embedding-Modell für die Gedächtnis-Suche: ein Name (die GGUF-Datei wird unter models_dir gesucht bzw. aus
     # einem früheren Ollama übernommen) oder direkt ein Pfad zu einer .gguf-Datei – läuft über llama.cpp auf der CPU
     embed_model: str = "bge-m3"
+    # Embeddings im Grafikspeicher statt auf der CPU (~1 GB VRAM): lohnt sich nur bei sehr großem Gedächtnis bzw.
+    # häufigem `orbwise reindex`; einzelne Fragen sind auch auf der CPU schnell
+    embed_gpu: bool = False
     temperature: float = 0.6
     num_ctx: int = 16384
     # Qwen3 "Thinking" abschalten – deutlich schnellere Antworten

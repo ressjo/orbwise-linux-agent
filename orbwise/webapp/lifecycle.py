@@ -201,6 +201,8 @@ def setup(ctx) -> None:
         heal_index_soon()
         if isinstance(llm, LLMRouter):
             background.append(asyncio.create_task(start_model()))
+            if env("SKIP_WARMUP") != "1":  # Embedding-Server (CPU) vorladen – die erste Frage wartet sonst darauf
+                background.append(asyncio.create_task(llm.embedder.warm()))
             if retired and retired["strata"]:
                 background.append(asyncio.create_task(remove_retired(retired)))
         else:

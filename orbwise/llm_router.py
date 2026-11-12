@@ -424,7 +424,7 @@ class LLMRouter:
         from .embedder import Embedder
         llama = state_path.parent / "llama.cpp" / "current" if state_path else None
         self.embedder = Embedder(cfg.embed_model, cfg.models_dir, llama / "llama-server" if llama else None, llama,
-                                 transport=transport)
+                                 transport=transport, gpu=cfg.embed_gpu)
         self.active = self._initial_profile()
         self.client = None
         self.servers: dict[str, ManagedServer] = {}
