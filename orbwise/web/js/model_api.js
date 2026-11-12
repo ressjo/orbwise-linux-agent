@@ -89,11 +89,9 @@ export async function renderApiTab() {
        `curl ${st.url}/chat/completions \\\n  -H "Authorization: Bearer ${key}" -H "Content-Type: application/json" \\\n  -d '{"model": "${modelId}", "messages": [{"role": "user", "content": "Hallo"}]}'`);
   box.querySelector(".api-notes").textContent = L(
     "Nur auf diesem Rechner erreichbar. Programme bekommen das Modell ohne Orbwise-Systemprompt, Gedächtnis und Werkzeuge – sie können also nichts am PC tun. "
-    + "Orbwise und das Programm teilen sich das Modell: Nach einer API-Anfrage liest Orbwise deinen Chat beim nächsten Mal neu ein (dauert einen Moment). "
-    + "Bei Ollama-Modellen kann Ollama das Modell mit anderer Kontextgröße neu laden.",
+    + "Orbwise und das Programm teilen sich das Modell: Nach einer API-Anfrage liest Orbwise deinen Chat beim nächsten Mal neu ein (dauert einen Moment).",
     "Only reachable on this computer. Programs get the model without the Orbwise system prompt, memory and tools – so they can't do anything on the PC. "
-    + "Orbwise and the program share the model: after an API request Orbwise re-reads your chat next time (takes a moment). "
-    + "With Ollama models, Ollama may reload the model with a different context size.");
+    + "Orbwise and the program share the model: after an API request Orbwise re-reads your chat next time (takes a moment).");
 }
 export function showApiStatus(st) {
   const el = $("mp-api").querySelector(".api-status");

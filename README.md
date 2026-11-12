@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <b>A local AI assistant for Linux that remembers, writes code and runs your PC – on your own hardware.</b>
+  <b>The local AI assistant you can trust with your Linux machine.</b>
 </p>
 
 <p align="center">
@@ -16,45 +16,103 @@
   <img alt="Languages: German, English" src="https://img.shields.io/badge/language-de%20%7C%20en-2b6f73">
 </p>
 
-Orbwise is a web app on `localhost` with a voice, a long memory and real hands on your system. The model runs on
-your machine through llama.cpp or Ollama; speech recognition and speech output run locally too – in German or
-English.
+Orbwise runs a language model on your own GPU and gives it real hands on your system – updates, files, code, your
+servers. It shows you the exact command or diff before anything changes, and nothing leaves the PC unless you use web
+search or a service you set up.
 
-![A conversation: answer in a serif reading font, a running web search on the small orb, activity panel with live telemetry](docs/screenshot-chat.png)
+![Orbwise changes a landing page: it shows the diff and asks, then checks the result with a screenshot – "1 file changed" with Undo](docs/demo.gif)
 
-<p align="center"><i>Remembers for weeks · codes in a sandbox and shows you what it built · runs your PC, but asks first</i></p>
+## Why Orbwise
 
-## What makes it different
+- **It asks first – and you can see why.** Every change appears as a card with the exact command or diff. Four levels
+  decide what may run without asking, from *nothing* to *everything but root*; `sudo` always goes through a password
+  dialog that shows what gets root; scripts and builds run in a cage without network. Content from web pages or
+  mails cannot trigger actions on its own. → [Security](docs/security.md#security)
+- **It runs on the hardware you have.** From 8 GB of video memory up: the prompt, the tools and the memory adapt to
+  the context window. llama.cpp, speech recognition and speech output all run locally.
+  → [Models](docs/models.md#models--profiles)
+- **It measures itself.** `orbwise bench` lets the coding agent solve ten fixed tasks with your model and tells you
+  what was solved, in how many steps and how long it took – so you know whether a model is any good as an agent
+  before you rely on it. → [Benchmark](docs/models.md#does-the-agent-work-with-this-model-orbwise-bench)
 
-**It remembers – without running out of context.** Every conversation lands in a plain Markdown journal, one file
-per day, plus daily summaries and a `facts.md` you can edit by hand. A local search index (full text + embeddings)
-brings old details back when they matter: "what did we do with the NAS last Tuesday?" works weeks later. Long chats
-are compacted the way Claude Code does it, so the prompt stays small and the prompt cache stays warm. Each coding
-project gets a memory of its own. → [Memory](docs/memory.md#memory--without-context-window-problems)
+## Quick start
 
-**A coding agent that looks at its own work.** Switch to *Coding*, pick a project and the agent works like OpenCode:
-reads before it edits, makes small exact changes, runs the tests, can be undone per answer. Turn on the sandbox and
-it works in a container on its own copy and branch – it may install and build freely there, takes a screenshot of
-the page it just built to check the result, and your project folder stays untouched until you apply the changes or
-push the branch. Hand it a whole job with `/goal` and it keeps going until it's done.
-→ [Coding mode](docs/coding.md#coding-mode)
+```bash
+git clone https://github.com/ressjo/orbwise-linux-agent.git ~/orbwise
+~/orbwise/scripts/install.sh --lang en
+orbwise serve --open
+```
 
-![Coding in the sandbox: the agent edits a landing page, checks it with a screenshot shown in the chat, "1 file changed" with Undo, the steps in the activity panel](docs/screenshot-sandbox.png)
+The installer detects your graphics card and proposes a model that fits. Details: [Installation](#installation).
 
-**Local, voice included.** A model page in the style of LM Studio downloads GGUF models from Hugging Face, picks
-the right llama.cpp build for your GPU (ROCm, CUDA or Vulkan) and measures which settings read prompts fastest.
-Whisper listens, Pocket TTS answers sentence by sentence. Nothing leaves the PC unless you use web search or a
-service you configured. → [Models](docs/models.md#models--profiles) · [Voice](docs/integrations.md#voice--voice-effect)
+## What it does
 
-**It asks before it changes things.** Every command that changes the system appears as a card with the exact command
-or diff – confirm by click, key or voice. Read-only commands run directly, destructive ones never; content from mails,
-web pages or the screen can't trigger actions on its own. → [Security](docs/security.md#security)
+**Runs your PC – but asks.** "Update my system", "what is filling up my disk?", "restart the web server on the NAS":
+read-only commands run directly, everything else waits for your click, key or voice. → [Security](docs/security.md#security)
 
 ![Confirmation card in the chat before a system update](docs/screenshot-confirm.png)
 
+**Writes code and looks at its own work.** In *Coding* the agent reads before it edits, makes small exact changes,
+runs the project's tests before it says "done" and can be undone per answer. With the sandbox it works in a container
+on its own copy and branch; `/goal` hands it a whole job. → [Coding mode](docs/coding.md#coding-mode)
+
+![Coding: the agent changed the landing page headline, the preview it took is shown in the chat, "1 file changed" with Undo](docs/screenshot-coding.png)
+
+**Remembers – without running out of context.** Every conversation lands in a plain Markdown journal, with daily
+summaries and a `facts.md` you can edit by hand. A local search index brings old details back when they matter:
+"what did we do with the NAS last Tuesday?" works weeks later. → [Memory](docs/memory.md#memory--without-context-window-problems)
+
+![A conversation with a running web search; the activity panel shows speed, context and what the agent is doing](docs/screenshot-chat.png)
+
+**Speaks and listens, locally.** Whisper listens, Pocket TTS answers sentence by sentence – in German or English.
+→ [Voice](docs/integrations.md#voice--voice-effect)
+
+**Connects to what you already run.** Home Assistant, Paperless, mail, calendars, Docker, SSH, Telegram – and any
+[MCP server](docs/integrations.md#mcp-servers-tools-from-other-programs).
+
+## What it protects – and what it doesn't
+
+Orbwise runs commands on your machine, so this is the part to read. The table is computed from the code
+(`python -m orbwise.security_matrix`) and a test fails when it is out of date.
+
+<!-- security-matrix:begin -->
+|  | Off | Read only | Read + edit files | Auto |
+|---|---|---|---|---|
+| Reading: `ls`, `df`, `git status` | **asks** | runs | runs | runs |
+| Create or change a file in your home | **asks** | **asks** | runs | runs |
+| Scripts, builds, tests: `python3 x.py`, `npm test` | **asks** | **asks** | runs caged | runs |
+| Deleting: `rm file` | **asks** | **asks** | **asks** | runs |
+| Sending to the network: `curl -d @file …` | **asks** | **asks** | **asks** | runs |
+| Changing start-up files: `~/.bashrc`, autostart | **asks** | **asks** | **asks** | runs |
+| Reading credentials: `cat ~/.ssh/id_rsa` | **asks** | **asks** | **asks** | **asks** |
+| The same file with the read tool | **never** | **never** | **never** | **never** |
+| Root: `sudo …`, `su`, `pkexec`, `yay` | **asks** | **asks** | **asks** | **password dialog** |
+| `git push` | **asks** | **asks** | **asks** | **asks** |
+| `rm -rf /`, overwriting a disk, `chmod -R … /` | **never** | **never** | **never** | **never** |
+<!-- security-matrix:end -->
+
+Each protection – hidden instructions in web pages and mails, reading your keys, smuggling data out, root, destroying
+the system – is a readable test in [`tests/test_attacks.py`](tests/test_attacks.py); the
+[threat model](docs/security.md#threat-model) says which test proves what.
+
+**It does not protect against:** approving a card without reading it · the level *Auto*, which lets everything but
+root, pushing, mail and reading credentials run (including what a web page talks the model into) · passwordless sudo, where a script
+calling sudo runs as root unasked in *Auto* · the `docker` group, which is root without a password · a kernel exploit
+· a model that is simply wrong. `orbwise doctor --security` shows which of these apply on your machine.
+→ [Details](docs/security.md#what-it-does-not-protect-against)
+
+## Built with AI, checked by tests
+
+Most of Orbwise's code was written with an AI coding assistant (Claude Code), directed, reviewed and used daily by a
+human. What keeps it honest is not the author but the checks: more than 1,300 tests on every commit, the safety rules
+in code instead of in the prompt, and a [benchmark](docs/models.md#does-the-agent-work-with-this-model-orbwise-bench)
+that measures whether the agent solves real tasks with a given model.
+
 ## Skills
 
-What Orbwise can do for you – each line links to the details.
+What Orbwise can do for you – each line links to the details. System, files, web, coding, memory, routines and voice
+are the **core**; servers, smart home, documents, mail, notes, calendar and phone are optional **extras** that only
+appear once you set them up.
 
 | | |
 |---|---|
@@ -72,8 +130,7 @@ What Orbwise can do for you – each line links to the details.
 | **Planning** | Plan mode: looks things up read-only and presents a plan to run, change or discard → [Plan mode](docs/coding.md#plan-mode) |
 
 > Orbwise is an independent hobby project. It can run commands on your computer – use it at your own risk, see the
-> [Disclaimer](#disclaimer). Most of the code was written with an AI coding assistant (Claude Code) and reviewed,
-> tested and used by a human; bug reports and fixes are welcome.
+> [Disclaimer](#disclaimer). Bug reports and fixes are welcome.
 
 ## Requirements
 
@@ -97,9 +154,10 @@ The installer asks for the **language**, the **graphics card** (NVIDIA / AMD / n
 pre-selected), the **language model** from a list of presets that shows what fits your video memory
 (✔ fits · ~ partly in RAM · ✘ too big) with a recommendation, and which **skills** to set up (see
 [Skills: set up and switch](docs/integrations.md#skills-set-up-and-switch)). On AMD cards that ROCm doesn't officially support
-(RX 6600/6650/6700, RX 7600) it offers to set the needed `HSA_OVERRIDE_GFX_VERSION` for Ollama.
+(RX 6600/6650/6700, RX 7600) it tells you the `HSA_OVERRIDE_GFX_VERSION` the card usually needs (see
+[AMD GPUs](docs/models.md#amd-gpus)); without it llama.cpp falls back to its Vulkan build.
 
-Options: `--model qwen3:8b` (skip the model question), `--gpu auto|cuda|rocm|vulkan|cpu`, `--lang de|en`,
+Options: `--model unsloth/Qwen3-8B-GGUF` (skip the model question; a Hugging Face repo or link), `--gpu auto|cuda|rocm|vulkan|cpu`, `--lang de|en`,
 `--yes` (no questions, use the detected/recommended defaults), `--autostart` (also start Orbwise at login – off by
 default).
 
@@ -108,9 +166,9 @@ default).
 
 The installer
 
-1. installs the system packages (Ollama with the right GPU backend, `uv`, `fd`, `ripgrep`, `plocate`, `xdg-utils`, …),
+1. installs the system packages (`uv`, `fd`, `ripgrep`, `plocate`, `xdg-utils`, …),
 2. sets up the Python environment (`uv sync --extra voice`),
-3. pulls the chosen model (recommendation: ≥ 22 GB → `qwen3:30b`, ≥ 12 GB → `qwen3:14b`, ≥ 6 GB → `qwen3:8b`, otherwise `qwen3:4b`) together with `bge-m3` (embeddings) – if a download fails you can pick another model,
+3. downloads a prebuilt **llama.cpp** (the build that runs on your GPU: CUDA, ROCm, Vulkan or CPU – nothing is compiled) and the chosen model as a GGUF file from Hugging Face (recommendation: ≥ 22 GB → Qwen 3 30B-A3B, ≥ 12 GB → Qwen 3 14B, ≥ 6 GB → Qwen 3 8B, otherwise Qwen 3 4B) together with `bge-m3` (embeddings, runs on the CPU) – if a download fails you can pick another model,
 4. installs the speech output Piper with the voice of your language (`orbwise voice install`), the wake word model and Whisper,
 5. adds an **Orbwise** entry to the application menu – it starts the server when needed and opens the UI in its own
    window. Orbwise does **not** start at login unless you ask for it (`--autostart`, **Settings → General → Start at
@@ -123,7 +181,7 @@ Everything else – models, skills and their passwords, voice – is set up in t
 Then:
 
 ```bash
-orbwise doctor        # checks Ollama, models, voice, wake word, tools, integrations, NAS
+orbwise doctor        # checks llama.cpp, models, voice, wake word, tools, integrations, NAS
 orbwise serve --open  # starts the server and opens http://localhost:8765
 ```
 
@@ -210,10 +268,12 @@ orbwise serve [--open] [-v]    # start the server
 orbwise open                   # open the UI in the browser (signed in)
 orbwise stop                   # stop a running Orbwise (also one in the background)
 orbwise doctor                 # check the installation
+orbwise doctor --security      # which safeguards are in effect on this machine (cage, sudo, network, level)
 orbwise skills                 # skills overview (setup / enable / disable <name>)
 orbwise autostart [on|off]     # start at login (default: off)
 orbwise model [name]           # list or switch model profiles
-orbwise model add [ollama-tag] # download another model (interactive presets without a tag; also HF links)
+orbwise model add [user/repo]  # download another model (interactive presets without a name; HF links, .gguf files)
+orbwise model embed            # download the embedding model for the memory search
 orbwise model search <term>    # search GGUF models on Hugging Face (or <user/repo> for its quantizations)
 orbwise model llamacpp --update # newest llama.cpp build for models from Hugging Face / ~/models
 orbwise model add qwen-image   # image model (also z-image-turbo, flux-schnell, sdxl) – or in the image view
@@ -234,7 +294,7 @@ orbwise init-config            # experts: write the commented example config.yam
 |---|---|
 | `orbwise: command not found` | Open a new terminal (PATH was extended) or run `~/orbwise/scripts/install.sh` again |
 | The orb stays "OFFLINE" | Is `orbwise serve` running? Log: `~/.local/state/orbwise.log` |
-| "Ollama not reachable" | `sudo systemctl enable --now ollama` |
+| A profile "used Ollama" / the model is gone after an update | Orbwise runs models with llama.cpp only. Add the model again as GGUF (**Models → Add** or `orbwise model add <user/repo>`); the memory search keeps working with the `bge-m3` file Ollama already downloaded. `orbwise doctor` lists what is left to do |
 | Context: "shortened", slow answers, the window seems smaller | `orbwise context-test` (or Models → model → *Diagnostics* → *Test context*): checks whether the server really runs with the configured window, KV cache in VRAM, token estimate, prompt cache (same prompt and follow-up), a prompt up to the compaction point (the model must still repeat a code word from its start) and overflow detection. `--quick` skips the two slow fill checks |
 | No natural voice (the browser speaks) | `orbwise doctor` → Piper missing? `orbwise voice install`; its log: `~/.local/share/orbwise/piper/server.log` (Pocket TTS: `…/pocket-tts/server.log`) |
 | Microphone doesn't work | Open `http://localhost:8765` (not the IP), check the browser's microphone permission |
@@ -258,7 +318,7 @@ Browser (localhost:8765)                          Python backend (FastAPI, 127.0
  ├─ microphone → 16 kHz PCM             ──WS──►   wake word (openWakeWord) → VAD → Whisper
  └─ playback + level → orb              ◄──────   Pocket TTS (sentence by sentence)
                                                    │
-                         Ollama / llama-server (LLM + bge-m3)   ~/.local/share/orbwise/memory/
+                         llama-server (LLM) + bge-m3 on CPU     ~/.local/share/orbwise/memory/
 ```
 
 Screenshots are made in demo mode (`ORBWISE_FAKE_LLM=1`, no real model) – regenerate them with
@@ -266,7 +326,7 @@ Screenshots are made in demo mode (`ORBWISE_FAKE_LLM=1`, no real model) – rege
 
 ```bash
 uv sync --extra voice --extra dev
-uv run pytest -q                                   # all tests run offline, no GPU/Ollama needed
+uv run pytest -q                                   # all tests run offline, no GPU or model needed
 uv run ruff check orbwise tests
 ORBWISE_FAKE_LLM=1 uv run orbwise serve --open       # UI demo without a model ("/tool <name> <json>" calls tools)
 ```
@@ -307,7 +367,7 @@ from their original sources, and their licenses apply:
 | [Pocket TTS](https://github.com/kyutai-labs/pocket-tts) + its model and voices (downloaded by the installer or on request) | speech output | program MIT · model see [its model card](https://huggingface.co/kyutai/pocket-tts) · voices per voice, see [kyutai/tts-voices](https://huggingface.co/kyutai/tts-voices) |
 | [openWakeWord](https://github.com/dscripka/openWakeWord) | wake word | code Apache-2.0 · pre-trained "hey_jarvis" model **CC BY-NC-SA 4.0 (non-commercial)** |
 | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) + Whisper models | speech recognition | MIT |
-| Language models via Ollama / llama.cpp (Qwen, Llama, Mistral, gpt-oss, …) | chat | per model – see its model card |
+| Language models via llama.cpp (Qwen, Llama, Mistral, gpt-oss, …) | chat | per model – see its model card |
 | [ddgs](https://pypi.org/project/ddgs/), [trafilatura](https://github.com/adbar/trafilatura), [caldav](https://github.com/python-caldav/caldav) | web search, page text, calendar | MIT · Apache-2.0 · GPL-3.0-or-later OR Apache-2.0 |
 | [pypdf](https://github.com/py-pdf/pypdf) | reading attached PDFs | BSD-3-Clause |
 

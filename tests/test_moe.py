@@ -74,7 +74,6 @@ def test_new_profile_for_a_big_moe_model_keeps_context(tmp_path, cfg):
     small_gpu = {"vram_gb": 4, "gpus": [{"vram_gb": 4}]}
     p = llamacpp.make_profile(cfg, "big", gguf, None, small_gpu, 8090)
     assert " --n-cpu-moe 2" in p["server"]["command"] and " -c 32768 " in p["server"]["command"]
-    assert p["embed_on_cpu"] is True
     big_gpu = {"vram_gb": 24, "gpus": [{"vram_gb": 24}]}
     assert "--n-cpu-moe" not in llamacpp.make_profile(cfg, "big", gguf, None, big_gpu, 8090)["server"]["command"]
     dense = write_gguf(tmp_path / "Dense-Q6_K.gguf", moe=False)
@@ -97,7 +96,7 @@ def _router(tmp_path, saved: dict | None = None):
     cfg = LLMConfig(base_url="http://127.0.0.1:9", profiles={
         "moe": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8099/v1", model="moe", num_ctx=8192,
                              server=ServerConfig(command="llama-server -m moe.gguf -ngl 99 -c 8192")),
-        "olla": ProfileConfig(backend="ollama", model="qwen3")}, active="olla")
+        "extern": ProfileConfig(base_url="http://127.0.0.1:9/v1", model="qwen3")}, active="extern")
     return LLMRouter(cfg, state_path=state), state
 
 
@@ -116,7 +115,7 @@ def test_router_sets_and_remembers_moe(tmp_path):
     router.follow_moe("moe", 5)  # nicht mehr automatisch → bleibt aus
     assert "--n-cpu-moe" not in router.profiles["moe"].server.command
     with pytest.raises(Exception):
-        asyncio.run(router.set_moe("olla", 2))  # Ollama: geht nicht
+        asyncio.run(router.set_moe("extern", 2))  # Ollama: geht nicht
     # gemerkte Einstellung gilt nach einem Neustart
     again, _ = _router(tmp_path, {"moe": {"moe": {"auto": 2}}})
     assert " --n-cpu-moe 2" in again.profiles["moe"].server.command and again.moe_auto("moe")
@@ -128,12 +127,11 @@ def test_api_sets_moe_and_reports_it(tmp_path, cfg, monkeypatch):
     monkeypatch.setattr(mdl, "detect_gpu", lambda: {"vendor": "amd", "vram_gb": 4, "gpus": [{"vram_gb": 4}]})
     monkeypatch.setattr(router_mod, "_help_text", lambda command, env: "--n-cpu-moe N  keep experts of N layers on the CPU")
     gguf = write_gguf(tmp_path / "Big-MoE-Q6_K.gguf")
-    cfg.llm.base_url = "http://127.0.0.1:9"
     cfg.llm.profiles = {
         "big": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8099/v1", model="big", num_ctx=32768,
                              server=ServerConfig(command=f"llama-server -m {gguf} -ngl 99 -c 32768")),
-        "olla": ProfileConfig(backend="ollama", model="qwen3")}
-    cfg.llm.active = "olla"
+        "extern": ProfileConfig(base_url="http://127.0.0.1:9/v1", model="qwen3")}
+    cfg.llm.active = "extern"
     state = cfg.memory.dir.parent / "state.json"
     state.parent.mkdir(parents=True, exist_ok=True)
     state.write_text(json.dumps({"local_models": {"big": {"files": [str(gguf)], "downloaded": False}}}))
@@ -149,7 +147,7 @@ def test_api_sets_moe_and_reports_it(tmp_path, cfg, monkeypatch):
         assert client.post("/api/models/big/moe", json={"mode": "manual", "n": 3}).json()["n"] == 3
         assert client.post("/api/models/big/moe", json={"mode": "manual", "n": 9}).status_code == 400
         assert client.post("/api/models/big/moe", json={"mode": "off"}).json()["n"] == 0
-        assert client.post("/api/models/olla/moe", json={"mode": "auto"}).status_code == 400  # kein MoE/llama.cpp
+        assert client.post("/api/models/extern/moe", json={"mode": "auto"}).status_code == 400  # kein MoE/llama.cpp
         # Kontext kleiner bei „automatisch“: weniger Experten müssen in den RAM
         client.post("/api/models/big/moe", json={"mode": "auto"})
         client.post("/api/models/big/context", json={"ctx": 8192, "mode": "tools"})
@@ -163,12 +161,11 @@ def test_auto_needs_a_known_gpu(tmp_path, cfg, monkeypatch):
     monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
     monkeypatch.setattr(mdl, "detect_gpu", lambda: {"vendor": "", "vram_gb": 0, "gpus": []})
     gguf = write_gguf(tmp_path / "Big-MoE-Q6_K.gguf")
-    cfg.llm.base_url = "http://127.0.0.1:9"
     cfg.llm.profiles = {
         "big": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8099/v1", model="big", num_ctx=32768,
                              server=ServerConfig(command=f"llama-server -m {gguf} -ngl 99 -c 32768")),
-        "olla": ProfileConfig(backend="ollama", model="qwen3")}
-    cfg.llm.active = "olla"
+        "extern": ProfileConfig(base_url="http://127.0.0.1:9/v1", model="qwen3")}
+    cfg.llm.active = "extern"
     from orbwise.server import create_app
     with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
         r = client.post("/api/models/big/moe", json={"mode": "auto"})

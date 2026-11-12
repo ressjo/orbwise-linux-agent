@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """LLM-Benchmark für die Orbwise-Modellprofile – eigenständig, nicht Teil der Oberfläche.
 
-Prüft jedes Profil (Ollama oder llama-server) mit Stichproben aus den Original-Datensätzen und gibt am Ende eine
+Prüft jedes Profil (llama-server oder ein anderer OpenAI-kompatibler Server) mit Stichproben aus den Original-Datensätzen und gibt am Ende eine
 Tabelle wie bei offiziellen Modellvorstellungen aus:
 
     MMLU-Pro   Wissen, 10 Antwortmöglichkeiten          TIGER-Lab/MMLU-Pro
@@ -51,7 +51,7 @@ import httpx
 
 from orbwise.config import DATA_DIR, load_config
 from orbwise.lang import T, set_lang
-from orbwise.llm import LLMError, OllamaLLM, OpenAICompatLLM, strip_think
+from orbwise.llm import LLMError, OpenAICompatLLM, strip_think
 
 ROWS_API = os.environ.get("HF_DATASETS_SERVER", "https://datasets-server.huggingface.co").rstrip("/") + "/rows"
 PAGE = 100  # mehr gibt die Datasets-API je Anfrage nicht heraus
@@ -510,14 +510,8 @@ def make_client(p, llm_cfg, think: bool, greedy: bool, timeout: float):
     """Eigener Client je Profil (unabhängig vom laufenden Orbwise – die Modellwahl dort bleibt unverändert)."""
     sampling = {} if greedy else p.sampling
     temperature = 0.0 if greedy else p.temperature
-    if p.backend == "openai":
-        prof = p.model_copy(update={"sampling": sampling, "temperature": temperature, "think": think})
-        return OpenAICompatLLM(prof, timeout=timeout)
-    client = OllamaLLM(llm_cfg.model_copy(update={
-        "base_url": p.base_url, "model": p.model, "temperature": temperature, "num_ctx": p.num_ctx,
-        "think": think, "request_timeout": timeout}))
-    client.sampling = sampling
-    return client
+    prof = p.model_copy(update={"sampling": sampling, "temperature": temperature, "think": think})
+    return OpenAICompatLLM(prof, timeout=timeout)
 
 
 async def ask(client, prompt: str, think: bool, max_tokens: int) -> tuple[str, dict]:
@@ -747,16 +741,6 @@ def orbwise_running(port: int) -> bool:
     return bool(listening_pids(port))
 
 
-async def unload_ollama(llm_cfg) -> None:
-    client = OllamaLLM(llm_cfg)
-    try:
-        await client.unload_all()
-    except (LLMError, httpx.HTTPError, OSError):
-        pass
-    finally:
-        await client.close()
-
-
 async def run_profile(name: str, p, llm_cfg, items: dict, run_dir: Path, args) -> None:
     from orbwise.llm_router import ManagedServer
 
@@ -764,7 +748,6 @@ async def run_profile(name: str, p, llm_cfg, items: dict, run_dir: Path, args) -
         print("  " + msg, flush=True)
 
     print(f"\n▶ {p.label} ({p.backend} · {p.model})", flush=True)
-    await unload_ollama(llm_cfg)  # Grafikspeicher für dieses Modell freimachen
     server = ManagedServer(p.server, p.base_url) if p.server else None
     timeout = max(llm_cfg.request_timeout, 1800.0 if args.think else 600.0)
     client = make_client(p, llm_cfg, args.think, args.greedy, timeout)
@@ -772,8 +755,6 @@ async def run_profile(name: str, p, llm_cfg, items: dict, run_dir: Path, args) -
         if server:
             await server.stop_foreign()
             await server.ensure_running(say)
-        elif p.backend == "ollama":
-            await client.preload()
         for key in args.bench:
             if key == "speed":
                 print("  [Speed] …", flush=True)
@@ -788,8 +769,6 @@ async def run_profile(name: str, p, llm_cfg, items: dict, run_dir: Path, args) -
         await client.close()
         if server:
             await server.stop()
-        if p.backend == "ollama":
-            await unload_ollama(llm_cfg)
 
 
 def latest_run() -> Path | None:

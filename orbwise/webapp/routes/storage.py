@@ -7,17 +7,12 @@ import asyncio
 from pathlib import Path
 from urllib.parse import quote
 
-import httpx
 from fastapi import HTTPException
 
 from ... import imagegen_setup, llamacpp, storage
 from ... import models as mdl
 from ...lang import T
 from ...llm_router import LLMRouter
-
-
-def _tag(name: str) -> str:
-    return name if ":" in name else name + ":latest"
 
 
 def register(app, ctx) -> None:
@@ -27,21 +22,11 @@ def register(app, ctx) -> None:
     llm = ctx.llm
     state_file = ctx.state_file
 
-    async def ollama_sizes() -> dict[str, int]:
-        try:
-            async with httpx.AsyncClient(base_url=cfg.llm.base_url, timeout=2) as client:
-                r = await client.get("/api/tags")
-                r.raise_for_status()
-                return {_tag(m.get("name", "")): int(m.get("size") or 0) for m in r.json().get("models", [])}
-        except (httpx.HTTPError, ValueError, AttributeError):
-            return {}
-
-    def model_items(sizes: dict[str, int]) -> list[dict]:
+    def model_items() -> list[dict]:
         if not isinstance(llm, LLMRouter):
             return []
         mdir = llamacpp.models_dir(cfg)
         seen_files: set[str] = set()
-        seen_ollama: set[str] = set()
         out = []
         for name, p in llm.profiles.items():
             rec = llamacpp.local_record(state_file, name)
@@ -59,10 +44,6 @@ def register(app, ctx) -> None:
                     note="Eigene Datei – bleibt beim Entfernen liegen." if own else "",
                     note_en="Your own file – stays when removed." if own else "", path=Path(files[0])),
                     "in_models_dir": all(storage._inside(Path(f), mdir) for f in files)})
-            elif p.backend == "ollama" and _tag(p.model) in sizes and _tag(p.model) not in seen_ollama:
-                seen_ollama.add(_tag(p.model))
-                out.append(storage._item(label, sizes[_tag(p.model)], active=name == llm.active, note="Ollama",
-                                         delete=f"/api/models/{quote(name, safe='')}" if removable else ""))
         return sorted(out, key=lambda i: -i["bytes"])
 
     def image_items(directory: Path) -> list[dict]:
@@ -89,12 +70,9 @@ def register(app, ctx) -> None:
 
     @app.get("/api/storage")
     async def storage_overview():
-        uses_ollama = isinstance(llm, LLMRouter) and any(p.backend == "ollama" for p in llm.profiles.values())
-        sizes = await ollama_sizes() if uses_ollama else {}
-
         def build() -> dict:
             directory = image_dir()
-            return storage.overview(cfg, models=model_items(sizes), images=image_items(directory),
+            return storage.overview(cfg, models=model_items(), images=image_items(directory),
                                     image_dir=directory)
         return await asyncio.to_thread(build)
 

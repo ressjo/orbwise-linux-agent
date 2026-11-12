@@ -55,10 +55,10 @@ def run(coro):
 
 def router(tmp_path, cmd):
     cfg = LLMConfig(profiles={
-        "ollama": ProfileConfig(model="qwen3:8b"),
+        "extern": ProfileConfig(base_url="http://127.0.0.1:9/v1", model="qwen3-8b"),
         "big": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8091/v1", model="a",
                              server=ServerConfig(command=cmd)),
-    }, active="ollama")
+    }, active="extern")
     return LLMRouter(cfg, state_path=tmp_path / "state.json")
 
 
@@ -80,7 +80,7 @@ def test_split_is_set_remembered_and_reset(tmp_path):
     with pytest.raises(LLMError):
         run(r.set_gpus("big", [0, 0]))
     with pytest.raises(LLMError):
-        run(r.set_gpus("ollama", [50, 50]))
+        run(r.set_gpus("extern", [50, 50]))
 
 
 def test_context_keeps_a_buffer_per_gpu(tmp_path, monkeypatch):
@@ -116,14 +116,14 @@ def test_split_api_checks_one_share_per_gpu(cfg, monkeypatch):
     monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
     fake_smi(monkeypatch)
     cfg.llm = LLMConfig(profiles={
-        "ollama": ProfileConfig(model="qwen3:8b"),
+        "extern": ProfileConfig(base_url="http://127.0.0.1:9/v1", model="qwen3-8b"),
         "big": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8091/v1", model="a",
                              server=ServerConfig(command="llama-server -m /m/a.gguf -ngl 99")),
-    }, active="ollama")
+    }, active="extern")
     origin = {"Origin": "http://localhost:8765"}
     with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
         assert client.post("/api/models/big/gpus", json={"split": [100]}, headers=origin).status_code == 400
-        assert client.post("/api/models/ollama/gpus", json={"split": [50, 50]}, headers=origin).status_code == 400
+        assert client.post("/api/models/extern/gpus", json={"split": [50, 50]}, headers=origin).status_code == 400
         r = client.post("/api/models/big/gpus", json={"split": [75, 25]}, headers=origin)
         assert r.status_code == 200, r.text
         listed = {p["name"]: p for p in client.get("/api/models").json()["profiles"]}

@@ -6,7 +6,7 @@
 #   systemctl --user daemon-reload && systemctl --user enable --now orbwise
 [Unit]
 Description=Orbwise local AI assistant
-After=network-online.target ollama.service
+After=network-online.target
 
 [Service]
 ExecStart=%h/.local/bin/orbwise serve

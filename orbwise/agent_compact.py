@@ -335,7 +335,7 @@ class CompactMixin:
                          budget: int) -> tuple[str, int]:
         """Zusammenfassung streamen (Fortschritt in der Aktivität). Gleiche Werkzeuge wie zuletzt, damit der
         Server seinen Cache nutzt – aber tool_choice "none" und ohne Denkkette. Ruft das Modell trotzdem ein
-        Werkzeug auf (Ollama kennt tool_choice nicht), einmal ohne Werkzeuge wiederholen."""
+        Werkzeug auf (nicht jeder Server kennt tool_choice), einmal ohne Werkzeuge wiederholen."""
         for tools in (self.schemas, None):
             parts: list[str] = []
             last, result = 0.0, {}

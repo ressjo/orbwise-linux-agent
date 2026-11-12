@@ -277,7 +277,7 @@ def test_whole_run_against_test_server(tmp_path, monkeypatch, capsys):
     config.write_text(json.dumps({
         "port": free_port(),
         "memory": {"dir": str(tmp_path / "data" / "memory")},
-        "llm": {"base_url": f"http://127.0.0.1:{free_port()}",  # kein Ollama
+        "llm": {
                 "profiles": {"fake": {"backend": "openai", "label": "Fake Llama",
                                       "base_url": f"http://127.0.0.1:{port}/v1",
                                       "server": {"command": f"{sys.executable} {HERE / 'fake_llama_server.py'} {port}",

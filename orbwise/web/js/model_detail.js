@@ -77,14 +77,14 @@ export function renderModelDetail() {
                                 run: () => deleteModel(p) });
   more.hidden = !items.length;
   more.onclick = (e) => { e.stopPropagation(); popMenu(more, items); };
-  box.querySelector(".md-sub").textContent = p.path || (p.backend === "ollama" ? `Ollama · ${p.model}` : p.model);
+  box.querySelector(".md-sub").textContent = p.path || p.model;
   const facts = [
     [L("Engine", "Engine"), p.engine],
     [L("Quantisierung", "Quantization"), p.quant],
     [L("Größe", "Size"), p.size_gb ? `${fmt(p.size_gb, 1)} GB` : null],
     [L("Braucht", "Needs"), p.vram_gb ? `~${fmt(p.vram_gb, 1)} GB VRAM` : null, p.fit],
     [L("Kontext", "Context"), p.num_ctx ? ctxLabel(modelCtx(p, "tools")) + (p.ctx_coding ? ` · Coding ${ctxLabel(p.ctx_coding)}` : "") : null],
-    [L("KV-Cache", "KV cache"), p.kv || (p.backend === "ollama" ? L("Ollama-Dienst", "Ollama service") : null)],
+    [L("KV-Cache", "KV cache"), p.kv || null],
     [L("Batch", "Batch"), p.ubatch && p.ubatch !== 512 ? String(p.ubatch) : null],
     [L("Beschleunigung", "Speed-up"), p.spec && p.spec !== "off" ? (p.spec === "mtp" ? "MTP" : L("N-Gramm", "N-gram"))
       : (p.spec_options || []).some((o) => o.mode === "mtp" && o.ok) ? L("MTP möglich", "MTP available") : null],
@@ -112,7 +112,7 @@ export function renderModelDetail() {
   if (p.managed && p.moe && p.moe.supported) renderMoe(box.querySelector(".md-moe"), p);
   else box.querySelector(".md-moe").remove();  // nur MoE-Modelle mit einem llama-server, der --n-cpu-moe kennt
   if (p.managed) renderPerf(box.querySelector(".md-perf"), p);
-  else box.querySelector(".md-perf").remove();  // Ollama/fremder Server: Tempo regelt der Dienst selbst
+  else box.querySelector(".md-perf").remove();  // fremder Server: Tempo regelt der Dienst selbst
   if (p.tunable) renderQuality(box.querySelector(".md-quality"), p);
   else box.querySelector(".md-quality").remove();  // nur mit Orbwises llama.cpp (llama-perplexity)
   renderSampling(box.querySelector(".md-smp"), p);
@@ -316,9 +316,7 @@ function renderKvSettings(sec, p) {
       low ? "" : L("2-Bit kann dieser llama-server nicht (das offizielle llama.cpp bietet höchstens 4 Bit).",
                    "2-bit is not supported by this llama-server (official llama.cpp goes down to 4 bits)."));
   } else {
-    hint(sec.querySelector(".kv-hint"), L("Bei Ollama gilt die Stufe für den ganzen Dienst.", "With Ollama the level applies to the whole service."),
-      L('sudo systemctl edit ollama → Environment="OLLAMA_FLASH_ATTENTION=1" "OLLAMA_KV_CACHE_TYPE=q8_0", dann sudo systemctl restart ollama.',
-        'sudo systemctl edit ollama → Environment="OLLAMA_FLASH_ATTENTION=1" "OLLAMA_KV_CACHE_TYPE=q8_0", then sudo systemctl restart ollama.'));
+    hint(sec.querySelector(".kv-hint"), L("Fremder Server: die Stufe legt er selbst fest.", "External server: it sets the level itself."), "");
   }
 }
 // Mehrere Grafikkarten: automatisch (llama.cpp verteilt nach freiem Speicher) oder eigene Anteile je Karte

@@ -29,7 +29,7 @@ start (a backup `config.yaml.bak` is kept).
 | Option | Meaning |
 |---|---|
 | `language` | `de` or `en` – assistant, speech recognition, default voice, UI and CLI |
-| `llm.model` | Ollama model, e.g. `qwen3:14b`, `qwen3:8b` |
+| `llm.embed_model` | Embedding model for the memory search: a name (`bge-m3`, downloaded with `orbwise model embed`) or a path to a `.gguf` file |
 | `llm.profiles`, `llm.active` | Several models, see [Models & profiles](models.md#models--profiles) |
 | `memory.context_budget_tokens` | Optional cap for the prompt size (default: automatic from the context window) |
 | `memory.compact_idle` | Compact a nearly full context right after an answer instead of before the next question (default on) |

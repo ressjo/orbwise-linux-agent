@@ -8,7 +8,7 @@ import pytest
 from conftest import run
 
 from orbwise import bench
-from orbwise.bench_tasks import BY_NAME, TASKS
+from orbwise.bench_tasks import BY_NAME, COMMON, TASKS
 
 needs_git = pytest.mark.skipif(not shutil.which("git"), reason="git fehlt")
 
@@ -26,6 +26,35 @@ def test_task_is_unsolved_at_first_and_solved_by_its_reference(task, tmp_path):
     ok, why = bench.verdict(task, project, task.answer)
     assert ok, why
     assert task.solution or task.answer  # jede Aufgabe hat eine Musterlösung
+
+
+def test_checks_need_no_pytest(tmp_path):
+    """Orbwises eigene Umgebung hat kein pytest – die Prüfung nimmt den Test-Lauf, den jedes Projekt mitbringt."""
+    import subprocess
+    import sys
+    task = BY_NAME["fix-bug"]
+    project = tmp_path / "p"
+    project.mkdir()
+    bench._prepare(task, project)
+    assert "import pytest" not in COMMON["run_tests.py"] and "run_tests.py" in COMMON["AGENTS.md"]
+    assert COMMON[".orbwise.yaml"] == "check: python3 run_tests.py\n"  # auch die Prüf-Schranke des Agenten
+    # -I -S: ohne site-packages, also sicher ohne pytest
+    r = subprocess.run([sys.executable, "-I", "-S", "run_tests.py"], cwd=project, capture_output=True, text=True)
+    assert r.returncode == 1 and "FAILED test_stats.py::test_median_even" in r.stdout and "1 failed, 3 passed" in r.stdout
+    (project / "stats.py").write_text(task.solution["stats.py"])
+    r = subprocess.run([sys.executable, "-I", "-S", "run_tests.py"], cwd=project, capture_output=True, text=True)
+    assert r.returncode == 0 and r.stdout.strip().endswith("0 failed, 4 passed")
+    # ein Projekt ganz ohne Tests gilt nicht als „grün“; ein Importfehler zählt als Fehlschlag
+    (project / "tests" / "test_stats.py").write_text("import gibt_es_nicht\n")
+    r = subprocess.run([sys.executable, "-I", "-S", "run_tests.py"], cwd=project, capture_output=True, text=True)
+    assert r.returncode == 1 and "FAILED test_stats.py (Import)" in r.stdout
+    # ein Projekt ganz ohne Tests: der Lauf meldet keinen Fehler (sonst machte er die Prüf-Schranke des Agenten bei
+    # jeder Aufgabe ohne Tests rot) – als „gelöst“ zählt es für die Prüfung trotzdem nicht
+    (project / "tests" / "test_stats.py").unlink()
+    r = subprocess.run([sys.executable, "run_tests.py"], cwd=project, capture_output=True, text=True)
+    assert r.returncode == 0 and "0 failed, 0 passed (keine Tests" in r.stdout
+    from orbwise.bench_tasks import tests_ok
+    assert tests_ok(project)[0] is False
 
 
 def test_cheating_does_not_count(tmp_path):
@@ -117,6 +146,12 @@ def test_bench_report_and_file(cfg, tmp_path, monkeypatch):
     assert "Test 7B" in report and "fix-bug" in report and "2/2" in report and "0/2" in report
     assert "2/4 gelöst (50%)" in report and "4 fehlgeschlagene Edits" in report
     assert "2/4 solved (50%)" in bench.format_report(result, en=True)
+    # die Kopfzeile sagt, womit wirklich gelaufen wurde
+    assert "Denken aus" in report and result["think"] is False
+    thinking = run(bench.run_bench(cfg, Solver(), ["find-code"], think=True, model="Test 7B"))
+    assert "· Denken an" in bench.format_report(thinking) and "· thinking on" in bench.format_report(thinking, en=True)
+    cfg.llm.think = True  # ohne Vorgabe gilt das Modell-Profil
+    assert run(bench.run_bench(cfg, Solver(), ["find-code"], model="x"))["think"] is True
     path = bench.save(result, tmp_path / "out")
     assert path.name.endswith("-Test-7B.json") and '"rate": 0.5' in path.read_text()
     with pytest.raises(ValueError, match="Unbekannte Aufgabe: gibt-es-nicht"):

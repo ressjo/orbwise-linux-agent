@@ -485,3 +485,35 @@ def test_background_jobs_get_the_password_dialog_too(cfg, tmp_path, monkeypatch,
     out, during = run(go("sudo systemctl start demo"))  # sichtbares sudo: wird zu sudo -A, mit Token
     assert "FAKE-SUDO -A systemctl start demo token=ja" in out and broker.tokens == {}
     assert not next(iter(during.values()))["implicit"]
+
+
+def test_confirmation_card_gets_the_command_that_will_run(cfg, llm, memory, monkeypatch):
+    """Systemupdate und Pakete: die Karte zeigt, was wirklich läuft – nicht nur „system_update({})“."""
+    from orbwise.agent import Agent
+    from orbwise.tools import packages
+    c = ctx(cfg)
+    monkeypatch.setattr(packages, "aur_helper", lambda _ctx: "yay")
+    cfg.tools.package_manager = "pacman"
+    assert packages.update_command(c, {}) == "sudo pacman -Syu --noconfirm\nyay -Sua --noconfirm"
+    assert packages.remove_command(c, {"names": "htop, Vim"}) == "sudo pacman -Rns --noconfirm htop vim"
+    assert packages.install_command(c, {"names": "htop"}).startswith("sudo pacman -S --needed --noconfirm htop\nyay -S")
+    cfg.tools.package_manager = "apt"
+    assert packages.update_command(c, {}) == "sudo apt-get update && sudo apt-get -y upgrade"
+    assert packages.install_command(c, {"names": "htop"}) == "sudo apt-get -y install htop"
+    assert packages.install_command(c, {"names": "htop; rm -rf /"}) == ""  # ungültig: das Werkzeug lehnt alles ab
+    cfg.tools.privilege_cmd = "pkexec"
+    assert packages.remove_command(c, {"names": "htop"}) == "pkexec apt-get -y remove --autoremove htop"
+    cfg.tools.privilege_cmd = "dashboard"
+    events = []
+
+    async def emit(ev):
+        events.append(ev)
+
+    async def deny(*a):
+        return False
+    run(Agent(cfg, llm, memory).run("/tool system_update {}", emit, deny))
+    call = next(e for e in events if e["type"] == "tool_call")
+    assert call["risk"] == "confirm" and call["command"] == "sudo apt-get update && sudo apt-get -y upgrade"
+    events.clear()  # lesende Werkzeuge und solche ohne Befehl: kein Feld
+    run(Agent(cfg, llm, memory).run("/tool list_reminders {}", emit, deny))
+    assert "command" not in next(e for e in events if e["type"] == "tool_call")

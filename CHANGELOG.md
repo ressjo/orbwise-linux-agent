@@ -5,12 +5,44 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **llama.cpp only – Ollama is no longer used.** Every model runs as a `llama-server` that Orbwise starts and
+  stops; the installer downloads a prebuilt llama.cpp and the chosen model as GGUF from Hugging Face instead of
+  installing Ollama. The presets, `orbwise model add` and the model page take Hugging Face repos, links or `.gguf`
+  files.
+- **Embeddings for the memory search** run in their own small `llama-server` on the CPU (starts with the first
+  search), so they never compete with the language model or image mode for video memory. New:
+  `orbwise model embed` downloads the embedding model.
+  The server is warmed in the background at start, a missing model file is not searched for on every question,
+  and a server that fails to start is not retried for five minutes (questions do not wait for it).
+  `llm.embed_gpu: true` puts the embeddings into VRAM instead.
+
+### Migration from an Ollama setup
+- Existing configs keep loading. Profiles that used Ollama (`llm.model`, `backend: ollama`, models pulled through
+  the UI) are no longer offered; the model page and `orbwise doctor` name them. Add the model again under
+  **Models → Add** or with `orbwise model add <user/repo>`.
+- The `bge-m3` file Ollama already downloaded is read directly – same vectors, no re-indexing, Ollama does not need
+  to run. After that Ollama can be uninstalled.
+- Removed options: `llm.base_url`, `llm.model`, `llm.keep_alive`, and per profile `embed_on_cpu`, `unload_ollama`
+  (ignored when still present).
+
 ### Added
+- **Trust you can check:**
+  - a **threat model** in `docs/security.md`: what Orbwise withstands, how, and which test proves it – plus an honest
+    list of what it does not protect against (also in the README);
+  - **`tests/test_attacks.py`**: every protection as a readable scenario – hidden instructions in a web page, reading
+    keys, smuggling data out, root in every spelling, destroying the system, a symlink out of the sandbox, an MCP
+    server that calls itself harmless;
+  - the **permission matrix** in README and docs is computed from the rules the agent applies
+    (`python -m orbwise.security_matrix`); a test fails when the table is out of date;
+  - **`orbwise doctor --security`** shows which safeguards are in effect on your machine: running as root, listening
+    beyond localhost, the cage, sudo with or without a password, the `docker` group, MCP servers allowed wholesale.
 - **Agent benchmark (`orbwise bench`):** lets the coding agent solve ten small fixed tasks with the active model –
   fixing a bug, adding a function, renaming across files, a precise edit in a large file, writing tests, reading and
   answering – each in a throw-away project with an objective check. The report shows what was solved, steps, time,
   failed edits, thinking cut short and skipped repeats, and is saved as JSON to compare models, context windows and
-  settings. Confirmations are decided by a fixed rule (what the cage of *Read + edit files* would allow).
+  settings. Confirmations are decided by a fixed rule (what the cage of *Read + edit files* would allow). The
+  projects bring their own test runner, so neither the agent nor the check needs pytest.
 - **MCP servers:** Orbwise can use the tools of any Model Context Protocol server – a program it starts (`command`,
   stdio) or one reached over HTTP (`url`). Configure them under `mcp.servers`; the tools appear as
   `mcp_<server>_<tool>` in the Tools and the Coding mode, and `orbwise doctor` shows what connected. They ask before
@@ -25,10 +57,6 @@ All notable changes to this project are documented here. The format follows
 - **Thinking that goes in circles is stopped:** when the end of a reasoning chain repeats for the third time, Orbwise
   cuts it and lets the model act with what it had worked out before the loop – in every window size (the activity
   shows "thoughts repeating"). Long reasoning that keeps moving is not touched.
-- **Thinking during tasks – every step or only where needed:** new setting under *Settings → General*, next to the
-  step limit (`llm.think_steps: lean` in the config). With thinking on, *Only where needed* thinks in the first step
-  of an answer and after a failed step instead of before every tool call. Faster on long tasks; *Every step* stays
-  the default because the other may cost quality with some models and can change what the prompt cache holds.
 - **Coding mode – `grep` with context lines:** `context: N` shows up to ten lines before and after every match
   (`12: ` for the match, `13- ` for the lines around it, `…` between separate places) – often saves the `read` that
   used to follow a search. `limit` still counts matches, not context lines.
@@ -38,6 +66,14 @@ All notable changes to this project are documented here. The format follows
   check, and never a TypeScript from the project's own `node_modules`, which the agent could have written.
 
 ### Fixed
+- **Auto mode – reading credentials asks:** in *Auto* a shell command such as `cat ~/.ssh/id_rsa`, `env` or
+  `echo $API_TOKEN` ran without a question, although the read tools refuse the same files in every level. It now
+  asks there too, with the same rules as in the other levels (also inside `bash -c '…'` and `$(…)`).
+- **English interface – German leftovers:** a new chat was called "Neuer Chat", and the reason on the confirmation
+  card of a file change read "ändert …". Both now follow the language.
+- **Header buttons overlapped the activity panel:** the labels of the buttons at the top right depended on the window
+  width; with the activity panel open or the coding buttons present they ran into each other. They now depend on the
+  room actually available, and in a narrow header Sandbox and Check shrink to their icons.
 - **Coding mode – running the same test after every fix no longer counts as a loop:** the loop detection counted
   identical calls over the whole answer, so the third `pytest -q` was skipped with "the result is above" although the
   code had changed in between, and the fourth ended the answer (or the `/goal`). A successful `edit`/`write` now
@@ -70,6 +106,19 @@ All notable changes to this project are documented here. The format follows
   success.
 
 ### Changed
+- **Core and extras apart:** the integrations with services not everyone has – Paperless, mail, calendar, Portainer,
+  Trilium, Obsidian, Home Assistant, Telegram – moved from `orbwise/tools/` (and `orbwise/telegram.py`) to
+  `orbwise/extras/`, their tests to `tests/extras/`, and CI runs core and extras as separate steps. A test makes sure
+  the core only touches the extras where it plugs them in. Nothing changes for users: same tools, same settings.
+- **Readable tool names in the chat, real commands on the confirmation card:** above an answer and in the status line
+  the chat now says "Web search" or "System update" instead of `web_search` and `system_update` (the technical name
+  shows on hover). The confirmation card for a system update or for installing/removing packages shows the command
+  that will really run (`sudo pacman -Syu --noconfirm`, `sudo apt-get -y install htop` …) instead of
+  `system_update({})`; other tools list their arguments line by line, and an empty box is no longer shown.
+- **README and pictures renewed:** the README opens with what Orbwise is for – the local assistant you can trust with
+  your Linux machine –, a short film of a coding task (diff card, approval, result with preview and Undo), three
+  reasons and a three-line quick start. All screenshots show the current interface; `scripts/screenshots.mjs` signs
+  in with the access token, starts each picture from a clean chat and can also record the film (`demo`, needs ffmpeg).
 - **Coding mode – sub-agents in parallel, as far as the model server allows:** several sub-agents started in one step
   already ran at the same time, but unchecked: on a llama-server with one slot they kept swapping prompts, so each step
   re-read everything. Now as many `explore` sub-agents run side by side as the server serves at once (its slot count;

@@ -1,7 +1,7 @@
 """Bilder und PDFs, die der Nutzer im Chat anhängt (Büroklammer, Einfügen, Ziehen): liegen unter <data>/attachments.
 
 Bilder stehen als Dateiname an der Nutzernachricht ("attachments"). Kann das aktive Modell Bilder sehen, bekommt es
-sie direkt (OpenAI-Format image_url bzw. Ollama images); sonst steht der Pfad in der Nachricht und das Modell nutzt
+sie direkt (OpenAI-Format image_url); sonst steht der Pfad in der Nachricht und das Modell nutzt
 look_at_image (eigenes Vision-Modell).
 
 PDFs werden lokal ausgelesen (pypdf, nichts verlässt den Rechner). Der Text steht an der Nachricht ("docs") und geht

@@ -3,7 +3,7 @@
 - „Dateien bearbeiten“ (file_edit_ok): nur lesende Teile und Dateiänderungen im eigenen Home.
 - „Auto“ (auto_shell_ok): alles ohne Root – außer Löschen, Ausschalten, Senden ins Netz, Startdateien/Autostart/
   Zugangsdaten. Die Prüfungen je Programm stehen in AUTO_RULES.
-- auto_full_check: die gröbere Vorprüfung für „Auto“ (nur Root und Pushen fragen).
+- auto_full_check: die gröbere Vorprüfung für „Auto“ (nur Root, Pushen und Zugangsdaten lesen fragen).
 """
 
 from __future__ import annotations
@@ -88,8 +88,40 @@ def file_edit_ok(command: str, cwd: str | None = None) -> bool:
 
 # ---------------------------------------------------------------- „Auto“: Vorprüfung
 
-def auto_full_check(command: str) -> tuple[str, str]:
-    """Auto-Modus „Auto“: nur Root und Pushen fragen. → ("ok" | "root" | "push", Grund)."""
+def _reads_secrets(command: str, cwd: str | None, _depth: int = 0) -> bool:
+    """Liest oder zeigt der Befehl Zugangsdaten (cat ~/.ssh/id_rsa, env, $API_TOKEN, < ~/.netrc …)? Dieselben
+    Regeln wie in den anderen Stufen – auch in Befehlsersetzungen und bash -c '…'."""
+    cmd = command.strip()
+    if not cmd or _depth > 3:
+        return False
+    if SECRET_VARS.search(cmd) or re.search(r"\benviron\b", scan_text(cmd)):
+        return True
+    if any(_reads_secrets(inner, cwd, _depth + 1) for inner in substitutions(strip_heredocs(cmd))):
+        return True
+    try:
+        toks = tokens(cmd)
+    except ValueError:
+        return False
+    here = cwd or os.path.expanduser("~")
+    for seg in walk(toks):
+        if any(reads_secret([f], here, recursive=False) for f in seg.inputs) or seg.bare_env:
+            return True
+        if not seg.core:
+            continue
+        if seg.name in ("cd", "pushd"):
+            here = changed_dir(here, seg.args)
+        elif prints_secrets(seg.name, seg.args, here):
+            return True
+        elif seg.name in SHELLS and "-c" in seg.args:
+            i = seg.args.index("-c") + 1
+            if i < len(seg.args) and _reads_secrets(seg.args[i], here, _depth + 1):
+                return True
+    return False
+
+
+def auto_full_check(command: str, cwd: str | None = None) -> tuple[str, str]:
+    """Auto-Modus „Auto“: nur Root, Pushen und das Lesen von Zugangsdaten fragen.
+    → ("ok" | "root" | "push" | "secrets", Grund)."""
     root = "root", T("braucht Root-Rechte", "needs root privileges")
     plain = plain_words(scan_text(command.strip()))
     if _ROOT_WORD.search(plain) or _SELF_ROOT.search(plain):
@@ -101,6 +133,10 @@ def auto_full_check(command: str) -> tuple[str, str]:
         pass
     if _GIT_PUSH.search(plain):
         return "push", T("schickt Commits ins Internet (git push)", "pushes commits to the internet (git push)")
+    if _reads_secrets(command, cwd):
+        # das Lese-Werkzeug verweigert diese Dateien in jeder Stufe – ein Shell-Befehl soll es nicht still umgehen
+        return "secrets", T("liest Zugangsdaten (Schlüssel/Passwörter) – fragt auch im Auto-Modus",
+                            "reads credentials (keys/passwords) – Auto still asks")
     return "ok", ""
 
 

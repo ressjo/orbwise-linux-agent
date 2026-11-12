@@ -1,6 +1,6 @@
-"""Modell-Vorauswahl: bekannte Ollama-Modelle mit Größe und Grafikspeicher-Bedarf, GPU-Erkennung und eine
-interaktive Auswahl (Installer und `orbwise model add`). Zusätzlich geladene Modelle werden als Profile gemerkt
-(state.json → added_models) und erscheinen im Modell-Menü der Oberfläche."""
+"""Modell-Vorauswahl: bekannte GGUF-Modelle auf Hugging Face mit Größe und Grafikspeicher-Bedarf, GPU-Erkennung,
+Suche auf Hugging Face und eine interaktive Auswahl (Installer und `orbwise model add`). Alle Modelle laufen mit
+llama.cpp; hinzugefügte Modelle stehen als Profile in state.json → added_profiles."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from .lang import T
 
 @dataclass(frozen=True)
 class Preset:
-    tag: str            # Ollama-Name
+    tag: str            # hf.co/<nutzer>/<repo>:<quant>
     label: str
     download_gb: float  # ungefähre Downloadgröße
     vram_gb: float      # komfortabel komplett im Grafikspeicher
@@ -31,27 +31,23 @@ class Preset:
 
 
 PRESETS: list[Preset] = [
-    Preset("qwen3:4b", "Qwen 3 4B", 2.6, 4, "klein und flott – für schwache GPUs oder nur CPU",
+    Preset("hf.co/unsloth/Qwen3-4B-GGUF:Q4_K_M", "Qwen 3 4B", 2.5, 4, "klein und flott – für schwache GPUs oder nur CPU",
            "small and quick – for weak GPUs or CPU only"),
-    Preset("qwen3:8b", "Qwen 3 8B", 5.2, 7, "gutes Tool-Calling, ideal für 8 GB",
+    Preset("hf.co/unsloth/Qwen3-8B-GGUF:Q4_K_M", "Qwen 3 8B", 5.0, 7, "gutes Tool-Calling, ideal für 8 GB",
            "good tool calling, ideal for 8 GB"),
-    Preset("qwen3:14b", "Qwen 3 14B", 9.3, 12, "deutlich klüger – Empfehlung für 12–16 GB",
+    Preset("hf.co/unsloth/Qwen3-14B-GGUF:Q4_K_M", "Qwen 3 14B", 9.0, 12, "deutlich klüger – Empfehlung für 12–16 GB",
            "noticeably smarter – recommended for 12–16 GB"),
-    Preset("qwen3:30b", "Qwen 3 30B-A3B (MoE)", 19, 20, "sehr schnell dank MoE; mit 16 GB teilweise im RAM",
-           "very fast thanks to MoE; partly in RAM with 16 GB"),
-    Preset("qwen3:32b", "Qwen 3 32B", 20, 24, "stark, braucht 24 GB", "strong, needs 24 GB"),
-    Preset("qwen3.5:4b", "Qwen 3.5 4B", 3.4, 5, "neuere Qwen-Generation, klein", "newer Qwen generation, small"),
-    Preset("qwen3.5:9b", "Qwen 3.5 9B", 6.6, 9, "neuere Qwen-Generation – für 10–16 GB",
-           "newer Qwen generation – for 10–16 GB"),
-    Preset("qwen3.5:27b", "Qwen 3.5 27B", 17, 22, "neuere Qwen-Generation, groß", "newer Qwen generation, large"),
-    Preset("gpt-oss:20b", "gpt-oss 20B (OpenAI)", 14, 16, "starkes Tool-Calling, denkt immer ein wenig",
-           "strong tool calling, always reasons a little"),
-    Preset("mistral-small3.2:24b", "Mistral Small 3.2 24B", 15, 18, "gut in Deutsch/Englisch, 16 GB knapp",
-           "good in German/English, 16 GB is tight"),
-    Preset("llama3.1:8b", "Llama 3.1 8B", 4.9, 7, "bewährt, Tool-Calling solide", "proven, solid tool calling"),
+    Preset("hf.co/unsloth/Qwen3-30B-A3B-GGUF:Q4_K_M", "Qwen 3 30B-A3B (MoE)", 18.6, 20,
+           "sehr schnell dank MoE; mit 16 GB teilweise im RAM", "very fast thanks to MoE; partly in RAM with 16 GB"),
+    Preset("hf.co/unsloth/Qwen3-32B-GGUF:Q4_K_M", "Qwen 3 32B", 19.8, 24, "stark, braucht 24 GB", "strong, needs 24 GB"),
+    Preset("hf.co/unsloth/gpt-oss-20b-GGUF:Q4_K_M", "gpt-oss 20B (OpenAI)", 11.6, 16,
+           "starkes Tool-Calling, denkt immer ein wenig", "strong tool calling, always reasons a little"),
+    Preset("hf.co/unsloth/Mistral-Small-3.2-24B-Instruct-2506-GGUF:Q4_K_M", "Mistral Small 3.2 24B", 14.3, 18,
+           "gut in Deutsch/Englisch, 16 GB knapp", "good in German/English, 16 GB is tight"),
+    Preset("hf.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF:Q4_K_M", "Llama 3.1 8B", 4.9, 7, "bewährt, Tool-Calling solide",
+           "proven, solid tool calling"),
 ]
 BY_TAG = {p.tag: p for p in PRESETS}
-TAG_RE = re.compile(r"^[a-z0-9][a-z0-9._/-]*(:[a-z0-9._-]+)?$")
 # GGUF-Modelle von Hugging Face: hf.co/<nutzer>/<repo>[:<quant>] (Groß/Klein bleibt erhalten)
 HF_TAG_RE = re.compile(r"^hf\.co/[A-Za-z0-9][\w.-]*/[\w.-]+(:[\w.-]+)?$")
 HF_URL_RE = re.compile(r"^(?:https?://)?(?:www\.)?(?:huggingface\.co|hf\.co)/([A-Za-z0-9][\w.-]*)/([\w.-]+)"
@@ -64,8 +60,7 @@ SPLIT_RE = re.compile(r"-\d{5}-of-\d{5}\.gguf$", re.IGNORECASE)
 
 
 def normalize_tag(text: str) -> str | None:
-    """Ollama-Name, Hugging-Face-Link oder hf.co-Name → gültiger Name (sonst None). hf.co/… lädt Orbwise selbst und
-    startet es mit llama.cpp (siehe llamacpp.py), alles andere geht an Ollama.
+    """Hugging-Face-Link, hf.co-Name oder `nutzer/repo[:quant]` → 'hf.co/<nutzer>/<repo>[:<quant>]' (sonst None).
     'https://huggingface.co/unsloth/Qwen3-8B-GGUF/blob/main/Qwen3-8B-Q4_K_M.gguf' → 'hf.co/unsloth/Qwen3-8B-GGUF:Q4_K_M'"""
     text = (text or "").strip()
     m = HF_URL_RE.match(text)
@@ -77,7 +72,7 @@ def normalize_tag(text: str) -> str | None:
         return f"hf.co/{user}/{repo}" + (f":{quant}" if quant else "")
     if HF_TAG_RE.match(text):
         return text
-    return text.lower() if TAG_RE.match(text.lower()) else None
+    return "hf.co/" + text if HF_TAG_RE.match("hf.co/" + text) else None
 
 
 def is_hf(tag: str) -> bool:
@@ -96,18 +91,20 @@ def label_of(tag: str) -> str:
 
 
 def slug(tag: str) -> str:
-    """Profilname aus einem Ollama-Namen: 'qwen3:14b' → 'qwen3-14b'."""
+    """Profilname aus einem Modellnamen: 'Qwen3-8B Q4_K_M' → 'qwen3-8b-q4-k-m'."""
     return re.sub(r"[^a-z0-9.-]+", "-", tag.lower()).strip("-")
 
 
 def recommend(vram_gb: float) -> str:
+    def tag(part: str) -> str:
+        return next(p.tag for p in PRESETS if part in p.tag)
     if vram_gb >= 22:
-        return "qwen3:30b"
+        return tag("Qwen3-30B-A3B")
     if vram_gb >= 12:
-        return "qwen3:14b"
+        return tag("Qwen3-14B")
     if vram_gb >= 6:
-        return "qwen3:8b"
-    return "qwen3:4b"
+        return tag("Qwen3-8B")
+    return tag("Qwen3-4B")
 
 
 def fit(p: Preset, vram_gb: float) -> str:
@@ -185,27 +182,23 @@ def _amd_name() -> str:
     return "AMD"
 
 
-# ---------------------------------------------------------------- Ollama
+# ---------------------------------------------------------------- Vorauswahl
 
-def installed_models(base_url: str = "http://localhost:11434") -> set[str]:
-    try:
-        r = httpx.get(f"{base_url}/api/tags", timeout=5)
-        return {m.get("name", "") for m in r.json().get("models", [])}
-    except (httpx.HTTPError, ValueError):
-        return set()
-
-
-def is_installed(tag: str, installed: set[str]) -> bool:
-    if is_hf(tag):  # Ollama schreibt hf.co-Namen je nach Version anders groß
-        return tag.lower() in {t.lower() for t in installed} or \
-            (":" not in tag and f"{tag}:latest".lower() in {t.lower() for t in installed})
-    return tag in installed or (":" not in tag and f"{tag}:latest" in installed)
+def is_installed(tag: str, models_dir: Path | None) -> bool:
+    """Liegt die Datei dieser Quantisierung schon unter models_dir/<nutzer>_<repo>/?"""
+    if not models_dir or not is_hf(tag):
+        return False
+    repo, _, quant = tag[6:].partition(":")
+    folder = Path(models_dir) / repo.replace("/", "_")
+    if not folder.is_dir():
+        return False
+    return any(quant.lower() in f.name.lower() and not is_sidecar(f.name) for f in folder.glob("*.gguf"))
 
 
-def preset_list(vram_gb: float, installed: set[str]) -> list[dict]:
+def preset_list(vram_gb: float, models_dir: Path | None = None) -> list[dict]:
     rec = recommend(vram_gb)
-    return [{**asdict(p), "note": p.note(), "fit": fit(p, vram_gb), "installed": is_installed(p.tag, installed),
-             "recommended": p.tag == rec, "profile": slug(p.tag)} for p in PRESETS]
+    return [{**asdict(p), "note": p.note(), "fit": fit(p, vram_gb), "installed": is_installed(p.tag, models_dir),
+             "recommended": p.tag == rec, "profile": slug(label_of(p.tag))} for p in PRESETS]
 
 
 # ---------------------------------------------------------------- Hugging Face: suchen, Quantisierung wählen
@@ -466,25 +459,13 @@ def set_active(state_path: Path, name: str) -> None:
 
 
 def added_models(state_path: Path) -> list[str]:
-    return [t for t in state.load(state_path).get("added_models", []) if isinstance(t, str) and normalize_tag(t) == t]
-
-
-def register_model(state_path: Path, tag: str, activate: bool = False) -> str:
-    name = slug(tag)
-
-    def change(data: dict) -> None:
-        models = data.setdefault("added_models", [])
-        if tag not in models:
-            models.append(tag)
-        if activate:
-            data["active_profile"] = name
-    state.update(state_path, change)
-    return name
+    """Früher per Ollama geladene Modelle (state.json → added_models) – nur noch, um sie als abgelöst zu melden."""
+    return [t for t in state.load(state_path).get("added_models", []) if isinstance(t, str)]
 
 
 def removable(state_path: Path, name: str) -> bool:
     """Per Oberfläche/`orbwise model add` hinzugefügt (state.json) – nicht aus der config.yaml."""
-    return name in added_profiles(state_path) or any(slug(t) == name for t in added_models(state_path))
+    return name in added_profiles(state_path)
 
 
 def unregister_model(state_path: Path, name_or_tag: str) -> str | None:
@@ -511,9 +492,8 @@ def unregister_model(state_path: Path, name_or_tag: str) -> str | None:
 FIT_MARK = {"ok": "✔", "tight": "~", "big": "✘"}
 
 
-def choose_interactive(vram_gb: float, installed: set[str] | None = None, ask=input, out=print) -> str | None:
-    """Nummerierte Liste; Enter = Empfehlung, Zahl = Preset, eigener Name = beliebiges Ollama-Modell."""
-    installed = installed or set()
+def choose_interactive(vram_gb: float, models_dir: Path | None = None, ask=input, out=print) -> str | None:
+    """Nummerierte Liste; Enter = Empfehlung, Zahl = Preset, sonst ein Hugging-Face-Link oder nutzer/repo."""
     rec = recommend(vram_gb)
     out(T(f"\nModell auswählen (Grafikspeicher: {vram_gb:g} GB)", f"\nChoose a model (video memory: {vram_gb:g} GB)"))
     out(T("  ✔ passt komplett  ~ teilweise im RAM (langsamer)  ✘ zu groß",
@@ -522,16 +502,17 @@ def choose_interactive(vram_gb: float, installed: set[str] | None = None, ask=in
         tags = []
         if p.tag == rec:
             tags.append(T("EMPFOHLEN", "RECOMMENDED"))
-        if is_installed(p.tag, installed):
-            tags.append(T("installiert", "installed"))
+        if is_installed(p.tag, models_dir):
+            tags.append(T("heruntergeladen", "downloaded"))
         extra = f"  [{', '.join(tags)}]" if tags else ""
         out(f" {i:>2}) {FIT_MARK[fit(p, vram_gb)]} {p.label:<24} ~{p.download_gb:g} GB  {p.note()}{extra}")
-    out(T("  Oder einen eigenen Ollama-Namen oder Hugging-Face-Link eingeben (z. B. qwen3:1.7b oder\n"
-          "  https://huggingface.co/unsloth/Qwen3-8B-GGUF – Suche: orbwise model search <begriff>).",
-          "  Or type any Ollama model name or Hugging Face link (e.g. qwen3:1.7b or\n"
-          "  https://huggingface.co/unsloth/Qwen3-8B-GGUF – search: orbwise model search <term>)."))
+    out(T("  Oder einen Hugging-Face-Link bzw. nutzer/repo eingeben (z. B. unsloth/Qwen3-8B-GGUF –\n"
+          "  Suche: orbwise model search <begriff>).",
+          "  Or type a Hugging Face link or user/repo (e.g. unsloth/Qwen3-8B-GGUF –\n"
+          "  search: orbwise model search <term>)."))
+    rec_label = BY_TAG[rec].label
     while True:
-        answer = ask(T(f"Auswahl [Enter = {rec}]: ", f"Choice [Enter = {rec}]: ")).strip()
+        answer = ask(T(f"Auswahl [Enter = {rec_label}]: ", f"Choice [Enter = {rec_label}]: ")).strip()
         if not answer:
             return rec
         if answer.isdigit() and 1 <= int(answer) <= len(PRESETS):

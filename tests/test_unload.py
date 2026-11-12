@@ -1,4 +1,4 @@
-"""Modell von Hand entladen: Server aus bzw. Ollama entladen, Profil bleibt gewählt, die nächste Anfrage lädt es
+"""Modell von Hand entladen: Server aus, Profil bleibt gewählt, die nächste Anfrage lädt es
 wieder; der Zustand gilt über einen Neustart, Vorwärmen und Bild-Modus holen es nicht zurück."""
 
 import json
@@ -7,8 +7,7 @@ import httpx
 import pytest
 from conftest import run
 from fastapi.testclient import TestClient
-from test_models import FakeOllama, ollama  # noqa: F401 – Fixture
-from test_profiles import free_port, make_llm_cfg, ollama_mock, server_cfg
+from test_profiles import free_port, make_llm_cfg, server_cfg
 
 from orbwise.agent import Agent
 from orbwise.llm import LLMError
@@ -21,9 +20,7 @@ def test_unload_managed_server_and_reload_on_next_question(cfg, memory, tmp_path
     port = free_port()
     llm_cfg = make_llm_cfg(port, server_cfg(port))
     state = tmp_path / "state.json"
-    calls = []
     router = LLMRouter(llm_cfg, state_path=state)
-    router.ollama = type(router.ollama)(llm_cfg, transport=httpx.MockTransport(ollama_mock(calls)))
     events = []
 
     async def progress(text):
@@ -57,23 +54,25 @@ def test_unload_managed_server_and_reload_on_next_question(cfg, memory, tmp_path
     assert events and events[-1] == ("done", None) and any(kind == "progress" for kind, _ in events)
 
 
-def test_unload_ollama_profile(tmp_path):
+def test_unload_external_profile(tmp_path):
+    """Fremder Server: Orbwise kann ihn nicht beenden – der Zustand „entladen“ gilt trotzdem (nichts wird gefragt)."""
     calls = []
-    router = LLMRouter(make_llm_cfg(9), state_path=tmp_path / "state.json",
-                       transport=httpx.MockTransport(ollama_mock(calls)))
+
+    def handler(req):
+        calls.append(req.url.path)
+        return httpx.Response(200, json={})
+    router = LLMRouter(make_llm_cfg(9), state_path=tmp_path / "state.json", transport=httpx.MockTransport(handler))
     assert router.active == "qwen"
     run(router.unload())
-    assert ("/api/generate", {"model": "qwen3:8b", "keep_alive": 0}) in calls
     before = len(calls)
-    assert run(router.status())["unloaded"] and len(calls) == before  # Ollama nicht gefragt
+    assert run(router.status())["unloaded"] and len(calls) == before  # Server nicht gefragt
     # Laden über die Modellseite (aktives, entladenes Profil) hebt den Zustand auf
     run(router.activate("qwen"))
     assert not router.unloaded
 
 
 def test_select_only_when_unloaded(tmp_path):
-    router = LLMRouter(make_llm_cfg(9), state_path=tmp_path / "state.json",
-                       transport=httpx.MockTransport(ollama_mock([])))
+    router = LLMRouter(make_llm_cfg(9), state_path=tmp_path / "state.json")
     with pytest.raises(LLMError, match="entladen"):
         run(router.select("llama"))
     run(router.unload())
@@ -84,8 +83,7 @@ def test_select_only_when_unloaded(tmp_path):
 
 def test_image_mode_does_not_restart_unloaded_model(tmp_path):
     from orbwise.imagegen import ImageEngine
-    router = LLMRouter(make_llm_cfg(9), state_path=tmp_path / "state.json",
-                       transport=httpx.MockTransport(ollama_mock([])))
+    router = LLMRouter(make_llm_cfg(9), state_path=tmp_path / "state.json")
     started = []
 
     async def prepare(name, progress):
@@ -98,12 +96,10 @@ def test_image_mode_does_not_restart_unloaded_model(tmp_path):
     assert started == []
 
 
-def test_api_unload_and_startup_keeps_it_unloaded(cfg, ollama, monkeypatch):  # noqa: F811
+def test_api_unload_and_startup_keeps_it_unloaded(cfg, monkeypatch):
     monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
     monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
     monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
-    cfg.llm.base_url = ollama
-    FakeOllama.deleted = []
     from orbwise.server import create_app
     with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
         assert client.post("/api/models/unload").json()["ok"]

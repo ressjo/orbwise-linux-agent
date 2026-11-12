@@ -84,7 +84,7 @@ def test_connection_test_uses_unsaved_values(cfg):
 
 
 def test_telegram_test_finds_the_chat_id(cfg, monkeypatch):
-    from orbwise import telegram
+    from orbwise.extras import telegram
 
     def handler(req):
         if req.url.path.endswith("/getMe"):

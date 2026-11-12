@@ -2,8 +2,7 @@
 
 - llama-server: genaue Werte aus seinem Startlog („ROCm0 KV buffer size = 512.00 MiB“,
   „CPU_Mapped model buffer size = …“).
-- Ollama: /api/ps (wie viel vom Modell im VRAM liegt) und /api/show (Architektur) – der KV-Cache wird daraus
-  geschätzt (f16, wie Ollama ihn standardmäßig anlegt).
+- sonst: geschätzt aus dem Kopf der GGUF-Datei (Architektur → KV-Cache pro Token).
 
 Daraus eine Empfehlung: Wie groß kann das Kontextfenster werden, ohne in den RAM auszuweichen (langsam), bzw. wie
 weit sollte es herunter, wenn es schon ausweicht.
@@ -71,7 +70,7 @@ def flash_attn(text: str) -> str | None:
 
 
 def kv_per_token_from_info(model_info: dict, bytes_per: float = 2.0) -> int | None:
-    """KV-Cache pro Token aus den GGUF-Metadaten von Ollama (/api/show → model_info)."""
+    """KV-Cache pro Token aus den GGUF-Metadaten (Schlüssel wie „qwen3.block_count“)."""
     def find(suffix: str) -> int | None:
         for key, value in model_info.items():
             if key.endswith(suffix) and isinstance(value, (int, float)):
@@ -134,7 +133,7 @@ def summary(info: dict[str, Any]) -> dict:
 
 # ---------------------------------------------------------------- Schätzung aus der GGUF-Datei (llama-server)
 # Wenn das Startlog nichts hergibt (eigener Log des Startskripts, Server lief schon): Architektur aus dem Kopf der
-# Modelldatei lesen und den KV-Cache daraus berechnen – wie bei Ollama.
+# Modelldatei lesen und den KV-Cache daraus berechnen.
 _GGUF_SCALARS = {0: "<B", 1: "<b", 2: "<H", 3: "<h", 4: "<I", 5: "<i", 6: "<f", 7: "<?", 10: "<Q", 11: "<q", 12: "<d"}
 CACHE_BYTES = {"f32": 4.0, "f16": 2.0, "bf16": 2.0, "q8_0": 34 / 32, "q5_1": 24 / 32, "q5_0": 22 / 32,
                "q4_1": 20 / 32, "q4_0": 18 / 32, "iq4_nl": 18 / 32}

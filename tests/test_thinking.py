@@ -6,8 +6,8 @@ from conftest import run
 from fastapi.testclient import TestClient
 
 from orbwise.agent import Agent
-from orbwise.config import LLMConfig, ProfileConfig
-from orbwise.llm import OllamaLLM, OpenAICompatLLM, template_levels, template_thinking
+from orbwise.config import ProfileConfig
+from orbwise.llm import OpenAICompatLLM, template_levels, template_thinking
 
 
 def test_template_decides_the_caps():
@@ -28,20 +28,6 @@ def test_levels_come_from_the_model():
     assert template_levels(two) == (["low", "high"], None)  # genau die zwei – nichts ergänzt
     assert template_levels("{% if reasoning_effort == 'max' %}") == ([], None)  # eine Stufe ist keine Auswahl
     assert template_levels("{% if enable_thinking %}<think>") == ([], None)  # nur an/aus – keine Stufen
-
-
-def test_ollama_caps_from_show():
-    def client(caps, model="qwen3:8b", template=""):
-        def handler(req):
-            return httpx.Response(200, json={} if caps is None else {"capabilities": caps, "template": template})
-        return OllamaLLM(LLMConfig(model=model), transport=httpx.MockTransport(handler))
-    assert run(client(["completion", "tools", "thinking"]).thinking_caps()) == "toggle"
-    # auch gpt-oss: Stufen nur, wenn die Vorlage welche nennt – keine festen von Orbwise
-    assert run(client(["completion", "thinking"], "gpt-oss:20b").thinking_caps()) == "toggle"
-    listed = client(["thinking"], "x", "{{ if eq .ReasoningEffort \"low\" }}{% if reasoning_effort in ['low', 'high'] %}")
-    assert run(listed.thinking_caps()) == "levels" and run(listed.thinking_levels()) == (["low", "high"], None)
-    assert run(client(["completion", "tools"]).thinking_caps()) == "none"
-    assert run(client(None).thinking_caps()) is None  # altes Ollama ohne capabilities
 
 
 def test_llama_server_caps_from_props():

@@ -72,7 +72,7 @@ def tunable_router(cfg, tmp_path):
     gguf = tmp_path / "Qwen-27B-UD-IQ4_XS.gguf"
     write_gguf(gguf, META)
     raw = llamacpp.make_profile(cfg, "qwen-27b", gguf, None, AMD, 8199)
-    llm_cfg = LLMConfig(profiles={"qwen-27b": ProfileConfig.model_validate(raw), "klein": ProfileConfig(model="qwen3:8b")},
+    llm_cfg = LLMConfig(profiles={"qwen-27b": ProfileConfig.model_validate(raw), "klein": ProfileConfig(base_url="http://127.0.0.1:9/v1", model="qwen3-8b")},
                         active="qwen-27b")
     return LLMRouter(llm_cfg, state_path=tmp_path / "state.json")
 
@@ -157,8 +157,7 @@ def test_api_tune_and_switch_build(cfg, tmp_path, monkeypatch):
     write_gguf(gguf, META)
     state_file = cfg.memory.dir.parent / "state.json"
     name = llamacpp.add_model(cfg, state_file, gguf, None, AMD, {}, downloaded=False)
-    cfg.llm.base_url = "http://127.0.0.1:9"
-    cfg.llm.profiles = {"qwen": ProfileConfig(model="qwen3:8b")}
+    cfg.llm.profiles = {"qwen": ProfileConfig(base_url="http://127.0.0.1:9/v1", model="qwen3-8b")}
     cfg.llm.active = "qwen"
 
     async def fake_tune(cfg_, router, profile, gpu, progress=None):
@@ -185,7 +184,7 @@ def test_api_tune_and_switch_build(cfg, tmp_path, monkeypatch):
         # (fehlt der Build, lädt der Schalter ihn erst – siehe test_flavor_switch_downloads_a_missing_build_first)
         own_build(cfg, "vulkan")
         r = client.post("/api/llamacpp/flavor", json={"flavor": "vulkan"}).json()
-        assert r["flavor"] == "vulkan" and not r["restart"]  # aktiv ist das Ollama-Modell
+        assert r["flavor"] == "vulkan" and not r["restart"]  # aktiv ist ein fremder Server
         assert client.get("/api/llamacpp").json()["flavor"] == "vulkan"
 
 

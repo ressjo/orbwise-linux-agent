@@ -64,8 +64,8 @@ def register(app, ctx) -> None:
     async def switch_context_quietly(mode: str) -> None:
         """Eigenes Kontextfenster des Modus: Server des aktiven Modells damit neu starten (wenn es abweicht)."""
         wanted = llm.wanted_context(llm.active, mode)
-        if not wanted or wanted == llm.profile.num_ctx or llm.profile.backend == "ollama" and not llm.profile.server:
-            await llm.set_mode(mode)  # Ollama: neues num_ctx gilt ab der nächsten Anfrage, kein Neustart nötig
+        if not wanted or wanted == llm.profile.num_ctx or not llm.profile.server:
+            await llm.set_mode(mode)  # fremder Server: Orbwise startet dort nichts neu
             return
         name = llm.active
         await hub.broadcast({"type": "model_switching", "name": name, "label": llm.profile.label})

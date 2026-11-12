@@ -1,5 +1,5 @@
 """Bilder im Chat: hochladen, an der Nutzernachricht speichern; ein Modell mit Bildunterstützung bekommt sie direkt
-(OpenAI image_url / Ollama images), sonst steht der Pfad in der Nachricht und look_at_image wird geladen."""
+(OpenAI image_url), sonst steht der Pfad in der Nachricht und look_at_image wird geladen."""
 
 import base64
 import json
@@ -10,7 +10,7 @@ from test_prompt_size import all_integrations
 from orbwise import attachments
 from orbwise.agent import Agent
 from orbwise.config import ProfileConfig
-from orbwise.llm import ollama_messages, to_openai_messages
+from orbwise.llm import to_openai_messages
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\0" * 32
 
@@ -58,7 +58,6 @@ def test_message_formats(cfg):
     oa = to_openai_messages(msgs)[0]["content"]
     assert oa[0] == {"type": "text", "text": "Was ist das?"}
     assert oa[1]["image_url"]["url"].startswith("data:image/png;base64,")
-    assert ollama_messages(msgs)[0]["images"] == [base64.b64encode(PNG).decode()]
 
 
 def test_vision_model_gets_the_image(cfg, memory):

@@ -1,5 +1,6 @@
-"""Modell-Profile: aktives Chat-Modell (Ollama oder OpenAI-kompatibler Server) umschalten, optional den
-Modell-Server (llama-server) selbst starten/stoppen. Embeddings laufen immer über Ollama."""
+"""Modell-Profile: aktives Chat-Modell umschalten – ein llama-server (llama.cpp), den Orbwise selbst startet und
+stoppt, oder ein eigener OpenAI-kompatibler Server. Embeddings laufen über einen eigenen kleinen llama-server
+(embedder.py)."""
 
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ import httpx
 from . import state
 from .config import LLMConfig, ProfileConfig, ServerConfig
 from .lang import T
-from .llm import ContextOverflow, LLMError, OllamaLLM, OpenAICompatLLM, clean_sampling
+from .llm import ContextOverflow, LLMError, OpenAICompatLLM, clean_sampling
 from .llm_memory import cache_type, moe_layers_of
 
 log = logging.getLogger(__name__)
@@ -63,11 +64,13 @@ def _log_path() -> Path:
 class ManagedServer:
     """Startet einen Modell-Server als eigene Prozessgruppe und wartet, bis er bereit ist."""
 
-    def __init__(self, server: ServerConfig, base_url: str, transport: httpx.AsyncBaseTransport | None = None):
+    def __init__(self, server: ServerConfig, base_url: str, transport: httpx.AsyncBaseTransport | None = None,
+                 plain: bool = False):
         self.cfg = server
         self.base_url = base_url.rstrip("/")
         self.proc: subprocess.Popen | None = None
         self.transport = transport
+        self.plain = plain  # ohne die Cache-Optionen fürs Sprachmodell (Embedding-Server)
 
     @property
     def health_url(self) -> str:
@@ -107,7 +110,8 @@ class ManagedServer:
                 env["LD_LIBRARY_PATH"] += ":" + os.environ["LD_LIBRARY_PATH"]
             try:  # Prompt-Cache: Checkpoints (Hybrid-Modelle), Cache im RAM – sonst liest er nach Änderungen viel neu ein
                 from .llamacpp import cache_flags
-                extra = await asyncio.to_thread(cache_flags, command, {k: env[k] for k in self.cfg.env})
+                extra = "" if self.plain else await asyncio.to_thread(cache_flags, command,
+                                                                      {k: env[k] for k in self.cfg.env})
             except Exception:  # noqa: BLE001 – nur eine Beschleunigung, der Start darf nicht daran scheitern
                 extra = ""
             if extra:
@@ -373,7 +377,7 @@ def spec_mode(command: str) -> str:
 def spec_options(server: ServerConfig | None) -> list[dict]:
     """Angebotene Stufen mit „geht“ und Grund, falls nicht."""
     if server is None:
-        why = T("nur mit llama.cpp (Ollama kann das nicht)", "llama.cpp only (Ollama can't do this)")
+        why = T("nur bei einem llama-server, den Orbwise startet", "only for a llama-server Orbwise starts")
         return [{"mode": "off", "ok": True}, {"mode": "mtp", "ok": False, "why": why},
                 {"mode": "ngram", "ok": False, "why": why}]
     sup = spec_support(server.command, server.env or {})
@@ -402,16 +406,25 @@ def spec_stats(log_text: str) -> dict | None:
 
 
 class LLMRouter:
-    """Bietet dieselbe Schnittstelle wie OllamaLLM (chat_stream, chat, embed, status, close)."""
+    """Die Schnittstelle zum Modell für den Rest von Orbwise: chat_stream, chat, embed, status, close."""
 
     def __init__(self, cfg: LLMConfig, state_path: Path | None = None,
                  transport: httpx.AsyncBaseTransport | None = None):
         self.cfg = cfg
         self.state_path = state_path
-        self.profiles = cfg.resolved_profiles()
+        # Ollama wird nicht mehr unterstützt: solche Profile (alte Config, state.json) fallen weg – ihre Namen
+        # stehen hier, damit Oberfläche und doctor sagen können, was zu tun ist
+        self.retired: list[str] = []
+        self.profiles = {n: p for n, p in cfg.resolved_profiles().items() if p.backend != "ollama" or self._retire(n)} \
+            if cfg.profiles else {}
         self.add_downloaded_models()
+        if not self.profiles:  # noch kein Modell: der übliche Platz eines llama-servers, bis eins hinzugefügt ist
+            self.profiles = cfg.model_copy(update={"profiles": {}}).resolved_profiles()
         self.transport = transport
-        self.ollama = OllamaLLM(cfg, transport=transport)  # Embeddings + Entladen
+        from .embedder import Embedder
+        llama = state_path.parent / "llama.cpp" / "current" if state_path else None
+        self.embedder = Embedder(cfg.embed_model, cfg.models_dir, llama / "llama-server" if llama else None, llama,
+                                 transport=transport, gpu=cfg.embed_gpu)
         self.active = self._initial_profile()
         self.client = None
         self.servers: dict[str, ManagedServer] = {}
@@ -422,7 +435,7 @@ class LLMRouter:
         # (release(restart=…)), bevor das Sprachmodell wieder gebraucht wird – siehe imagegen.py
         self.gpu_borrowed = None
         saved = self._read_state()
-        # Von Hand entladen (Modellseite): Server aus bzw. Ollama-Modell aus dem Speicher, das Profil bleibt gewählt.
+        # Von Hand entladen (Modellseite): Server aus, das Profil bleibt gewählt.
         # Die nächste Anfrage lädt es wieder (ensure_loaded); gilt auch über einen Neustart von Orbwise
         self.unloaded = bool(saved.get("unloaded"))
         self.load_progress: Progress | None = None  # Fortschritt, wenn eine Anfrage das Modell zurückholt
@@ -469,11 +482,17 @@ class LLMRouter:
                     log.warning("Spekulatives Decoding für '%s' nicht gesetzt: %s", name, e)
         self._build_client()
 
+    def _retire(self, name: str) -> bool:
+        self.retired.append(name)
+        log.warning("Profil '%s' nutzt Ollama – das wird nicht mehr unterstützt. Modell über Modelle → Hinzufügen "
+                    "als GGUF laden.", name)
+        return False
+
     def add_downloaded_models(self) -> list[str]:
-        """Per `orbwise model add` bzw. Oberfläche geladene Ollama-Modelle als Profile ergänzen."""
+        """Über die Oberfläche bzw. `orbwise model add` angelegte Profile (state.json) ergänzen."""
         if not self.state_path:
             return []
-        from .models import added_models, added_profiles, label_of, slug
+        from .models import added_models, added_profiles, slug
         new = []
         for name, raw in added_profiles(self.state_path).items():
             if name in self.profiles:
@@ -489,17 +508,14 @@ class LLMRouter:
             except ValueError as e:
                 log.warning("Gespeichertes Profil '%s' ungültig: %s", name, e)
                 continue
-            self.profiles[name] = extra.resolved_profiles()[name]
-            new.append(name)
-        for tag in added_models(self.state_path):
-            name = slug(tag)
-            if name in self.profiles:
+            if extra.profiles[name].backend == "ollama":
+                self._retire(name)
                 continue
-            label = label_of(tag)
-            extra = self.cfg.model_copy(update={"profiles": {name: ProfileConfig(backend="ollama", model=tag,
-                                                                                  label=label)}})
             self.profiles[name] = extra.resolved_profiles()[name]
             new.append(name)
+        for tag in added_models(self.state_path):  # früher per Ollama geladene Modelle
+            if slug(tag) not in self.retired:
+                self._retire(slug(tag))
         return new
 
     # ---------- Auswahl ----------
@@ -609,17 +625,10 @@ class LLMRouter:
                 self.detected_ctx[self.active] = n
 
     def _client_for(self, p: ProfileConfig):
-        if p.backend == "openai":
-            return OpenAICompatLLM(p, timeout=self.cfg.request_timeout, transport=self.transport)
-        client = OllamaLLM(self.cfg.model_copy(update={
-            "base_url": p.base_url, "model": p.model, "temperature": p.temperature,
-            "num_ctx": p.num_ctx, "think": p.think}), transport=self.transport)
-        client.sampling = p.sampling
-        return client
+        return OpenAICompatLLM(p, timeout=self.cfg.request_timeout, transport=self.transport)
 
     def _build_client(self) -> None:
         self.client = self._client_for(self.profile)
-        self.ollama.embed_on_cpu = self.profile.embed_on_cpu
 
     def server_for(self, name: str) -> ManagedServer | None:
         p = self.profiles[name]
@@ -630,11 +639,6 @@ class LLMRouter:
         return self.servers[name]
 
     async def _prepare(self, name: str, progress: Progress | None) -> None:
-        p = self.profiles[name]
-        if p.unload_ollama:
-            unloaded = await self.ollama.unload_all()
-            if unloaded and progress:
-                await progress("Grafikspeicher freigegeben (" + ", ".join(unloaded) + ")")
         server = self.server_for(name)
         if server:
             await server.ensure_running(progress)
@@ -644,11 +648,6 @@ class LLMRouter:
         (Startanzeige), statt nur im Log zu landen."""
         await self._prepare(self.active, progress)
         await self.detect_context()
-
-    async def warm(self) -> None:
-        """Ollama-Modell vorladen (bei einem eigenen Modell-Server ist es nach dem Start schon geladen)."""
-        if isinstance(self.client, OllamaLLM):
-            await self.client.preload()
 
     async def remove_profile(self, name: str) -> None:
         """Profil aus der Auswahl nehmen (vorher `orbwise.models.unregister_model`); ein gestarteter Server wird beendet."""
@@ -660,15 +659,13 @@ class LLMRouter:
         self.profiles.pop(name, None)
 
     async def unload(self) -> None:
-        """Aktives Modell aus dem (Grafik-)Speicher nehmen, ohne ein anderes zu laden: eigenen Server beenden bzw.
-        Ollama entladen. Das Profil bleibt gewählt; die nächste Anfrage lädt es wieder."""
+        """Aktives Modell aus dem (Grafik-)Speicher nehmen, ohne ein anderes zu laden: den eigenen Server beenden.
+        Das Profil bleibt gewählt; die nächste Anfrage lädt es wieder."""
         async with self._lock:
             if not self.gpu_borrowed:  # sonst hat der Bild-Modus das Sprachmodell schon beendet
                 server = self.server_for(self.active)
                 if server:
                     await server.stop()
-                if self.profile.backend == "ollama" or self.profile.unload_ollama:
-                    await self.ollama.unload_all()
             self.unloaded = True
             self._write_state()
 
@@ -701,7 +698,7 @@ class LLMRouter:
             self.active = name
             self._build_client()
             self._write_state()
-            if old_client is not None and old_client is not self.ollama:
+            if old_client is not None:
                 await old_client.close()
 
     async def activate(self, name: str, progress: Progress | None = None) -> None:
@@ -741,7 +738,7 @@ class LLMRouter:
             self.active = name
             self._build_client()
             self._write_state()
-            if old_client is not None and old_client is not self.ollama:
+            if old_client is not None:
                 await old_client.close()
             await self.detect_context()
 
@@ -767,13 +764,9 @@ class LLMRouter:
         return await self.client.chat(messages)
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
-        if self.gpu_borrowed and not self.ollama.embed_on_cpu:  # Bild-Modus hat den Grafikspeicher: auf der CPU
-            self.ollama.embed_on_cpu = True
-            try:
-                return await self.ollama.embed(texts)
-            finally:
-                self.ollama.embed_on_cpu = self.profile.embed_on_cpu
-        return await self.ollama.embed(texts)
+        """Vektoren für die Gedächtnis-Suche – über den Embedding-Server (CPU; unabhängig vom Sprachmodell und davon,
+        ob der Bild-Modus gerade den Grafikspeicher hat)."""
+        return await self.embedder.embed(texts)
 
     async def status(self) -> dict:
         p = self.profile
@@ -781,16 +774,16 @@ class LLMRouter:
             st = {"online": True, "model_available": True, "unloaded": True}
         else:
             st = await self.client.status()
-        if p.backend == "openai":
-            emb = await self.ollama.status()
-            st.update({"embed_model": self.cfg.embed_model, "embed_available": emb.get("embed_available", False)})
+        emb = self.embedder.status()
+        st.update({"embed_model": self.cfg.embed_model, "embed_available": emb["available"],
+                   "embed_problem": emb["problem"], "retired": list(self.retired)})
         st.update({"context": self.context_size, "profile": self.active, "label": p.label, "backend": p.backend, "switching": self.switching,
                    "model": p.model})
         return st
 
     # ---------- Kontextgröße (Modellseite) ----------
     def _apply_context(self, name: str, n: int) -> None:
-        """Kontextfenster eines Profils setzen: Ollama über num_ctx, ein eigener llama-server über -c im Startbefehl
+        """Kontextfenster eines Profils setzen: ein eigener llama-server über -c im Startbefehl
         (wirkt beim nächsten Start)."""
         p = self.profiles[name]
         p.num_ctx = n
@@ -821,8 +814,8 @@ class LLMRouter:
         """Batch-Größe eines eigenen llama-server setzen (wirkt beim nächsten Start)."""
         p = self.profiles[name]
         if not p.server:
-            raise LLMError(T("Die Batch-Größe lässt sich nur bei llama.cpp einstellen, nicht bei Ollama.",
-                             "The batch size can only be set for llama.cpp, not for Ollama."))
+            raise LLMError(T("Die Batch-Größe lässt sich nur bei einem llama-server einstellen, den Orbwise startet.",
+                             "The batch size can only be set for a llama-server Orbwise starts."))
         command = _BATCH_FLAGS.sub("", p.server.command)
         if n != 512:
             command += f" -ub {n} -b {max(2048, n)}"
@@ -843,8 +836,8 @@ class LLMRouter:
         """Experten der ersten n Schichten in den RAM legen (wirkt beim nächsten Start); 0 = alle auf der GPU."""
         p = self.profiles[name]
         if not p.server:
-            raise LLMError(T("Experten in den RAM legen geht nur mit llama.cpp, nicht mit Ollama.",
-                             "Moving experts to RAM only works with llama.cpp, not with Ollama."))
+            raise LLMError(T("Experten in den RAM legen geht nur bei einem llama-server, den Orbwise startet.",
+                             "Moving experts to RAM only works for a llama-server Orbwise starts."))
         command = _MOE_FLAGS.sub("", p.server.command)
         if n > 0:
             command += f" --n-cpu-moe {int(n)}"
@@ -877,8 +870,8 @@ class LLMRouter:
         """Aufteilung auf die Grafikkarten setzen (wirkt beim nächsten Start); None = automatisch."""
         p = self.profiles[name]
         if not p.server:
-            raise LLMError(T("Die Aufteilung auf Grafikkarten geht nur mit llama.cpp – Ollama verteilt selbst.",
-                             "Splitting across GPUs only works with llama.cpp – Ollama splits by itself."))
+            raise LLMError(T("Die Aufteilung auf Grafikkarten geht nur bei einem llama-server, den Orbwise startet.",
+                             "Splitting across GPUs only works for a llama-server Orbwise starts."))
         command = _GPU_FLAGS.sub("", p.server.command) + gpu_flags(split)
         env = {**(p.server.env or {}), "CUDA_DEVICE_ORDER": "PCI_BUS_ID"}
         p.server = p.server.model_copy(update={"command": command, "env": env})
@@ -899,8 +892,8 @@ class LLMRouter:
         """Spekulatives Decoding eines eigenen llama-server setzen (wirkt beim nächsten Start)."""
         p = self.profiles[name]
         if not p.server:
-            raise LLMError(T("Spekulatives Decoding geht nur mit llama.cpp, nicht mit Ollama.",
-                             "Speculative decoding only works with llama.cpp, not with Ollama."))
+            raise LLMError(T("Spekulatives Decoding geht nur bei einem llama-server, den Orbwise startet.",
+                             "Speculative decoding only works for a llama-server Orbwise starts."))
         command = _SPEC_FLAGS.sub("", p.server.command)
         if mode == "mtp":
             src = mtp_source(command)
@@ -928,7 +921,7 @@ class LLMRouter:
 
     async def _reconfigure(self, name: str, apply, key: str, value, progress: Progress | None) -> None:
         """Startoptionen eines Profils ändern und merken (state.json[key]); beim aktiven Profil wird ein eigener
-        Server neu gestartet (Ollama lädt bei der nächsten Anfrage neu)."""
+        Server neu gestartet."""
         if self.gpu_borrowed and name == self.active:
             await self.gpu_borrowed(restart=False)
         async with self._lock:
@@ -946,7 +939,7 @@ class LLMRouter:
                     await self._prepare(name, progress)
                 old_client = self.client
                 self._build_client()
-                if old_client is not None and old_client is not self.ollama:
+                if old_client is not None:
                     await old_client.close()
                 if not self.unloaded:
                     await self.detect_context()
@@ -983,7 +976,7 @@ class LLMRouter:
 
     async def set_context(self, name: str, n: int, progress: Progress | None = None, mode: str | None = None) -> None:
         """Kontextfenster ändern und merken (state.json; Coding getrennt). Beim aktiven Profil im aktuellen Modus wird
-        ein eigener Server neu gestartet, Ollama lädt das Modell bei der nächsten Anfrage mit der neuen Größe.
+        ein eigener Server neu gestartet.
         n = 0 im Coding-Modus: eigene Größe aufheben (wieder wie Tools)."""
         if name not in self.profiles:
             raise LLMError(f"Unbekanntes Profil '{name}'")
@@ -1017,8 +1010,6 @@ class LLMRouter:
             raise LLMError(str(e)) from e
         self.profiles[name].sampling = sets
         self._remember("sampling", name, sets)
-        if name == self.active and isinstance(self.client, OllamaLLM):
-            self.client.sampling = sets  # OpenAI-Client liest das Profil selbst
         return sets
 
     async def set_kv(self, name: str, kv: str, progress: Progress | None = None) -> None:
@@ -1030,19 +1021,16 @@ class LLMRouter:
         if kv not in allowed:
             raise LLMError(f"KV-Cache-Stufe bitte eine von: {', '.join(allowed)}")
         if not self.profiles[name].server:
-            raise LLMError("Bei Ollama gilt die KV-Cache-Stufe für den ganzen Ollama-Dienst: sudo systemctl edit ollama "
-                           "→ Environment=\"OLLAMA_FLASH_ATTENTION=1\" \"OLLAMA_KV_CACHE_TYPE=q8_0\"")
+            raise LLMError(T("Die KV-Cache-Stufe lässt sich nur bei einem llama-server einstellen, den Orbwise startet.",
+                             "The KV cache level can only be set for a llama-server that Orbwise starts."))
         await self._reconfigure(name, lambda: self._apply_kv(name, kv), "kv_cache", kv, progress)
 
     async def memory_info(self) -> tuple[dict | None, str]:
         """Speicher des aktiven Modells samt Kontext (VRAM/RAM) → (Werte, Grund falls keine).
-        llama-server: genau aus dem Startlog, sonst geschätzt aus der GGUF-Datei (Pfad laut /props); Ollama: API."""
+        llama-server: genau aus dem Startlog, sonst geschätzt aus der GGUF-Datei (Pfad laut /props)."""
         from .llm_memory import estimate_from_gguf, parse_llama_log
         if self.unloaded:
             return None, "Modell ist entladen"
-        if isinstance(self.client, OllamaLLM):
-            info = await self.client.memory_info()
-            return info, "" if info else "Modell ist gerade nicht in Ollama geladen"
         p = self.profile
         info = None
         if p.server:
@@ -1094,4 +1082,4 @@ class LLMRouter:
             await server.stop()
         if self.client is not None:
             await self.client.close()
-        await self.ollama.close()
+        await self.embedder.close()

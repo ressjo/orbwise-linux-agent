@@ -1,4 +1,4 @@
-"""Modellverwaltung im Web-Server: Modellliste, Hinzufügen (Ollama-Vorauswahl, Hugging Face, Dateien in ~/models),
+"""Modellverwaltung im Web-Server: Modellliste, Hinzufügen (Vorauswahl, Hugging Face, Dateien in ~/models),
 Downloads als Hintergrund-Aufgaben, llama.cpp-Build, Laden/Entladen/Löschen und die Einstellungen je Modell
 (Kontextfenster, Sampling, KV-Cache, Batch-Größe, spekulatives Decoding, Messen der schnellsten Einstellung).
 
@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 import os
 import re
@@ -52,22 +51,12 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
         from ... import llamacpp_quality, llamacpp_tune
         from ... import models as mdl
         profiles = llm.describe()
-        sizes: dict[str, int] = {}
-        # Größen nur von Ollama-Servern holen, die ein Profil wirklich nutzt (llama-server kennt /api/tags nicht)
-        for base in {p.get("base_url") or cfg.llm.base_url for p in profiles if p["backend"] == "ollama"}:
-            try:
-                async with httpx.AsyncClient(base_url=base, timeout=2) as client:
-                    for m in (await client.get("/api/tags")).json().get("models", []):
-                        sizes.setdefault(m.get("name", ""), int(m.get("size") or 0))
-            except (httpx.HTTPError, ValueError):
-                pass
         added = mdl.added_profiles(state_file)  # state.json nur einmal lesen
-        added_slugs = {mdl.slug(t) for t in mdl.added_models(state_file)}
         gpu = await gpu_info()
         for p in profiles:
-            p["deletable"] = p["name"] in added or p["name"] in added_slugs
-            size = sizes.get(p["model"]) or sizes.get(f"{p['model']}:latest") if p["backend"] == "ollama" else None
-            p["engine"] = "Ollama" if p["backend"] == "ollama" else "llama.cpp" if p["managed"] else "OpenAI-API"
+            p["deletable"] = p["name"] in added
+            size = None
+            p["engine"] = "llama.cpp" if p["managed"] else "OpenAI-API"
             files: list[str] = []
             if (local := llamacpp_mod.local_record(state_file, p["name"])) is not None:
                 files = [f for f in local.get("files", []) if Path(f).is_file()]
@@ -79,9 +68,6 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
                 p["path"] = llamacpp_mod._tilde(weights[0] if weights else files[0])
                 p["vision"] = len(weights) < len(files)
                 q = mdl.QUANT_RE.search(mdl.SPLIT_RE.sub(".gguf", Path(weights[0]).name)) if weights else None
-                p["quant"] = q.group(1) if q else None
-            elif p["backend"] == "ollama":
-                q = re.search(r":((?:UD-)?I?Q\d\w*|[bf]f16)$", p["model"], re.I)
                 p["quant"] = q.group(1) if q else None
             p["size_gb"] = round(size / 1e9, 1) if size else None
             if size:
@@ -96,6 +82,7 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
                 p["tuning"] = llamacpp_tune.saved(state_file, p["name"])
                 p["quality"] = llamacpp_quality.saved(state_file, p["name"])
         return {"active": llm.active, "switching": llm.switching, "unloaded": llm.unloaded, "profiles": profiles, "gpu": gpu,
+                "retired": list(llm.retired), "embed": llm.embedder.status(),
                 "pulls": [{"tag": t, **pull_state.get(t, {})} for t in sorted(pulls)]}
 
     gpu_cache: dict = {}
@@ -172,7 +159,7 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
         body = re.sub(r"(--api-key\s+)\S+", r"\1•••", body)
         return {"lines": body.splitlines()[-max(1, min(lines, 2000)):], "file": "~/.local/state/orbwise-llm.log"}
 
-    # ---------- Modelle hinzufügen (Vorauswahl + ollama pull mit Fortschritt) ----------
+    # ---------- Modelle hinzufügen (Vorauswahl, Download mit Fortschritt) ----------
     pulls: dict[str, asyncio.Task] = {}
     pull_state: dict[str, dict] = {}  # letzter Fortschritt je Download (für das Modell-Menü)
 
@@ -180,8 +167,8 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
     async def model_presets():
         from ... import models as mdl
         gpu = await asyncio.to_thread(mdl.detect_gpu)
-        installed = await asyncio.to_thread(mdl.installed_models, cfg.llm.base_url)
-        return {"gpu": gpu, "presets": mdl.preset_list(gpu["vram_gb"], installed),
+        from ... import llamacpp
+        return {"gpu": gpu, "presets": mdl.preset_list(gpu["vram_gb"], llamacpp.models_dir(cfg)),
                 "pulling": sorted(pulls)}
 
     def with_fit(item: dict, gpu: dict) -> dict:
@@ -459,41 +446,6 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
         start_job("llama.cpp", job)
         return {"ok": True}
 
-    async def pull_model(tag: str) -> None:
-        from ... import models as mdl
-        last = 0.0
-        try:
-            async with httpx.AsyncClient(base_url=cfg.llm.base_url, timeout=None) as client:
-                async with client.stream("POST", "/api/pull", json={"model": tag, "stream": True}) as resp:
-                    if resp.status_code != 200:
-                        raise LLMError(f"Ollama {resp.status_code}: {(await resp.aread()).decode(errors='replace')[:200]}")
-                    async for line in resp.aiter_lines():
-                        if not line.strip():
-                            continue
-                        ev = json.loads(line)
-                        if ev.get("error"):
-                            raise LLMError(ev["error"])
-                        now = time.monotonic()
-                        if now - last > 0.5 or ev.get("status") == "success":
-                            last = now
-                            pull_state[tag] = {"status": ev.get("status", ""), "completed": ev.get("completed"),
-                                               "total": ev.get("total")}
-                            await hub.broadcast({"type": "model_pull", "tag": tag, **pull_state[tag]})
-            name = mdl.register_model(state_file, tag)
-            if isinstance(llm, LLMRouter):
-                llm.add_downloaded_models()
-            await hub.broadcast({"type": "model_pull", "tag": tag, "done": True, "profile": name})
-        except asyncio.CancelledError:
-            # Stream geschlossen → Ollama bricht ab; Teilstücke bleiben im Ollama-Cache (erneuter Start setzt fort)
-            await hub.broadcast({"type": "model_pull", "tag": tag, "cancelled": True})
-            raise
-        except (httpx.HTTPError, LLMError, ValueError) as e:
-            text = str(e) if not isinstance(e, httpx.ConnectError) else "Ollama ist nicht erreichbar"
-            await hub.broadcast({"type": "model_pull", "tag": tag, "error": text})
-        finally:
-            pulls.pop(tag, None)
-            pull_state.pop(tag, None)
-
     @app.post("/api/models/pull")
     async def model_pull(request: Request):
         from ... import models as mdl
@@ -502,12 +454,10 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
         body = await request.json()
         tag = mdl.normalize_tag(str(body.get("tag", "")))
         if not tag:
-            raise HTTPException(400, "Ungültiger Modellname oder Hugging-Face-Link (geteilte GGUF-Dateien gehen nicht)")
-        if mdl.is_hf(tag):  # Hugging Face: Orbwise lädt die GGUF-Datei selbst und startet sie mit llama.cpp
-            return {"ok": True, "tag": start_job(tag, lambda: pull_gguf(tag))}
-        if tag not in pulls:
-            pulls[tag] = asyncio.create_task(pull_model(tag))
-        return {"ok": True, "tag": tag}
+            raise HTTPException(400, T("Bitte einen Hugging-Face-Link oder nutzer/repo angeben.",
+                                       "Please give a Hugging Face link or user/repo."))
+        # Orbwise lädt die GGUF-Datei selbst und startet sie mit llama.cpp
+        return {"ok": True, "tag": start_job(tag, lambda: pull_gguf(tag))}
 
     @app.delete("/api/models/pull/{tag:path}")
     async def model_pull_cancel(tag: str):
@@ -600,12 +550,9 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
             raise HTTPException(404, "Unbekanntes Modell")
         if not mdl.removable(state_file, name):
             raise HTTPException(400, "Dieses Modell ist in der config.yaml eingetragen – dort entfernen.")
-        profile = llm.profiles[name]
         if llm.switching:
             raise HTTPException(409, T("Gerade wird ein Modell geladen – bitte kurz warten.",
                                        "A model is loading right now – please wait a moment."))
-        if profile.backend == "ollama" and profile.model in pulls:
-            raise HTTPException(409, "Das Modell wird gerade geladen – erst den Download abbrechen.")
         if name == llm.active:  # erst entladen, ein anderes wählen (ohne es zu laden), dann löschen
             others = [n for n in llm.profiles if n != name]
             if not others:
@@ -626,13 +573,6 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
         freed = 0
         if llamacpp_mod.local_record(state_file, name) is not None:  # nur selbst geladene Dateien löschen
             freed = await asyncio.to_thread(llamacpp_mod.forget, cfg, state_file, name)
-        elif profile.backend == "ollama" and not any(
-                p.backend == "ollama" and p.model == profile.model for p in llm.profiles.values()):
-            try:  # nur löschen, wenn kein anderes Profil dasselbe Ollama-Modell nutzt
-                async with httpx.AsyncClient(base_url=cfg.llm.base_url, timeout=30) as client:
-                    await client.request("DELETE", "/api/delete", json={"model": profile.model})
-            except httpx.HTTPError as e:
-                log.warning("Ollama-Modell %s nicht gelöscht: %s", profile.model, e)
         await hub.broadcast({"type": "models_changed"})
         return {"ok": True, "freed_gb": round(freed / 1e9, 1), "active": llm.active}
 
@@ -768,8 +708,6 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
             if llm.profiles[name].server and llm.moe_auto(name) and mode == llm.mode:
                 llm.follow_moe(name, auto_moe_layers(name, ctx=ctx))  # mehr Kontext = mehr Experten in den RAM
             await llm.set_context(name, ctx, model_progress, mode=mode)
-            if live:
-                await llm.warm()  # Ollama: gleich mit der neuen Größe laden
         active = await restart_with(name, change, live=live, show_context=True,
                                     status=lambda e: 400 if "zwischen" in str(e) else 502)
         return {"ok": True, "ctx": llm.context_size if active else ctx}
@@ -862,8 +800,8 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
         if size not in UBATCH_SIZES:
             raise HTTPException(400, "Batch-Größe bitte 512, 1024 oder 2048")
         if not llm.profiles[name].server:
-            raise HTTPException(400, T("Die Batch-Größe lässt sich nur bei llama.cpp einstellen, nicht bei Ollama.",
-                                       "The batch size can only be set for llama.cpp, not for Ollama."))
+            raise HTTPException(400, T("Die Batch-Größe lässt sich nur bei einem llama-server einstellen, den Orbwise startet.",
+                                       "The batch size can only be set for a llama-server that Orbwise starts."))
         await restart_with(name, lambda: llm.set_ubatch(name, size, model_progress))
         agent.forget_prefill(name)  # die alte Geschwindigkeit gilt nicht mehr – die nächste Antwort misst neu
         return {"ok": True, "ubatch": size}
@@ -881,8 +819,8 @@ def register(app: FastAPI, *, cfg, llm, agent, memory, hub, state_file: Path, ba
             raise HTTPException(400, T("Bitte für jede Grafikkarte einen Anteil angeben.",
                                        "Please give a share for every GPU."))
         if not llm.profiles[name].server:
-            raise HTTPException(400, T("Die Aufteilung auf Grafikkarten geht nur mit llama.cpp – Ollama verteilt selbst.",
-                                       "Splitting across GPUs only works with llama.cpp – Ollama splits by itself."))
+            raise HTTPException(400, T("Die Aufteilung auf Grafikkarten geht nur bei einem llama-server, den Orbwise startet.",
+                                       "Splitting across GPUs only works for a llama-server that Orbwise starts."))
         try:
             await restart_with(name, lambda: llm.set_gpus(name, split, model_progress), show_context=True)
         except LLMError as e:

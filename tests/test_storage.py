@@ -82,14 +82,13 @@ def test_storage_api_lists_models_and_clears(tmp_path, cfg, monkeypatch):
     monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
     gguf = _file(tmp_path / "models" / "qwen" / "Qwen-Q4_K_M.gguf", 5 * MB)
     mine = _file(tmp_path / "models" / "eigen.gguf", 2 * MB)
-    cfg.llm.base_url = "http://127.0.0.1:9"
     cfg.llm.profiles = {
         "qwen": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8099/v1", model="qwen",
                               server=ServerConfig(command=f"llama-server -m {gguf} -ngl 99")),
         "eigen": ProfileConfig(backend="openai", base_url="http://127.0.0.1:8098/v1", model="eigen",
                                server=ServerConfig(command=f"llama-server -m {mine} -ngl 99")),
-        "olla": ProfileConfig(backend="ollama", model="qwen3")}
-    cfg.llm.active = "olla"
+        "extern": ProfileConfig(base_url="http://127.0.0.1:9/v1", model="qwen3")}
+    cfg.llm.active = "extern"
     state = storage.data_dir(cfg) / "state.json"
     state.parent.mkdir(parents=True, exist_ok=True)
     state.write_text(json.dumps({

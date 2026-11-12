@@ -1,13 +1,9 @@
-import json
 import subprocess
 
-import httpx
 from conftest import run
 
 from orbwise import metrics
 from orbwise.agent import Agent
-from orbwise.config import LLMConfig
-from orbwise.llm import OllamaLLM
 
 
 def make_amd(root, total=8 * 1024**3, used=3 * 1024**3, busy=57, power_uw=123_000_000, temp=64000):
@@ -67,25 +63,6 @@ def test_cpu_percent(tmp_path, monkeypatch):
 def test_collect_has_ram():
     data = metrics.collect()
     assert data["ram"]["total"] > 0 and data["ram"]["used"] > 0
-
-
-def test_ollama_token_stats():
-    lines = [
-        {"message": {"role": "assistant", "content": "Hallo"}, "done": False},
-        {"message": {"role": "assistant", "content": ""}, "done": True, "eval_count": 120,
-         "eval_duration": 2_000_000_000, "prompt_eval_count": 900, "prompt_eval_duration": 500_000_000,
-         "load_duration": 1_200_000_000},
-    ]
-    llm = OllamaLLM(LLMConfig())
-    llm._client = httpx.AsyncClient(base_url="http://o", transport=httpx.MockTransport(
-        lambda r: httpx.Response(200, text="\n".join(json.dumps(x) for x in lines))))
-
-    async def go():
-        return [e async for e in llm.chat_stream([{"role": "user", "content": "x"}])]
-
-    done = run(go())[-1]
-    assert done["stats"] == {"tokens": 120, "tps": 60.0, "prompt_tokens": 900, "prompt_total": 900,
-                             "prompt_tps": 1800.0, "prompt_ms": 500, "load_ms": 1200}
 
 
 def test_agent_emits_llm_stats(cfg, llm, memory):

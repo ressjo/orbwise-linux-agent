@@ -14,9 +14,9 @@ from fastapi import HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 
 from ... import askpass, metrics, usage
+from ...extras.calendar_tools import calendar_status
+from ...extras.trilium import trilium_status
 from ...lang import T
-from ...tools.calendar_tools import calendar_status
-from ...tools.trilium import trilium_status
 
 log = logging.getLogger(__name__)
 
@@ -176,8 +176,7 @@ def register(app, ctx) -> None:
         try:
             return await asyncio.to_thread(step_limit.set_limits, cfg, state_file, body if isinstance(body, dict) else {})
         except ValueError as e:
-            raise HTTPException(400, T("Ungültige Einstellung.", "Invalid setting.") if str(e) == "think_steps"
-                                else T("Ungültiges Schritt-Limit.", "Invalid step limit.")) from e
+            raise HTTPException(400, T("Ungültiges Schritt-Limit.", "Invalid step limit.")) from e
 
     # ---------- Artefakte: Temp-Ordner für Diagramme, Exporte & Co. (siehe artifacts.py) ----------
     @app.get("/api/artifacts")

@@ -727,24 +727,6 @@ def test_own_image_backend_does_not_unload_the_llm(engine, tmp_path):
     assert not run(engine.enter()) and engine.llm.llm_server.stopped == 0 and engine.llm.gpu_borrowed is None
 
 
-def test_embeddings_go_to_the_cpu_while_images_have_the_gpu(cfg):
-    from orbwise.llm_router import LLMRouter
-    router = LLMRouter(cfg.llm)
-    seen = []
-
-    async def embed(texts):
-        seen.append(router.ollama.embed_on_cpu)
-        return [[0.0]] * len(texts)
-    router.ollama.embed = embed
-
-    async def borrowed(restart=True):
-        pass
-    run(router.embed(["a"]))
-    router.gpu_borrowed = borrowed
-    run(router.embed(["b"]))
-    assert seen == [False, True] and router.ollama.embed_on_cpu is False  # danach wieder wie eingestellt
-
-
 def test_no_background_maintenance_in_image_mode(cfg, monkeypatch, tmp_path):
     from fastapi.testclient import TestClient
 
@@ -851,7 +833,6 @@ def test_typing_loads_a_resting_llm_but_not_in_image_mode(cfg, monkeypatch, tmp_
     from orbwise.server import create_app
     monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
     monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
-    cfg.llm.base_url = "http://127.0.0.1:9"
     cfg.image.dir = str(tmp_path / "img")
     with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
         llm = client.app.state.hub.agent.llm

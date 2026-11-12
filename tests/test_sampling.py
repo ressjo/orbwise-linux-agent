@@ -6,7 +6,7 @@ import pytest
 from conftest import run
 
 from orbwise.config import LLMConfig, ProfileConfig
-from orbwise.llm import LLMError, OllamaLLM, OpenAICompatLLM, clean_sampling, sampling_for
+from orbwise.llm import LLMError, OpenAICompatLLM, clean_sampling, sampling_for
 from orbwise.llm_router import LLMRouter
 
 QWEN = {"think": {"temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.0, "presence_penalty": 0.0},
@@ -29,21 +29,16 @@ def test_payloads():
     fast = oa._payload([{"role": "user", "content": "hi"}], None, False, think=False)
     assert fast["presence_penalty"] == 1.5 and fast["top_p"] == 0.8 and fast["temperature"] == 0.7
     assert oa._payload([], None, False, think=True)["top_p"] == 0.95  # llama-server: Felder oben
-    ol = OllamaLLM(LLMConfig(model="qwen3:8b", temperature=0.6))
-    assert ol._payload([], None, False, think=False)["options"] == {"temperature": 0.6, "num_ctx": 16384}
-    ol.sampling = QWEN
-    opts = ol._payload([], None, False, think=True)["options"]
-    assert opts["top_k"] == 20 and opts["temperature"] == 1.0 and opts["num_ctx"] == 16384  # Ollama: in options
 
 
 def test_router_remembers(tmp_path):
-    cfg = LLMConfig(profiles={"qwen": ProfileConfig(model="qwen3:8b", sampling={"fast": {"repetition_penalty": 1.05}}),
+    cfg = LLMConfig(profiles={"qwen": ProfileConfig(base_url="http://q/v1", model="qwen3-8b", sampling={"fast": {"repetition_penalty": 1.05}}),
                               "big": ProfileConfig(backend="openai", base_url="http://x/v1", model="m")}, active="qwen")
     state = tmp_path / "state.json"
     router = LLMRouter(cfg, state_path=state)
     assert router.profiles["qwen"].sampling["fast"] == {"repeat_penalty": 1.05}  # aus der config.yaml vereinheitlicht
     run(router.set_sampling("qwen", QWEN["think"], QWEN["fast"]))
-    assert router.client.sampling["fast"]["presence_penalty"] == 1.5  # aktiver Ollama-Client sofort
+    assert router.client.profile.sampling["fast"]["presence_penalty"] == 1.5  # aktiver Client sofort
     run(router.set_sampling("big", {"top_k": 40}, None))
     with pytest.raises(LLMError):
         run(router.set_sampling("big", {"top_p": 3}, None))
@@ -58,7 +53,6 @@ def test_api(cfg, monkeypatch):
     from orbwise.server import create_app
     monkeypatch.setenv("ORBWISE_SKIP_WARMUP", "1")
     monkeypatch.delenv("ORBWISE_FAKE_LLM", raising=False)
-    cfg.llm.base_url = "http://127.0.0.1:9"
     with TestClient(create_app(cfg), base_url="http://localhost:8765") as client:
         data = client.get("/api/models/standard/sampling").json()
         assert data["think"] == {} and data["presets"]["qwen"]["fast"]["presence_penalty"] == 1.5

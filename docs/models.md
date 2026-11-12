@@ -11,18 +11,19 @@ cancelled there with **Cancel**). Models added this way can be deleted on the mo
 
 ```bash
 orbwise model add              # interactive list of presets for your GPU
-orbwise model add qwen3:14b    # or any model from ollama.com/library
+orbwise model add unsloth/Qwen3-14B-GGUF          # a Hugging Face repo – picks the quantization that fits
 orbwise model search qwen3.6 27b                  # search GGUF models on Hugging Face
 orbwise model search unsloth/Qwen3.6-27B-GGUF     # its quantizations with size and fit (✔ ~ ✘)
 orbwise model add https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/blob/main/Qwen3.6-27B-UD-Q4_K_XL.gguf
 orbwise model add hf.co/unsloth/Qwen3.6-27B-GGUF:UD-Q4_K_XL   # same as the link (runs with llama.cpp)
 orbwise model add ~/models/my-model-Q4_K_M.gguf                # a GGUF file you already have
 orbwise model llamacpp [--update]                               # llama.cpp build: show / update
-orbwise model remove qwen3-14b # remove it from the list (optionally also delete the files)
+orbwise model remove qwen3-14b-q4-k-m  # remove it from the list (optionally also delete the files)
+orbwise model embed            # the embedding model for the memory search (bge-m3, runs on the CPU)
 ```
 
 **Unloading:** **Unload** on the model page (or **Unload model** on the model chip) frees the video memory – the
-llama.cpp server stops, Ollama drops the model – while the model stays selected; the next question (or the
+llama.cpp server stops – while the model stays selected; the next question (or the
 API server) loads it again, warming the prompt cache does not. Handy before a game, during a big download or before
 deleting. It also survives a restart: Orbwise then starts without loading the model. Deleting the selected model
 unloads it first and selects another one (loaded with the next question).
@@ -59,8 +60,13 @@ GPU unusable. Update it yourself following the guide, then press **Update** on t
 matches; `orbwise doctor` warns when the build was made for a different ROCm major version. Deleting a model (**⋯ → Delete**) removes files Orbwise downloaded; files you put into `~/models` yourself stay.
 Gated repositories (e.g. Llama, Gemma) need a Hugging Face token: accept the license on the model page and enter a
 read token under **Settings → General → Hugging Face** (kept in the keyring; `HF_TOKEN` in the environment works too).
-`HF_ENDPOINT` points Orbwise at a mirror instead of huggingface.co. Ollama is still used for the memory embeddings and the
-Ollama presets above.
+`HF_ENDPOINT` points Orbwise at a mirror instead of huggingface.co.
+
+**Everything runs with llama.cpp.** Language models start as a `llama-server` that Orbwise manages; the memory
+embeddings (`bge-m3`) run in a second, small `llama-server` on the CPU that starts with the first search, so they
+never compete for video memory. Coming from an older version with Ollama: those profiles are no longer offered –
+the model page and `orbwise doctor` name them; add the model again as GGUF. The `bge-m3` file Ollama downloaded is
+reused as is (same vectors, no re-indexing); without it run `orbwise model embed`.
 
 **The model page** lists your models grouped into *Local* and *API* (the loaded one first, a filter field from seven
 models on) with a pill that says whether each fits your video memory. The details of a model are split into tabs:
@@ -71,8 +77,8 @@ longer explanation sits behind the **i** next to each heading. The *Add* tab hid
 don't fit your memory (one click shows them), and the *On disk* column only appears when there are new GGUF files.
 
 **Context window, KV cache and sampling per model** (Models page, for any model – changes to a model that is not
-loaded apply the next time it is loaded): the context window (a slider from 4k to 256k, up to what the model was trained for, separately for Tools and Coding – applied shortly after you let go), the KV cache level (f16 / q8 ≈ half / q4 ≈ a quarter of the memory – own llama-server only; with Ollama it
-is service-wide via `OLLAMA_KV_CACHE_TYPE`) and the sampling values for **thinking** and **non-thinking** answers
+loaded apply the next time it is loaded): the context window (a slider from 4k to 256k, up to what the model was trained for, separately for Tools and Coding – applied shortly after you let go), the KV cache level (f16 / q8 ≈ half / q4 ≈ a quarter of the memory – only for models
+Orbwise starts itself) and the sampling values for **thinking** and **non-thinking** answers
 (temperature, top_p, top_k, min_p, presence and repeat penalty; a **Qwen** preset fills in the vendor recommendation).
 Context and KV cache restart the model server; sampling applies from the next answer. Empty sampling fields keep the
 model's defaults.
@@ -81,13 +87,10 @@ Orbwise can know several language models and switch between them – click the *
 switch), **Load** on the models page, or run
 `orbwise model <name>` (`orbwise model` lists all profiles). The choice is remembered.
 
-- `backend: ollama` – models from Ollama (Qwen 3 recommended for tool use)
 - `backend: openai` – any OpenAI-compatible server: **llama-server** from llama.cpp, LM Studio, vLLM, …
 - With `server:` Orbwise starts the model server itself when the profile is activated, waits until it is ready and
   stops it again when switching back or quitting (log: `~/.local/state/orbwise-llm.log`). The real context size
   is read from the server.
-- `unload_ollama: true` evicts Ollama models from VRAM first, `embed_on_cpu: true` runs the memory embeddings on
-  the CPU – useful with 8 GB of VRAM.
 
 A hand-written profile for your own **llama-server** (models added in the web UI get one automatically):
 
@@ -95,16 +98,12 @@ A hand-written profile for your own **llama-server** (models added in the web UI
 llm:
   active: llama
   profiles:
-    qwen:
-      label: Qwen 3 8B
-      model: qwen3:8b
     llama:
       label: Qwen 27B (llama.cpp)
       backend: openai
       base_url: http://127.0.0.1:8080/v1
       model: qwen-27b
       api_key: "a-long-random-password"
-      unload_ollama: true
       server:
         command: llama-server -m ~/models/qwen-27b-Q4_K_M.gguf -ngl 99 -c 32768 -np 1 --jinja --port 8080 --api-key a-long-random-password
         env:
@@ -130,7 +129,7 @@ switch tools or whole groups off: `tools: {disabled: [sysadmin, paperless]}`.
 ### Prompt cache tips
 
 <details>
-<summary>Only the new part of a chat should be read – how llama-server and Ollama are set up for that</summary>
+<summary>Only the new part of a chat should be read – how llama-server is set up for that</summary>
 
 How long the model reads before it answers depends mostly on how much of the prompt the model server can reuse. The
 activity panel shows it for every step ("1,240 tokens read in 4 s (+11,980 cached)") – after the first question in
@@ -154,8 +153,6 @@ shows the full command; restored checkpoints appear in the same log.
 - **llama-server:** start it with **one slot** (`-np 1` – Orbwise's profiles do that); with several slots requests
   can land in different caches, `orbwise doctor` points this out. Optionally `--cache-reuse 256` lets the server reuse
   matching blocks even after a change further up (e.g. when a tool group is added).
-- **Ollama:** `llm.keep_alive` (default `30m`) – after that Ollama unloads the model and the next question reads the
-  whole chat again. Raise it if you often take longer breaks and the VRAM is not needed elsewhere.
 
 </details>
 
@@ -205,7 +202,7 @@ so bigger models or a bigger context fit.
 share per card (`--tensor-split`, card order as in `nvidia-smi`); 0 % leaves a card out – one card alone is fastest
 when the model fits on it. The setting is kept per model and restarts its server. After adding a card, raise the
 context of existing models on the model page. Two NVIDIA cards use the CUDA build; mixing AMD and NVIDIA needs the
-Vulkan build. Ollama models split by themselves.
+Vulkan build.
 
 ### MoE models bigger than the GPU: experts in RAM
 
@@ -263,7 +260,7 @@ layers (GLM-4.5, DeepSeek-V3, Qwen3.5/3.6 and others – either inside the GGUF 
 repeats passages already in the context (code, tool calls) and works with any model at no memory cost. Orbwise only
 offers what both the model and the llama.cpp build support (`--spec-type` in `llama-server --help`; otherwise it
 suggests updating llama.cpp) and shows the hit rate from the server log – below ~30 % it is better switched off.
-Not available for Ollama models.
+Only for models Orbwise starts itself (not for external servers).
 
 </details>
 
@@ -279,8 +276,7 @@ Programs get the model **raw** – without the Orbwise system prompt, memory or 
 the PC. Orbwise sits in front instead of exposing llama-server directly: it starts the model server when needed,
 hands the GPU back from image mode, and knows that its own prompt cache is gone after an API request (the next
 Orbwise answer re-reads the chat). By default the loaded model answers whatever model a program names; with
-**Programs may switch the model** Orbwise loads the named model (for your chat too). With Ollama models, Ollama may
-reload the model with a different context size. For Open WebUI in Docker use `--network=host`.
+**Programs may switch the model** Orbwise loads the named model (for your chat too). For Open WebUI in Docker use `--network=host`.
 
 ### Thinking mode
 
@@ -291,7 +287,7 @@ aloud. It costs time (often 10–60 s per step on smaller GPUs). For
 llama-server, **don't** pass `--reasoning-budget 0`, which disables reasoning server-side.
 
 The menu follows what the loaded model can do. Orbwise reads it from the model's chat template (llama-server
-`/props`) or Ollama's capabilities:
+`/props`):
 - **The model's own levels:** **Off** plus exactly the levels the chat template itself handles (values it compares
   `reasoning_effort` with or lists, at least two), shown under the model's own names (e.g. `low`, `xhigh`), its
   default marked; hovering the note at the bottom of the menu shows the template lines they come from. Orbwise has
@@ -304,10 +300,6 @@ larger one the model decides, and Orbwise only steps in when no room would be le
 a reasoning chain that goes in circles (its end repeats for the third time) is cut. In all three cases the step
 continues without further thinking, with the thoughts so far (the activity shows "enough thinking – acting now" or
 "thoughts repeating – acting now").
-
-**Thinking during tasks** (*Settings → General*, or `llm.think_steps` in the config): *Every step* (`all`, default)
-thinks before every tool call; *Only where needed* (`lean`) thinks in the first step of an answer and after a failed
-step – faster on long tasks, but it may cost quality with some models.
 
 **Tool calls written as text.** If a model's chat template and the server don't match, the model writes its tool
 call into the answer instead of calling the tool. Orbwise recognises the common spellings (`<tool_call>…`,
@@ -338,11 +330,15 @@ short, repeats the loop detection skipped, timeouts. The full result lands as JS
 `~/.local/share/orbwise/bench/` – run it before and after changing a model, the context window, the thinking setting
 or the prompt, and compare.
 
+- Without `--think` the model profile decides whether it thinks; the step limit comes from the settings. The first
+  line of the report says what the run really used.
 - It uses a model server that is already running (so Orbwise can stay open) or starts it and stops it again.
 - Nobody is there to confirm: the agent runs in *Read + edit files*, and what would ask there is decided by a fixed
   rule – allowed is what that level's cage would allow (no root, deleting, sending to the network; files only in
   the project), everything else is refused and counted.
 - Weakening the given tests doesn't help: the check resets them first.
+- No pytest needed, neither for the agent nor for the check: every project brings a small test runner
+  (`python3 run_tests.py`, named in its `AGENTS.md`), so the result does not depend on what is installed.
 - Plan for a few minutes up to an hour, depending on model and hardware; a task counts as failed after
   `--timeout` (900) seconds.
 
@@ -367,7 +363,7 @@ uv run python scripts/llm_bench.py --resume                      # continue an i
 ```
 
 Profiles that start their own llama-server are started and stopped by the script (stop Orbwise first with
-`orbwise stop` – both would share the GPU memory); Ollama models are unloaded after each profile. Datasets come
+`orbwise stop` – both would share the GPU memory). Datasets come
 from the Hugging Face datasets API and are cached page by page in `~/.cache/orbwise/bench` (an interrupted download
 continues where it stopped; for large sets like MMLU-Pro a sample only loads randomly chosen pages; `HF_TOKEN`
 raises the rate limit); by default a fixed sample
@@ -394,13 +390,13 @@ the keyring, never in `state.json` or `manifest.json`.
 
 ## AMD GPUs
 
-- Check with `ollama ps` during a request – it should say `100% GPU`.
-- Cards that ROCm doesn't officially support (e.g. RX 6600/6700, RX 7600) usually work with an override:
+- Check **Models → model → Diagnostics** (or `orbwise doctor`) during a request – the model and its KV cache
+  should sit in VRAM, not in RAM.
+- Cards that ROCm doesn't officially support (e.g. RX 6600/6700, RX 7600) usually work with an override in the
+  profile's environment (`llm.profiles.<name>.server.env`, see the example above) or for all of Orbwise:
   ```bash
-  sudo systemctl edit ollama
-  # [Service]
-  # Environment="HSA_OVERRIDE_GFX_VERSION=10.3.0"   # RDNA2 (RX 6000)
-  # Environment="HSA_OVERRIDE_GFX_VERSION=11.0.0"   # RDNA3 (RX 7000)
-  sudo systemctl restart ollama
+  mkdir -p ~/.config/environment.d
+  echo 'HSA_OVERRIDE_GFX_VERSION=10.3.0' > ~/.config/environment.d/orbwise-rocm.conf   # RDNA2 (RX 6000)
+  # 11.0.0 for RDNA3 (RX 7000) – log out and in again afterwards
   ```
-- If ROCm doesn't work at all: `./scripts/install.sh --gpu vulkan` (Arch).
+- If ROCm doesn't work at all, Orbwise uses the Vulkan build of llama.cpp by itself (switch under **Models → llama.cpp**).

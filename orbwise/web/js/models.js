@@ -150,7 +150,7 @@ async function renderPulls() {
   box.classList.toggle("hidden", !pulls.length);
 }
 // ---- Reiter „Meine Modelle“: Liste – gruppiert (Lokal / API), aktives Modell oben, ab 7 Modellen mit Suche
-const isLocal = (p) => !!(p.managed || p.path || p.backend === "ollama");
+const isLocal = (p) => !!(p.managed || p.path);
 function renderModelList() {
   const d = MP.data;
   const list = $("mp-list");
@@ -174,6 +174,16 @@ function renderModelList() {
       });
     };
     list.appendChild(search);
+  }
+  // Hinweise: abgelöste Ollama-Profile, fehlendes Embedding-Modell (Gedächtnis-Suche dann nur über Stichworte)
+  const notes = (d.retired || []).map((n) => L(`„${n}“ lief über Ollama – das gibt es nicht mehr. Bitte als GGUF neu hinzufügen.`,
+                                               `"${n}" ran on Ollama – no longer supported. Please add it again as GGUF.`));
+  if (d.embed && !d.embed.available && d.embed.problem) notes.push(d.embed.problem);
+  for (const text of notes) {
+    const n = document.createElement("div");
+    n.className = "mm-hint mp-note";
+    n.textContent = text;
+    list.appendChild(n);
   }
   const groups = [[L("Lokal", "Local"), d.profiles.filter(isLocal)], [L("API", "API"), d.profiles.filter((p) => !isLocal(p))]]
     .filter(([, items]) => items.length);
@@ -327,7 +337,7 @@ export function init() {
   // Aktiv und wirklich geladen (von Hand entladen: Änderungen gelten erst beim nächsten Laden)
   isLive = (p) => p.active && p.loaded !== false;
   restartNote = (p) => (isLive(p) ? (p.managed ? L("Zum Ändern startet der Modell-Server neu.", "Changing it restarts the model server.")
-                                                     : L("Zum Ändern lädt Ollama das Modell neu.", "Changing it makes Ollama reload the model."))
+                                                     : L("Gilt für die nächste Anfrage.", "Applies to the next request."))
                                         : L("Gilt ab dem nächsten Laden.", "Applies the next time it is loaded."));
 
   kCtx = (n) => (n >= 1024 ? `${Math.round(n / 1024)}k` : String(n || ""));

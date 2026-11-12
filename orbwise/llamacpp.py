@@ -822,11 +822,10 @@ def moe_for_new_profile(gguf: Path, ctx: int, vram_gb: float, gpus: int, extra: 
 def make_profile(cfg, name: str, gguf: Path, mmproj: Path | None, gpu: dict, port: int) -> dict:
     extra = mmproj.stat().st_size if mmproj and mmproj.exists() else 0
     vram, gpus = float(gpu.get("vram_gb") or 0), len(gpu.get("gpus") or []) or 1
-    ctx, cpu_embed = pick_context(gguf, extra, vram, gpus)
+    ctx, _fits = pick_context(gguf, extra, vram, gpus)
     moe = moe_for_new_profile(gguf, ctx, vram, gpus, extra)
     if moe:
         ctx, moe_layers = moe
-        cpu_embed = True  # der Grafikspeicher ist knapp – Embeddings des Gedächtnisses auf der CPU
     key = secrets.token_hex(16)  # llama-server erlaubt Anfragen von jeder Webseite (CORS *) – nur mit Schlüssel
     command = f"{_tilde(binary(cfg))} -m {_tilde(gguf)}"
     if mmproj:
@@ -840,8 +839,6 @@ def make_profile(cfg, name: str, gguf: Path, mmproj: Path | None, gpu: dict, por
         "base_url": f"http://127.0.0.1:{port}/v1",
         "model": name,
         "api_key": key,
-        "embed_on_cpu": cpu_embed,
-        "unload_ollama": True,
         "server": {"command": command, "env": {"LD_LIBRARY_PATH": _short(root(cfg) / "current")},
                    "startup_timeout": 300},
     }

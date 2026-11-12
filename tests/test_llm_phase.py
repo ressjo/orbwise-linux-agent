@@ -86,7 +86,7 @@ def test_compacting_is_shown(cfg, llm, memory):
 
 def test_prompt_phase_reports_only_the_new_part(cfg, llm, memory):
     agent = Agent(cfg, llm, memory)
-    agent.llm = SimpleNamespace(profile=SimpleNamespace(backend="ollama"), active="local")
+    agent.llm = SimpleNamespace(profile=SimpleNamespace(backend="openai"), active="local")
     agent.last_context = {"used": 5000}
     agent._last_prompt["local"], agent._prefill_tps["local"] = 4000, 500.0
     info = agent._prompt_phase()

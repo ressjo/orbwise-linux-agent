@@ -136,7 +136,14 @@ code { font-family: var(--mono); font-size: .9em; }
 .icon-btn:hover { background: var(--surface-2); color: var(--text); }
 .icon-btn.on { color: var(--accent); background: var(--accent-soft); }
 .icon-btn .ib-label { display: none; font-size: var(--fs-md); font-weight: 500; white-space: nowrap; }
-@media (min-width: 1280px) {
+/* nach dem Platz im Kopf des Hauptbereichs, nicht nach der Fensterbreite: mit offener Aktivitätsleiste oder den
+   Coding-Knöpfen (Projekt, Sandbox, Prüfen) ist er schmal – dann bleiben es Symbole */
+@container head (max-width: 760px) {  /* enger Kopf (Coding mit offener Aktivitätsleiste): Sandbox/Prüfen nur als Symbol */
+  .sandbox-chip em, .review-chip em { display: none; }
+  .project-chip { max-width: 230px; }
+}
+@container head (min-width: 940px) {
+  .head-actions .icon-btn:has(.ib-label) .badge { position: static; margin-left: -2px; }  /* neben der Beschriftung, nicht darüber */
   .head-actions .icon-btn:has(.ib-label) { display: inline-flex; align-items: center; width: auto; padding: 0 10px 0 8px; gap: 6px; }
   .head-actions .icon-btn .ib-label { display: inline; }
 }
@@ -421,6 +428,9 @@ textarea.ui-dialog-input { height: auto; padding: 9px 12px; resize: vertical; }
 .conversation { grid-row: 3; }
 .composer-wrap { grid-row: 4; }
 .main-head { display: flex; align-items: center; gap: 10px; padding: 0 16px 0 20px; border-bottom: 1px solid transparent; }
+/* Container für die Beschriftung der Symbolknöpfe (siehe .ib-label); eigene Ebene, damit die Menüs im Kopf über dem
+   Chat liegen */
+.main-head { container: head / inline-size; position: relative; z-index: 5; }
 .main.has-messages .main-head { border-bottom-color: var(--border); }
 .chat-title { flex: 1; min-width: 0; font-size: var(--fs-base); font-weight: 550; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .head-actions { display: flex; align-items: center; gap: 4px; }

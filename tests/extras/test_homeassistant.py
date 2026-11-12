@@ -3,7 +3,7 @@ import pytest
 from conftest import run
 from fake_homeassistant import TOKEN, FakeHA
 
-from orbwise.tools import homeassistant as ha
+from orbwise.extras import homeassistant as ha
 from orbwise.tools.registry import CONFIRM, SAFE, ToolContext, get_tool, load_all_tools, tool_schemas
 
 TOOLS = {"ha_find", "ha_state", "ha_control"}

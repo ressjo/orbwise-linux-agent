@@ -2,7 +2,7 @@ import pytest
 from conftest import run
 
 from orbwise.agent import Agent
-from orbwise.tools import obsidian as ob
+from orbwise.extras import obsidian as ob
 from orbwise.tools.registry import CONFIRM, SAFE, ToolContext, get_tool, load_all_tools, tool_schemas
 
 TOOLS = {"obsidian_search", "obsidian_read", "obsidian_ask", "obsidian_create_note", "obsidian_append",

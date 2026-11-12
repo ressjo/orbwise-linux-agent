@@ -47,7 +47,6 @@ def test_ui_leaves_thinking_after_model_start(cfg, monkeypatch):
         await asyncio.sleep(0.6)
 
     monkeypatch.setattr(llm_router.LLMRouter, "start", slow_start)
-    cfg.llm.base_url = "http://127.0.0.1:9"
     with TestClient(server.create_app(cfg), base_url="http://localhost:8765") as client:
         with client.websocket_connect(WS, headers=ORIGIN) as ws:
             hello = ws.receive_json()
@@ -68,7 +67,6 @@ def test_model_start_failure_also_ends_thinking(cfg, monkeypatch):
         raise llm_router.LLMError("llama-server ist beim Start beendet worden")
 
     monkeypatch.setattr(llm_router.LLMRouter, "start", broken_start)
-    cfg.llm.base_url = "http://127.0.0.1:9"
     with TestClient(server.create_app(cfg), base_url="http://localhost:8765") as client:
         with client.websocket_connect(WS, headers=ORIGIN) as ws:
             assert ws.receive_json()["busy"] is True
@@ -164,24 +162,6 @@ def test_startup_progress_is_reported_until_ready(cfg, monkeypatch):
             assert states["model"] == "ok" and states["memory"] == "ok"
             assert states["stt"] == "off" and states["telegram"] == "off"  # Stimme aus, Telegram nicht eingerichtet
         assert client.get("/api/startup").json()["ready"]
-
-
-def test_model_preload_explains_missing_model():
-    import httpx
-
-    from orbwise.config import LLMConfig
-    from orbwise.llm import LLMError, OllamaLLM
-
-    def handler(request):
-        return httpx.Response(404, json={"error": "model 'qwen3:14b' not found"})
-
-    llm = OllamaLLM(LLMConfig(), transport=httpx.MockTransport(handler))
-    try:
-        run(llm.preload())
-    except LLMError as e:
-        assert "ollama pull qwen3:14b" in str(e)
-    else:
-        raise AssertionError("kein Fehler")
 
 
 def test_app_js_version_follows_its_modules(tmp_path, monkeypatch):

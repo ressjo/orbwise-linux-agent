@@ -5,7 +5,7 @@ from conftest import run
 from fake_imap import PASSWORD, USER, FakeImap
 from fake_paperless import TOKEN, FakePaperless
 
-from orbwise.tools import mail, paperless
+from orbwise.extras import mail, paperless
 from orbwise.tools.registry import CONFIRM, SAFE, ToolContext, get_tool, load_all_tools, tool_schemas
 
 

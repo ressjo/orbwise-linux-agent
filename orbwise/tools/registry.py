@@ -1,4 +1,4 @@
-"""Tool-Registry: Funktionen werden per Decorator registriert, das JSON-Schema für Ollama
+"""Tool-Registry: Funktionen werden per Decorator registriert, das JSON-Schema für das Sprachmodell
 wird aus den Typannotationen (Annotated[typ, "Beschreibung"]) erzeugt."""
 
 from __future__ import annotations
@@ -75,6 +75,8 @@ class ToolSpec:
     describe: Callable[[Any], str] | None = None
     # Vorschau fürs Bestätigungsfenster (z. B. Diff einer Dateiänderung)
     preview: Callable[[ToolContext, dict], str] | None = None
+    # Der Befehl, den das Werkzeug ausführen wird – steht auf der Bestätigungskarte (z. B. „sudo pacman -Syu“)
+    command: Callable[[ToolContext, dict], str] | None = None
 
     def is_enabled(self, cfg: Any) -> bool:
         if cfg is None:
@@ -142,7 +144,8 @@ def _json_type(tp: Any) -> tuple[str, type]:
 
 def tool(description: str, risk: str | RiskFn = SAFE, name: str | None = None,
          enabled: Callable[[Any], bool] | None = None, editable: tuple[str, ...] = (),
-         describe: Callable[[Any], str] | None = None, preview: Callable[[ToolContext, dict], str] | None = None):
+         describe: Callable[[Any], str] | None = None, preview: Callable[[ToolContext, dict], str] | None = None,
+         command: Callable[[ToolContext, dict], str] | None = None):
     def deco(func):
         sig = inspect.signature(func)
         hints = typing.get_type_hints(func, include_extras=True)
@@ -176,6 +179,7 @@ def tool(description: str, risk: str | RiskFn = SAFE, name: str | None = None,
             editable=tuple(editable),
             describe=describe,
             preview=preview,
+            command=command,
         )
         REGISTRY[spec.name] = spec
         return func
@@ -222,21 +226,26 @@ def get_tool(name: str) -> ToolSpec | None:
 
 def load_all_tools() -> dict[str, ToolSpec]:
     # Import registriert die Tools per Decorator
+    # Zusätze (Paperless, Mail, Kalender …): eingetragen werden sie immer, angeboten erst nach dem Einrichten
+    from ..extras import (  # noqa: F401
+        calendar_tools,
+        homeassistant,
+        mail,
+        obsidian,
+        paperless,
+        portainer,
+        telegram_tools,
+        trilium,
+    )
     from . import (  # noqa: F401
         apps,
         briefing,
-        calendar_tools,
         code,
         files,
         github_tools,
-        homeassistant,
         image_tools,
-        mail,
         memory_tools,
-        obsidian,
         packages,
-        paperless,
-        portainer,
         power,
         reminder_tools,
         routine_tools,
@@ -244,10 +253,8 @@ def load_all_tools() -> dict[str, ToolSpec]:
         ssh,
         sysadmin,
         system,
-        telegram_tools,
         todo_tools,
         toolload,
-        trilium,
         vision,
         weather,
         web,

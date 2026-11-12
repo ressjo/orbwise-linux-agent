@@ -201,6 +201,8 @@ def setup(ctx) -> None:
         heal_index_soon()
         if isinstance(llm, LLMRouter):
             background.append(asyncio.create_task(start_model()))
+            if env("SKIP_WARMUP") != "1":  # Embedding-Server (CPU) vorladen – die erste Frage wartet sonst darauf
+                background.append(asyncio.create_task(llm.embedder.warm()))
             if retired and retired["strata"]:
                 background.append(asyncio.create_task(remove_retired(retired)))
         else:
@@ -276,15 +278,9 @@ def setup(ctx) -> None:
                 await llm.start(model_progress)
                 await startup.set("model", "running", T(f"lade {llm.profile.model} in den Speicher …",
                                                         f"loading {llm.profile.model} into memory …"))
-                try:  # sonst wartet die erste Frage, bis Ollama das Modell geladen hat
-                    await llm.warm()
-                    warm_error = ""
-                except LLMError as e:  # Profil ist trotzdem aktiv – nur vorladen ging nicht (z. B. Ollama aus)
-                    warm_error = str(e)
             await hub.broadcast({"type": "model_active", "name": name})
-            await startup.set("model", "warn" if warm_error else "ok", warm_error or label)
-            if not warm_error:
-                hub.prewarm_soon()  # leerer Chat: Systemprompt + Werkzeuge in den Cache – auch ohne offene Oberfläche
+            await startup.set("model", "ok", label)
+            hub.prewarm_soon()  # leerer Chat: Systemprompt + Werkzeuge in den Cache – auch ohne offene Oberfläche
         except LLMError as e:
             log.warning("Modell-Start fehlgeschlagen: %s", e)
             await hub.broadcast({"type": "model_error", "name": name, "text": str(e)})

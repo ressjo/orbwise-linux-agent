@@ -74,7 +74,7 @@ writing outside the copy, and pushing to GitHub; the leak guard keeps watching w
 - **Screenshots:** the agent can take a screenshot of the app it is building (`screenshot`, e.g. of the dev
   server on `localhost` or an HTML file) with headless Chromium – in the sandbox inside the container, otherwise with
   the Chromium/Chrome on your machine. The image appears under the answer (see the
-  [screenshot above](../README.md#what-makes-it-different)); if the loaded model sees images, it also gets a description to check
+  [screenshot in the README](../README.md#what-it-does)); if the loaded model sees images, it also gets a description to check
   its work.
 - The default image `orbwise-sandbox:4` (Debian with git, Python, Node, build tools, ripgrep, Chromium for screenshots, Podman, and for the code check ruff, bandit, semgrep, gitleaks, shellcheck) is built on first use;
   `sandbox.image` takes any other image (e.g. `python:3.12`). Install Podman with `sudo apt install podman`.

@@ -25,6 +25,7 @@ import time
 from pathlib import Path
 from typing import Annotated
 
+from ..lang import T
 from . import jobs, proc
 from .files import READ_MAX_BYTES, SKIP_DIRS, _human_size
 from .registry import BLOCKED, CONFIRM, SAFE, ToolContext, tool
@@ -422,7 +423,7 @@ def _edit_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     p = ctx.path(args["path"])
     if is_secret_path(str(p)):
         return BLOCKED, secret_reason()
-    return CONFIRM, f"{'ändert' if p.exists() else 'erstellt'} {_rel(ctx, p)}"
+    return CONFIRM, f"{T('ändert', 'changes') if p.exists() else T('erstellt', 'creates')} {_rel(ctx, p)}"
 
 
 def edit_preview(ctx: ToolContext, args: dict) -> str:
@@ -502,7 +503,7 @@ def _write_risk(ctx: ToolContext, args: dict) -> tuple[str, str]:
     p = ctx.path(args["path"])
     if is_secret_path(str(p)):
         return BLOCKED, secret_reason()
-    return CONFIRM, f"{'überschreibt' if p.exists() else 'erstellt'} {_rel(ctx, p)}"
+    return CONFIRM, f"{T('überschreibt', 'overwrites') if p.exists() else T('erstellt', 'creates')} {_rel(ctx, p)}"
 
 
 def _read_text(p: Path) -> str | None:

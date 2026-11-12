@@ -6,8 +6,8 @@ import pytest
 from conftest import run
 
 from orbwise.dates import easter, holidays, resolve
+from orbwise.extras.calendar_tools import parse_start
 from orbwise.reminders import parse_when
-from orbwise.tools.calendar_tools import parse_start
 from orbwise.tools.registry import ToolContext, get_tool, load_all_tools
 
 TODAY = date(2026, 10, 3)  # ein Samstag

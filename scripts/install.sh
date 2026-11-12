@@ -3,8 +3,9 @@
 #
 #   ./scripts/install.sh                   # asks for language, GPU and model (with recommendations)
 #   ./scripts/install.sh --lang en         # English assistant, voice and UI (default: de)
-#   ./scripts/install.sh --model qwen3:8b  # choose the Ollama model yourself
-#   ./scripts/install.sh --gpu vulkan      # force the Ollama backend: auto | cuda | rocm | vulkan | cpu (Arch)
+#   ./scripts/install.sh --model unsloth/Qwen3-8B-GGUF   # choose the model yourself (Hugging Face repo or link)
+#   ./scripts/install.sh --gpu cpu         # auto | cuda | rocm | vulkan | cpu – only used to size the model choice;
+#                                          # llama.cpp itself picks the build that runs on this machine
 #   ./scripts/install.sh --yes             # no questions, use the detected/recommended defaults
 #   ./scripts/install.sh --autostart       # also start Orbwise at login (default: only the app-menu entry)
 # Change or add models later with:  orbwise model add
@@ -116,19 +117,8 @@ fi
 # ---------------------------------------------------------------- System packages
 say "Installing system packages"
 if [[ $DISTRO == arch ]]; then
-  case "$GPU" in
-    cuda) OLLAMA_PKG="ollama-cuda" ;;
-    rocm) OLLAMA_PKG="ollama-rocm" ;;
-    vulkan) OLLAMA_PKG="ollama-vulkan" ;;
-    *) OLLAMA_PKG="ollama" ;;
-  esac
-  if ! pacman -Si "$OLLAMA_PKG" >/dev/null 2>&1; then
-    echo "Package $OLLAMA_PKG not found in the repos – using 'ollama'."
-    OLLAMA_PKG="ollama"
-  fi
   sudo pacman -S --needed --noconfirm python uv git fd ripgrep plocate xdg-utils polkit pacman-contrib libnotify \
-    gtk3 curl iproute2 iputils bubblewrap "$OLLAMA_PKG"
-  sudo systemctl enable --now ollama.service
+    gtk3 curl iproute2 iputils bubblewrap
   sudo systemctl enable --now plocate-updatedb.timer || true
 else
   sudo apt-get update
@@ -139,21 +129,8 @@ else
     curl -LsSf https://astral.sh/uv/install.sh | sh
     export PATH="$HOME/.local/bin:$PATH"
   fi
-  # Ollama – official installer (sets up CUDA/ROCm support and the systemd service)
-  if ! command -v ollama >/dev/null; then
-    curl -fsSL https://ollama.com/install.sh | sh
-  fi
-  sudo systemctl enable --now ollama.service || true
 fi
 sudo updatedb || true
-
-if [[ -n "$HSA" ]] && ask_yes "Deine AMD-Karte braucht für ROCm meist HSA_OVERRIDE_GFX_VERSION=$HSA. Für Ollama einrichten?" \
-                              "Your AMD card usually needs HSA_OVERRIDE_GFX_VERSION=$HSA for ROCm. Set it up for Ollama?" y; then
-  sudo mkdir -p /etc/systemd/system/ollama.service.d
-  printf '[Service]\nEnvironment="HSA_OVERRIDE_GFX_VERSION=%s"\n' "$HSA" | \
-    sudo tee /etc/systemd/system/ollama.service.d/orbwise-rocm.conf >/dev/null
-  sudo systemctl daemon-reload && sudo systemctl restart ollama.service || true
-fi
 
 # ---------------------------------------------------------------- Python environment
 say "Setting up the Python environment (uv)"
@@ -176,10 +153,11 @@ if [[ -z "$MODEL" ]]; then
   echo "$(t 'Grafikspeicher' 'Video memory'): ${GB} GB"
 fi
 
-say "$(t 'Sprachmodell wählen und laden (dauert beim ersten Mal)' 'Choosing and pulling the language model (takes a while the first time)')"
-for _ in {1..30}; do ollama list >/dev/null 2>&1 && break; sleep 1; done
+say "$(t 'llama.cpp einrichten (fertiger Build, kein Kompilieren)' 'Setting up llama.cpp (prebuilt, nothing to compile)')"
+uv run orbwise model llamacpp
+
+say "$(t 'Sprachmodell wählen und laden (dauert beim ersten Mal)' 'Choosing and downloading the language model (takes a while the first time)')"
 CHOICE_FILE="$(mktemp)"
-OLLAMA_MODEL=""   # Ollama-Chatmodell
 choose_model() {  # Menü geht ins Terminal, die Wahl in $CHOICE_FILE
   if (( ASK )); then uv run orbwise model choose --vram "$GB" --out "$CHOICE_FILE"
   else uv run orbwise model choose --vram "$GB" --out "$CHOICE_FILE" </dev/null; fi
@@ -187,15 +165,14 @@ choose_model() {  # Menü geht ins Terminal, die Wahl in $CHOICE_FILE
 while true; do
   if [[ -z "$MODEL" ]]; then choose_model; MODEL="$(cat "$CHOICE_FILE")"; fi
   echo "→ $MODEL"
-  if ollama pull "$MODEL"; then
-    OLLAMA_MODEL="$MODEL"
-    break
-  fi
+  if uv run orbwise model add "$MODEL" --yes; then break; fi
   echo "$(t "✘ '$MODEL' konnte nicht eingerichtet werden." "✘ Could not set up '$MODEL'.")"
   if (( ASK )); then MODEL=""; else exit 1; fi
 done
 rm -f "$CHOICE_FILE"
-ollama pull bge-m3   # Embeddings fürs Gedächtnis
+# Embeddings fürs Gedächtnis (kleines Modell, läuft auf der CPU) – ohne geht die Suche nur über Stichworte
+uv run orbwise model embed || echo "$(t '⚠ Embedding-Modell nicht geladen – später: orbwise model embed' \
+  '⚠ Embedding model not downloaded – later: orbwise model embed')"
 
 # ---------------------------------------------------------------- Voice
 say "$(t "Installiere die Sprachausgabe Piper (CPU)" "Installing the Piper speech output (CPU)")"
@@ -210,7 +187,6 @@ uv run python -c "from faster_whisper import WhisperModel; WhisperModel('small',
 say "Configuration"
 if [[ ! -f "$CONF/config.yaml" ]]; then
   uv run orbwise init-config
-  [[ -n "$OLLAMA_MODEL" ]] && sed -i "s|^  model: .*|  model: $OLLAMA_MODEL|" "$CONF/config.yaml"
   sed -i "s|^language: [a-z]*|language: $LANG_CHOICE|" "$CONF/config.yaml"
 else
   echo "$(t "$CONF/config.yaml gibt es schon – bleibt unverändert." "$CONF/config.yaml already exists – left unchanged.")"
@@ -271,5 +247,8 @@ echo "Skills:   orbwise skills        (Mail, Paperless, Portainer … – also u
 cat <<EOF
 
 NVIDIA: speech recognition can run on the GPU – set voice.stt_device: cuda and voice.stt_compute_type: float16.
-AMD: if ROCm does not pick up your card (ollama ps shows 100% CPU), see docs/models.md, section "AMD GPUs".
+AMD: if ROCm does not pick up your card (the model runs on the CPU), see docs/models.md, section "AMD GPUs".
 EOF
+if [[ -n "$HSA" ]]; then
+  echo "     Your card usually needs HSA_OVERRIDE_GFX_VERSION=$HSA for ROCm – Orbwise falls back to Vulkan otherwise."
+fi

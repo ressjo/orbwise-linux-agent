@@ -26,13 +26,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from .bench_tasks import BY_NAME, CONFTEST, TASKS, Task
+from .bench_tasks import BY_NAME, COMMON, TASKS, Task
 
 TIMEOUT = 900  # Sekunden je Aufgabe, danach zählt sie als nicht gelöst
 
 
 def _prepare(task: Task, project: Path) -> None:
-    for rel, content in {**task.files, "conftest.py": CONFTEST}.items():
+    for rel, content in {**task.files, **COMMON}.items():
         target = project / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
@@ -47,13 +47,13 @@ def _prepare(task: Task, project: Path) -> None:
 def verdict(task: Task, project: Path, answer: str) -> tuple[bool, str]:
     """Prüfung der Aufgabe. Geschützte Dateien (die Tests) gelten im Ausgangszustand; eine Aufgabe, die nichts ändern
     darf, ist mit geänderten Dateien nicht gelöst."""
-    originals = {**task.files, "conftest.py": CONFTEST}
+    originals = {**task.files, **COMMON}
     if task.read_only:
         changed = [rel for rel, content in originals.items()
                    if not (project / rel).is_file() or (project / rel).read_text(encoding="utf-8") != content]
         if changed:
             return False, "hat Dateien geändert: " + ", ".join(changed[:3])
-    for rel in (*task.protect, "conftest.py"):
+    for rel in (*task.protect, *COMMON):
         (project / rel).parent.mkdir(parents=True, exist_ok=True)
         (project / rel).write_text(originals[rel], encoding="utf-8")
     try:
@@ -165,7 +165,12 @@ async def run_bench(cfg: Any, llm: Any, names: list[str] | None = None, runs: in
             results.append(r)
             if progress:
                 progress(r)
-    return {"model": model, "window": getattr(llm, "context_size", None) or cfg.llm.num_ctx, "think": think,
+    # womit wirklich gelaufen wurde: ohne Vorgabe gilt die Einstellung des Modell-Profils
+    profile = getattr(llm, "profile", None)
+    default = getattr(profile, "think", None)
+    thinking = think if think is not None else bool(cfg.llm.think if default is None else default)
+    return {"model": model, "window": getattr(llm, "context_size", None) or cfg.llm.num_ctx, "think": thinking,
+
             "date": datetime.now().isoformat(timespec="seconds"), "runs": max(1, runs), "results": results,
             "summary": summary(results)}
 
@@ -209,7 +214,8 @@ def format_report(result: dict, en: bool = False) -> str:
     s = result["summary"]
     model = f"{result.get('model') or '?'} · {result.get('window') or '?'} Token"
     think = result.get("think")
-    model += (" · thinking " if en else " · Denken ") + (str(think) if think not in (None, False) else ("off" if en else "aus"))
+    model += (" · thinking " if en else " · Denken ") + (
+        ("off" if en else "aus") if think in (None, False) else ("on" if en else "an") if think is True else str(think))
     total = (f"{s['solved']}/{s['total']} solved ({s['rate']:.0%}) · {s['seconds']:.0f} s · median {s['median_steps']:g} "
              f"steps · {s['edit_fails']} failed edits · {s['think_cuts']} thinking cut · {s['repeats_skipped']} repeats "
              f"skipped · {s['denied']} denied · {s['timeouts']} timeouts" if en else

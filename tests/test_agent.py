@@ -183,7 +183,7 @@ def test_repeated_identical_calls_are_skipped_and_stopped(cfg, memory, monkeypat
 
 
 def test_cached_prompt_counts_are_not_taken_as_prompt_size():
-    """Ollama meldet bei Cache-Treffern nur die neuen Token – das ist keine Prompt-Größe."""
+    """Mancher Server meldet bei Cache-Treffern nur die neuen Token – das ist keine Prompt-Größe."""
     from orbwise.agent import prompt_size
 
     assert prompt_size({"prompt_total": 300}, 6000) == 0          # Cache-Treffer

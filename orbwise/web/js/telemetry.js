@@ -326,7 +326,7 @@ export function init() {
   braveDashboard = null;
   $("tele-brave").addEventListener("click", () => { if (braveDashboard) window.open(braveDashboard, "_blank", "noopener"); });
 
-  // Live-Token/s während des Streamens (gleitendes 2-s-Fenster), danach exakter Ollama-Wert
+  // Live-Token/s während des Streamens (gleitendes 2-s-Fenster), danach der exakte Wert des Servers
   setInterval(() => {
     const now = performance.now();
     T.tokenTimes = T.tokenTimes.filter((t) => now - t < 2000);
@@ -345,7 +345,7 @@ export function init() {
 
   // ---------------------------------------------------------------- Kontext im Speicher (VRAM/RAM) + Größe einstellen
   // Zeigt, wie viel der KV-Cache belegt und ob er im Grafikspeicher liegt – und wie groß das Kontextfenster werden
-  // darf (llama-server: genau aus seinem Log, Ollama: geschätzt).
+  // darf (llama-server: genau aus seinem Log, sonst geschätzt).
   gbs = (b) => `${(b / 1024 ** 3).toLocaleString(LOCALE, { maximumFractionDigits: b < 1024 ** 3 ? 2 : 1 })} GB`;
   lastMem = null;
   ctxLabel = (n) => (n >= 1048576 && n % 1048576 === 0 ? `${n / 1048576}M` : n % 1024 === 0 ? `${n / 1024}k` : kTok(n));

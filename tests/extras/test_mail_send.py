@@ -11,8 +11,8 @@ from fake_imap import PASSWORD, USER, FakeImap
 from fastapi.testclient import TestClient
 
 from orbwise.agent import Agent
+from orbwise.extras import mail
 from orbwise.hub import Hub
-from orbwise.tools import mail
 from orbwise.tools.registry import CONFIRM, ToolContext, get_tool, load_all_tools, tool_schemas
 
 

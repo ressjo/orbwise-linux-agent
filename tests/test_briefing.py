@@ -8,7 +8,8 @@ from fake_paperless import TOKEN, FakePaperless
 from fastapi.testclient import TestClient
 
 from orbwise.config import BriefingConfig
-from orbwise.tools import briefing, paperless, proc, reminder_tools, web
+from orbwise.extras import paperless
+from orbwise.tools import briefing, proc, reminder_tools, web
 from orbwise.tools.registry import ToolContext
 
 

@@ -1,9 +1,9 @@
-"""LLM-Anbindung: Ollama (Chat mit Tool-Calls, Streaming, Embeddings) und ein FakeLLM für Tests/Demo."""
+"""LLM-Anbindung: OpenAI-kompatibler Server (llama-server aus llama.cpp und andere) mit Streaming und Tool-Calls –
+und ein FakeLLM für Tests/Demo."""
 
 from __future__ import annotations
 
 import asyncio
-import base64
 import hashlib
 import json
 import logging
@@ -16,8 +16,6 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-
-from .config import LLMConfig
 
 log = logging.getLogger(__name__)
 
@@ -110,237 +108,8 @@ def sampling_for(sampling: dict | None, thinking: bool, temperature: float | Non
     return values
 
 
-_RUNNER_DIED = re.compile(r"process has terminated|segmentation fault|core dumped|exit status|SIGSEGV|SIGABRT", re.I)
-
-
-def ollama_error(status: int, body: str, model: str) -> str:
-    """Fehlertext von Ollama – stürzt der Modell-Prozess beim Laden ab, mit Erklärung statt nur der Rohmeldung."""
-    raw = body.strip()[:300]
-    try:
-        raw = json.loads(raw).get("error", raw)
-    except (ValueError, AttributeError):
-        pass
-    if _RUNNER_DIED.search(raw):
-        hint = (f"Ollama konnte das Modell {model} nicht laden – der Modell-Prozess ist abgestürzt ({raw}). "
-                "Häufige Ursachen: Ollama kennt den Modelltyp dieser GGUF-Datei noch nicht (sehr neue Modelle, "
-                "besonders von Hugging Face mit separatem Bildmodul/mmproj), oder der Grafikspeicher ist voll bzw. "
-                "der GPU-Treiber hakt. Prüfen: 'ollama run " + model + " hallo' und 'journalctl -u ollama -n 80'.")
-        if model.startswith("hf.co/"):
-            hint += (" Lösung: Modelle (Seitenleiste) → das Modell wählen → ⋯ → „Mit llama.cpp neu laden“ – dann läuft es mit "
-                     "llama-server statt Ollama.")
-        return hint
-    return f"Ollama antwortet mit {status}: {raw}" if status != 200 else raw
-
-
-class OllamaLLM:
-    def __init__(self, cfg: LLMConfig, transport: httpx.AsyncBaseTransport | None = None):
-        self.cfg = cfg
-        # Embeddings auf der CPU rechnen (spart Grafikspeicher, wenn ein anderes Modell die GPU belegt)
-        self.embed_on_cpu = False
-        self.embed_gpu_broken = False  # Embedding-Modell stürzte auf der GPU ab → bis zum Neustart auf der CPU
-        self.sampling: dict = {}  # Sampling-Sätze des Profils (think/fast), siehe sampling_for
-        self._client = httpx.AsyncClient(base_url=cfg.base_url, timeout=cfg.request_timeout, transport=transport)
-
-    async def close(self) -> None:
-        await self._client.aclose()
-
-    def _payload(self, messages: list[dict], tools: list[dict] | None, stream: bool,
-                 think: bool | None = None, max_tokens: int | None = None, effort: str | None = None) -> dict:
-        think = self.cfg.think if think is None else think
-        if think and effort:  # Stufe des Modells (nur gesetzt, wenn seine Vorlage Stufen nennt)
-            think = effort
-        payload: dict[str, Any] = {
-            "model": self.cfg.model,
-            "messages": ollama_messages(messages),
-            "stream": stream,
-            "keep_alive": self.cfg.keep_alive,
-            "options": {**sampling_for(self.sampling, bool(think), self.cfg.temperature), "num_ctx": self.cfg.num_ctx},
-            "think": think,
-        }
-        if max_tokens:
-            payload["options"]["num_predict"] = max_tokens
-        if tools:
-            payload["tools"] = tools
-        return payload
-
-    async def chat_stream(self, messages: list[dict], tools: list[dict] | None = None,
-                          think: bool | None = None, max_tokens: int | None = None,
-                          tool_choice: str | None = None, effort: str | None = None) -> AsyncIterator[dict]:
-        """Liefert {"type": "token", "text": ...} und abschließend {"type": "done", "message": {...}}.
-        think: Denkmodus für diese Anfrage (None = Einstellung aus der Config). max_tokens begrenzt die Antwort;
-        tool_choice kennt Ollama nicht (die Werkzeuge bleiben trotzdem im Prompt, damit der Cache passt)."""
-        content: list[str] = []
-        tool_calls: list[dict] = []
-        stats: dict[str, Any] = {}
-        payload = self._payload(messages, tools, True, think, max_tokens, effort)
-        try:
-            async with self._client.stream("POST", "/api/chat", json=payload) as resp:
-                if resp.status_code != 200:
-                    body = (await resp.aread()).decode(errors="replace")
-                    raise LLMError(ollama_error(resp.status_code, body, self.cfg.model))
-                async for line in resp.aiter_lines():
-                    if not line.strip():
-                        continue
-                    chunk = json.loads(line)
-                    if "error" in chunk:
-                        raise LLMError(ollama_error(200, chunk["error"], self.cfg.model))
-                    msg = chunk.get("message") or {}
-                    if msg.get("thinking"):
-                        yield {"type": "reasoning", "text": msg["thinking"]}
-                    if msg.get("content"):
-                        content.append(msg["content"])
-                        yield {"type": "token", "text": msg["content"]}
-                    if msg.get("tool_calls"):
-                        tool_calls.extend(msg["tool_calls"])
-                    if chunk.get("done"):
-                        stats = generation_stats(chunk)
-                        break
-        except httpx.ConnectError as e:
-            raise LLMError(
-                f"Ollama unter {self.cfg.base_url} nicht erreichbar – läuft 'ollama serve'?"
-            ) from e
-        message: dict[str, Any] = {"role": "assistant", "content": "".join(content)}
-        if tool_calls:
-            message["tool_calls"] = tool_calls
-        yield {"type": "done", "message": message, "stats": stats}
-
-    async def chat(self, messages: list[dict]) -> str:
-        try:
-            resp = await self._client.post("/api/chat", json=self._payload(messages, None, False))
-        except httpx.ConnectError as e:
-            raise LLMError(f"Ollama unter {self.cfg.base_url} nicht erreichbar") from e
-        if resp.status_code != 200:
-            raise LLMError(ollama_error(resp.status_code, resp.text, self.cfg.model))
-        return strip_think(resp.json().get("message", {}).get("content", ""))
-
-    async def preload(self) -> None:
-        """Modell schon beim Start in den (Grafik-)Speicher laden – sonst wartet die erste Frage darauf."""
-        try:
-            resp = await self._client.post("/api/generate", json={
-                "model": self.cfg.model, "prompt": "", "keep_alive": self.cfg.keep_alive}, timeout=600)
-        except httpx.ConnectError as e:
-            raise LLMError(f"Ollama unter {self.cfg.base_url} nicht erreichbar – läuft 'ollama serve'?") from e
-        except httpx.HTTPError as e:
-            raise LLMError(f"Ollama: {e}") from e
-        if resp.status_code == 404 or "not found" in resp.text.lower():
-            raise LLMError(f"Modell {self.cfg.model} fehlt – einmalig laden: ollama pull {self.cfg.model}")
-        if resp.status_code != 200:
-            raise LLMError(ollama_error(resp.status_code, resp.text, self.cfg.model))
-
-    async def embed(self, texts: list[str]) -> list[list[float]]:
-        payload: dict[str, Any] = {"model": self.cfg.embed_model, "input": texts, "keep_alive": self.cfg.keep_alive}
-        if self.embed_on_cpu or self.embed_gpu_broken:
-            payload["options"] = {"num_gpu": 0}
-        try:
-            resp = await self._client.post("/api/embed", json=payload)
-            if resp.status_code != 200 and "options" not in payload and _RUNNER_DIED.search(resp.text):
-                # Embedding-Modell stürzt auf der GPU ab (Treiber/VRAM) → auf der CPU weiter, sonst fiele die
-                # Gedächtnis-Suche auf reine Volltextsuche zurück
-                cpu = await self._client.post("/api/embed", json={**payload, "options": {"num_gpu": 0}})
-                if cpu.status_code == 200:
-                    log.warning("Embedding-Modell %s stürzt auf der GPU ab (%s) – rechne bis zum Neustart auf der CPU",
-                                self.cfg.embed_model, resp.text[:120])
-                    self.embed_gpu_broken = True
-                    resp = cpu
-        except httpx.HTTPError as e:
-            raise LLMError(f"Ollama für Embeddings nicht erreichbar: {e}") from e
-        if resp.status_code != 200:
-            raise LLMError(f"Embedding fehlgeschlagen ({resp.status_code}): {resp.text[:200]}")
-        return resp.json()["embeddings"]
-
-    async def loaded_models(self) -> list[str]:
-        try:
-            resp = await self._client.get("/api/ps", timeout=5)
-            return [m["name"] for m in resp.json().get("models", [])]
-        except (httpx.HTTPError, ValueError, KeyError):
-            return []
-
-    async def memory_info(self) -> dict | None:
-        """Wie viel des geladenen Modells (samt Kontext) im Grafikspeicher liegt – aus /api/ps und /api/show.
-        Der KV-Cache wird aus der Architektur geschätzt (f16). None, wenn das Modell gerade nicht geladen ist."""
-        from .llm_memory import kv_per_token_from_info
-        try:
-            models = (await self._client.get("/api/ps", timeout=5)).json().get("models", [])
-            want = self.cfg.model if ":" in self.cfg.model else f"{self.cfg.model}:latest"
-            entry = next((m for m in models if m.get("name") in (self.cfg.model, want)
-                          or m.get("model") in (self.cfg.model, want)), None)
-            if not entry:
-                return None
-            show = (await self._client.post("/api/show", json={"model": self.cfg.model}, timeout=10)).json()
-        except (httpx.HTTPError, ValueError):
-            return None
-        info_ = show.get("model_info") or {}
-        size, in_vram = int(entry.get("size") or 0), int(entry.get("size_vram") or 0)
-        ctx = int(entry.get("context_length") or self.cfg.num_ctx)
-        per_token = kv_per_token_from_info(info_)
-        kv = per_token * ctx if per_token else 0
-        share = in_vram / size if size else 1.0
-        train = next((int(v) for k, v in info_.items() if k.endswith(".context_length") and isinstance(v, int)), None)
-        model = max(0, size - kv)
-        return {"ctx": ctx, "ctx_train": train, "kv_per_token": per_token, "source": "estimate",
-                "kv_vram": int(kv * share), "kv_ram": int(kv * (1 - share)),
-                "model_vram": int(model * share), "model_ram": int(model * (1 - share)),
-                "model_ram_offload": int(model * (1 - share))}
-
-    async def supports_images(self) -> bool:
-        """Kann das Modell Bilder sehen? (Ollama: /api/show → capabilities enthält "vision")"""
-        try:
-            show = (await self._client.post("/api/show", json={"model": self.cfg.model}, timeout=10)).json()
-        except (httpx.HTTPError, ValueError):
-            return False
-        return "vision" in (show.get("capabilities") or [])
-
-    async def _show(self) -> dict:
-        try:
-            data = (await self._client.post("/api/show", json={"model": self.cfg.model}, timeout=10)).json()
-        except (httpx.HTTPError, ValueError):
-            return {}
-        return data if isinstance(data, dict) else {}
-
-    async def thinking_caps(self) -> str | None:
-        """Wie kann das Modell denken? "levels" (Stufen aus seiner Vorlage), "toggle" (nur an/aus), "none" – None =
-        unbekannt. Ollama: /api/show → capabilities enthält "thinking"; Stufen nur, wenn die Vorlage welche nennt."""
-        show = await self._show()
-        caps = show.get("capabilities")
-        if not isinstance(caps, list):
-            return None
-        if "thinking" not in caps:
-            return "none"
-        return "levels" if template_levels(show.get("template"))[0] else "toggle"
-
-    async def thinking_levels(self) -> tuple[list[str], str | None]:
-        """Nur die Stufen, die die Vorlage des Modells selbst nennt."""
-        return template_levels((await self._show()).get("template"))
-
-    async def unload_all(self) -> list[str]:
-        """Alle geladenen Ollama-Modelle aus dem (Grafik-)Speicher entfernen."""
-        names = await self.loaded_models()
-        for name in names:
-            try:
-                await self._client.post("/api/generate", json={"model": name, "keep_alive": 0}, timeout=30)
-            except httpx.HTTPError:
-                pass
-        return names
-
-    async def status(self) -> dict:
-        try:
-            resp = await self._client.get("/api/tags", timeout=3)
-            names = [m["name"] for m in resp.json().get("models", [])]
-        except Exception as e:  # noqa: BLE001
-            return {"online": False, "error": str(e), "model": self.cfg.model}
-        def has(model: str) -> bool:
-            return any(n == model or n == f"{model}:latest" or n.split(":")[0] == model for n in names)
-        return {
-            "online": True,
-            "model": self.cfg.model,
-            "model_available": has(self.cfg.model),
-            "embed_model": self.cfg.embed_model,
-            "embed_available": has(self.cfg.embed_model),
-        }
-
-
 def to_openai_messages(messages: list[dict]) -> list[dict]:
-    """Nachrichten im internen (Ollama-)Format → OpenAI-Format: Tool-Calls bekommen IDs, Tool-Ergebnisse werden
+    """Nachrichten im internen Format → OpenAI-Format: Tool-Calls bekommen IDs, Tool-Ergebnisse werden
     in Reihenfolge ihrer Aufrufe zugeordnet, Argumente als JSON-String."""
     out: list[dict] = []
     pending: list[str] = []
@@ -384,22 +153,6 @@ def _data_url(path: str) -> str | None:
         return data_url(Path(path))
     except OSError:
         return None
-
-
-def ollama_messages(messages: list[dict]) -> list[dict]:
-    """Bildpfade → Base64 (Ollama erwartet die Bilder direkt in der Nachricht)."""
-    out = []
-    for m in messages:
-        if m.get("images"):
-            images = []
-            for path in m["images"]:
-                try:
-                    images.append(base64.b64encode(Path(path).read_bytes()).decode())
-                except OSError:
-                    continue
-            m = {**m, "images": images}
-        out.append(m)
-    return out
 
 
 def _call_of(name: str, raw: str) -> dict:
@@ -645,21 +398,6 @@ def openai_stats(timings: dict, usage: dict, first_token: float | None, started:
             "prompt_tokens": usage.get("prompt_tokens"), "prompt_total": total, "prompt_tps": None}
 
 
-def generation_stats(chunk: dict) -> dict:
-    """Token-Statistik aus dem letzten Ollama-Chunk (Dauern in Nanosekunden)."""
-    def rate(count, duration):
-        return round(count / (duration / 1e9), 1) if count and duration else None
-    return {
-        "tokens": chunk.get("eval_count"),
-        "tps": rate(chunk.get("eval_count"), chunk.get("eval_duration")),
-        "prompt_tokens": chunk.get("prompt_eval_count"),
-        "prompt_total": chunk.get("prompt_eval_count"),
-        "prompt_tps": rate(chunk.get("prompt_eval_count"), chunk.get("prompt_eval_duration")),
-        "prompt_ms": round(chunk["prompt_eval_duration"] / 1e6) if chunk.get("prompt_eval_duration") else None,
-        "load_ms": round(chunk["load_duration"] / 1e6) if chunk.get("load_duration") else None,
-    }
-
-
 def template_thinking(template) -> str | None:
     """Denkfähigkeit laut Chat-Vorlage (Jinja-Text) – None, wenn es keine Vorlage gibt."""
     if not isinstance(template, str) or not template.strip():
@@ -720,7 +458,7 @@ def strip_think(text: str) -> str:
 
 
 class FakeLLM:
-    """Deterministisches Ersatz-LLM (ORBWISE_FAKE_LLM=1) für Tests und UI-Demo ohne Ollama.
+    """Deterministisches Ersatz-LLM (ORBWISE_FAKE_LLM=1) für Tests und UI-Demo ohne Modell-Server.
 
     - "/tool <name> <json-args>" erzeugt einen Tool-Call
     - "systemupdate"/"update my system" löst system_update aus, "welche dateien ..." find_files,
@@ -792,8 +530,7 @@ class FakeLLM:
         return {"role": "assistant", "content": (
             "The hero now leads with the roast date – **Roasted on Tuesday, in your cup by Friday** "
             "(`index.html:19`). The screenshot shows it fits on two lines next to the cup, and the call to action "
-            "stays above the fold.\n\nThe change is on the sandbox branch; apply it to the project or push it "
-            "when you like it.")}
+            "stays above the fold.\n\nUndo is right below if you liked the old one better.")}
 
     def _demo_plan(self, request: str) -> str:
         if self.en:

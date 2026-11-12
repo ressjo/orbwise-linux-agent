@@ -27,7 +27,7 @@ search entries of earlier coding chats move to their project; facts stored so fa
 **How the context stays small – and fast:** Orbwise handles the context like Claude Code. Between two compactions
 the prompt **only grows at the end**: instructions, tools, earlier messages and the note in front of each of your
 questions (date and time, memories, the approved plan) stay byte for byte the same once they were sent. llama.cpp
-(llama-server) and Ollama therefore reuse what they already processed and only read the new part – a slow graphics card does
+(llama-server) therefore reuses what they already processed and only read the new part – a slow graphics card does
 not have to re-read the conversation for every question or tool step. The *Context* tile's tooltip shows how many tokens
 came from the cache.
 
@@ -130,6 +130,6 @@ from the `amdgpu` driver.
 
 **Context in memory** shows how big the model's KV cache is and where it lives – green in VRAM, orange in RAM (slow) –
 plus a recommendation: "up to ~32k possible" when VRAM is free, or "better 12k" when parts already spill into RAM.
-For a llama-server started by Orbwise the numbers come straight from its log; for Ollama they are estimated
+For a llama-server started by Orbwise the numbers come straight from its log; otherwise they are estimated
 from the model architecture. The context window itself is set per model on the **Models** page (see
 [Models & profiles](models.md#models--profiles)).

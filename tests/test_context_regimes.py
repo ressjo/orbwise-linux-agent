@@ -14,8 +14,8 @@ from test_prompt_size import all_integrations, first_request
 from orbwise.agent import Agent
 from orbwise.config import ProfileConfig
 from orbwise.context_plan import plan_for
+from orbwise.extras import paperless as pl
 from orbwise.memory.context import Conversation, est_tokens
-from orbwise.tools import paperless as pl
 from orbwise.tools.registry import ToolContext, get_tool, load_all_tools
 from orbwise.toolselect import SMALL_CORE
 

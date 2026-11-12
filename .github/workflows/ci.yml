@@ -2,8 +2,7 @@ name: CI
 
 on:
   push:
-    # Standardbranch – nach einem Umbenennen in main greift die erste Zeile
-    branches: [main, claude/epic-volta-vyvxlk]
+    branches: [main]
   pull_request:
 
 jobs:
@@ -18,8 +17,10 @@ jobs:
         run: uv sync --extra dev --extra voice
       - name: Lint
         run: uv run ruff check orbwise tests
-      - name: Test
-        run: uv run pytest -q -n auto
+      - name: Test (core)
+        run: uv run pytest -q -n auto --ignore=tests/extras
+      - name: Test (extras – Paperless, mail, calendar, Telegram …)
+        run: uv run pytest -q -n auto tests/extras
       - name: Version and changelog agree
         run: |
           version=$(grep -m1 '^__version__' orbwise/__init__.py | cut -d'"' -f2)
