@@ -12,6 +12,9 @@ from .registry import ToolContext, tool
 @tool("Merkt sich dauerhaft einen Fakt über den Nutzer, seine Vorlieben, sein System oder Projekte – als "
       "vollständigen Satz. Im Coding-Modus landet er im Gedächtnis des aktuellen Projekts.")
 async def remember(ctx: ToolContext, fact: str) -> str:
+    if ctx.memory.private:
+        return ("Nicht gespeichert: Das ist ein privater Chat – hier wird nichts dauerhaft gemerkt. Sag dem Nutzer, "
+                "dass er dafür einen normalen Chat nehmen kann.")
     added, replaced = await ctx.memory.remember_fact(fact)
     if replaced:
         return f"Aktualisiert (vorher: {replaced})."

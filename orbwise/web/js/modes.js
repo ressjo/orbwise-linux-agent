@@ -21,6 +21,10 @@ export function applyMode(ev) {
   S.project = ev.project || "";
   S.sandbox = ev.sandbox || null;
   S.goal = ev.goal || null;
+  S.private = !!ev.private;
+  app.classList.toggle("private", S.private);
+  $("private-pill").classList.toggle("hidden", !S.private);
+  $("chat-private").setAttribute("aria-pressed", String(S.private));
   renderGoal();
   app.classList.toggle("coding", S.mode === "coding");
   renderSandboxChip();

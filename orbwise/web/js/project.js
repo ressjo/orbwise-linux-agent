@@ -244,7 +244,7 @@ export function openChatView(ev) {
   for (const id of Object.keys(assistants)) delete assistants[id];
   parkConfirm();  // nicht mit dem alten Chat wegwerfen
   $("chat").innerHTML = "";
-  $("chat-title").textContent = ev.title || "";
+  $("chat-title").textContent = ev.private ? L("Privater Chat", "Private chat") : ev.title || "";
   loadHistory();
   loadChats();
 }
@@ -254,7 +254,7 @@ export async function loadHistory() {
     const h = await getJSON("/api/history");
     S.historyLoaded = true;
     setTimeout(renderBoot, 0);
-    $("chat-title").textContent = h.chat && h.chat.title ? h.chat.title : "";
+    $("chat-title").textContent = S.private ? L("Privater Chat", "Private chat") : h.chat && h.chat.title ? h.chat.title : "";
     if (h.summary) addSystem(L("Frühere Gesprächsteile sind im Gedächtnis zusammengefasst.", "Earlier parts of this chat are summarised in memory."));
     const dividers = {};
     for (const ep of h.epochs || []) dividers[ep.at] = ep;

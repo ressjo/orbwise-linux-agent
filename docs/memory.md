@@ -120,6 +120,17 @@ everything from the other chats.
 - **Delete** removes a chat **completely**: from the list, the journal and the search index; affected daily
   summaries are rebuilt from the rest. Learned facts are kept (delete them under **Memory** or say "forget …").
 
+### Private chat
+
+The ghost button next to **New chat** starts a private chat (Tools mode). It lives in RAM only: no chat file, no
+journal entry, nothing in the search index or the day summaries, and `remember` refuses to store facts. Orbwise can
+still *read* its memory there. The chat is gone as soon as you leave it – another chat, **New chat**, the ghost
+button again, a mode switch or quitting Orbwise; images and PDFs attached only to it and cached tool outputs are
+deleted with it. It is not in the chat list and cannot be exported, renamed or restored.
+
+What it does not hide: what a tool did on your system (files written, shell commands and their history, web
+requests), the log of the model server, and RAM that the OS may swap to disk.
+
 ## Telemetry
 
 The activity panel shows (every 2 s, with a sparkline): **Token/s** (generation speed), **Context** (prompt

@@ -22,7 +22,7 @@ from pathlib import Path
 
 from ..config import MemoryConfig
 from ..lang import T
-from .chats import ChatStore, chat_mode
+from .chats import ChatStore, chat_mode, new_id
 from .context import Conversation, est_tokens
 from .files import Facts, Journal, Summaries, day_str, digest, valid_day
 from .index import Hit, MemoryIndex, split_text
@@ -33,6 +33,10 @@ __all__ = ["Memory", "Conversation", "Hit", "est_tokens"]
 
 DAY_CHUNK_CHARS = 12000
 TOOLS_KINDS = ("journal", "summary", "fact")
+
+
+def is_private(conv: Conversation | None) -> bool:
+    return bool(conv is not None and conv.meta.get("private"))
 
 
 def project_id(project: str) -> str:
@@ -138,10 +142,17 @@ class Memory:
         return moved
 
     def close(self) -> None:
+        for conv in (self.conversation, *self._outer):  # beim Beenden: ein privater Chat nimmt seine Anhänge mit
+            if is_private(conv):
+                self.conversation = conv
+                self._leave()
         self.index.close()
 
     # ---------- Schreiben ----------
     async def log_exchange(self, user_text: str, assistant_text: str, tool_notes: list[str]) -> None:
+        if self.private:  # privater Chat: kein Tagebuch, kein Suchindex – nichts, was später wieder auftaucht
+            self.last_activity = time.time()
+            return
         now = datetime.now()
         chat = self.conversation.chat_id
         project = self.project_of()
@@ -173,12 +184,67 @@ class Memory:
         """Modus des Chats, in dem gerade gearbeitet wird: "tools" oder "coding"."""
         return chat_mode(self.conversation.meta)
 
+    # ---------- Privater Chat: nur im Arbeitsspeicher, hinterlässt nichts ----------
+    @property
+    def private(self) -> bool:
+        """Der Chat, in dem gerade gearbeitet wird, ist privat (steht in keiner Datei, kommt in kein Gedächtnis)."""
+        return is_private(self.conversation)
+
+    def new_private_chat(self) -> Conversation:
+        """Privaten Chat beginnen (Tools-Modus). Er lebt nur im Arbeitsspeicher: keine Datei, kein Tagebuch, kein
+        Suchindex, keine neuen Fakten. Mit dem Verlassen (anderer Chat, neuer Chat, Moduswechsel, Beenden) ist er
+        weg. Gelesen wird das Gedächtnis weiterhin."""
+        if self._outer:
+            raise RuntimeError("Chat wird gerade benutzt")  # eine Routine arbeitet – der Server verhindert das vorher
+        self._leave()
+        self.chats.set_mode("tools")
+        conv = Conversation(None, new_id())
+        conv.meta["private"] = True
+        self.conversation = conv
+        return conv
+
+    def _leave(self) -> None:
+        """Den Chat verlassen, in dem gerade gearbeitet wird: speichern – oder, wenn er privat ist, restlos verwerfen
+        (auch die Bilder/PDFs, die nur er verwendet hat)."""
+        conv = self.conversation
+        if not is_private(conv):
+            conv.save()
+            return
+        names = {n for m in conv.history for n in m.get("attachments") or ()}
+        names |= {d.get("name", "") for m in conv.history for d in m.get("docs") or () if isinstance(d, dict)}
+        # große Werkzeug-Ausgaben dieses Chats, die als Datei im Zwischenspeicher liegen
+        cache = Path(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")) / "orbwise" / "outputs"
+        for m in conv.history:
+            if m.get("role") != "tool":
+                continue
+            for found in re.findall(r"\[Vollständige Ausgabe \([^)]*\): (\S+\.txt) ", str(m.get("content") or "")):
+                path = Path(found)
+                with contextlib.suppress(OSError):
+                    if path.parent.resolve() == cache.resolve():
+                        path.unlink()
+        conv.history, conv.epochs = [], []
+        folder = self.cfg.dir.expanduser().parent / "attachments"
+        names = {n for n in names if n and "/" not in n and not n.startswith(".")}
+        if not names or not folder.is_dir():
+            return
+        stored = ""
+        for path in self.chats.dir.glob("*.json"):  # dieselbe Datei hängt vielleicht auch an einem normalen Chat
+            with contextlib.suppress(OSError):
+                stored += path.read_text(encoding="utf-8", errors="replace")
+        for name in names:
+            if name in stored:
+                continue
+            for path in folder.glob(Path(name).stem + ".*"):  # Bild bzw. PDF samt ausgelesenem Text
+                with contextlib.suppress(OSError):
+                    path.unlink()
+
     def new_chat(self) -> Conversation:
         """Neuer Chat im selben Modus – ist der aktuelle noch leer, wird er weiterverwendet."""
-        if not self.conversation.history:
+        if not self.conversation.history and not self.private:
             return self.conversation
-        self.conversation.save()
-        self.conversation = self.chats.create(mode=self.mode)
+        mode = self.mode
+        self._leave()
+        self.conversation = self.chats.create(mode=mode)
         return self.conversation
 
     def start_fresh(self) -> Conversation:
@@ -189,8 +255,8 @@ class Memory:
 
     def switch_mode(self, mode: str) -> Conversation:
         """Zwischen Tools- und Coding-Modus wechseln: öffnet den zuletzt benutzten Chat dieses Modus."""
-        if mode != self.mode:
-            self.conversation.save()
+        if mode != self.mode or self.private:  # ein privater Chat endet auch beim Wechsel in den eigenen Modus
+            self._leave()
             self.conversation = self.chats.open_active(mode)
         self.chats.set_mode(mode)
         return self.conversation
@@ -216,7 +282,7 @@ class Memory:
 
     def switch_chat(self, chat_id: str) -> Conversation:
         if chat_id != self.conversation.chat_id:
-            self.conversation.save()
+            self._leave()
             self.conversation = self.chats.set_active(chat_id)
         return self.conversation
 

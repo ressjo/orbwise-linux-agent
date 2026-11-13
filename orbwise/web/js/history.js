@@ -192,4 +192,6 @@ export function init() {
     chatSearchTimer = setTimeout(loadChats, 250);
   });
   $("chat-new").onclick = () => newChat();
+  // Privater Chat an/aus: noch einmal drücken verlässt ihn (dann ist er weg) und öffnet einen neuen normalen Chat
+  $("chat-private").onclick = () => api("POST", S.private ? "/api/chats" : "/api/chats/private").catch(() => {});
 }

@@ -27,6 +27,9 @@ All notable changes to this project are documented here. The format follows
   (ignored when still present).
 
 ### Added
+- **Private chat** (ghost button next to *New chat*, Tools mode): kept in RAM only – no chat file, no journal, no
+  search index, no new facts – and gone as soon as you leave it, together with its attachments. The memory can
+  still be read there. See `docs/memory.md`.
 - **Trust you can check:**
   - a **threat model** in `docs/security.md`: what Orbwise withstands, how, and which test proves it – plus an honest
     list of what it does not protect against (also in the README);

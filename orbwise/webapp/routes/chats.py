@@ -221,7 +221,7 @@ def register(app, ctx) -> None:
         sb = agent.sandbox_state() if memory.mode == "coding" else None
         goal = conv.meta.get("goal") if isinstance(conv.meta.get("goal"), dict) else None
         return {"mode": conv.meta.get("mode") or "tools", "project": conv.meta.get("project") or "",
-                "chat_id": conv.chat_id, "goal": {"text": goal["text"], "steps": goal.get("steps", 0)} if goal else None,
+                "chat_id": conv.chat_id, "private": bool(conv.meta.get("private")), "goal": {"text": goal["text"], "steps": goal.get("steps", 0)} if goal else None,
                 "sandbox": {"enabled": True, "network": sb.get("network", True), "branch": sb.get("branch", ""),
                             "engine": sb.get("engine", ""), "path": sb.get("path", "")} if sb else None}
 
@@ -236,7 +236,10 @@ def register(app, ctx) -> None:
         memory.active.save()
         if memory.conversation is not memory.active:
             memory.conversation.save()
-        return memory.chats.list(q, mode=mode or mode_info()["mode"])
+        items = memory.chats.list(q, mode=mode or mode_info()["mode"])
+        if memory.active.meta.get("private"):  # der private Chat steht nicht in der Liste – dort ist dann keiner offen
+            items = [{**c, "active": False} for c in items]
+        return items
 
     @app.post("/api/chats/{chat_id}/project")
     async def chat_project(chat_id: str, request: Request):
@@ -267,6 +270,19 @@ def register(app, ctx) -> None:
         memory.new_chat()
         await chat_switched()
         return {"id": memory.active.chat_id}
+
+    @app.post("/api/chats/private")
+    async def chat_private():
+        """Privater Chat: nur im Arbeitsspeicher – keine Datei, kein Tagebuch, kein Suchindex, keine neuen Fakten.
+        Mit dem Verlassen (anderer oder neuer Chat, Moduswechsel, Beenden) ist er weg."""
+        await settle()
+        if memory.conversation is not memory.active:  # eine Routine/Telegram-Anfrage arbeitet gerade
+            raise HTTPException(409, T("Orbwise arbeitet gerade – bitte kurz warten.", "Orbwise is busy – please wait."))
+        memory.new_private_chat()
+        agent._cache_owner = None
+        await chat_switched()
+        await hub.broadcast({"type": "chats_changed"})
+        return {"id": memory.active.chat_id, "private": True}
 
     @app.post("/api/chats/{chat_id}/activate")
     async def chat_activate(chat_id: str):
