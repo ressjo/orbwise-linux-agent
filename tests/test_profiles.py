@@ -490,3 +490,24 @@ def test_context_event_reports_usage_and_trimming(cfg, memory):
     assert any(e.get("phase") == "compress" for e in events)
     ev = [e for e in events if e["type"] == "context"][-1]
     assert ev["summarized"] and ev["used"] <= ev["budget"] and not ev["trimmed"]
+
+
+def test_start_failure_explains_a_file_made_for_another_llama_cpp(tmp_path, monkeypatch):
+    """„tensor … not found“: llama.cpp kennt den Typ, die Datei passt aber nicht zu seiner Umsetzung (typisch bei
+    GGUFs, die vor der fertigen Unterstützung erstellt wurden) – der Hinweis nennt die Version und was hilft."""
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    base = tmp_path / "llama.cpp"
+    (base / "b12606-rocm").mkdir(parents=True)
+    (base / "current").symlink_to(base / "b12606-rocm")
+    (base / "manifest.json").write_text(json.dumps({"tag": "b12606", "flavor": "rocm"}))
+    script = base / "b12606-rocm" / "llama-server"
+    script.write_text("#!/bin/sh\necho \"E llama_model_load: error loading model: check_tensor_dims: tensor "
+                      "'blk.24.attn_q.weight' not found\"\nexit 1\n")
+    script.chmod(0o755)
+    server = ManagedServer(ServerConfig(command=f"{base / 'current' / 'llama-server'} -m x.gguf", startup_timeout=10),
+                           f"http://127.0.0.1:{free_port()}/v1")
+    with pytest.raises(LLMError) as err:
+        run(server.ensure_running())
+    text = str(err.value)
+    assert "Exit-Code 1" in text and "blk.24.attn_q.weight" in text  # Log-Auszug bleibt
+    assert "(b12606) kennt den Modelltyp" in text and "später erneut herunterladen" in text

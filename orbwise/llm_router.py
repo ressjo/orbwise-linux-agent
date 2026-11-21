@@ -5,6 +5,7 @@ stoppt, oder ein eigener OpenAI-kompatibler Server. Embeddings laufen über eine
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import re
@@ -199,12 +200,42 @@ def library_hint(command: str) -> str:
                  "Oberfläche: Modelle (Seitenleiste) → llama.cpp AKTUALISIEREN (oder orbwise model llamacpp --update).",
                  f"\n→ This llama-server does not know the model type “{arch.group(1)}” yet. For models added in the "
                  "web UI: Models (sidebar) → update llama.cpp (or orbwise model llamacpp --update).")
+    layout = re.search(r"check_tensor_dims: tensor '([^']+)' not found|wrong number of tensors|"
+                       r"missing tensor '([^']+)'", text)
+    if layout:
+        tag = _build_of(command)
+        version = f" ({tag})" if tag else ""
+        return T(f"\n→ Dieser llama-server{version} kennt den Modelltyp, aber die Datei ist anders aufgebaut, als er "
+                 "erwartet. Meist wurde die GGUF mit einer anderen llama.cpp-Version erstellt – oft kurz nach dem "
+                 "Erscheinen eines neuen Modells, bevor die Unterstützung fertig war. Ist llama.cpp schon aktuell "
+                 "(Modelle → llama.cpp → Nach Update suchen), hilft nur eine neu erstellte Datei: später erneut "
+                 "herunterladen (der Hochlader lädt sie meist nach) oder eine Fassung eines anderen Hochladers nehmen.",
+                 f"\n→ This llama-server{version} knows the model type, but the file is laid out differently than it "
+                 "expects. Usually the GGUF was made with a different llama.cpp version – often right after a new "
+                 "model came out, before support was finished. If llama.cpp is already up to date (Models → "
+                 "llama.cpp → Check for update), only a newly made file helps: download it again later (uploaders "
+                 "usually re-upload) or take a version from another uploader.")
     m = re.search(r"error while loading shared libraries: ([^:\s]+)", text)
     if not m:
         return ""
     fix = T("das CUDA-/ROCm-Laufzeitpaket der Distribution installieren", "install your distribution's CUDA/ROCm runtime")
     return T(f"\n→ Es fehlt die Bibliothek {m.group(1)}. Reparatur: {fix}",
              f"\n→ The library {m.group(1)} is missing. Fix: {fix}")
+
+
+def _build_of(command: str) -> str:
+    """Version des llama.cpp-Builds, den dieser Startbefehl nutzt (aus dem manifest.json, das Orbwise beim Laden
+    schreibt) – leer bei einem eigenen llama-server."""
+    m = re.match(r"\s*(?:\S+=\S*\s+)*(\S*llama-server)(\s|$)", command)
+    if not m:
+        return ""
+    binary = Path(os.path.expanduser(m.group(1)))
+    for folder in (binary.parent.parent, binary.parent.parent.parent):  # …/llama.cpp/current/llama-server
+        try:
+            return str(json.loads((folder / "manifest.json").read_text(encoding="utf-8")).get("tag") or "")
+        except (OSError, ValueError):
+            continue
+    return ""
 
 
 def tail_log(lines: int = 15) -> str:
